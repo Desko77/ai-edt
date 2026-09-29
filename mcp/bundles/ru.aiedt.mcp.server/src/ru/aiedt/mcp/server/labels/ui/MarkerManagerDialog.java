@@ -129,13 +129,12 @@ public class MarkerManagerDialog
         for (Marker marker : service.getMarkers(project))
         {
             String name = marker.getName();
-            boolean was = initiallyAssigned.contains(name);
             boolean now = checked.contains(name);
-            if (now && !was)
+            if (now && !initiallyAssigned.contains(name))
             {
                 service.assignMarker(project, objectFqn, name);
             }
-            else if (!now && was)
+            else if (MarkerRenamePlan.unassignOnApply(initiallyAssigned, name, now))
             {
                 service.unassignMarker(project, objectFqn, name);
             }
@@ -271,9 +270,9 @@ public class MarkerManagerDialog
         MarkerEditDialog dialog = new MarkerEditDialog(getShell(), marker);
         if (dialog.open() == Window.OK)
         {
-            service.updateMarker(project, marker.getName(), dialog.getMarkerName(), dialog.getMarkerColor(),
-                dialog.getMarkerDescription());
-            initiallyAssigned = renameInAssigned(initiallyAssigned, marker.getName(), dialog.getMarkerName());
+            initiallyAssigned = MarkerRenamePlan.apply(marker, dialog.getMarkerName(), initiallyAssigned,
+                (nameBefore, newName) -> service.updateMarker(project, nameBefore, newName, dialog.getMarkerColor(),
+                    dialog.getMarkerDescription()));
             refreshTablePreservingChecks();
         }
     }
@@ -395,27 +394,6 @@ public class MarkerManagerDialog
         IStructuredSelection selection = tableViewer.getStructuredSelection();
         Object first = selection.getFirstElement();
         return first instanceof Marker ? (Marker)first : null;
-    }
-
-    /**
-     * Applies a rename to the set of initially assigned names, so a renamed-while-open marker is still
-     * recognized as assigned when the dialog is confirmed.
-     *
-     * @param assigned the current set
-     * @param oldName the marker's old name
-     * @param newName the marker's new name, or <code>null</code> when unchanged
-     * @return the updated set
-     */
-    private static Set<String> renameInAssigned(Set<String> assigned, String oldName, String newName)
-    {
-        if (newName == null || newName.equals(oldName) || !assigned.contains(oldName))
-        {
-            return assigned;
-        }
-        Set<String> updated = new HashSet<>(assigned);
-        updated.remove(oldName);
-        updated.add(newName);
-        return updated;
     }
 
     /**

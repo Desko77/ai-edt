@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 130 | a test class named after it |
-| exercised | 180 | reached by some other test |
-| tool-sweep | 53 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 43 | needs a display or an extension point |
-| workspace-bound | 27 | drives a live EDT project or debug session |
+| direct | 133 | a test class named after it |
+| exercised | 197 | reached by some other test |
+| tool-sweep | 49 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 41 | needs a display or an extension point |
+| workspace-bound | 24 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **433** | across 485 test classes |
+| **total** | **444** | across 522 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (27)
+## workspace-bound (24)
 
 **folders**
 - IClusterManager
@@ -27,7 +27,6 @@ _none_
 
 **labels**
 - MarkerHelpers
-- MarkerManager
 
 **labels/refactoring**
 - MarkerDeleteRefactorHook
@@ -49,8 +48,6 @@ _none_
 - ExternalProjectResolver
 - InfobaseIdentity
 - ProjectReadinessGate
-- ProjectScopeResolver
-- RoleRightsAnalyzer
 
 **toolkit/mdreport**
 - EObjectProbe
@@ -60,7 +57,7 @@ _none_
 - CommandInterfaceOps
 - FormEventOps
 
-## ui-bound (43)
+## ui-bound (41)
 
 **(root)**
 - McpAutoStart
@@ -96,10 +93,8 @@ _none_
 - MarkerFilterController
 - MarkerFilterDialog
 - MarkerFilterPanel
-- MarkerIconFactory
 - MarkerManagerDialog
 - MarkerMenuBuilder
-- MarkerQueryFilter
 
 **navigation**
 - CollapseTreeCommand
@@ -125,17 +120,15 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (53)
+## tool-sweep (49)
 
 **toolkit/ops**
 - ApplicationsReader
 - AttributeAdder
-- AuditRoleRightsTool
 - BookmarksReader
 - BreakpointRemover
 - BreakpointSetter
 - BreakpointsLister
-- CallHierarchyReader
 - CodeTemplateTool
 - CommonPictureExporter
 - CompareConfigurationsTool
@@ -165,7 +158,6 @@ _none_
 - LaunchConfigsLister
 - ListExtensionsTool
 - OutgoingStructuresReader
-- PlatformDocReader
 - ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
@@ -180,9 +172,8 @@ _none_
 - TasksReader
 - UninstallExtensionTool
 - XdtoWorkshopTool
-- YaxunitDebugRunner
 
-## exercised (180)
+## exercised (197)
 
 **(root)**
 - Activator
@@ -211,10 +202,21 @@ _none_
 **labels**
 - MarkerDecorationHelpers
 - MarkerKeys
+- MarkerManager
+- MarkerSearch
 
 **labels/model**
 - Marker
 - MarkerStore
+
+**labels/ui**
+- MarkerEditCommit
+- MarkerIconFactory
+- MarkerMatchCache
+- MarkerMenuIndex
+- MarkerOwnership
+- MarkerQueryFilter
+- MarkerRenamePlan
 
 **settings**
 - McpAuth
@@ -279,8 +281,11 @@ _none_
 - PictureValidator
 - ProjectMetricsCollector
 - ProjectResolver
+- ProjectScopeResolver
 - ProjectStateGuard
 - QlValidator
+- RoleRightsAnalyzer
+- RunReceipts
 - SubsystemMembership
 - SupportSnapshotStore
 - SyncBaseline
@@ -310,8 +315,10 @@ _none_
 - MetadataFormatter
 
 **toolkit/ops**
+- AuditRoleRightsTool
 - BslCodeReviewTool
 - BslModuleAccess
+- CallHierarchyReader
 - CheckDocReader
 - CodeSearchTool
 - CodeTextSearcher
@@ -331,6 +338,7 @@ _none_
 - ExpressionEvaluator
 - ExternalObjectWorkshopTool
 - FindRlsViolationsTool
+- FormAppearanceOps
 - FormCommandInterfaceOps
 - FormCreateOps
 - FormItemsOps
@@ -364,6 +372,7 @@ _none_
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
+- PlatformDocReader
 - PredefinedOps
 - ProblemSummaryReader
 - ProjectAdminFacadeTool
@@ -385,6 +394,7 @@ _none_
 - ValidateForExportTool
 - VanessaTool
 - WorkspaceMarksFacadeTool
+- YaxunitDebugRunner
 - YaxunitTestsTool
 
 **wire**
@@ -400,7 +410,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (130)
+## direct (133)
 
 **(root)**
 - BrowserOrigin
@@ -460,6 +470,7 @@ _none_
 - IdleComparisonSweep
 - InfobaseHolders
 - InstanceRegistry
+- InvalidCharacters
 - JUnitReportFormatter
 - JUnitXmlReader
 - LaunchApplicationIds
@@ -472,6 +483,7 @@ _none_
 - MetadataTypeCatalog
 - MethodSignature
 - ModalDialogWatch
+- ModelEditabilityGuard
 - MonopolyLock
 - MutatorIdempotency
 - MutatorIdempotencyStore
@@ -488,6 +500,7 @@ _none_
 - SensitivePatternLibrary
 - SensitiveTextMasker
 - StandardCommandRegistry
+- StockPictures
 - SupportSnapshot
 - SystemEnumValues
 - TaskDirectory
@@ -573,12 +586,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 14 |
 | 5-8 | 42 |
-| 9-16 | 52 |
-| 17+ | 20 |
+| 9-16 | 53 |
+| 17+ | 22 |
 
-3957 test methods across 485 test classes; 130 classes have a test of their own, median 9 methods each.
+4224 test methods across 522 test classes; 133 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 130 of 433 classes have one: 53 are covered by the registry-wide contract sweep and 27 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 133 of 444 classes have one: 49 are covered by the registry-wide contract sweep and 24 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

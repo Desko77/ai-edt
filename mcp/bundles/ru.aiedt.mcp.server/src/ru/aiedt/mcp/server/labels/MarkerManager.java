@@ -28,6 +28,12 @@ import java.io.StringWriter;
 
 import java.nio.charset.StandardCharsets;
 
+import java.nio.file.Files;
+
+import java.nio.file.Path;
+
+import java.util.ArrayList;
+
 import java.util.HashMap;
 
 import java.util.HashSet;
@@ -112,11 +118,13 @@ import ru.aiedt.mcp.server.labels.model.MarkerStore;
 
  * <p>
 
- * The cache map is guarded by a read/write lock. The lock protects the cache slots, not the storage
+ * Readers take a snapshot of the collections under the read lock, so an HTTP call iterating
 
- * objects inside them; mutations run on the shared storage after fetching it, which is safe as long as
+ * markers cannot race a UI thread that is mutating them. A mutation changes the live storage
 
- * they stay on one thread, as they do in practice.
+ * and publishes it only after the file is stored; a failed write puts the previous contents back
+
+ * and tells the caller. A marker file that does not parse is not cached and is not overwritten.
 
  * </p>
 
@@ -175,6 +183,26 @@ public class MarkerManager
 
 
     private final Map<IProject, MarkerStore> cache = new HashMap<>();
+
+    /**
+
+     * Why a caller is told a mutation did not run: the marker file is on disk and does not parse.
+
+     */
+
+    public static final String UNREADABLE_MARKER_FILE =
+
+        "the marker file is unreadable; resolve it first"; //$NON-NLS-1$
+
+
+
+    /**
+
+     * Projects whose marker file is present but does not parse. Those are not cached.
+
+     */
+
+    private final Set<IProject> unreadable = new HashSet<>();
 
 
 
@@ -388,13 +416,23 @@ public class MarkerManager
 
     /**
 
-     * Returns a project's marker storage, loading it from disk on the first request and caching it.
+     * Returns a detached copy of a project's marker storage.
+
+     * <p>
+
+     * The copy is taken under the lock. An HTTP caller can iterate the lists after it returns
+
+     * without racing a UI thread that mutates the live storage, and edits of the copy are not
+
+     * written back.
+
+     * </p>
 
      *
 
      * @param project the project
 
-     * @return the storage; never <code>null</code>, empty when the project has no marker file yet
+     * @return a snapshot; empty when the project has no readable marker file
 
      */
 
@@ -414,7 +452,7 @@ public class MarkerManager
 
             {
 
-                return cached;
+                return cached.copy();
 
             }
 
@@ -428,29 +466,23 @@ public class MarkerManager
 
         }
 
-
-
         lock.writeLock().lock();
 
         try
 
         {
 
-            MarkerStore cached = cache.get(project);
+            MarkerStore live = loadIntoCache(project);
 
-            if (cached != null)
+            if (live == null)
 
             {
 
-                return cached;
+                return new MarkerStore();
 
             }
 
-            MarkerStore loaded = loadMarkerStorage(project);
-
-            cache.put(project, loaded);
-
-            return loaded;
+            return live.copy();
 
         }
 
@@ -466,15 +498,24 @@ public class MarkerManager
 
 
 
+
     /**
 
-     * Returns the live list of defined markers for a project.
+     * Returns the defined markers for a project, in user order.
+
+     * <p>
+
+     * The list is a copy. The {@link Marker} instances are the live ones, so a tree that found a
+
+     * marker in one call still finds that same instance on the next call while the cache is unchanged.
+
+     * </p>
 
      *
 
      * @param project the project
 
-     * @return the backing marker list, in user order
+     * @return the markers; empty when the file is missing or unreadable
 
      */
 
@@ -482,15 +523,76 @@ public class MarkerManager
 
     {
 
-        return getMarkerStorage(project).getTags();
+        lock.readLock().lock();
+
+        try
+
+        {
+
+            MarkerStore cached = cache.get(project);
+
+            if (cached != null)
+
+            {
+
+                return new ArrayList<>(cached.getTags());
+
+            }
+
+        }
+
+        finally
+
+        {
+
+            lock.readLock().unlock();
+
+        }
+
+        lock.writeLock().lock();
+
+        try
+
+        {
+
+            MarkerStore live = loadIntoCache(project);
+
+            if (live == null)
+
+            {
+
+                return new ArrayList<>();
+
+            }
+
+            return new ArrayList<>(live.getTags());
+
+        }
+
+        finally
+
+        {
+
+            lock.writeLock().unlock();
+
+        }
 
     }
+
 
 
 
     /**
 
      * Defines a new marker.
+
+     * <p>
+
+     * Nothing is published when a marker with that name already exists, when the marker file does
+
+     * not parse, or when the file cannot be written. In those cases the file on disk is left as it was.
+
+     * </p>
 
      *
 
@@ -502,7 +604,7 @@ public class MarkerManager
 
      * @param description the marker description, or <code>null</code> for none
 
-     * @return the created marker, or <code>null</code> when a marker with that name already existed
+     * @return the created marker, or <code>null</code> when it was not stored
 
      */
 
@@ -510,25 +612,68 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        Marker marker = new Marker(name, color, description);
+        Marker created = null;
 
-        if (!storage.addMarker(marker))
+        try
 
         {
 
-            return null;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return null;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            Marker marker = new Marker(name, color, description);
+
+            if (!storage.addMarker(marker))
+
+            {
+
+                return null;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return null;
+
+            }
+
+            created = marker;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireMarkersChanged(project);
+        {
 
-        return marker;
+            lock.writeLock().unlock();
+
+        }
+
+        if (created != null)
+
+        {
+
+            fireMarkersChanged(project);
+
+        }
+
+        return created;
 
     }
+
 
 
 
@@ -538,7 +683,13 @@ public class MarkerManager
 
      * <p>
 
-     * When the name changes, every assignment of the old name is moved to the new one.
+     * When the name changes, every assignment of the old name is moved to the new one. A name that
+
+     * is already taken changes nothing, including the color and description; the caller keeps those
+
+     * by updating again with the original name. A file that cannot be written is restored to the
+
+     * state it had before this call.
 
      * </p>
 
@@ -554,9 +705,9 @@ public class MarkerManager
 
      * @param description the new description, or <code>null</code> to keep it
 
-     * @return <code>true</code> on success; <code>false</code> when the marker is not found or the new
+     * @return <code>true</code> when the update was stored; <code>false</code> when the marker is not
 
-     *         name is already taken
+     *         found, the new name is already taken, or the file could not be written
 
      */
 
@@ -566,27 +717,17 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        Marker marker = storage.getMarkerByName(oldName);
+        boolean changed = false;
 
-        if (marker == null)
-
-        {
-
-            return false;
-
-        }
-
-
-
-        boolean renaming = newName != null && !newName.equals(oldName);
-
-        if (renaming)
+        try
 
         {
 
-            if (storage.getMarkerByName(newName) != null)
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
 
             {
 
@@ -594,53 +735,104 @@ public class MarkerManager
 
             }
 
-            for (List<String> names : storage.getAssignments().values())
+            Marker marker = storage.getMarkerByName(oldName);
+
+            if (marker == null)
 
             {
 
-                for (int i = 0; i < names.size(); i++)
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            boolean renaming = newName != null && !newName.equals(oldName);
+
+            if (renaming)
+
+            {
+
+                if (storage.getMarkerByName(newName) != null)
 
                 {
 
-                    if (oldName.equals(names.get(i)))
+                    return false;
+
+                }
+
+                for (List<String> names : storage.getAssignments().values())
+
+                {
+
+                    for (int i = 0; i < names.size(); i++)
 
                     {
 
-                        names.set(i, newName);
+                        if (oldName.equals(names.get(i)))
+
+                        {
+
+                            names.set(i, newName);
+
+                        }
 
                     }
 
                 }
 
+                marker.setName(newName);
+
             }
 
-            marker.setName(newName);
+            if (color != null)
+
+            {
+
+                marker.setColor(color);
+
+            }
+
+            if (description != null)
+
+            {
+
+                marker.setDescription(description);
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        if (color != null)
+        finally
 
         {
 
-            marker.setColor(color);
+            lock.writeLock().unlock();
 
         }
 
-        if (description != null)
+        if (changed)
 
         {
 
-            marker.setDescription(description);
+            fireMarkersChanged(project);
 
         }
 
-        saveMarkerStorage(project, storage);
-
-        fireMarkersChanged(project);
-
-        return true;
+        return changed;
 
     }
+
 
 
 
@@ -654,7 +846,7 @@ public class MarkerManager
 
      * @param markerName the name of the marker to delete
 
-     * @return <code>true</code> when the marker existed
+     * @return <code>true</code> when the marker existed and the file was written
 
      */
 
@@ -662,23 +854,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.removeMarker(markerName))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.removeMarker(markerName))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireMarkersChanged(project);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireMarkersChanged(project);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -710,6 +945,16 @@ public class MarkerManager
 
      * Assigns a marker to an object.
 
+     * <p>
+
+     * Returns <code>false</code>, and leaves the storage as it was, when the marker is not defined,
+
+     * when it was already assigned, when the marker file does not parse, or when the file cannot be
+
+     * written.
+
+     * </p>
+
      *
 
      * @param project the project
@@ -718,7 +963,7 @@ public class MarkerManager
 
      * @param markerName the marker name; must already be defined
 
-     * @return <code>true</code> when the assignment was newly added
+     * @return <code>true</code> when the assignment was newly added and stored
 
      */
 
@@ -726,23 +971,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.assignMarker(objectFqn, markerName))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.assignMarker(objectFqn, markerName))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireAssignmentsChanged(project, objectFqn);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireAssignmentsChanged(project, objectFqn);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -758,7 +1046,7 @@ public class MarkerManager
 
      * @param markerName the marker name
 
-     * @return <code>true</code> when the marker was assigned and has been removed
+     * @return <code>true</code> when the marker was assigned and the removal was stored
 
      */
 
@@ -766,23 +1054,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.unassignMarker(objectFqn, markerName))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.unassignMarker(objectFqn, markerName))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireAssignmentsChanged(project, objectFqn);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireAssignmentsChanged(project, objectFqn);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -874,7 +1205,89 @@ public class MarkerManager
 
     /**
 
-     * Moves an object's assignments to a new FQN, as when it is renamed.
+     * Tells whether an object, or any object nested under it, carries markers.
+
+     * <p>
+
+     * A rename contributor calls this before it builds a change. Markers on the object itself and
+
+     * markers on a child, whose name continues past {@code objectFqn} with a dot, both count. A name
+
+     * that only shares a prefix does not.
+
+     * </p>
+
+     *
+
+     * @param project the project
+
+     * @param objectFqn the fully qualified name being renamed
+
+     * @return <code>true</code> when there are assignments to carry
+
+     */
+
+    public boolean holdsObjectOrDescendant(IProject project, String objectFqn)
+
+    {
+
+        return getMarkerStorage(project).holdsObjectOrDescendant(objectFqn);
+
+    }
+
+
+
+    /**
+
+     * Returns why a mutation of this project's markers was refused because the file does not parse.
+
+     *
+
+     * @param project the project
+
+     * @return {@link #UNREADABLE_MARKER_FILE} when the file is present and does not parse, or
+
+     *         <code>null</code> when it is readable or absent
+
+     */
+
+    public String markerFileRefusal(IProject project)
+
+    {
+
+        if (project == null)
+
+        {
+
+            return null;
+
+        }
+
+        getMarkerStorage(project);
+
+        lock.readLock().lock();
+
+        try
+
+        {
+
+            return unreadable.contains(project) ? UNREADABLE_MARKER_FILE : null;
+
+        }
+
+        finally
+
+        {
+
+            lock.readLock().unlock();
+
+        }
+
+    }
+
+    /**
+
+     * Moves an object's assignments, and the assignments of every object nested under it, to a new FQN.
 
      *
 
@@ -884,7 +1297,7 @@ public class MarkerManager
 
      * @param newFqn the new FQN
 
-     * @return <code>true</code> when the object had assignments to move
+     * @return <code>true</code> when something was moved and the file was written
 
      */
 
@@ -892,23 +1305,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.renameObject(oldFqn, newFqn))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.renameObject(oldFqn, newFqn))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireAssignmentsChanged(project, newFqn);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireAssignmentsChanged(project, newFqn);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -922,7 +1378,7 @@ public class MarkerManager
 
      * @param objectFqn the object FQN
 
-     * @return <code>true</code> when the object had assignments
+     * @return <code>true</code> when the object had assignments and the file was written
 
      */
 
@@ -930,23 +1386,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.removeObject(objectFqn))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.removeObject(objectFqn))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireAssignmentsChanged(project, objectFqn);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireAssignmentsChanged(project, objectFqn);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -960,7 +1459,7 @@ public class MarkerManager
 
      * @param markerName the marker to move
 
-     * @return <code>true</code> when it moved
+     * @return <code>true</code> when it moved and the file was written
 
      */
 
@@ -968,23 +1467,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.moveMarkerUp(markerName))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.moveMarkerUp(markerName))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireMarkersChanged(project);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireMarkersChanged(project);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -998,7 +1540,7 @@ public class MarkerManager
 
      * @param markerName the marker to move
 
-     * @return <code>true</code> when it moved
+     * @return <code>true</code> when it moved and the file was written
 
      */
 
@@ -1006,23 +1548,66 @@ public class MarkerManager
 
     {
 
-        MarkerStore storage = getMarkerStorage(project);
+        lock.writeLock().lock();
 
-        if (!storage.moveMarkerDown(markerName))
+        boolean changed = false;
+
+        try
 
         {
 
-            return false;
+            MarkerStore storage = loadIntoCache(project);
+
+            if (storage == null)
+
+            {
+
+                return false;
+
+            }
+
+            MarkerStore before = storage.copy();
+
+            if (!storage.moveMarkerDown(markerName))
+
+            {
+
+                return false;
+
+            }
+
+            if (!stored(project, storage, before))
+
+            {
+
+                return false;
+
+            }
+
+            changed = true;
 
         }
 
-        saveMarkerStorage(project, storage);
+        finally
 
-        fireMarkersChanged(project);
+        {
 
-        return true;
+            lock.writeLock().unlock();
+
+        }
+
+        if (changed)
+
+        {
+
+            fireMarkersChanged(project);
+
+        }
+
+        return changed;
 
     }
+
 
 
 
@@ -1142,6 +1727,14 @@ public class MarkerManager
 
      * Drops a project from the cache so its storage is reloaded on next request.
 
+     * <p>
+
+     * An unreadable file is forgotten too, so a later edit of the file is parsed again instead of
+
+     * being refused forever.
+
+     * </p>
+
      *
 
      * @param project the project to evict
@@ -1160,6 +1753,8 @@ public class MarkerManager
 
             cache.remove(project);
 
+            unreadable.remove(project);
+
         }
 
         finally
@@ -1171,6 +1766,7 @@ public class MarkerManager
         }
 
     }
+
 
 
 
@@ -1258,15 +1854,11 @@ public class MarkerManager
 
     /**
 
-     * Reads a project's marker file into a storage.
+     * Returns the cached storage, loading it when absent. The caller holds the write lock.
 
      * <p>
 
-     * A missing or empty file, an I/O failure, or malformed YAML all resolve to an empty storage
-
-     * rather than an error, so the decorator and filters always have something to work with. The load
-
-     * also ignores properties it does not know, so a file written by a newer version still reads.
+     * An unreadable file is not cached. The caller must not write an empty storage over it.
 
      * </p>
 
@@ -1274,7 +1866,163 @@ public class MarkerManager
 
      * @param project the project
 
-     * @return the loaded storage, or an empty one
+     * @return the live storage, or <code>null</code> when the file does not parse
+
+     */
+
+    private MarkerStore loadIntoCache(IProject project)
+
+    {
+
+        if (project == null || unreadable.contains(project))
+
+        {
+
+            return null;
+
+        }
+
+        MarkerStore cached = cache.get(project);
+
+        if (cached != null)
+
+        {
+
+            return cached;
+
+        }
+
+        MarkerStore loaded = loadMarkerStorage(project);
+
+        if (loaded == null)
+
+        {
+
+            return null;
+
+        }
+
+        cache.put(project, loaded);
+
+        return loaded;
+
+    }
+
+
+
+    /**
+
+     * Writes a storage that was already mutated, or puts the previous contents back when the write fails.
+
+     * The caller holds the write lock.
+
+     *
+
+     * @param project the project
+
+     * @param storage the live storage, already changed
+
+     * @param before a snapshot taken before the change
+
+     * @return <code>true</code> when the file was written
+
+     */
+
+    private boolean stored(IProject project, MarkerStore storage, MarkerStore before)
+
+    {
+
+        if (!saveMarkerStorage(project, storage))
+
+        {
+
+            storage.restoreFrom(before);
+
+            return false;
+
+        }
+
+        cache.put(project, storage);
+
+        return true;
+
+    }
+
+
+
+    /**
+
+     * Tells whether an existing marker file may be replaced.
+
+     * <p>
+
+     * A forced Eclipse write clears the read-only attribute and then succeeds, so the caller would be
+
+     * told the markers were saved. A file the operating system will not open for writing is refused
+
+     * here, before that write.
+
+     * </p>
+
+     *
+
+     * @param file the marker file, which exists
+
+     * @return <code>false</code> when the file is read-only
+
+     */
+
+    private static boolean canOverwrite(IFile file)
+
+    {
+
+        if (file.isReadOnly())
+
+        {
+
+            return false;
+
+        }
+
+        IPath location = file.getLocation();
+
+        if (location == null)
+
+        {
+
+            return true;
+
+        }
+
+        Path path = location.toFile().toPath();
+
+        return !Files.exists(path) || Files.isWritable(path);
+
+    }
+
+    /**
+
+     * Reads a project's marker file into a storage.
+
+     * <p>
+
+     * A missing or empty file resolves to an empty storage. Malformed YAML does not: it is recorded
+
+     * as unreadable and answered with <code>null</code>, so nobody caches that emptiness or writes it
+
+     * back over the file. The load ignores properties it does not know, so a file written by a newer
+
+     * version still reads.
+
+     * </p>
+
+     *
+
+     * @param project the project
+
+     * @return the loaded storage, an empty one when there is nothing to read, or <code>null</code> when
+
+     *         the file does not parse
 
      */
 
@@ -1296,6 +2044,8 @@ public class MarkerManager
 
         {
 
+            unreadable.remove(project);
+
             return new MarkerStore();
 
         }
@@ -1307,6 +2057,8 @@ public class MarkerManager
         {
 
             MarkerStore storage = createLoadYaml().load(reader);
+
+            unreadable.remove(project);
 
             return storage != null ? storage : new MarkerStore();
 
@@ -1326,17 +2078,20 @@ public class MarkerManager
 
         {
 
-            // Corrupt YAML, a git merge-conflict marker, or an unreadable property. Degrade to empty
+            // Corrupt YAML or a git merge-conflict marker. Remember it and refuse to cache an empty
 
-            // rather than let the exception escape and leave the decorator permanently broken.
+            // storage: the next mutation would otherwise overwrite both sides of the conflict.
+
+            unreadable.add(project);
 
             Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
 
-            return new MarkerStore();
+            return null;
 
         }
 
     }
+
 
 
 
@@ -1350,9 +2105,11 @@ public class MarkerManager
 
      * @param storage the storage to write
 
+     * @return <code>true</code> when the file was written; <code>false</code> when it was not
+
      */
 
-    private void saveMarkerStorage(IProject project, MarkerStore storage)
+    private boolean saveMarkerStorage(IProject project, MarkerStore storage)
 
     {
 
@@ -1360,7 +2117,7 @@ public class MarkerManager
 
         {
 
-            return;
+            return false;
 
         }
 
@@ -1379,6 +2136,18 @@ public class MarkerManager
             }
 
             IFile file = settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
+
+            if (file.exists() && !canOverwrite(file))
+
+            {
+
+                Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+
+                    + ": the file is read-only", null); //$NON-NLS-1$
+
+                return false;
+
+            }
 
             byte[] bytes = dumpToString(storage).getBytes(StandardCharsets.UTF_8);
 
@@ -1404,6 +2173,8 @@ public class MarkerManager
 
             }
 
+            return true;
+
         }
 
         catch (CoreException | IOException e)
@@ -1412,9 +2183,12 @@ public class MarkerManager
 
             Activator.logError("Could not save the marker file for project " + project.getName(), e); //$NON-NLS-1$
 
+            return false;
+
         }
 
     }
+
 
 
 
@@ -1559,4 +2333,3 @@ public class MarkerManager
     }
 
 }
-

@@ -40,6 +40,7 @@ import ru.aiedt.mcp.server.labels.model.Marker;
  */
 public class MarkerQueryFilter
     extends ViewerFilter
+    implements MarkerManager.IMarkerChangeListener
 {
     /** The navigator content id this filter is registered under. */
     public static final String FILTER_ID = "ru.aiedt.mcp.server.labels.MarkerQueryFilter"; //$NON-NLS-1$
@@ -62,14 +63,35 @@ public class MarkerQueryFilter
 
     private final Map<IProject, Set<Marker>> selectedMarkers = new HashMap<>();
 
-    private final Map<IProject, Set<String>> matchCache = new HashMap<>();
+    private final MarkerMatchCache<IProject> matchCache = new MarkerMatchCache<>();
 
     /**
-     * Creates an inactive filter. The Navigator extension factory calls this.
+     * Creates an inactive filter and subscribes it to marker changes.
+     * <p>
+     * The Navigator extension factory calls this. The subscription is what drops a cached match list
+     * when markers change without the filter being applied again.
+     * </p>
      */
     public MarkerQueryFilter()
     {
-        // Starts switched off.
+        try
+        {
+            MarkerManager.getInstance().addMarkerChangeListener(this);
+        }
+        catch (RuntimeException e)
+        {
+            // The workspace is not up yet. The cache still clears when the filter is applied again.
+        }
+    }
+
+    /**
+     * Returns the cache of matching object names.
+     *
+     * @return the cache
+     */
+    public MarkerMatchCache<IProject> matchCache()
+    {
+        return matchCache;
     }
 
     /**
@@ -86,7 +108,7 @@ public class MarkerQueryFilter
         }
         showUnmarkedOnly = false;
         dialogMode = true;
-        matchCache.clear();
+        matchCache.invalidateAll();
     }
 
     /**
@@ -98,7 +120,7 @@ public class MarkerQueryFilter
     {
         showUnmarkedOnly = unmarkedOnly;
         dialogMode = true;
-        matchCache.clear();
+        matchCache.invalidateAll();
     }
 
     /**
@@ -109,7 +131,7 @@ public class MarkerQueryFilter
         dialogMode = false;
         showUnmarkedOnly = false;
         selectedMarkers.clear();
-        matchCache.clear();
+        matchCache.invalidateAll();
     }
 
     @Override
@@ -424,6 +446,29 @@ public class MarkerQueryFilter
         }
         matchCache.put(project, result);
         return result;
+    }
+
+    /**
+     * Drops the cached matches for a project whose marker definitions changed.
+     *
+     * @param project the affected project
+     */
+    @Override
+    public void onMarkersChanged(IProject project)
+    {
+        matchCache.invalidate(project);
+    }
+
+    /**
+     * Drops the cached matches for a project whose assignments changed.
+     *
+     * @param project the affected project
+     * @param objectFqn the object whose assignments changed; the whole project's cache is dropped
+     */
+    @Override
+    public void onAssignmentsChanged(IProject project, String objectFqn)
+    {
+        matchCache.invalidate(project);
     }
 
     /**

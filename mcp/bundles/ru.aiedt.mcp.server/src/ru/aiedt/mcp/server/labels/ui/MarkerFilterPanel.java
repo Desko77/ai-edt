@@ -136,6 +136,8 @@ import ru.aiedt.mcp.server.labels.MarkerKeys;
 
 import ru.aiedt.mcp.server.labels.MarkerManager;
 
+import ru.aiedt.mcp.server.labels.MarkerSearch;
+
 import ru.aiedt.mcp.server.labels.model.Marker;
 
 
@@ -628,7 +630,7 @@ public class MarkerFilterPanel
 
             {
 
-                searchPattern = Pattern.compile(text, Pattern.CASE_INSENSITIVE);
+                searchPattern = MarkerSearch.compile(text);
 
                 searchText.setToolTipText(null);
 
@@ -1206,19 +1208,8 @@ public class MarkerFilterPanel
 
         {
 
-            for (IProject project : projectsWithMarkers)
+            return MarkerOwnership.projectOf(projectsWithMarkers, (Marker)first, service::getMarkers);
 
-            {
-
-                if (service.getMarkers(project).contains(first))
-
-                {
-
-                    return project;
-
-                }
-
-            }
 
         }
 
@@ -1552,19 +1543,8 @@ public class MarkerFilterPanel
 
             {
 
-                for (IProject project : projectsWithMarkers)
+                return MarkerOwnership.projectOf(projectsWithMarkers, (Marker)element, service::getMarkers);
 
-                {
-
-                    if (service.getMarkers(project).contains(element))
-
-                    {
-
-                        return project;
-
-                    }
-
-                }
 
             }
 
@@ -1658,21 +1638,8 @@ public class MarkerFilterPanel
 
         {
 
-            for (IProject project : projectsWithMarkers)
+            return MarkerOwnership.projectOf(projectsWithMarkers, marker, service::getMarkers);
 
-            {
-
-                if (service.getMarkers(project).contains(marker))
-
-                {
-
-                    return project;
-
-                }
-
-            }
-
-            return null;
 
         }
 
@@ -1749,4 +1716,3 @@ public class MarkerFilterPanel
     }
 
 }
-
