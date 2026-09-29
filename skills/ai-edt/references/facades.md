@@ -248,10 +248,12 @@ form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
   of the same name (a register without one is refused, naming its dimensions). Every property is
   read back inside the same transaction and a mismatch refuses the call; under `dryRun` the answer
   says the change was applied, read back and rolled back.
-- `create_object` builds a catalog or a document through the EDT wizard's own factory, which is what
-  gives the object its defaults and `producedTypes`. Where that factory is unavailable the object is
-  built from the model's base factory instead and the answer carries `warning` naming the defaults
-  the object did not receive and why, beside `propertiesAtModelDefault` and `synonym`.
+- `create_object` builds a catalog or a document through the EDT wizard's own factory, and the object gets
+  the wizard's defaults for its kind (a catalog: levels, code and description length, code type,
+  uniqueness, autonumbering, folders on top; a document: number length and type, periodicity,
+  uniqueness, autonumbering, posting; both: standard commands and `producedTypes`). Where that factory
+  is unavailable the object is built from the model's base factory instead and the answer carries
+  `warning` naming the defaults the object did not receive and why.
 - `add_object_attribute`, `add_tabular_section_attribute` and `set_object_type` answer
   `qualifierIgnored` when the qualifier applies to none of the types in the composition (`length` on
   a `Number`, for one). Under `dryRun` the first two do not borrow the reference types' targets and
@@ -277,7 +279,7 @@ form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
 - `add_template` checks `templateType` against the model's own literals before the transaction and
   refuses an unknown one; synonyms (`GraphicalScheme`, Russian names) are taken as the model literal
   (`GraphicalSchema`), `templateType` answers the type the model wrote, and `requestedTemplateType`
-  appears when that differs from the one asked for. An owner FQN written with a Russian
+  carries the requested type as the model literal when the written type differs from it. An owner FQN written with a Russian
   kind is translated through the type catalogue. `set_template_content` with an explicit
   `templateType` refuses a template that carries no catalogue, and one of another format.
 - `create_route_map` writes the business process's `Flowchart.scheme`: points with `location` (four
