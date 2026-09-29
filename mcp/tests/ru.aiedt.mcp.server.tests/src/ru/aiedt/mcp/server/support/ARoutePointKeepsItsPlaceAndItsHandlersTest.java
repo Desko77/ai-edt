@@ -315,4 +315,66 @@ public class ARoutePointKeepsItsPlaceAndItsHandlersTest
         assertFalse("a Start point has no addressing", //$NON-NLS-1$
             pointNamed(read, "Старт").containsKey("addressingAttributes")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
+
+    /** A transition out of a Condition comes back with the branch it was written for. */
+    @Test
+    public void aConditionsBranchesComeBackAsTheyWent()
+    {
+        List<Map<String, String>> points = new ArrayList<>();
+        points.add(point("Start", "Старт")); //$NON-NLS-1$ //$NON-NLS-2$
+        points.add(point("Action", "Выполнить")); //$NON-NLS-1$ //$NON-NLS-2$
+        points.add(point("Condition", "Проверка")); //$NON-NLS-1$ //$NON-NLS-2$
+        points.add(point("Completion", "Завершение")); //$NON-NLS-1$ //$NON-NLS-2$
+        List<Map<String, String>> transitions = new ArrayList<>();
+        transitions.add(transition("Старт", "Выполнить")); //$NON-NLS-1$ //$NON-NLS-2$
+        transitions.add(transition("Выполнить", "Проверка")); //$NON-NLS-1$ //$NON-NLS-2$
+        Map<String, String> yes = transition("Проверка", "Завершение"); //$NON-NLS-1$ //$NON-NLS-2$
+        yes.put("branch", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        transitions.add(yes);
+        Map<String, String> no = transition("Проверка", "Выполнить"); //$NON-NLS-1$ //$NON-NLS-2$
+        no.put("branch", "false"); //$NON-NLS-1$ //$NON-NLS-2$
+        transitions.add(no);
+
+        BmRouteMapHelper.RouteMap read = readBack(BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", points, transitions, null, null)); //$NON-NLS-1$
+
+        Map<String, String> branches = new LinkedHashMap<>();
+        for (Map<String, Object> t : read.transitions)
+        {
+            if ("Проверка".equals(t.get("from"))) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                branches.put(String.valueOf(t.get("to")), String.valueOf(t.get("branch"))); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            else
+            {
+                assertFalse("only a Condition's transition has a branch: " + t, t.containsKey("branch")); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        assertEquals("true", branches.get("Завершение")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("false", branches.get("Выполнить")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** The events a read answers go back into a write as they came, and give the same handlers. */
+    @Test
+    public void theEventsOfAReadGoBackInAsHandlers()
+    {
+        List<Map<String, String>> points = threePoints();
+        points.get(1).put("handlers", "{\"onexecute\":\"ВыполнитьЗадание\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmRouteMapHelper.WritePlan first = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", points, twoTransitions(), null, null); //$NON-NLS-1$
+        Object events = pointNamed(readBack(first), "Выполнить").get("events"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<Map<String, String>> again = threePoints();
+        again.get(1).put("events", new com.google.gson.Gson().toJson(events)); //$NON-NLS-1$
+        BmRouteMapHelper.WritePlan second = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", again, twoTransitions(), null, null); //$NON-NLS-1$
+
+        assertNull("events are read as handlers: " + second.error, second.error); //$NON-NLS-1$
+        assertEquals(first.handlers, second.handlers);
+
+        again.get(1).put("handlers", "{\"OnExecute\":\"Другой\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmRouteMapHelper.WritePlan both = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", again, twoTransitions(), null, null); //$NON-NLS-1$
+        assertNotNull("handlers and events together are refused", both.error); //$NON-NLS-1$
+    }
 }

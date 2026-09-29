@@ -9,7 +9,9 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -166,6 +168,8 @@ public final class BmRouteMapHelper
                 return result;
             }
             NodeList children = items.getChildNodes();
+            Map<Map<String, Object>, String> linePorts = new IdentityHashMap<>();
+            Map<String, String[]> conditionPorts = new HashMap<>();
             for (int i = 0; i < children.getLength(); i++)
             {
                 Node n = children.item(i);
@@ -189,6 +193,8 @@ public final class BmRouteMapHelper
                         {
                             t.put("title", title); //$NON-NLS-1$
                         }
+                        Element fromSide = firstChild(connect, "From"); //$NON-NLS-1$
+                        linePorts.put(t, fromSide != null ? childText(fromSide, "PortIndex") : null); //$NON-NLS-1$
                         result.transitions.add(t);
                     }
                     continue;
@@ -215,6 +221,12 @@ public final class BmRouteMapHelper
                     {
                         p.put("addressingAttributes", addressing); //$NON-NLS-1$
                     }
+                    String truePort = childText(props, "TruePortIndex"); //$NON-NLS-1$
+                    if (truePort != null && p.get("name") != null) //$NON-NLS-1$
+                    {
+                        conditionPorts.put(String.valueOf(p.get("name")), //$NON-NLS-1$
+                            new String[] {truePort, childText(props, "FalsePortIndex")}); //$NON-NLS-1$
+                    }
                 }
                 List<Map<String, String>> handlers = readEvents(item);
                 if (!handlers.isEmpty())
@@ -222,6 +234,22 @@ public final class BmRouteMapHelper
                     p.put("events", handlers); //$NON-NLS-1$
                 }
                 result.points.add(p);
+            }
+            for (Map<String, Object> t : result.transitions)
+            {
+                String[] ports = conditionPorts.get(String.valueOf(t.get("from"))); //$NON-NLS-1$
+                String port = linePorts.get(t);
+                if (ports != null && port != null)
+                {
+                    if (port.equals(ports[0]))
+                    {
+                        t.put("branch", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+                    }
+                    else if (port.equals(ports[1]))
+                    {
+                        t.put("branch", "false"); //$NON-NLS-1$ //$NON-NLS-2$
+                    }
+                }
             }
         }
         catch (Exception e)
@@ -659,7 +687,14 @@ public final class BmRouteMapHelper
                 r.error = locationError;
                 return r;
             }
-            String handlerError = readHandlers(asString(p.get("handlers")), def, pl); //$NON-NLS-1$
+            if (p.get("handlers") != null && p.get("events") != null) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                r.error = "Route point '" + name //$NON-NLS-1$
+                    + "': give its handlers as 'handlers' or as 'events', not both"; //$NON-NLS-1$
+                return r;
+            }
+            Object handlerSource = p.get("handlers") != null ? p.get("handlers") : p.get("events"); //$NON-NLS-1$ //$NON-NLS-2$
+            String handlerError = readHandlers(asString(handlerSource), def, pl);
             if (handlerError != null)
             {
                 r.error = handlerError;

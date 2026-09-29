@@ -660,15 +660,31 @@ final class SpecializedOps
                     }
                     if (spec.dimension != null)
                     {
-                        Object dimension =
-                            EditMetadataTool.resolveReferenceTarget(tx, spec.dimension);
+                        Object dimension = spec.dimension.indexOf('.') < 0
+                            ? dimensionNamed(task.getAddressing(), spec.dimension)
+                            : EditMetadataTool.resolveReferenceTarget(tx, spec.dimension);
                         if (!(dimension instanceof InformationRegisterDimension))
                         {
                             throw new RuntimeException("Addressing dimension not found: " //$NON-NLS-1$
                                 + spec.dimension + " (expected InformationRegister.<Reg>." //$NON-NLS-1$
-                                + "Dimension.<Name>). Nothing was changed."); //$NON-NLS-1$
+                                + "Dimension.<Name>, or a dimension name of the addressing register: " //$NON-NLS-1$
+                                + dimensionNames(task.getAddressing()) + "). Nothing was changed."); //$NON-NLS-1$
                         }
                         attribute.setAddressingDimension((InformationRegisterDimension)dimension);
+                    }
+                    if (attribute.getAddressingDimension() == null)
+                    {
+                        InformationRegisterDimension same = dimensionNamed(task.getAddressing(), spec.name);
+                        if (same == null)
+                        {
+                            throw new RuntimeException("Addressing attribute '" + spec.name //$NON-NLS-1$
+                                + "' has no addressing dimension, and the addressing register " //$NON-NLS-1$
+                                + (task.getAddressing() == null ? "is not set" //$NON-NLS-1$
+                                    : fqnOf(task.getAddressing()) + " has no dimension of that name") //$NON-NLS-1$
+                                + ". Give 'dimension' - one of " + dimensionNames(task.getAddressing()) //$NON-NLS-1$
+                                + " - or set addressingRegister. Nothing was changed."); //$NON-NLS-1$
+                        }
+                        attribute.setAddressingDimension(same);
                     }
                 }
                 SessionParameter writtenPerformer = null;
@@ -868,6 +884,48 @@ final class SpecializedOps
         for (AddressingAttribute one : task.getAddressingAttributes())
         {
             names.add(one.getName());
+        }
+        return names.isEmpty() ? "none" : String.join(", ", names); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A dimension of the addressing register by name, matched without regard to case.
+     *
+     * @param register the Task's addressing register, possibly null
+     * @param name the dimension name
+     * @return the dimension, or null when there is no register or no dimension by that name
+     */
+    static InformationRegisterDimension dimensionNamed(InformationRegister register, String name)
+    {
+        if (register == null || name == null)
+        {
+            return null;
+        }
+        for (InformationRegisterDimension one : register.getDimensions())
+        {
+            if (one.getName() != null && one.getName().equalsIgnoreCase(name))
+            {
+                return one;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The dimension names of the addressing register, for an error text.
+     *
+     * @param register the register, possibly null
+     * @return the names, comma-separated, or "none"
+     */
+    static String dimensionNames(InformationRegister register)
+    {
+        List<String> names = new ArrayList<>();
+        if (register != null)
+        {
+            for (InformationRegisterDimension one : register.getDimensions())
+            {
+                names.add(one.getName());
+            }
         }
         return names.isEmpty() ? "none" : String.join(", ", names); //$NON-NLS-1$ //$NON-NLS-2$
     }
