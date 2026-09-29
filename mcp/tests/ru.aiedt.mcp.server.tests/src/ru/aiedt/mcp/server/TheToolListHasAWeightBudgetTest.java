@@ -137,8 +137,13 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 178350 to 178983 on 2026-09-29 for the merge restore point: the two git
      * operations and the sentences on compare_three_way and insights that name it.
      * </p>
+     * <p>
+     * And for backupTo on infobase_admin, the path, timeoutSeconds, runKey and cancel sentences
+     * that name the two snapshot operations, and the schema description that says a load
+     * replaces everything the infobase holds. Measured 29.09: 181766.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 180542;
+    private static final int DOCUMENT_BUDGET = 181766;
 
     private LiveServer server;
 
@@ -297,8 +302,9 @@ public class TheToolListHasAWeightBudgetTest
         // Raised to the measured 9864 for the data-loss protection of update_database and
         // inspect_database_sync: protectData now says the comparison is made before the update
         // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
-        // facade's help names acceptDataLoss beside protectData (measured 29.09).
-        BUDGETS.put("infobase_admin", Integer.valueOf(9864)); //$NON-NLS-1$
+        // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot operations add backupTo and name themselves for
+        // path, timeoutSeconds, runKey and cancel.
+        BUDGETS.put("infobase_admin", Integer.valueOf(11088)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the

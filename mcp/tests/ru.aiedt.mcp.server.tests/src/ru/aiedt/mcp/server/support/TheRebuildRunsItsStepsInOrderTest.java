@@ -867,8 +867,8 @@ public class TheRebuildRunsItsStepsInOrderTest
     {
         List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
         ReentrantLock lock = new ReentrantLock();
-        BmInfobaseExtensionHelper.LauncherContext ctx =
-            new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx =
+            new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         CountDownLatch gate = new CountDownLatch(1);
         ctx.launcher = blockingFullDumpLauncher(order, gate);
@@ -908,8 +908,8 @@ public class TheRebuildRunsItsStepsInOrderTest
     {
         List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
         ReentrantLock lock = new ReentrantLock();
-        BmInfobaseExtensionHelper.LauncherContext ctx =
-            new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx =
+            new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         CountDownLatch gate = new CountDownLatch(1);
         ctx.launcher = blockingFullDumpLauncher(order, gate);

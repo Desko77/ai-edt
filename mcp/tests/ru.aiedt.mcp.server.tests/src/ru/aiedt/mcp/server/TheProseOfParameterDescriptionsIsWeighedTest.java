@@ -226,6 +226,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * mainAddressingAttribute and currentPerformer: set_task_addressing writes the addressing
      * register, the addressing attributes, the main one and the current performer of a Task,
      * and a caller names each by its own argument.
+     * And by 945 on infobase_admin for the two snapshot operations: path says which .dt a dump
+     * writes and which one a load reads, backupTo names where the load's backup of the current
+     * contents goes, and timeoutSeconds, runKey and cancel are described for both - a run answered
+     * as Pending is waited on, looked at and stopped through the same three arguments the update
+     * takes.
      * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
@@ -270,8 +275,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised to the measured 6234 for the data-loss protection of update_database and
         // inspect_database_sync: protectData now says the comparison is made before the update
         // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
-        // facade's help names acceptDataLoss beside protectData (measured 29.09).
-        PROSE.put("infobase_admin", Integer.valueOf(6234));
+        // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot operations add path, backupTo, timeoutSeconds, runKey
+        // and cancel sentences.
+        PROSE.put("infobase_admin", Integer.valueOf(7151));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
         // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
@@ -593,6 +599,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * restore_merge_point, and the sentence of compare_three_way and insights that a changing
      * comparison records a point first.
      * </p>
+     * <p>
+     * And by 917 for the two snapshot operations on infobase_admin: path, backupTo,
+     * timeoutSeconds, runKey and cancel. Measured 29.09: 100551.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 99634;
+    private static final int DOCUMENT_PROSE = 100551;
 }

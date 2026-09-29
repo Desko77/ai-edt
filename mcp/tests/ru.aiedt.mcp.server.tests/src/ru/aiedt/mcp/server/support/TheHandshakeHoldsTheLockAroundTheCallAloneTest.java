@@ -243,7 +243,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
     {
         List<String> order = new ArrayList<>();
         RecordingLock lock = new RecordingLock(order);
-        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launcher = recordingLauncher(order, lock, null);
 
@@ -263,7 +263,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
     {
         List<String> order = new ArrayList<>();
         RecordingLock lock = new RecordingLock(order);
-        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launcher = recordingLauncher(order, lock,
             new IllegalStateException("the Designer exited with code 1")); //$NON-NLS-1$
@@ -293,7 +293,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
     {
         List<String> order = java.util.Collections.synchronizedList(new ArrayList<>());
         RecordingLock lock = new RecordingLock(order);
-        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launcher = recordingLauncher(order, lock, null);
         java.util.concurrent.atomic.AtomicReference<Throwable> outcome =
@@ -338,7 +338,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
     {
         List<String> order = new ArrayList<>();
         RecordingLock lock = new RecordingLock(order);
-        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launcher = recordingLauncher(order, lock, null);
         java.lang.reflect.Method method = Object.class.getMethod("toString"); //$NON-NLS-1$
@@ -383,7 +383,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
     {
         List<String> order = new ArrayList<>();
         RecordingLock lock = new RecordingLock(order);
-        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launcher = recordingLauncher(order, lock, null);
         ctx.launchClaim.set(true); // the abandonment crossed the boundary first
@@ -412,7 +412,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
     {
         List<String> order = new ArrayList<>();
         RecordingLock lock = new RecordingLock(order);
-        BmInfobaseExtensionHelper.LauncherContext ctx = new BmInfobaseExtensionHelper.LauncherContext();
+        ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launchClaim.set(true);
         Object target = new Object()
