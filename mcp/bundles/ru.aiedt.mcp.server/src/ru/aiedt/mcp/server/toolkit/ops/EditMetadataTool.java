@@ -517,6 +517,15 @@ public class EditMetadataTool implements IMcpTool
                 "create/get/remove_route_map: BusinessProcess FQN (alias of ownerFqn), e.g. BusinessProcess.Order.") //$NON-NLS-1$
             .booleanProperty("overwrite", //$NON-NLS-1$
                 "create_route_map: replace an existing Flowchart.scheme (default false - refuses to clobber).") //$NON-NLS-1$
+            // set_task_addressing parameters (the addressing of a Task, or of the Task a BP owns).
+            .stringProperty("addressingRegister", //$NON-NLS-1$
+                "set_task_addressing: InformationRegister FQN the task is addressed in.") //$NON-NLS-1$
+            .stringProperty("addressingAttributes", //$NON-NLS-1$
+                "set_task_addressing: JSON array of {name,type,dimension} the task addresses by.") //$NON-NLS-1$
+            .stringProperty("mainAddressingAttribute", //$NON-NLS-1$
+                "set_task_addressing: the attribute that addresses the task (name or FQN).") //$NON-NLS-1$
+            .stringProperty("currentPerformer", //$NON-NLS-1$
+                "set_task_addressing: SessionParameter FQN the current performer comes from.") //$NON-NLS-1$
             .stringProperty("tabularSection", //$NON-NLS-1$
                 "Tabular section name for addTabularSectionAttribute / removeTabularSectionAttribute (alias of tabularSectionName).") //$NON-NLS-1$
             .stringProperty("tabularSectionName", //$NON-NLS-1$
@@ -2912,10 +2921,11 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "merge_template_cells", "Templates", "", p -> templateOps.opTemplateCellOp("merge_template_cells", p));
         reg(m, "draw_template", "Templates", "", p -> templateOps.opTemplateCellOp("draw_template", p));
 
-        // ---- BusinessProcess route map (3) ----
+        // ---- BusinessProcess route map (4) ----
         reg(m, "create_route_map", "BusinessProcess route map", "", p -> routeMapOps.opCreateRouteMap(p));
         reg(m, "get_route_map", "BusinessProcess route map", "", p -> routeMapOps.opGetRouteMap(p));
         reg(m, "remove_route_map", "BusinessProcess route map", "", p -> routeMapOps.opRemoveRouteMap(p));
+        reg(m, "set_task_addressing", "BusinessProcess route map", "", p -> specializedOps.opSetTaskAddressing(p));
 
         // ---- Extensions (5) - uniform delegate miscOps.opExtensionAdopt(op, params) ----
         for (String adoptOp : Arrays.asList("adopt_object", "adopt_objects", "adopt_child",
@@ -2976,6 +2986,10 @@ public class EditMetadataTool implements IMcpTool
         sb.append("These parameters carry more rules than their one-line schema description " //$NON-NLS-1$
             + "states. Every one of them is still declared in the schema - this is the detail, " //$NON-NLS-1$
             + "not a second list of parameters.\n\n"); //$NON-NLS-1$
+        sb.append("### addressingAttributes\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: the addressing attributes (реквизиты адресации) the Task must have, as a JSON array of {\"name\":<name>, \"type\"?:<type>, \"dimension\"?:<InformationRegister.X.Dimension.Y>}. names are compared without regard to case. An attribute that is already on the Task is left as it is; one that is missing is created with the type and dimension the entry gives it, which is add_addressing_attribute's work done in the same call. An attribute named with neither type nor dimension and not already there is refused - the tool does not guess a type. The read-back lists the attribute names the Task holds afterwards.\n\n"); //$NON-NLS-1$
+        sb.append("### addressingRegister\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: the InformationRegister the Task is addressed in (задача адресуется), as an FQN - InformationRegister.<Name>. It is the register whose dimensions the addressing attributes draw on. One of the four arguments of set_task_addressing; a call naming none of them is refused with the list.\n\n"); //$NON-NLS-1$
         sb.append("### attributeName\n\n"); //$NON-NLS-1$
         sb.append("Form attribute name for add_dynamic_list_table / add_form_attribute_column and for set_property targeting an attribute's extInfo (e.g. a DynamicList's queryText / customQuery). For add_form_attribute_column prefer parentAttributeName; attributeName is accepted as an alias.\n\n"); //$NON-NLS-1$
         sb.append("### autoGenerateColumns\n\n"); //$NON-NLS-1$
@@ -3003,6 +3017,8 @@ public class EditMetadataTool implements IMcpTool
             + "preview. Call once without confirm to see what would be affected, then " //$NON-NLS-1$
             + "call again with confirm=true to carry it out. Ignored by every other " //$NON-NLS-1$
             + "operation.\n\n"); //$NON-NLS-1$
+        sb.append("### currentPerformer\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: the SessionParameter the current performer of the Task comes from (текущий исполнитель), as an FQN - SessionParameter.<Name>. One of the four arguments of set_task_addressing.\n\n"); //$NON-NLS-1$
         sb.append("### containerFqn\n\n"); //$NON-NLS-1$
         sb.append("For remove_item and move_item: the form FQN, accepted as an alias of formFqn. remove_item finds the item named by `name` anywhere on the form, root included, and takes no parent group. For move_item the destination container is parentName (omit it to move the item to the form root) and beforeName places it in front of a named sibling.\n\n"); //$NON-NLS-1$
         sb.append("### content\n\n"); //$NON-NLS-1$
@@ -3038,6 +3054,8 @@ public class EditMetadataTool implements IMcpTool
             + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
             + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
             + "usedMobileApplicationFunctionalities.\n\n"); //$NON-NLS-1$
+        sb.append("### mainAddressingAttribute\n\n"); //$NON-NLS-1$
+        sb.append("set_task_addressing: which of the Task's addressing attributes is its main one (основной реквизит адресации) - the bare name, or the full child FQN Task.<Task>.AddressingAttribute.<Name>. The attribute must be on the Task afterwards: list it in addressingAttributes to have it created in the same call, or add it first with add_addressing_attribute. set_object_reference can set the same property on its own when the attribute already exists.\n\n"); //$NON-NLS-1$
         sb.append("### isFolder\n\n"); //$NON-NLS-1$
         sb.append("add_predefined_item: create the item as a group/folder (Catalog / " //$NON-NLS-1$
             + "ChartOfCharacteristicTypes only). Default false. Optional.\n\n"); //$NON-NLS-1$
@@ -3068,7 +3086,13 @@ public class EditMetadataTool implements IMcpTool
             + "Russian. A register field, which carries a kind and a type, is added by " //$NON-NLS-1$
             + "add_register_field instead.\n\n"); //$NON-NLS-1$
         sb.append("### points\n\n"); //$NON-NLS-1$
-        sb.append("create_route_map: JSON array of route points, laid out top to bottom. Each object: {\"type\":Start|Action|Condition|Completion|NestedBusinessProcess, \"name\":<unique>, \"title\"?, \"taskDescription\"? (Action/Nested), \"subprocess\"? (Nested = a BusinessProcess FQN)}. Action points auto-carry the linked Task's addressing attributes. Points are laid out top to bottom in array order - declare a shared target (e.g. a common Completion) after its sources for cleaner connectors. Needs exactly one Start and at least one Completion.\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map: JSON array of route points, laid out top to bottom. Each object: {\"type\":Start|Action|Condition|Completion|NestedBusinessProcess, \"name\":<unique>, \"title\"?, \"taskDescription\"? (Action/Nested), \"subprocess\"? (Nested = a BusinessProcess FQN), \"location\"?, \"handlers\"?}. Action points auto-carry the linked Task's addressing attributes. Point names are compared without regard to case, so 'Старт' and 'старт' are one point and the second is refused as a duplicate. Points are laid out top to bottom in array order - declare a shared target (e.g. a common Completion) after its sources for cleaner connectors. Needs exactly one Start and at least one Completion.\n\n"); //$NON-NLS-1$
+        sb.append("get_route_map answers the same map back: pointCount, transitionCount, points[] (type, name, title, taskDescription, subprocess, location {top,left,bottom,right}, addressingAttributes[] of child FQNs, events[] of {event,handler}) and transitions[] (from, to, title). A property the scheme does not carry is left out of a point rather than answered as null, and an event with no handler is not listed - the writer emits every event of a point kind and only the handled ones carry a procedure name.\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map answers with written, replaced (true when a Flowchart.scheme was already there and this call replaced it), pointCount, transitionCount, points[] carrying every point's coordinates as written and locationFromCaller, handlers[] of {point,event,handler} for each handler that went into the scheme, and stubsWritten / stubsAlreadyPresent for the handler procedures of the object module. A write that replaced a map is a different thing from a first write, and a caller that may not have meant to replace one has to be told which happened.\n\n"); //$NON-NLS-1$
+        sb.append("### location\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map, per point: where the point sits on the map, as {\"top\":<px>,\"left\":<px>,\"bottom\":<px>,\"right\":<px>} or {\"x\":<centre>,\"y\":<centre>,\"width\"?,\"height\"?}, the width and height defaulting to the point kind's own box. Give one of the two forms, not both, and give all four corners of the first - an incomplete set is refused rather than completed by guesswork. Omit the argument entirely and the point is laid out by the default order. What was used comes back in the answer's points[] as top / left / bottom / right, with locationFromCaller=true when the coordinates were the caller's rather than the layout's. get_route_map reads the same four figures back out of the scheme, under the point's location.\n\n"); //$NON-NLS-1$
+        sb.append("### handlers\n\n"); //$NON-NLS-1$
+        sb.append("create_route_map, per point: the handler of the point's events, as an object of event name to handler name {\"before\":\"ОбработкаПеред\"} or as an array of {\"event\":<event>,\"handler\":<handler>}. The event name is the one the point kind declares (Start / Action / Condition / Completion / NestedBusinessProcess each have their own set); an event the kind does not declare is refused with the list it does have, and an empty handler name is refused. A point whose event is given no handler keeps the event with no handler, which is what the editor shows as an unbound event. The names are written into the scheme and come back in the answer's handlers[]. A handler the BusinessProcess object module does not declare yet gets a procedure there with the parameters of its event and an empty body, named in stubsWritten; one already declared is left alone and named in stubsAlreadyPresent; dryRun names the procedures it would write in stubsToWrite. get_route_map reads the handlers back as each point's events[].\n\n"); //$NON-NLS-1$
         sb.append("### properties\n\n"); //$NON-NLS-1$
         sb.append("create_object: a JSON object of property name to value, applied to the " //$NON-NLS-1$
             + "new object before it joins the configuration - e.g. " //$NON-NLS-1$
@@ -3247,7 +3271,7 @@ public class EditMetadataTool implements IMcpTool
             case "Templates":
                 return "template create + content I/O + MXL cell ops";
             case "BusinessProcess route map":
-                return "create / read / remove";
+                return "create / read / remove, and the addressing of the linked Task";
             case "Extensions":
                 return "adopt (borrow) base-configuration objects into an extension";
             case "DCS":

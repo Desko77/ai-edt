@@ -74,8 +74,13 @@ public class TheToolListHasAWeightBudgetTest
      * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
      * and add_schema_parameter write them into the schema parameter.
      * </p>
+     * <p>
+     * Raised from 173621 to 173715 for addressingRegister, addressingAttributes,
+     * mainAddressingAttribute and currentPerformer on edit_metadata: set_task_addressing writes
+     * the addressing of a Task.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 173621;
+    private static final int DOCUMENT_BUDGET = 173715;
 
     private LiveServer server;
 

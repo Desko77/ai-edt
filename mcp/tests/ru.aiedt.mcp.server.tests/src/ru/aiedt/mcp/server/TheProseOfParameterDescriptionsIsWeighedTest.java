@@ -221,11 +221,17 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * way to say whether the new application becomes the project's default without the flag.
      * Their rules live in the operation help.
      * </p>
+     * <p>
+     * And by 458 on edit_metadata for addressingRegister, addressingAttributes,
+     * mainAddressingAttribute and currentPerformer: set_task_addressing writes the addressing
+     * register, the addressing attributes, the main one and the current performer of a Task,
+     * and a caller names each by its own argument.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
     {
-        PROSE.put("edit_metadata", Integer.valueOf(13730));
+        PROSE.put("edit_metadata", Integer.valueOf(14188));
         // git: operation, projectName and the log's limit are the whole surface a client builds
         // the call from - the repository answers the rest. Grown to 875 for the commit's five
         // arguments (paths by name - there is no add-all - the message, and the author pair a
@@ -501,6 +507,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
      * edit_metadata: 93862.
      * </p>
+     * <p>
+     * And by 128 for addressingRegister, addressingAttributes, mainAddressingAttribute and
+     * currentPerformer on edit_metadata, the four arguments of set_task_addressing: 95865.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 95737;
+    private static final int DOCUMENT_PROSE = 95865;
 }

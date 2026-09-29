@@ -14,11 +14,18 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 
+import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.metadata.mdclass.AddressingAttribute;
+import com._1c.g5.v8.dt.metadata.mdclass.BusinessProcess;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.InformationRegister;
+import com._1c.g5.v8.dt.metadata.mdclass.InformationRegisterDimension;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.SessionParameter;
+import com._1c.g5.v8.dt.metadata.mdclass.Task;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -422,6 +429,542 @@ final class SpecializedOps
     {
         return addTypedCollectionChild(params, "getAddressingAttributes", //$NON-NLS-1$
             "AddressingAttribute", "add_addressing_attribute"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** The four Task-addressing properties this operation writes, as the caller names them. */
+    private static final String[] ADDRESSING_ARGUMENTS = {"addressingRegister", "addressingAttributes", //$NON-NLS-1$ //$NON-NLS-2$
+        "mainAddressingAttribute", "currentPerformer"}; //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * Refuses a call that named none of the Task-addressing properties, listing the
+     * four a caller may name. Returns null when at least one was given.
+     *
+     * @param addressingRegister requested addressing register, may be null or blank
+     * @param addressingAttributes requested addressing attributes, may be null or blank
+     * @param mainAddressingAttribute requested main addressing attribute, may be null or blank
+     * @param currentPerformer requested current performer, may be null or blank
+     * @return the refusal text, or null when the call asks for something
+     */
+    static String taskAddressingRefusal(String addressingRegister, String addressingAttributes,
+        String mainAddressingAttribute, String currentPerformer)
+    {
+        if (isFilled(addressingRegister) || isFilled(addressingAttributes)
+            || isFilled(mainAddressingAttribute) || isFilled(currentPerformer))
+        {
+            return null;
+        }
+        return "set_task_addressing wrote nothing: name at least one of " //$NON-NLS-1$
+            + String.join(", ", ADDRESSING_ARGUMENTS) //$NON-NLS-1$
+            + ". addressingRegister takes an InformationRegister FQN, addressingAttributes a JSON " //$NON-NLS-1$
+            + "array of {name,type,dimension} for the attributes the Task must have, " //$NON-NLS-1$
+            + "mainAddressingAttribute the name or FQN of the one that addresses the task, and " //$NON-NLS-1$
+            + "currentPerformer a SessionParameter FQN. Nothing was changed."; //$NON-NLS-1$
+    }
+
+    /**
+     * Reads the addressing-attribute definitions out of the {@code addressingAttributes}
+     * argument: a JSON array of {@code {name,type,dimension}} objects.
+     *
+     * @param raw the argument as the caller wrote it
+     * @return the definitions, or {@code error} set when the argument is not such an array
+     */
+    static AddressingSpecs parseAddressingSpecs(String raw)
+    {
+        AddressingSpecs out = new AddressingSpecs();
+        int declared = EditMetadataTool.jsonArrayLength(raw);
+        if (declared < 0)
+        {
+            out.error = "'addressingAttributes' must be a JSON array of objects, e.g. " //$NON-NLS-1$
+                + "[{\"name\":\"Executor\",\"type\":\"CatalogRef.Users\"}]. It was given: " //$NON-NLS-1$
+                + raw + "."; //$NON-NLS-1$
+            return out;
+        }
+        if (declared == 0)
+        {
+            out.error = "'addressingAttributes' was given an empty array. Name the attributes " //$NON-NLS-1$
+                + "the Task must have, or leave the argument out - an empty array asks for " //$NON-NLS-1$
+                + "nothing. Nothing was changed."; //$NON-NLS-1$
+            return out;
+        }
+        List<Map<String, String>> parsed = EditMetadataTool.parseStructArray(raw);
+        if (parsed.size() < declared)
+        {
+            out.error = "'addressingAttributes' must be a JSON array of objects, e.g. " //$NON-NLS-1$
+                + "[{\"name\":\"Executor\",\"type\":\"CatalogRef.Users\"}]. " //$NON-NLS-1$
+                + declared + " of them were declared and " + parsed.size() + " read."; //$NON-NLS-1$ //$NON-NLS-2$
+            return out;
+        }
+        for (Map<String, String> one : parsed)
+        {
+            String name = trimToNull(one.get("name")); //$NON-NLS-1$
+            if (name == null)
+            {
+                out.error = "'addressingAttributes' has an entry without a 'name': " + one; //$NON-NLS-1$
+                out.specs.clear();
+                return out;
+            }
+            NameValue spec = new NameValue();
+            spec.name = name;
+            spec.type = trimToNull(one.get("type")); //$NON-NLS-1$
+            spec.dimension = trimToNull(one.get("dimension")); //$NON-NLS-1$
+            out.specs.add(spec);
+        }
+        return out;
+    }
+
+    /** One addressing-attribute definition: its name and the optional type / register dimension. */
+    static final class NameValue
+    {
+        String name;
+        String type;
+        String dimension;
+    }
+
+    /** The addressing-attribute definitions a call asked for, or why they could not be read. */
+    static final class AddressingSpecs
+    {
+        final List<NameValue> specs = new ArrayList<>();
+        String error;
+    }
+
+    /**
+     * Writes the addressing properties of a Task - the register that addresses it, the
+     * attributes it addresses by, which of them is the main one, and where the current
+     * performer comes from - and confirms each one by reading it back in the same
+     * transaction.
+     * <p>
+     * {@code ownerFqn} names the Task or the BusinessProcess that owns one; the linked
+     * Task is written in either case. Addressing attributes named but absent are created
+     * with the type and register dimension the call gives them, which is what
+     * {@code add_addressing_attribute} does one attribute at a time. A property whose
+     * value does not read back as written fails the call instead of reporting success:
+     * the four properties sit on one object and address a route, so a half-applied set
+     * is a route that runs with the wrong performer rather than an incomplete edit.
+     * </p>
+     *
+     * @param params the tool parameters
+     * @return the JSON result document
+     */
+    String opSetTaskAddressing(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String addressingRegister = JsonUtils.extractStringArgument(params, "addressingRegister"); //$NON-NLS-1$
+        String addressingAttributes = JsonUtils.extractStringArgument(params, "addressingAttributes"); //$NON-NLS-1$
+        String mainAddressingAttribute =
+            JsonUtils.extractStringArgument(params, "mainAddressingAttribute"); //$NON-NLS-1$
+        String currentPerformer = JsonUtils.extractStringArgument(params, "currentPerformer"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+
+        String nothingAsked = taskAddressingRefusal(addressingRegister, addressingAttributes,
+            mainAddressingAttribute, currentPerformer);
+        if (nothingAsked != null)
+        {
+            return ToolResult.error(nothingAsked).toJson();
+        }
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn"); //$NON-NLS-1$
+        if (!err.isEmpty())
+        {
+            return ToolResult.error(err.trim()).toJson();
+        }
+        AddressingSpecs specs = new AddressingSpecs();
+        if (isFilled(addressingAttributes))
+        {
+            specs = parseAddressingSpecs(addressingAttributes);
+            if (specs.error != null)
+            {
+                return ToolResult.error(specs.error).toJson();
+            }
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+
+        final String registerFqn =
+            isFilled(addressingRegister) ? MetadataTypeCatalog.normalizeFqn(addressingRegister.trim()) : null;
+        final String performerFqn =
+            isFilled(currentPerformer) ? MetadataTypeCatalog.normalizeFqn(currentPerformer.trim()) : null;
+        final String mainWanted = isFilled(mainAddressingAttribute)
+            ? mainAddressingAttribute.trim() : null;
+        final List<NameValue> wanted = specs.specs;
+        IConfigurationProvider regCfgProvider = Activator.getDefault().getConfigurationProvider();
+        final Configuration regConfig = regCfgProvider != null
+            ? regCfgProvider.getConfiguration(project) : null;
+        final List<String> created = new ArrayList<>();
+        final Map<String, Object> readBack = new LinkedHashMap<>();
+
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                Task task = taskOf(owner, ownerFqn);
+                InformationRegister writtenRegister = null;
+                if (registerFqn != null)
+                {
+                    Object register = EditMetadataTool.resolveReferenceTarget(tx, registerFqn);
+                    if (!(register instanceof InformationRegister))
+                    {
+                        throw new RuntimeException("Addressing register not found: " + registerFqn //$NON-NLS-1$
+                            + " (expected InformationRegister.<Name>). Nothing was changed."); //$NON-NLS-1$
+                    }
+                    writtenRegister = (InformationRegister)register;
+                    task.setAddressing(writtenRegister);
+                }
+                for (NameValue spec : wanted)
+                {
+                    AddressingAttribute attribute = findAddressingAttribute(task, spec.name);
+                    if (attribute == null)
+                    {
+                        if (spec.type == null && spec.dimension == null)
+                        {
+                            throw new RuntimeException("Addressing attribute '" + spec.name //$NON-NLS-1$
+                                + "' does not exist on " + fqnOf(task) + ". Give its 'type' (and " //$NON-NLS-1$
+                                + "optionally 'dimension') in addressingAttributes to create it, or " //$NON-NLS-1$
+                                + "add it with add_addressing_attribute first."); //$NON-NLS-1$
+                        }
+                        attribute = (AddressingAttribute)BmObjectHelper
+                            .createOwnerScopedObject(task, "AddressingAttribute"); //$NON-NLS-1$
+                        if (attribute == null)
+                        {
+                            throw new RuntimeException("Cannot create an AddressingAttribute under " //$NON-NLS-1$
+                                + fqnOf(task) + ": no compatible MdClassFactory method."); //$NON-NLS-1$
+                        }
+                        attribute.setName(spec.name);
+                        task.getAddressingAttributes().add(attribute);
+                        created.add(spec.name);
+                    }
+                    if (spec.type != null)
+                    {
+                        if (regConfig == null)
+                        {
+                            throw new RuntimeException("The configuration of " + projectName //$NON-NLS-1$
+                                + " is not available, so the type of '" + spec.name //$NON-NLS-1$
+                                + "' cannot be applied. Nothing was changed."); //$NON-NLS-1$
+                        }
+                        BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.setTypes(attribute,
+                            project, regConfig, Collections.singletonList(spec.type),
+                            new BmDefinedTypeHelper.QualifierOptions());
+                        if (!tr.ok)
+                        {
+                            throw new RuntimeException("Type '" + spec.type + "' of addressing " //$NON-NLS-1$ //$NON-NLS-2$
+                                + "attribute '" + spec.name + "' was not applied: " + tr.error); //$NON-NLS-1$ //$NON-NLS-2$
+                        }
+                    }
+                    if (spec.dimension != null)
+                    {
+                        Object dimension =
+                            EditMetadataTool.resolveReferenceTarget(tx, spec.dimension);
+                        if (!(dimension instanceof InformationRegisterDimension))
+                        {
+                            throw new RuntimeException("Addressing dimension not found: " //$NON-NLS-1$
+                                + spec.dimension + " (expected InformationRegister.<Reg>." //$NON-NLS-1$
+                                + "Dimension.<Name>). Nothing was changed."); //$NON-NLS-1$
+                        }
+                        attribute.setAddressingDimension((InformationRegisterDimension)dimension);
+                    }
+                }
+                SessionParameter writtenPerformer = null;
+                if (performerFqn != null)
+                {
+                    Object performer = EditMetadataTool.resolveReferenceTarget(tx, performerFqn);
+                    if (!(performer instanceof SessionParameter))
+                    {
+                        throw new RuntimeException("Current performer not found: " + performerFqn //$NON-NLS-1$
+                            + " (expected SessionParameter.<Name>). Nothing was changed."); //$NON-NLS-1$
+                    }
+                    writtenPerformer = (SessionParameter)performer;
+                    task.setCurrentPerformer(writtenPerformer);
+                }
+                if (mainWanted != null)
+                {
+                    String name = lastSegment(mainWanted);
+                    AddressingAttribute main = findAddressingAttribute(task, name);
+                    if (main == null)
+                    {
+                        throw new RuntimeException("Main addressing attribute '" + name //$NON-NLS-1$
+                            + "' is not among the addressing attributes of " + fqnOf(task) + " (" //$NON-NLS-1$ //$NON-NLS-2$
+                            + addressingAttributeNames(task) + "). List it in addressingAttributes or " //$NON-NLS-1$
+                            + "add it with add_addressing_attribute first."); //$NON-NLS-1$
+                    }
+                    task.setMainAddressingAttribute(main);
+                }
+
+                // Read every property back inside the same transaction: what is reported is what
+                // the model holds, not what this code asked for. A property is compared against
+                // the object the call resolved, so a write that reached a different object of the
+                // same name is a failure too.
+                List<String> mismatches = new ArrayList<>();
+                if (registerFqn != null)
+                {
+                    InformationRegister held = task.getAddressing();
+                    String shown = fqnOf(held);
+                    readBack.put("addressingRegister", shown); //$NON-NLS-1$
+                    if (held != writtenRegister)
+                    {
+                        mismatches.add("addressingRegister: asked " + registerFqn //$NON-NLS-1$
+                            + ", read " + shown); //$NON-NLS-1$
+                    }
+                }
+                if (!wanted.isEmpty())
+                {
+                    List<String> names = new ArrayList<>();
+                    for (AddressingAttribute one : task.getAddressingAttributes())
+                    {
+                        names.add(one.getName());
+                    }
+                    readBack.put("addressingAttributes", names); //$NON-NLS-1$
+                    for (NameValue spec : wanted)
+                    {
+                        if (!containsIgnoreCase(names, spec.name))
+                        {
+                            mismatches.add("addressingAttributes: '" + spec.name //$NON-NLS-1$ //$NON-NLS-2$
+                                + "' did not read back (" + String.join(", ", names) + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                        }
+                    }
+                }
+                if (mainWanted != null)
+                {
+                    String written = task.getMainAddressingAttribute() != null
+                        ? task.getMainAddressingAttribute().getName() : null;
+                    readBack.put("mainAddressingAttribute", written); //$NON-NLS-1$
+                    if (!lastSegment(mainWanted).equalsIgnoreCase(written == null ? "" : written)) //$NON-NLS-1$
+                    {
+                        mismatches.add("mainAddressingAttribute: asked " + mainWanted //$NON-NLS-1$
+                            + ", read " + written); //$NON-NLS-1$
+                    }
+                }
+                if (performerFqn != null)
+                {
+                    SessionParameter held = task.getCurrentPerformer();
+                    String shown = fqnOf(held);
+                    readBack.put("currentPerformer", shown); //$NON-NLS-1$
+                    if (held != writtenPerformer)
+                    {
+                        mismatches.add("currentPerformer: asked " + performerFqn //$NON-NLS-1$
+                            + ", read " + shown); //$NON-NLS-1$
+                    }
+                }
+                if (!mismatches.isEmpty())
+                {
+                    throw new RuntimeException("Written but not read back: " //$NON-NLS-1$
+                        + String.join("; ", mismatches)); //$NON-NLS-1$
+                }
+                return fqnOf(task);
+            });
+        if (!created.isEmpty())
+        {
+            r.tags.put("createdAttributes", created); //$NON-NLS-1$
+        }
+        r.tags.put("taskAddressing", readBack); //$NON-NLS-1$
+        r.tags.put("addressingRequested", requestedAddressing(registerFqn, wanted, mainWanted, //$NON-NLS-1$
+            performerFqn));
+        if (r.ok)
+        {
+            r.message = "Task addressing written and read back: " //$NON-NLS-1$
+                + describeAddressing(readBack) + "."; //$NON-NLS-1$
+        }
+        if (dryRun && r.ok)
+        {
+            r.tags.put("dryRun", Boolean.TRUE); //$NON-NLS-1$
+        }
+        return EditMetadataTool.formatResult(r, "set_task_addressing"); //$NON-NLS-1$
+    }
+
+    /**
+     * The Task a business-process addressing write goes to: the owner itself when it
+     * is a Task, the Task it is linked to when it is a BusinessProcess.
+     *
+     * @param owner the resolved owner object
+     * @param ownerFqn the owner FQN, for the error text
+     * @return the Task to write
+     */
+    private static Task taskOf(Object owner, String ownerFqn)
+    {
+        if (owner instanceof Task)
+        {
+            return (Task)owner;
+        }
+        if (owner instanceof BusinessProcess)
+        {
+            Task linked = ((BusinessProcess)owner).getTask();
+            if (linked == null)
+            {
+                throw new RuntimeException("BusinessProcess " + ownerFqn //$NON-NLS-1$
+                    + " has no linked Task; set its 'task' property first " //$NON-NLS-1$
+                    + "(set_object_reference property=task). Nothing was changed."); //$NON-NLS-1$
+            }
+            return linked;
+        }
+        throw new RuntimeException("ownerFqn must name a Task or a BusinessProcess; " + ownerFqn //$NON-NLS-1$
+            + " is neither. Nothing was changed."); //$NON-NLS-1$
+    }
+
+    /**
+     * An addressing attribute of the Task by name, matched without regard to case.
+     *
+     * @param task the Task to look in
+     * @param name the attribute name as the caller wrote it
+     * @return the attribute, or null when the Task has none by that name
+     */
+    private static AddressingAttribute findAddressingAttribute(Task task, String name)
+    {
+        for (AddressingAttribute one : task.getAddressingAttributes())
+        {
+            if (one.getName() != null && one.getName().equalsIgnoreCase(name))
+            {
+                return one;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The names of a Task's addressing attributes, for an error text.
+     *
+     * @param task the Task to read
+     * @return the names, comma-separated, or "none"
+     */
+    private static String addressingAttributeNames(Task task)
+    {
+        List<String> names = new ArrayList<>();
+        for (AddressingAttribute one : task.getAddressingAttributes())
+        {
+            names.add(one.getName());
+        }
+        return names.isEmpty() ? "none" : String.join(", ", names); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The FQN of a metadata object, or null when there is none to name it by - only a
+     * top object answers this, and a null here is a missing display value rather than a
+     * missing object.
+     *
+     * @param object the object, possibly null
+     * @return its FQN, or null
+     */
+    private static String fqnOf(Object object)
+    {
+        if (!(object instanceof IBmObject))
+        {
+            return null;
+        }
+        try
+        {
+            return ((IBmObject)object).bmGetFqn();
+        }
+        catch (Throwable notATopObject)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * The last dot-separated segment of an address - an attribute name out of a
+     * {@code Task.X.AddressingAttribute.Y} reference.
+     *
+     * @param address the address
+     * @return its last segment
+     */
+    private static String lastSegment(String address)
+    {
+        int dot = address.lastIndexOf('.');
+        return dot < 0 ? address : address.substring(dot + 1);
+    }
+
+    /**
+     * Whether a list holds a name, matched without regard to case.
+     *
+     * @param names the names to search
+     * @param wanted the name to find
+     * @return true when it is there
+     */
+    private static boolean containsIgnoreCase(List<String> names, String wanted)
+    {
+        for (String one : names)
+        {
+            if (one != null && one.equalsIgnoreCase(wanted))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * What the call asked for, next to what the model holds - so a caller comparing the
+     * two sees a request that was not applied rather than only its outcome.
+     *
+     * @param registerFqn the requested addressing register, may be null
+     * @param wanted the requested addressing attributes
+     * @param mainWanted the requested main addressing attribute, may be null
+     * @param performerFqn the requested current performer, may be null
+     * @return the request as the answer reports it
+     */
+    private static Map<String, Object> requestedAddressing(String registerFqn,
+        List<NameValue> wanted, String mainWanted, String performerFqn)
+    {
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (registerFqn != null)
+        {
+            m.put("addressingRegister", registerFqn); //$NON-NLS-1$
+        }
+        if (!wanted.isEmpty())
+        {
+            List<String> names = new ArrayList<>();
+            for (NameValue one : wanted)
+            {
+                names.add(one.name);
+            }
+            m.put("addressingAttributes", names); //$NON-NLS-1$
+        }
+        if (mainWanted != null)
+        {
+            m.put("mainAddressingAttribute", mainWanted); //$NON-NLS-1$
+        }
+        if (performerFqn != null)
+        {
+            m.put("currentPerformer", performerFqn); //$NON-NLS-1$
+        }
+        return m;
+    }
+
+    /**
+     * The read-back values as one line, for the answer's message.
+     *
+     * @param readBack the read-back block
+     * @return the line
+     */
+    private static String describeAddressing(Map<String, Object> readBack)
+    {
+        List<String> parts = new ArrayList<>();
+        for (Map.Entry<String, Object> entry : readBack.entrySet())
+        {
+            parts.add(entry.getKey() + "=" + entry.getValue()); //$NON-NLS-1$
+        }
+        return parts.isEmpty() ? "nothing read back" : String.join(", ", parts); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Whether a value carries something.
+     *
+     * @param value the value, possibly null
+     * @return true when it is neither null nor blank
+     */
+    private static boolean isFilled(String value)
+    {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    /**
+     * A trimmed value, or null when it carries nothing.
+     *
+     * @param value the value, possibly null
+     * @return the trimmed value, or null
+     */
+    private static String trimToNull(String value)
+    {
+        return isFilled(value) ? value.trim() : null;
     }
 
     /**
