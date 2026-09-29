@@ -283,8 +283,8 @@ public class ConfigurationBinaryImporter implements IMcpTool
             registry.remove(runKey);
         }
         PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey,
-            () -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
-                finalExtensionName, finalBase, finalBaseProject, finalKeepDir));
+            startedRun -> stageAndImport(finalBinary, finalKind, finalProjectName, finalPlatform,
+                finalExtensionName, finalBase, finalBaseProject, finalKeepDir, startedRun));
         // The name a poll of this run arrives under, so a live key exempts only this tool's own
         // resumption path from the heavy gates.
         entry.startedBy = NAME;
@@ -389,11 +389,13 @@ public class ConfigurationBinaryImporter implements IMcpTool
      * @param baseProjectName the workspace project an extension extends, or <code>null</code>
      * @param keepDir the caller's directory for the intermediate XML, or <code>null</code> for
      *            a temporary one that is deleted afterwards
+     * @param entry the run this import belongs to; the launch boundary of the staging process is
+     *            claimed on it
      * @return the reply JSON
      */
     private String stageAndImport(Path binary, BmBinaryImportHelper.BinaryKind kind,
         String projectName, String platform, String extensionName, Path base, String baseProjectName,
-        Path keepDir)
+        Path keepDir, PendingWorkRegistry.PendingEntry entry)
     {
         boolean keepXml = keepDir != null;
         Path xmlDir;
@@ -408,6 +410,21 @@ public class ConfigurationBinaryImporter implements IMcpTool
         }
         try
         {
+            // The launch boundary: staging starts a Configurator process, and from inside one
+            // there is nothing on this side that can stop it. A cancel that arrived earlier raised
+            // the call's flag, and here it keeps the process from starting rather than leaving a
+            // second 1C running that nobody can reach.
+            if (!entry.claimTheLaunch())
+            {
+                return ToolResult.error("The import was cancelled before the staging process " //$NON-NLS-1$
+                    + "started. No project was created.") //$NON-NLS-1$
+                    .put("tag", ErrorTags.CANCELLED.wire()) //$NON-NLS-1$
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .put("projectName", projectName) //$NON-NLS-1$
+                    .put("binaryPath", binary.toString()) //$NON-NLS-1$
+                    .toJson();
+            }
+
             BmBinaryImportHelper.XmlResult staged =
                 BmBinaryImportHelper.toXml(binary, platform, extensionName, base, xmlDir);
             if (!staged.ok)

@@ -45,6 +45,9 @@ public class TheRoadCarriesCancellationToTheWorkTest
 
     private AtomicReference<String> stopperAsked;
 
+    /** The stopper the domain declares for itself, put back by {@link #theProbeAndTheStopperGo()}. */
+    private java.util.function.Function<String, PendingWorkRegistry.StopOutcome> domainStopper;
+
     @Before
     public void aRoadOfItsOwn()
     {
@@ -52,6 +55,7 @@ public class TheRoadCarriesCancellationToTheWorkTest
             .getBundleContext();
         road = new ToolRoad(new Semaphore(1));
         stopperAsked = new AtomicReference<>();
+        domainStopper = PendingWorkRegistry.IMPORT_BINARY.stopper();
         PendingWorkRegistry.IMPORT_BINARY.stopsWith(key -> {
             stopperAsked.set(key);
             return PendingWorkRegistry.StopOutcome.STOPPED;
@@ -72,7 +76,9 @@ public class TheRoadCarriesCancellationToTheWorkTest
                 // unregistered by the test itself
             }
         }
-        PendingWorkRegistry.IMPORT_BINARY.stopsWith(null);
+        // The domain's own stopper, not null: these registries are singletons, and clearing one
+        // leaves every later test reading a domain that stops nothing.
+        PendingWorkRegistry.IMPORT_BINARY.stopsWith(domainStopper);
     }
 
     /**

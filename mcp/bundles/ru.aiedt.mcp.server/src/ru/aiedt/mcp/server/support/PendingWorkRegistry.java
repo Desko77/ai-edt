@@ -149,6 +149,33 @@ public final class PendingWorkRegistry
     public static final PendingWorkRegistry GENERIC =
         new PendingWorkRegistry("generic_tool", "generic-tool-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
 
+    /**
+     * What a cancel reaches in each of the five domains that have no process or client of their
+     * own to destroy.
+     * <p>
+     * A cancel through the task interface leaves {@link #cancel} and {@link #cancelAndStop}, and
+     * without a stopper the only thing it stopped was this server's waiting. Two kinds of channel
+     * are left. The walks read the call's flag at their next boundary, and most of the generic
+     * analysis tools and the reference walk report through it. The three writers cross a launch
+     * boundary - the blocking platform update, the EDT build of an external object, the Configurator
+     * process that imports a binary - where the flag keeps the launch from starting and cannot pull
+     * a started one back.
+     * </p>
+     * <p>
+     * Declared here, with the registry that owns the runs, rather than in each tool: a run outlives
+     * the call that started it, and the domain has to answer for it whether or not that tool's class
+     * has been loaded since.
+     * </p>
+     */
+    static
+    {
+        GENERIC.stopsWith(GENERIC::stopThroughTheFlag);
+        REFERENCES.stopsWith(REFERENCES::stopThroughTheFlag);
+        UPDATE.stopsWith(UPDATE::stopAtTheLaunchBoundary);
+        EXPORT.stopsWith(EXPORT::stopAtTheLaunchBoundary);
+        IMPORT_BINARY.stopsWith(IMPORT_BINARY::stopAtTheLaunchBoundary);
+    }
+
     /** TTL for completed entries that were never retrieved. 5 minutes. */
     private static final long COMPLETED_TTL_MS = 5 * 60 * 1000L;
 
@@ -180,9 +207,10 @@ public final class PendingWorkRegistry
      * What actually stops this domain's work, when anything can.
      * <p>
      * {@link #cancel} completes the tracking future, which stops work that has not begun and
-     * reaches nothing that has. A domain that owns a process it can destroy installs it here, so a
-     * cancel arriving through the task interface stops the same thing a cancel through the tool
-     * would.
+     * reaches nothing that has. A domain installs one here, so a cancel arriving through the task
+     * interface stops the same thing a cancel through the tool would: a domain that owns a process
+     * or a client it can stop declares that, and the five domains that own neither declare what
+     * the call's flag reaches in them (see the static block below).
      * </p>
      */
     private volatile Function<String, StopOutcome> stopper;
@@ -440,6 +468,13 @@ public final class PendingWorkRegistry
      * body - so what happened is said in the log.
      * </p>
      *
+     * <p>
+     * It raises the flag and asks no stopper. For Naparnik, the infobase export and the flag-reading
+     * walks that is enough - the flag stops their work the same way their stopper would. A Vanessa
+     * run reads no flag, so a withdrawal does not stop its client; {@code tasks/cancel} and
+     * {@code stopTheClient} are what do.
+     * </p>
+     *
      * @param sessionId the session the withdrawal came from; a null one owns nothing
      * @param requestId the request it names
      * @param reason what to record as the cause
@@ -626,8 +661,12 @@ public final class PendingWorkRegistry
      * <p>
      * A domain that has declared a stopper through {@link #stopsWith} is the exception: its work
      * is stopped as well, because it owns something it can stop. That is what a cancel arriving
-     * as {@code tasks/cancel} goes through. In a domain without one, the cancellation flag of the
-     * call that started the run is raised: work that reads it stops at its next boundary.
+     * as {@code tasks/cancel} goes through. The flag of the call that started the run is raised
+     * either way, and what it reaches differs by domain: the walks of the generic analysis tools
+     * and the reference walk read it through {@code WatchForCancel} and stop at their next
+     * boundary, Naparnik polls it around its question, and the infobase export builds its own
+     * {@code cancelled} supplier from it. A Vanessa run reads no flag at all - its client is
+     * stopped through {@code stopTheClient}, which is what that domain's stopper is.
      * </p>
      * <p>
      * Until a running body leaves, a call with the same runKey is refused rather than started
@@ -666,20 +705,36 @@ public final class PendingWorkRegistry
     private boolean drop(String runKey, boolean stopTheWork)
     {
         PendingEntry entry = entries.get(runKey);
-        boolean known = dropEntry(runKey);
-        // After the future, so work that has not begun is already stopped by then and the stopper
-        // only has to deal with work that has. Asked even for an unknown key: the tool's own cancel
-        // removes the entry first, and the process it owns still has to go.
-        Function<String, StopOutcome> stopsIt = stopTheWork ? stopper : null;
-        if (stopsIt != null)
+        if (stopTheWork)
         {
-            stopsIt.apply(runKey);
+            // Before the entry goes, so the flag is in the work's hands. Both halves of a cancel
+            // belong together: a domain stopper can only stop what it owns - a client, a spawned
+            // process - while the flag is what reaches whatever reads it, and the domains that
+            // read it (see the registrations below) are most of them.
+            raiseTheFlag(entry);
         }
-        else if (stopTheWork && entry != null && entry.cancellation != null && !entry.workHasLeft())
+        boolean known = dropEntry(runKey);
+        if (stopTheWork)
+        {
+            // After the future, so work that has not begun is already stopped by then and the
+            // stopper only has to deal with work that has. Asked even for an unknown key: the
+            // tool's own cancel removes the entry first, and the client it owns still has to go.
+            askTheStopper(runKey);
+        }
+        return known;
+    }
+
+    /**
+     * Raises the flag of a run, when it has one and has not already left.
+     *
+     * @param entry the run, or {@code null} for a key nothing holds
+     */
+    private static void raiseTheFlag(PendingEntry entry)
+    {
+        if (entry != null && entry.cancellation != null && !entry.workHasLeft())
         {
             entry.cancellation.cancel(CANCEL_REASON);
         }
-        return known;
     }
 
     /** The reason a cancel through this registry writes on the call's flag. */
@@ -739,39 +794,96 @@ public final class PendingWorkRegistry
     }
 
     /**
-     * Detaches a runKey, asks the domain to stop the work, and reports what stopping came to.
+     * What this domain declares as its stopper, so a caller that replaces it can hand it back.
+     * <p>
+     * A domain declares its stopper once, and a test that installs one of its own over the
+     * declaration has to restore it rather than clear it: the registries are singletons shared by
+     * the whole suite, and a cleared one leaves every later test reading a domain that stops
+     * nothing.
+     * </p>
+     *
+     * @return what {@link #stopsWith} was last given, or {@code null} when none is declared
+     */
+    Function<String, StopOutcome> stopper()
+    {
+        return stopper;
+    }
+
+    /**
+     * Asks the domain's stopper to stop a run, when the domain has one.
      *
      * @param runKey the key.
-     * @return what the domain's stopper reported, or {@link StopOutcome#NOTHING_TO_STOP} when the
-     *         domain has none
+     * @return what the stopper reported, or {@link StopOutcome#NOTHING_TO_STOP} when the domain
+     *         declares none
      */
-    public StopOutcome cancelAndStop(String runKey)
+    private StopOutcome askTheStopper(String runKey)
     {
         Function<String, StopOutcome> stopsIt = stopper;
-        PendingEntry entry = entries.get(runKey);
-        boolean wasRunning = entry != null && !entry.isDone();
-        dropEntry(runKey);
         if (stopsIt == null)
         {
-            return wasRunning ? stopThroughFlag(entry) : StopOutcome.NOTHING_TO_STOP;
+            return StopOutcome.NOTHING_TO_STOP;
         }
         StopOutcome outcome = stopsIt.apply(runKey);
         return outcome == null ? StopOutcome.NOTHING_TO_STOP : outcome;
     }
 
     /**
-     * Stops a run in a domain without a stopper, through the cancellation flag of the call that
-     * started it, and waits up to {@link #flagStopWaitMs} for the body to leave.
+     * Detaches a runKey, raises the flag of the call that started the run, asks the domain to stop
+     * the work, and reports what stopping came to.
      * <p>
-     * A run whose body had not begun is stopped by the cancelled future alone. A run started outside
-     * a call has no flag and is reported as still running.
+     * The flag goes up before the entry does. A run that answered Pending outlives the call that
+     * started it, and raising the flag afterwards reaches the entry rather than the work: what a
+     * cancel through the task interface can stop beyond the entry - a client, a spawned process -
+     * is the domain stopper's business, and the walks that read the flag are this one's.
+     * </p>
+     * <p>
+     * {@link StopOutcome#STOPPED} is answered only when the body has actually left, so the caller
+     * reading it as "the work is done" is right to. The key stays held until then: a call with the
+     * same arguments computes the same runKey, and a second copy of a run still executing is what
+     * this whole path exists to prevent (see {@link #getOrStart(String, Function)}).
+     * </p>
+     *
+     * @param runKey the key.
+     * @return {@link StopOutcome#STOPPED} when the run's work is no longer executing,
+     *         {@link StopOutcome#STILL_RUNNING} when it was told to stop and had not stopped, and
+     *         {@link StopOutcome#NOTHING_TO_STOP} when no run was live
+     */
+    public StopOutcome cancelAndStop(String runKey)
+    {
+        PendingEntry entry = entries.get(runKey);
+        boolean wasRunning = entry != null && !entry.isDone();
+        // Before the entry goes: an entry that has left the registry no longer names the work, and
+        // the flag is the only channel most of these domains have.
+        raiseTheFlag(entry);
+        dropEntry(runKey);
+        StopOutcome told = askTheStopper(runKey);
+        if (told == StopOutcome.STOPPED)
+        {
+            return StopOutcome.STOPPED;
+        }
+        if (!wasRunning)
+        {
+            // No run was live. What the stopper found under this key - a client, a process - is
+            // still its own answer, and NOTHING_TO_STOP is not a better one.
+            return told;
+        }
+        // The flag is up and the key is held. Whether the work left is the only question left.
+        return awaitTheRunsExit(entry);
+    }
+
+    /**
+     * Waits for a run's body to leave, after its flag has been raised, up to {@link #flagStopWaitMs}.
+     * <p>
+     * A body that had not begun was stopped by the cancelled tracking future alone and has already
+     * left. A run started outside a call has no flag, so nothing was raised and it is reported as
+     * still running rather than waited on.
      * </p>
      *
      * @param entry the run, already dropped from the registry
-     * @return {@link StopOutcome#STOPPED} when the body left or never began,
-     *         {@link StopOutcome#STILL_RUNNING} when it is still executing after the wait
+     * @return {@link StopOutcome#STOPPED} when the body had left or left within the wait,
+     *         {@link StopOutcome#STILL_RUNNING} when it was still executing after it
      */
-    private static StopOutcome stopThroughFlag(PendingEntry entry)
+    private static StopOutcome awaitTheRunsExit(PendingEntry entry)
     {
         if (entry.workHasLeft())
         {
@@ -781,7 +893,6 @@ public final class PendingWorkRegistry
         {
             return StopOutcome.STILL_RUNNING;
         }
-        entry.cancellation.cancel(CANCEL_REASON);
         java.util.concurrent.CountDownLatch left = new java.util.concurrent.CountDownLatch(1);
         entry.attachWorkExit(left::countDown);
         try
@@ -794,6 +905,69 @@ public final class PendingWorkRegistry
             Thread.currentThread().interrupt();
             return StopOutcome.STILL_RUNNING;
         }
+    }
+
+    /**
+     * Stops a run in a domain whose work reads the call's flag, and reports it as still running
+     * while the body is.
+     * <p>
+     * The flag is raised and nothing else: the walks that read it through {@code WatchForCancel},
+     * and the reference walk that reads it in its own loop, stop at their next boundary, and no
+     * thread is interrupted where it stands.
+     * </p>
+     *
+     * @param runKey the key a cancel was asked for
+     * @return {@link StopOutcome#STILL_RUNNING} while the body executes, otherwise
+     *         {@link StopOutcome#NOTHING_TO_STOP}
+     */
+    private StopOutcome stopThroughTheFlag(String runKey)
+    {
+        PendingEntry running = stopping.get(runKey);
+        if (running == null || !running.workIsRunning())
+        {
+            return StopOutcome.NOTHING_TO_STOP;
+        }
+        raiseTheFlag(running);
+        return StopOutcome.STILL_RUNNING;
+    }
+
+    /**
+     * Stops a run in a domain whose work crosses a launch boundary this side cannot pull it back
+     * over, and reports which side of that boundary the cancel found it on.
+     * <p>
+     * Before the boundary the raised flag keeps the launch from starting: the body reads
+     * {@link PendingEntry#claimTheLaunch()} just before it and answers cancelled instead. Past it
+     * the work is inside a blocking platform call - a Designer-mode update, an EDT build of an
+     * external object, a Configurator process importing a binary - and nothing here can promise
+     * that it was killed. That is what {@link StopOutcome#STILL_RUNNING} says, and the run's own
+     * exit is what settles it later.
+     * </p>
+     *
+     * @param runKey the key a cancel was asked for
+     * @return {@link StopOutcome#STOPPED} when the flag kept the launch from starting,
+     *         {@link StopOutcome#STILL_RUNNING} when the work had launched or has no flag at all,
+     *         {@link StopOutcome#NOTHING_TO_STOP} when no body is executing
+     */
+    private StopOutcome stopAtTheLaunchBoundary(String runKey)
+    {
+        PendingEntry running = stopping.get(runKey);
+        if (running == null || !running.workIsRunning())
+        {
+            return StopOutcome.NOTHING_TO_STOP;
+        }
+        if (!running.hasLaunched())
+        {
+            if (running.cancellation == null)
+            {
+                // Nothing raised, so nothing will refuse the launch. Said as it is, rather than as
+                // a stopped run the body has not been told about.
+                return StopOutcome.STILL_RUNNING;
+            }
+            raiseTheFlag(running);
+            return StopOutcome.STOPPED;
+        }
+        raiseTheFlag(running);
+        return StopOutcome.STILL_RUNNING;
     }
 
     /**
@@ -843,7 +1017,17 @@ public final class PendingWorkRegistry
     }
 
     /**
-     * @return whether cancelling in this domain stops the work rather than only the waiting
+     * Whether cancelling in this domain stops the work rather than only the waiting.
+     * <p>
+     * Read off the declared stopper, which is a statement about the domain rather than about one
+     * run: {@code GENERIC}, {@code REFERENCES}, {@code UPDATE}, {@code EXPORT} and
+     * {@code IMPORT_BINARY} answer true through the flag they raise, and the domains that own a
+     * client or a process - {@code VANESSA}, {@code NAPARNIK}, {@code EXPORT_INFOBASE} - through
+     * that. It is not a promise that a particular run has stopped: what a cancel came to is
+     * {@link #cancelAndStop(String)}'s answer.
+     * </p>
+     *
+     * @return whether a cancel in this domain reaches the work itself
      */
     public boolean stopsItsWork()
     {
@@ -902,6 +1086,15 @@ public final class PendingWorkRegistry
 
     /**
      * Evicts entries past their TTL.
+     * <p>
+     * A run whose body is still executing is never evicted, however long it has been going. The
+     * abandoned-TTL answers for a run nobody is coming back for - one whose caller left while the
+     * work waited to begin - and a run that is executing is not that: its result is what a repeat
+     * call collects, and dropping the entry loses that result and lets the repeat start a second
+     * copy of work that the first copy is still doing. Work with a duration the server cannot bound
+     * (a FULL infobase update, a large metadata batch) reaches this TTL; evicting it there is the
+     * defect this guard exists for.
+     * </p>
      */
     public void pruneExpired()
     {
@@ -916,7 +1109,7 @@ public final class PendingWorkRegistry
             {
                 it.remove();
             }
-            else if (entry.completedAt == 0
+            else if (entry.completedAt == 0 && !entry.workIsRunning()
                 && now - (entry.beganAt > 0 ? entry.beganAt : entry.startedAt) > abandonedTtlMs)
             {
                 if (entry.future != null && !entry.future.isDone())
@@ -1072,6 +1265,20 @@ public final class PendingWorkRegistry
         private final List<Runnable> onWorkExit = new java.util.ArrayList<>(2);
 
         /**
+         * Whether the work passed the boundary past which this side cannot pull it out.
+         * <p>
+         * Written by {@link #claimTheLaunch()} once the flag has been read and found clear, read by
+         * the domain's stopper. The two happen under this lock, so a cancel that raised the flag
+         * after a claim observes the claim; a cancel that raised it before one is observed by the
+         * claimant, which then refuses. There is no window in which a body enters the launch after
+         * a cancel and the stopper still reports the run as stoppable.
+         * </p>
+         */
+        private final Object launchLife = new Object();
+
+        private boolean launched;
+
+        /**
          * The flag the work watches, held where it outlives the request that started the run.
          * <p>
          * A run that answers Pending continues after its exchange is closed, and the flag belonged
@@ -1176,6 +1383,57 @@ public final class PendingWorkRegistry
             {
                 return workBegan && !workExitSettled;
             }
+        }
+
+        /**
+         * Asks to pass the boundary beyond which this run's work cannot be pulled out of, and
+         * answers whether it may.
+         * <p>
+         * Work that spawns a platform process or enters a blocking platform call asks here first,
+         * because from inside one of those there is nothing on this side that can stop it. A cancel
+         * arriving earlier raised the call's flag, so this answers {@code false} and the body
+         * returns a cancelled answer without starting something nothing can stop - which is what
+         * makes such a cancel come to a stop rather than to a request the work never answered.
+         * </p>
+         * <p>
+         * A run started outside a tool call has no flag, and answers {@code true}: there is nothing
+         * that could have told it to stop.
+         * </p>
+         *
+         * @return {@code true} when the body may enter the launch
+         */
+        public boolean claimTheLaunch()
+        {
+            synchronized (launchLife)
+            {
+                if (cancellation != null && cancellation.isCancelled())
+                {
+                    return false;
+                }
+                launched = true;
+                return true;
+            }
+        }
+
+        /**
+         * Whether the run passed that boundary and the work it guards is still executing.
+         * <p>
+         * Read by a domain's stopper: past the boundary the honest answer is that the work was told
+         * to stop and had not, and the run's own exit is what settles it later.
+         * </p>
+         *
+         * @return {@code true} while the launch is in progress
+         */
+        public boolean hasLaunched()
+        {
+            boolean went;
+            // Read under its own lock, then the work's life outside it: the two locks are never
+            // held together, so nothing here can deadlock against a work exit.
+            synchronized (launchLife)
+            {
+                went = launched;
+            }
+            return went && !workHasLeft();
         }
 
         /**

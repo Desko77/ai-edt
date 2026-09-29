@@ -118,10 +118,15 @@ public class TasksReader
             }
 
             List<TaskInfo> tasks = new ArrayList<>();
+            List<String> unread = new ArrayList<>();
             for (IProject project : projects)
             {
                 if (!project.isOpen())
                 {
+                    // A closed project holds its markers inside the project description, which EDT
+                    // reads when the project is open. Skipping it silently answered an empty list for
+                    // a project that has tasks, and read as "there are none".
+                    unread.add(project.getName());
                     continue;
                 }
                 collect(project, TASK_MARKER_TYPE, tasks, limit, priorityFilter, filePath);
@@ -136,7 +141,7 @@ public class TasksReader
                 }
             }
 
-            return render(tasks, limit);
+            return render(tasks, limit, unread);
         }
         catch (Exception e)
         {
@@ -191,9 +196,10 @@ public class TasksReader
      *
      * @param tasks the tasks
      * @param limit the limit they were gathered under
+     * @param unread the projects that were not read because they are closed; empty for none
      * @return the markdown
      */
-    private static String render(List<TaskInfo> tasks, int limit)
+    private static String render(List<TaskInfo> tasks, int limit, List<String> unread)
     {
         StringBuilder builder = new StringBuilder();
         builder.append("## Workspace Tasks\n\n"); //$NON-NLS-1$
@@ -204,9 +210,28 @@ public class TasksReader
         }
         builder.append("\n\n"); //$NON-NLS-1$
 
+        if (!unread.isEmpty())
+        {
+            // Before the list, not after it: a caller who reads only the first lines has to know
+            // that a project it named is missing from the count rather than empty.
+            if (unread.size() == 1)
+            {
+                builder.append("**Not read:** project \"").append(unread.get(0)) //$NON-NLS-1$
+                    .append("\" is closed; its tasks are not in this answer.\n\n"); //$NON-NLS-1$
+            }
+            else
+            {
+                builder.append("**Not read:** ").append(unread.size()) //$NON-NLS-1$
+                    .append(" projects are closed (").append(String.join(", ", unread)) //$NON-NLS-1$ //$NON-NLS-2$
+                    .append("); their tasks are not in this answer.\n\n"); //$NON-NLS-1$
+            }
+        }
+
         if (tasks.isEmpty())
         {
-            builder.append("*Nothing found.*\n"); //$NON-NLS-1$
+            builder.append(unread.isEmpty()
+                ? "*Nothing found.*\n" //$NON-NLS-1$
+                : "*Nothing found in the projects that were read.*\n"); //$NON-NLS-1$
             return builder.toString();
         }
 
