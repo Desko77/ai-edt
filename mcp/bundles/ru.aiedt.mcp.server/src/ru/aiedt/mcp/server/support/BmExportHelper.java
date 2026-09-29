@@ -332,12 +332,29 @@ public final class BmExportHelper
     }
 
     /**
-     * Polls {@code waitComputation(...)} for the given derived-data segments
-     * up to the given timeout. The exact method signature varies between EDT
-     * versions, so we try a few shapes via reflection. Returns {@code true}
-     * when the EDT confirms the segments are computed; {@code false} otherwise.
+     * Polls {@code waitComputation(...)} for the given derived-data segments up to the given timeout.
+     * The exact method signature varies between EDT versions, so we try a few shapes via reflection.
+     * <p>
+     * Returns {@code true} only when EDT answered the wait with {@code true}. An EDT build that
+     * declares no {@code waitComputation} at all, and a call that threw, both return
+     * {@code false}: nothing was confirmed, and a fixed grace sleep is not a confirmation. The
+     * current EDT builds declare no such method - {@code IBmModelManager} and its implementation
+     * carry only {@code waitModelSynchronization} - so without this the wait always answered
+     * {@code true} from the fallback branch and {@code waitComputationOk} said yes about a wait
+     * that never happened.
+     * </p>
+     * <p>
+     * Package-visible so the test can drive both fallback branches through a manager proxy; the
+     * branches live inside this method and nowhere else.
+     * </p>
+     *
+     * @param manager the BM model manager to wait through.
+     * @param dtProject the project the segments belong to.
+     * @param segments the derived-data segment names; an empty list is not waited for.
+     * @param timeoutMs the wait budget, and the cap of the fallback grace sleep.
+     * @return whether EDT confirmed the segments are computed.
      */
-    private static boolean waitForSegments(IBmModelManager manager, Object dtProject,
+    static boolean waitForSegments(IBmModelManager manager, Object dtProject,
         List<String> segments, long timeoutMs) throws InterruptedException
     {
         if (segments == null || segments.isEmpty())
@@ -374,12 +391,19 @@ public final class BmExportHelper
             catch (Exception e)
             {
                 Activator.logWarning("BmExportHelper.waitComputation failed: " + e.getMessage()); //$NON-NLS-1$
+                return false;
             }
         }
 
-        // Last resort: short polling sleep
-        Thread.sleep(Math.min(500L, timeoutMs));
-        return true;
+        // No waitComputation shape this EDT build answers to. A fixed grace sleep gives the
+        // export a moment to settle, and it is named here and in the caller's answer for what
+        // it is - a delay, not a confirmation.
+        long graceMs = Math.min(500L, timeoutMs);
+        Activator.logWarning("BmExportHelper: this EDT build declares no waitComputation; " //$NON-NLS-1$
+            + "waiting a fixed " + graceMs + "ms grace sleep for segments " + segments //$NON-NLS-1$ //$NON-NLS-2$
+            + " without confirmation"); //$NON-NLS-1$
+        Thread.sleep(graceMs);
+        return false;
     }
 
     private static Object[] buildWaitArgs(Method m, Object dtProject, List<String> segments,

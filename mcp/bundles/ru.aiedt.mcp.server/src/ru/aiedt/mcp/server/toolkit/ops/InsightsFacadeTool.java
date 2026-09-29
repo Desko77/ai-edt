@@ -125,8 +125,8 @@ public class InsightsFacadeTool implements IMcpTool
                 "project_metrics: project / subsystem (default project). dependency_graph: " //$NON-NLS-1$
                     + "project / subsystem / object / module (default project). " //$NON-NLS-1$
                     + "detect_query_anti_patterns: project / module / method (default project). " //$NON-NLS-1$
-                    + "compare_configurations: project / objectType / objectFqn (default " //$NON-NLS-1$
-                    + "project).") //$NON-NLS-1$
+                    + "compare_configurations: project / objectFqn (default project); " //$NON-NLS-1$
+                    + "objectFqn narrows the comparison to one object.") //$NON-NLS-1$
             .stringProperty("subsystemName", //$NON-NLS-1$
                 "Subsystem name when scope=subsystem (project_metrics, dependency_graph).") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
@@ -137,7 +137,8 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("level", //$NON-NLS-1$
                 "dependency_graph: metadata / modules / mixed (default metadata) - what " //$NON-NLS-1$
                     + "the graph nodes are. compare_configurations: object / attribute / module " //$NON-NLS-1$
-                    + "/ template (default object) - granularity of the diff.") //$NON-NLS-1$
+                    + "/ template (default object) - granularity of the diff; attribute needs " //$NON-NLS-1$
+                    + "mode=projects.") //$NON-NLS-1$
             .integerProperty("depth", //$NON-NLS-1$
                 "dependency_graph: BFS depth, 1-5 (default 2).") //$NON-NLS-1$
             .stringProperty("direction", //$NON-NLS-1$

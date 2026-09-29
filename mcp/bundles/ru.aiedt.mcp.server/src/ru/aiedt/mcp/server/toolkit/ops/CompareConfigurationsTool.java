@@ -29,6 +29,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmComparisonHelper;
 import ru.aiedt.mcp.server.support.MetadataDiffEngine;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -40,9 +41,13 @@ import ru.aiedt.mcp.server.support.UiSync;
  * {@code object | attribute | form | module | template}.
  * <p>
  * <b>1.38 modes:</b> {@code projects} (two open EDT projects) or
- * {@code files} (two on-disk exports). VCS-aware modes (commits / branches /
- * bm_vs_disk) are deferred to 1.39: public {@code IBmModel.reload()} is not
- * available.
+ * {@code files} (two on-disk exports - single files or whole export
+ * directories). VCS-aware modes (commits / branches / bm_vs_disk) are
+ * deferred to 1.39: public {@code IBmModel.reload()} is not available.
+ * <p>
+ * Only the model levels (object, attribute of mode=projects) run under
+ * {@code UiSync}; the file levels and the files mode read files and walk
+ * directories on the calling thread.
  */
 public class CompareConfigurationsTool implements IMcpTool
 {
@@ -66,14 +71,19 @@ public class CompareConfigurationsTool implements IMcpTool
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("projectName", "First project name (required for both modes)", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", //$NON-NLS-1$
+                "mode=projects: first project name. mode=files: path to the first export " //$NON-NLS-1$
+                    + "(a file, or the directory of an export)", true) //$NON-NLS-1$
             .stringProperty("mode", "projects | files (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("target", //$NON-NLS-1$
-                "For projects: name of second project. For files: path to second export.", //$NON-NLS-1$
-                true)
-            .stringProperty("level", "object | attribute | module | template (default object)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("scope", "project | objectType | objectFqn (default project)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("objectFqn", "Object FQN when scope=objectFqn") //$NON-NLS-1$ //$NON-NLS-2$
+                "For projects: name of second project. For files: path to the second export " //$NON-NLS-1$
+                    + "(a file, or the directory of an export)", true) //$NON-NLS-1$
+            .stringProperty("level", "object | attribute | module | template (default object; " //$NON-NLS-1$ //$NON-NLS-2$
+                + "attribute requires mode=projects)") //$NON-NLS-1$
+            .stringProperty("scope", "project | objectFqn (default project). objectFqn narrows " //$NON-NLS-1$ //$NON-NLS-2$
+                + "the comparison to one object.") //$NON-NLS-1$
+            .stringProperty("objectFqn", "Object FQN when scope=objectFqn, or with " //$NON-NLS-1$ //$NON-NLS-2$
+                + "level=attribute in mode=projects") //$NON-NLS-1$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("showRenames", "Detect renames via structural similarity (default true)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
@@ -110,6 +120,7 @@ public class CompareConfigurationsTool implements IMcpTool
         {
             return ToolResult.error("mode must be projects | files (1.38)").toJson(); //$NON-NLS-1$
         }
+        boolean projects = "projects".equalsIgnoreCase(mode); //$NON-NLS-1$
 
         String level = orDefault(JsonUtils.extractStringArgument(params, "level"), "object"); //$NON-NLS-1$ //$NON-NLS-2$
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -120,16 +131,37 @@ public class CompareConfigurationsTool implements IMcpTool
         {
             return ToolResult.error("projectName and target are required").toJson(); //$NON-NLS-1$
         }
+        if (!isKnownLevel(level))
+        {
+            return ToolResult.error(
+                "Unsupported level: " + level + " (object|attribute|module|template)").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String scope = present(JsonUtils.extractStringArgument(params, "scope")); //$NON-NLS-1$
+        String objectFqn = present(JsonUtils.extractStringArgument(params, "objectFqn")); //$NON-NLS-1$
+        String narrowingRefusal = scopeRefusal(projects, level, scope, objectFqn);
+        if (narrowingRefusal != null)
+        {
+            return ToolResult.error(narrowingRefusal).toJson();
+        }
+        boolean narrowToFqn = "objectFqn".equalsIgnoreCase(scope); //$NON-NLS-1$
 
         try
         {
-            return UiSync.call(() -> {
-                if ("projects".equalsIgnoreCase(mode)) //$NON-NLS-1$
+            // Only the metadata-model levels read the live model, and only those run under
+            // UiSync. The file levels walk workspace files and the files mode reads plain
+            // directories: holding the UI thread for them is what a long diff answered with
+            // UiBusyException while the session was busy with something else.
+            if (projects)
+            {
+                if ("module".equalsIgnoreCase(level) || "template".equalsIgnoreCase(level)) //$NON-NLS-1$ //$NON-NLS-2$
                 {
-                    return compareProjects(projectName, target, level, format, showRenames, params);
+                    return compareProjectSides(projectName, target, level, format,
+                        narrowToFqn ? objectFqn : null);
                 }
-                return compareFiles(projectName, target, level, format, params);
-            });
+                return UiSync.call(() -> compareProjects(projectName, target, level, format,
+                    showRenames, params, narrowToFqn ? objectFqn : null));
+            }
+            return compareFiles(projectName, target, level, format, narrowToFqn ? objectFqn : null);
         }
         catch (Exception e)
         {
@@ -138,8 +170,94 @@ public class CompareConfigurationsTool implements IMcpTool
         }
     }
 
+    /**
+     * Whether a level word is one this comparison takes.
+     *
+     * @param level the level argument.
+     * @return whether it names a level the tool compares at
+     */
+    private static boolean isKnownLevel(String level)
+    {
+        return "object".equalsIgnoreCase(level) || "attribute".equalsIgnoreCase(level) //$NON-NLS-1$ //$NON-NLS-2$
+            || "module".equalsIgnoreCase(level) || "template".equalsIgnoreCase(level); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The refusal for narrowing arguments that cannot act on this call, or {@code null} when they
+     * can.
+     * <p>
+     * {@code scope} names the sides the comparison covers - the whole of both, or one object when
+     * {@code objectFqn} names it. An argument that cannot act is refused by name rather than
+     * accepted and dropped: the call would answer as though it had been applied, and the caller
+     * has no way to learn otherwise.
+     * </p>
+     *
+     * @param projects whether the mode is projects.
+     * @param level the level argument.
+     * @param scope the scope argument, trimmed; {@code null} when absent.
+     * @param objectFqn the objectFqn argument, trimmed; {@code null} when absent.
+     * @return the refusal, or {@code null} when the arguments act or are absent
+     */
+    private static String scopeRefusal(boolean projects, String level, String scope, String objectFqn)
+    {
+        if (scope != null && !"project".equalsIgnoreCase(scope) //$NON-NLS-1$
+            && !"objectFqn".equalsIgnoreCase(scope)) //$NON-NLS-1$
+        {
+            return TextSuggest.invalidValue("scope", scope, List.of("project", "objectFqn")); //$NON-NLS-1$
+        }
+        if (!projects && "attribute".equalsIgnoreCase(level)) //$NON-NLS-1$
+        {
+            return "level=attribute needs the metadata model; call it with mode=projects."; //$NON-NLS-1$
+        }
+        if (scope == null || !"objectFqn".equalsIgnoreCase(scope)) //$NON-NLS-1$
+        {
+            // Without scope=objectFqn the objectFqn acts only as the subject of an
+            // attribute-level comparison in projects mode; anywhere else it changes nothing.
+            if (objectFqn != null && !(projects && "attribute".equalsIgnoreCase(level))) //$NON-NLS-1$
+            {
+                return "objectFqn is read with scope=objectFqn, or with level=attribute in " //$NON-NLS-1$
+                    + "mode=projects; with neither it changes nothing in this comparison."; //$NON-NLS-1$
+            }
+            return null;
+        }
+        if (objectFqn == null)
+        {
+            return "scope=objectFqn requires objectFqn."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * A trimmed argument value.
+     *
+     * @param value the raw argument.
+     * @return the trimmed value, or {@code null} when empty or absent
+     */
+    private static String present(String value)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * Compares the two open projects at the metadata-model levels, under UiSync in the caller.
+     *
+     * @param projectName the first project.
+     * @param targetProjectName the second project.
+     * @param level object or attribute.
+     * @param format json or markdown.
+     * @param showRenames whether rename detection runs at object level.
+     * @param params the whole call, for the attribute level's objectFqn.
+     * @param narrowFqn the object the comparison is narrowed to by {@code scope=objectFqn}, or
+     *                  {@code null} for the whole of both sides.
+     * @return the comparison answer.
+     */
     private String compareProjects(String projectName, String targetProjectName, String level,
-        String format, boolean showRenames, Map<String, String> params)
+        String format, boolean showRenames, Map<String, String> params, String narrowFqn)
     {
         IProject p1 = ProjectResolver.resolve(projectName);
         IProject p2 = ProjectResolver.resolve(targetProjectName);
@@ -166,60 +284,102 @@ public class CompareConfigurationsTool implements IMcpTool
         {
             MetadataDiffEngine.DiffResult diff = MetadataDiffEngine.diffObjects(c1, c2,
                 showRenames);
-            return formatResult(level, format, diff.toMap());
-        }
-        if ("attribute".equalsIgnoreCase(level)) //$NON-NLS-1$
-        {
-            String objectFqn = JsonUtils.extractStringArgument(params, "objectFqn"); //$NON-NLS-1$
-            if (objectFqn == null || objectFqn.isEmpty())
+            if (narrowFqn != null)
             {
-                return ToolResult.error("level=attribute requires objectFqn").toJson(); //$NON-NLS-1$
+                diff.retainOnly(narrowFqn);
             }
-            String[] parts = MetadataTypeCatalog.normalizeFqn(objectFqn).split("\\.", 2); //$NON-NLS-1$
-            if (parts.length < 2)
-            {
-                return ToolResult.error("objectFqn must be 'Type.Name'").toJson(); //$NON-NLS-1$
-            }
-            MdObject a = MetadataTypeCatalog.findObject(c1, parts[0], parts[1]);
-            MdObject b = MetadataTypeCatalog.findObject(c2, parts[0], parts[1]);
-            if (a == null || b == null)
-            {
-                return ToolResult.error("Object not found in one of the projects: " + objectFqn) //$NON-NLS-1$
-                    .toJson();
-            }
-            MetadataDiffEngine.DiffResult diff = MetadataDiffEngine.diffAttributes(a, b);
             Map<String, Object> diffMap = diff.toMap();
-            diffMap.put("objectFqn", objectFqn); //$NON-NLS-1$
+            if (narrowFqn != null)
+            {
+                diffMap.put("narrowedTo", narrowFqn); //$NON-NLS-1$
+            }
             return formatResult(level, format, diffMap);
+        }
+        // attribute: the objectFqn argument names the one object this level reads, whether it
+        // arrived with scope=objectFqn or on its own.
+        String objectFqn = present(JsonUtils.extractStringArgument(params, "objectFqn")); //$NON-NLS-1$
+        if (objectFqn == null)
+        {
+            return ToolResult.error("level=attribute requires objectFqn").toJson(); //$NON-NLS-1$
+        }
+        String[] parts = MetadataTypeCatalog.normalizeFqn(objectFqn).split("\\.", 2); //$NON-NLS-1$
+        if (parts.length < 2)
+        {
+            return ToolResult.error("objectFqn must be 'Type.Name'").toJson(); //$NON-NLS-1$
+        }
+        MdObject a = MetadataTypeCatalog.findObject(c1, parts[0], parts[1]);
+        MdObject b = MetadataTypeCatalog.findObject(c2, parts[0], parts[1]);
+        if (a == null || b == null)
+        {
+            return ToolResult.error("Object not found in one of the projects: " + objectFqn) //$NON-NLS-1$
+                .toJson();
+        }
+        MetadataDiffEngine.DiffResult diff = MetadataDiffEngine.diffAttributes(a, b);
+        Map<String, Object> diffMap = diff.toMap();
+        diffMap.put("objectFqn", objectFqn); //$NON-NLS-1$
+        return formatResult(level, format, diffMap);
+    }
+
+    /**
+     * Compares the two open projects at the file levels - modules and templates - outside the UI
+     * thread: the walk reads workspace files and asks nothing of the model.
+     *
+     * @param projectName the first project.
+     * @param targetProjectName the second project.
+     * @param level module or template.
+     * @param format json or markdown.
+     * @param narrowFqn the object whose files the walk is narrowed to by
+     *                  {@code scope=objectFqn}, or {@code null} for all files.
+     * @return the comparison answer.
+     */
+    private String compareProjectSides(String projectName, String targetProjectName, String level,
+        String format, String narrowFqn)
+    {
+        IProject p1 = ProjectResolver.resolve(projectName);
+        IProject p2 = ProjectResolver.resolve(targetProjectName);
+        if (p1 == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        if (p2 == null)
+        {
+            return ProjectResolver.notFound(targetProjectName).toJson();
+        }
+        String prefix = objectDirectoryPrefix(narrowFqn);
+        if (narrowFqn != null && prefix == null)
+        {
+            return ToolResult.error("objectFqn '" + narrowFqn //$NON-NLS-1$
+                + "' names no metadata object directory; name it like Catalog.Products").toJson(); //$NON-NLS-1$
         }
         if ("module".equalsIgnoreCase(level)) //$NON-NLS-1$
         {
-            return compareModulesByFiles(p1, p2, format, params);
+            return formatModuleDiff(collectModuleFiles(p1, prefix), collectModuleFiles(p2, prefix),
+                format, narrowFqn);
         }
-        if ("template".equalsIgnoreCase(level)) //$NON-NLS-1$
-        {
-            return compareTemplatesByFiles(p1, p2, format);
-        }
-        return ToolResult.error("Unsupported level: " + level + " (object|attribute|module|template)") //$NON-NLS-1$ //$NON-NLS-2$
-            .toJson();
+        return compareTemplatesByFiles(p1, p2, format, prefix, narrowFqn);
     }
 
-    private String compareModulesByFiles(IProject p1, IProject p2, String format,
-        Map<String, String> params) throws IllegalStateException
+    /**
+     * Compares the template files of two projects.
+     *
+     * @param p1 the first project.
+     * @param p2 the second project.
+     * @param format json or markdown.
+     * @param prefix the directory prefix the walk is narrowed to, or {@code null} for all files.
+     * @param narrowFqn the object the prefix came from, for the answer; {@code null} when not
+     *                  narrowed.
+     * @return the comparison answer.
+     */
+    private String compareTemplatesByFiles(IProject p1, IProject p2, String format, String prefix,
+        String narrowFqn)
     {
-        Map<String, IFile> a = collectModuleFiles(p1);
-        Map<String, IFile> b = collectModuleFiles(p2);
-        return formatModuleDiff(a, b, format);
-    }
-
-    private String compareTemplatesByFiles(IProject p1, IProject p2, String format)
-    {
-        Map<String, IFile> a = collectTemplateFiles(p1);
-        Map<String, IFile> b = collectTemplateFiles(p2);
+        Map<String, IFile> a = collectTemplateFiles(p1, prefix);
+        Map<String, IFile> b = collectTemplateFiles(p2, prefix);
         Map<String, Object> diff = new LinkedHashMap<>();
         List<String> added = new ArrayList<>();
         List<String> removed = new ArrayList<>();
         List<String> modified = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
         java.util.Set<String> all = new java.util.TreeSet<>();
         all.addAll(a.keySet());
         all.addAll(b.keySet());
@@ -237,7 +397,15 @@ public class CompareConfigurationsTool implements IMcpTool
             }
             else if (fa != null && fb != null)
             {
-                if (!filesByteEqual(fa, fb))
+                byte[] contentA = contentsOf(fa);
+                byte[] contentB = contentsOf(fb);
+                if (contentA == null || contentB == null)
+                {
+                    // A template that cannot be read is neither modified nor equal: the
+                    // comparison says nothing about it, and names it as unread.
+                    failed.add(key);
+                }
+                else if (!java.util.Arrays.equals(contentA, contentB))
                 {
                     modified.add(key);
                 }
@@ -246,35 +414,44 @@ public class CompareConfigurationsTool implements IMcpTool
         diff.put("added", added); //$NON-NLS-1$
         diff.put("removed", removed); //$NON-NLS-1$
         diff.put("modified", modified); //$NON-NLS-1$
+        diff.put("failed", failed); //$NON-NLS-1$
         diff.put("addedCount", added.size()); //$NON-NLS-1$
         diff.put("removedCount", removed.size()); //$NON-NLS-1$
         diff.put("modifiedCount", modified.size()); //$NON-NLS-1$
+        diff.put("failedCount", failed.size()); //$NON-NLS-1$
+        if (narrowFqn != null)
+        {
+            diff.put("narrowedTo", narrowFqn); //$NON-NLS-1$
+        }
         return formatResult("template", format, diff); //$NON-NLS-1$
     }
 
-    private boolean filesByteEqual(IFile a, IFile b)
+    /**
+     * The bytes of a workspace file.
+     *
+     * @param file the file.
+     * @return the content, or {@code null} when it could not be read
+     */
+    private static byte[] contentsOf(IFile file)
     {
-        try (java.io.InputStream as = a.getContents();
-             java.io.InputStream bs = b.getContents())
+        try (java.io.InputStream stream = file.getContents())
         {
-            int ax;
-            while ((ax = as.read()) != -1)
-            {
-                int bx = bs.read();
-                if (ax != bx)
-                {
-                    return false;
-                }
-            }
-            return bs.read() == -1;
+            return stream.readAllBytes();
         }
         catch (Exception e)
         {
-            return false;
+            return null;
         }
     }
 
-    private Map<String, IFile> collectModuleFiles(IProject project)
+    /**
+     * Collects the module files of a project.
+     *
+     * @param project the project.
+     * @param prefix the directory prefix the walk is narrowed to, or {@code null} for all files.
+     * @return project-relative path to file
+     */
+    private Map<String, IFile> collectModuleFiles(IProject project, String prefix)
     {
         Map<String, IFile> map = new LinkedHashMap<>();
         try
@@ -283,30 +460,9 @@ public class CompareConfigurationsTool implements IMcpTool
                 if (resource instanceof IFile && resource.getName().endsWith(".bsl")) //$NON-NLS-1$
                 {
                     String key = resource.getProjectRelativePath().toString();
-                    map.put(key, (IFile) resource);
-                }
-                return true;
-            });
-        }
-        catch (Exception ignored)
-        {
-            // best-effort
-        }
-        return map;
-    }
-
-    private Map<String, IFile> collectTemplateFiles(IProject project)
-    {
-        Map<String, IFile> map = new LinkedHashMap<>();
-        try
-        {
-            project.accept(resource -> {
-                if (resource instanceof IFile)
-                {
-                    String name = resource.getName();
-                    if (name.endsWith(".mxl") || name.endsWith(".dcs") || name.endsWith(".epf")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    if (underPrefix(key.replace('\\', '/'), prefix))
                     {
-                        map.put(resource.getProjectRelativePath().toString(), (IFile) resource);
+                        map.put(key, (IFile) resource);
                     }
                 }
                 return true;
@@ -319,7 +475,84 @@ public class CompareConfigurationsTool implements IMcpTool
         return map;
     }
 
-    private String formatModuleDiff(Map<String, IFile> a, Map<String, IFile> b, String format)
+    /**
+     * Collects the template files of a project.
+     *
+     * @param project the project.
+     * @param prefix the directory prefix the walk is narrowed to, or {@code null} for all files.
+     * @return project-relative path to file
+     */
+    private Map<String, IFile> collectTemplateFiles(IProject project, String prefix)
+    {
+        Map<String, IFile> map = new LinkedHashMap<>();
+        try
+        {
+            project.accept(resource -> {
+                if (resource instanceof IFile)
+                {
+                    String name = resource.getName();
+                    if (name.endsWith(".mxl") || name.endsWith(".dcs") || name.endsWith(".epf")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    {
+                        String key = resource.getProjectRelativePath().toString();
+                        if (underPrefix(key.replace('\\', '/'), prefix))
+                        {
+                            map.put(key, (IFile) resource);
+                        }
+                    }
+                }
+                return true;
+            });
+        }
+        catch (Exception ignored)
+        {
+            // best-effort
+        }
+        return map;
+    }
+
+    /**
+     * The export directory of an object, as a prefix both a plain export and an EDT-style
+     * {@code src/} tree are keyed by.
+     *
+     * @param objectFqn the object; {@code null} narrows nothing.
+     * @return the directory relative to the export root, or {@code null} when the name opens with
+     *         no metadata type this EDT knows.
+     */
+    private static String objectDirectoryPrefix(String objectFqn)
+    {
+        return objectFqn == null ? null : BmComparisonHelper.objectDirectoryOf(objectFqn);
+    }
+
+    /**
+     * Whether a file key sits under the directory prefix an object names. A key under
+     * {@code src/} is tried without it, so a plain export and an EDT-style tree narrow alike.
+     *
+     * @param key the file path, with forward separators.
+     * @param prefix the directory prefix, or {@code null} to keep everything.
+     * @return whether the file belongs to the narrowed walk
+     */
+    private static boolean underPrefix(String key, String prefix)
+    {
+        if (prefix == null)
+        {
+            return true;
+        }
+        String candidate = key.startsWith("src/") ? key.substring(4) : key; //$NON-NLS-1$
+        return candidate.startsWith(prefix + "/"); //$NON-NLS-1$
+    }
+
+    /**
+     * Formats the module-file diff of two collected sides.
+     *
+     * @param a the first side's files, keyed by project-relative path.
+     * @param b the second side's files.
+     * @param format json or markdown.
+     * @param narrowFqn the object the walk was narrowed to, for the answer; {@code null} when not
+     *                  narrowed.
+     * @return the comparison answer.
+     */
+    private String formatModuleDiff(Map<String, IFile> a, Map<String, IFile> b, String format,
+        String narrowFqn)
     {
         java.util.Set<String> all = new java.util.TreeSet<>();
         all.addAll(a.keySet());
@@ -327,6 +560,7 @@ public class CompareConfigurationsTool implements IMcpTool
         List<String> added = new ArrayList<>();
         List<String> removed = new ArrayList<>();
         List<Map<String, Object>> modified = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
         for (String key : all)
         {
             IFile fa = a.get(key);
@@ -345,6 +579,10 @@ public class CompareConfigurationsTool implements IMcpTool
                 String contentB = readText(fb);
                 if (contentA == null || contentB == null)
                 {
+                    // A module that cannot be read is neither equal nor different, and leaving
+                    // it out says neither: it is named, so the caller knows a comparison is
+                    // missing rather than clean.
+                    failed.add(key);
                     continue;
                 }
                 if (!contentA.equals(contentB))
@@ -362,9 +600,15 @@ public class CompareConfigurationsTool implements IMcpTool
         diff.put("added", added); //$NON-NLS-1$
         diff.put("removed", removed); //$NON-NLS-1$
         diff.put("modified", modified); //$NON-NLS-1$
+        diff.put("failed", failed); //$NON-NLS-1$
         diff.put("addedCount", added.size()); //$NON-NLS-1$
         diff.put("removedCount", removed.size()); //$NON-NLS-1$
         diff.put("modifiedCount", modified.size()); //$NON-NLS-1$
+        diff.put("failedCount", failed.size()); //$NON-NLS-1$
+        if (narrowFqn != null)
+        {
+            diff.put("narrowedTo", narrowFqn); //$NON-NLS-1$
+        }
         return formatResult("module", format, diff); //$NON-NLS-1$
     }
 
@@ -412,18 +656,61 @@ public class CompareConfigurationsTool implements IMcpTool
         return preview;
     }
 
+    /**
+     * Compares two on-disk exports in the files mode: two files byte by byte, or two export
+     * directories file by file. An export path is a directory as often as a file - a
+     * Designer-XML export arrives as a tree - and reading a directory as a file answered with a
+     * read error for a call the schema accepts.
+     *
+     * @param firstPath the first export, file or directory.
+     * @param secondPath the second export, file or directory.
+     * @param level the file kinds the comparison narrows to.
+     * @param format json or markdown.
+     * @param objectFqn the object the comparison is narrowed to by {@code scope=objectFqn}, or
+     *                  {@code null} for the whole of both sides.
+     * @return the comparison answer.
+     */
     private String compareFiles(String firstPath, String secondPath, String level, String format,
-        Map<String, String> params)
+        String objectFqn)
     {
         Path p1 = Paths.get(firstPath);
         Path p2 = Paths.get(secondPath);
         if (!Files.exists(p1))
         {
-            return ToolResult.error("First file not found: " + p1).toJson(); //$NON-NLS-1$
+            return ToolResult.error("First export not found: " + p1).toJson(); //$NON-NLS-1$
         }
         if (!Files.exists(p2))
         {
-            return ToolResult.error("Second file not found: " + p2).toJson(); //$NON-NLS-1$
+            return ToolResult.error("Second export not found: " + p2).toJson(); //$NON-NLS-1$
+        }
+        boolean firstIsDirectory = Files.isDirectory(p1);
+        boolean secondIsDirectory = Files.isDirectory(p2);
+        if (firstIsDirectory || secondIsDirectory)
+        {
+            if (firstIsDirectory != secondIsDirectory)
+            {
+                return ToolResult.error("mode=files compares two files or two export " //$NON-NLS-1$
+                    + "directories; one of these is a file and the other is a directory") //$NON-NLS-1$
+                        .toJson();
+            }
+            if (objectFqn != null)
+            {
+                String prefix = objectDirectoryPrefix(objectFqn);
+                if (prefix == null)
+                {
+                    return ToolResult.error("objectFqn '" + objectFqn //$NON-NLS-1$
+                        + "' names no metadata object directory; name it like Catalog.Products") //$NON-NLS-1$
+                            .toJson();
+                }
+                return compareExportDirectories(p1, p2, level, format, prefix, objectFqn);
+            }
+            return compareExportDirectories(p1, p2, level, format, null, null);
+        }
+        if (objectFqn != null)
+        {
+            return ToolResult.error("scope=objectFqn narrows a comparison of two export " //$NON-NLS-1$
+                + "directories; two files are already as narrow as this comparison gets") //$NON-NLS-1$
+                    .toJson();
         }
         try
         {
@@ -449,6 +736,141 @@ public class CompareConfigurationsTool implements IMcpTool
         catch (Exception e)
         {
             return ToolResult.error("Failed to compare files: " + e.getMessage()).toJson(); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Compares two export directories file by file, keyed by each file's path relative to its
+     * root.
+     *
+     * @param first the first export directory.
+     * @param second the second export directory.
+     * @param level the file kinds the walk keeps: module keeps {@code .bsl}, template keeps the
+     *              template extensions, object keeps everything.
+     * @param format json or markdown.
+     * @param prefix the directory prefix the walk is narrowed to, or {@code null} for all files.
+     * @param narrowFqn the object the prefix came from, for the answer; {@code null} when not
+     *                  narrowed.
+     * @return the comparison answer.
+     */
+    private String compareExportDirectories(Path first, Path second, String level, String format,
+        String prefix, String narrowFqn)
+    {
+        Map<String, Path> a = walkExport(first, level, prefix);
+        Map<String, Path> b = walkExport(second, level, prefix);
+        List<String> added = new ArrayList<>();
+        List<String> removed = new ArrayList<>();
+        List<String> modified = new ArrayList<>();
+        List<String> failed = new ArrayList<>();
+        java.util.Set<String> all = new java.util.TreeSet<>();
+        all.addAll(a.keySet());
+        all.addAll(b.keySet());
+        for (String key : all)
+        {
+            Path fa = a.get(key);
+            Path fb = b.get(key);
+            if (fa == null && fb != null)
+            {
+                added.add(key);
+            }
+            else if (fa != null && fb == null)
+            {
+                removed.add(key);
+            }
+            else if (fa != null && fb != null)
+            {
+                byte[] contentA = readBytes(fa);
+                byte[] contentB = readBytes(fb);
+                if (contentA == null || contentB == null)
+                {
+                    failed.add(key);
+                }
+                else if (!java.util.Arrays.equals(contentA, contentB))
+                {
+                    modified.add(key);
+                }
+            }
+        }
+        Map<String, Object> diff = new LinkedHashMap<>();
+        diff.put("added", added); //$NON-NLS-1$
+        diff.put("removed", removed); //$NON-NLS-1$
+        diff.put("modified", modified); //$NON-NLS-1$
+        diff.put("failed", failed); //$NON-NLS-1$
+        diff.put("addedCount", added.size()); //$NON-NLS-1$
+        diff.put("removedCount", removed.size()); //$NON-NLS-1$
+        diff.put("modifiedCount", modified.size()); //$NON-NLS-1$
+        diff.put("failedCount", failed.size()); //$NON-NLS-1$
+        if (narrowFqn != null)
+        {
+            diff.put("narrowedTo", narrowFqn); //$NON-NLS-1$
+        }
+        return formatResult(level, format, diff);
+    }
+
+    /**
+     * Walks one export tree and keeps the files the level and the narrowing ask about.
+     *
+     * @param root the export directory.
+     * @param level the file kinds the walk keeps.
+     * @param prefix the directory prefix the walk is narrowed to, or {@code null} for all files.
+     * @return path relative to the root, with forward separators, mapped to the file
+     */
+    private static Map<String, Path> walkExport(Path root, String level, String prefix)
+    {
+        Map<String, Path> files = new LinkedHashMap<>();
+        try (java.util.stream.Stream<Path> walk = Files.walk(root))
+        {
+            walk.filter(Files::isRegularFile).forEach(file -> {
+                String key = root.relativize(file).toString().replace('\\', '/');
+                if (fileKindKept(level, key) && underPrefix(key, prefix))
+                {
+                    files.put(key, file);
+                }
+            });
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("compare_configurations: could not walk " + root //$NON-NLS-1$
+                + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        return files;
+    }
+
+    /**
+     * Whether a file of the walked export belongs to the requested level.
+     *
+     * @param level the level argument.
+     * @param key the file path with forward separators.
+     * @return whether the walk keeps the file
+     */
+    private static boolean fileKindKept(String level, String key)
+    {
+        if ("module".equalsIgnoreCase(level)) //$NON-NLS-1$
+        {
+            return key.endsWith(".bsl"); //$NON-NLS-1$
+        }
+        if ("template".equalsIgnoreCase(level)) //$NON-NLS-1$
+        {
+            return key.endsWith(".mxl") || key.endsWith(".dcs") || key.endsWith(".epf"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        return true;
+    }
+
+    /**
+     * The bytes of a plain file.
+     *
+     * @param file the file.
+     * @return the content, or {@code null} when it could not be read
+     */
+    private static byte[] readBytes(Path file)
+    {
+        try
+        {
+            return Files.readAllBytes(file);
+        }
+        catch (Exception e)
+        {
+            return null;
         }
     }
 

@@ -66,9 +66,10 @@ public final class ExportedFiles
      *
      * @param project the project whose {@code src} holds them.
      * @param objects top-object FQNs.
-     * @return path relative to the project, mapped to a digest of its content; empty when the
-     *         directories cannot be read, which is reported as no comparison rather than as no
-     *         change
+     * @return path relative to the project, mapped to a digest of its content; a directory that is
+     *         not there contributes nothing, and one that is there but could not be read is marked
+     *         by a single entry for the directory itself, so the comparison says nothing about the
+     *         files under it rather than naming them removed
      */
     public static Map<String, String> snapshot(IProject project, List<String> objects)
     {
@@ -124,7 +125,8 @@ public final class ExportedFiles
      * A digest of every file under the given directories, keyed by its path relative to a root.
      *
      * @param root what the keys are relative to.
-     * @param directories the directories to read; one that is not there is skipped.
+     * @param directories the directories to read; one that is not there is skipped, and one that
+     *                    is there but could not be read is marked as unread instead
      * @return path to digest, in the order the files were read
      */
     public static Map<String, String> underDirectories(Path root, List<Path> directories)
@@ -146,6 +148,11 @@ public final class ExportedFiles
 
     /**
      * The difference between two readings.
+     * <p>
+     * A reading that could not see a directory marks it rather than leaving it out, and the files
+     * under such a directory are named neither created nor removed: one side said nothing about
+     * them, which is not the same as saying they are not there.
+     * </p>
      *
      * @param before the earlier reading.
      * @param now the later one.
@@ -156,14 +163,24 @@ public final class ExportedFiles
         List<String> written = new ArrayList<>();
         List<String> created = new ArrayList<>();
         List<String> removed = new ArrayList<>();
+        List<String> unknownBefore = unknownDirectories(before);
+        List<String> unknownNow = unknownDirectories(now);
         for (Map.Entry<String, String> entry : now.entrySet())
         {
+            if (NOT_READ.equals(entry.getValue()))
+            {
+                // The entry is a directory that could not be read. It is not a file that appeared.
+                continue;
+            }
             String was = before.get(entry.getKey());
             if (was == null)
             {
-                created.add(entry.getKey());
+                if (!underAny(entry.getKey(), unknownBefore))
+                {
+                    created.add(entry.getKey());
+                }
             }
-            else if (NOT_READ.equals(was) || NOT_READ.equals(entry.getValue()))
+            else if (NOT_READ.equals(was))
             {
                 // One side could not be read. Saying nothing about this file beats saying it
                 // changed when that is not known.
@@ -176,7 +193,11 @@ public final class ExportedFiles
         }
         for (String path : before.keySet())
         {
-            if (!now.containsKey(path))
+            if (NOT_READ.equals(before.get(path)))
+            {
+                continue;
+            }
+            if (!now.containsKey(path) && !underAny(path, unknownNow))
             {
                 removed.add(path);
             }
@@ -193,13 +214,51 @@ public final class ExportedFiles
      * @param before what {@link #snapshot} returned earlier.
      * @param project the project.
      * @param objects the same objects.
-     * @return the three lists, each sorted; empty lists when the earlier snapshot was empty, since
-     *         a comparison against nothing states nothing
+     * @return the three lists, each sorted; an empty earlier reading names every file the later
+     *         one found as created, since the export put them where nothing was
      */
     public static Changes since(Map<String, String> before, IProject project, List<String> objects)
     {
         Map<String, String> earlier = before == null ? new LinkedHashMap<>() : before;
         return between(earlier, snapshot(project, objects));
+    }
+
+    /**
+     * The directories a reading marked as unread.
+     *
+     * @param reading one side of a comparison.
+     * @return the keys that stand for a directory that could not be read
+     */
+    private static List<String> unknownDirectories(Map<String, String> reading)
+    {
+        List<String> unknown = new ArrayList<>();
+        for (Map.Entry<String, String> entry : reading.entrySet())
+        {
+            if (NOT_READ.equals(entry.getValue()))
+            {
+                unknown.add(entry.getKey());
+            }
+        }
+        return unknown;
+    }
+
+    /**
+     * Whether a path sits under one of the unread directories.
+     *
+     * @param path the path, with forward separators.
+     * @param directories the unread directory keys.
+     * @return whether the directory covers the path
+     */
+    private static boolean underAny(String path, List<String> directories)
+    {
+        for (String directory : directories)
+        {
+            if (path.startsWith(directory + "/")) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void readInto(Map<String, String> digests, Path root, Path directory)
@@ -213,9 +272,32 @@ public final class ExportedFiles
         }
         catch (IOException | RuntimeException e)
         {
-            // One unreadable directory leaves that object out of the comparison rather than
-            // failing the export it is only describing.
+            // A directory that is there and could not be read is not one that is not there: its
+            // files are unknown, not absent, and a reading that said nothing about them would have
+            // the comparison call them removed. The directory itself is marked, and the comparison
+            // keeps quiet about everything under it.
+            digests.put(keyOf(root, directory), NOT_READ);
             Activator.logDebug("resync: could not read " + directory + ": " + e); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The key a directory is known by in a reading.
+     *
+     * @param root what the keys are relative to.
+     * @param directory the directory.
+     * @return the relative key, or the absolute path when the directory does not sit under the
+     *         root and no relative key exists
+     */
+    private static String keyOf(Path root, Path directory)
+    {
+        try
+        {
+            return root.relativize(directory).toString().replace('\\', '/');
+        }
+        catch (IllegalArgumentException notUnderRoot)
+        {
+            return directory.toAbsolutePath().toString().replace('\\', '/');
         }
     }
 
