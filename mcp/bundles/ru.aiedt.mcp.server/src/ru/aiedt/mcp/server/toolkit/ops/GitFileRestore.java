@@ -137,10 +137,13 @@ public class GitFileRestore
                 .toJson();
         }
         byte[] bytes = revision.bytes();
-        java.nio.file.Path disk = disk(repository, repoPath);
-        Files.createDirectories(disk.getParent());
-        Files.write(disk, bytes);
-        refresh(project, file);
+        String written = putBytes(project, repository, repoPath, bytes, true);
+        if (written != null)
+        {
+            return ToolResult.error(written)
+                .put("filePath", repoPath) //$NON-NLS-1$
+                .toJson();
+        }
         String note = "The index was not changed. A file that matches HEAD is clean; one that " //$NON-NLS-1$
             + "differs from HEAD is listed as modified."; //$NON-NLS-1$
         ToolResult answer = ToolResult.success()
@@ -158,6 +161,42 @@ public class GitFileRestore
                 + "itself; call revalidate_objects."; //$NON-NLS-1$
         }
         return answer.put("note", note).toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * Writes bytes to one work-tree file. The bytes are stored as given: nothing is re-encoded and
+     * the index is not touched. An editor that holds the file with unsaved changes is refused, so
+     * the buffer the user is looking at is kept.
+     *
+     * @param project the project the file belongs to
+     * @param repository the repository
+     * @param repoPath the work-tree-relative path
+     * @param bytes the bytes to write
+     * @param refresh {@code true} to make the workspace notice this file before returning
+     * @return {@code null} when the file was written, or why nothing was written
+     * @throws Exception when the file cannot be written or the workspace cannot be refreshed
+     */
+    public static String putBytes(IProject project, Repository repository, String repoPath, byte[] bytes,
+        boolean refresh)
+        throws Exception
+    {
+        IFile file = workspaceFile(project, repository, repoPath);
+        if (EditorBuffer.hasUnsavedChanges(file))
+        {
+            return "An editor holds unsaved changes for " + repoPath //$NON-NLS-1$
+                + ". The editor's buffer is kept. Nothing was written."; //$NON-NLS-1$
+        }
+        java.nio.file.Path disk = disk(repository, repoPath);
+        if (disk.getParent() != null)
+        {
+            Files.createDirectories(disk.getParent());
+        }
+        Files.write(disk, bytes);
+        if (refresh)
+        {
+            refresh(project, file);
+        }
+        return null;
     }
 
     /**

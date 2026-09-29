@@ -118,8 +118,12 @@ public class TheToolListHasAWeightBudgetTest
      * the two revisions, the granularity and the dry-run flag. The git entry grew from 1330 to
      * 3113 bytes and nothing else in the list changed.
      * </p>
+     * <p>
+     * Raised from 178350 to 178983 on 2026-09-29 for the merge restore point: the two git
+     * operations and the sentences on compare_three_way and insights that name it.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 178350;
+    private static final int DOCUMENT_BUDGET = 178983;
 
     private LiveServer server;
 

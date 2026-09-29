@@ -243,11 +243,16 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Grown to 1553 for filePath, fromRef, toRef, granularity and dryRun: a caller names the
         // file, the two revisions, whether the cut is by line or by method, and whether revert
         // only previews (measured 29.09: 1553).
-        PROSE.put("git", Integer.valueOf(1553));
-        PROSE.put("compare_three_way", Integer.valueOf(3558));
+        // Grown to 1696 for pointId: restore_merge_point names the point, and an omitted id is the
+        // latest one (measured 29.09: 1696).
+        PROSE.put("git", Integer.valueOf(1696));
+        // Grown to 3747: the intent sentence says a changing run records a restore point first
+        // (measured 29.09: 3747).
+        PROSE.put("compare_three_way", Integer.valueOf(3747));
         // Raised from 5393 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
-        PROSE.put("insights", Integer.valueOf(5445));
+        // 2026-09-29: the intent sentence names the merge restore point. Measured 5873.
+        PROSE.put("insights", Integer.valueOf(5873));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
@@ -563,6 +568,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 678 for filePath, fromRef, toRef, granularity and dryRun on git. The git prose grew
      * from 875 to 1553 and nothing else in the list changed. Measured 29.09: 98229.
      * </p>
+     * <p>
+     * Raised from 98229 to 98692 on 2026-09-29 for the merge restore point. git grew from 1553 to
+     * 1696 for pointId, compare_three_way from 3558 to 3747 and insights from 5445 to 5873 for the
+     * sentence that a changing comparison records a point first.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 98229;
+    private static final int DOCUMENT_PROSE = 98692;
 }

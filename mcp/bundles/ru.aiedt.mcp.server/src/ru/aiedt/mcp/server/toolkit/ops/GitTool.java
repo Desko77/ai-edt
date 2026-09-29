@@ -25,6 +25,7 @@ import org.eclipse.jgit.revwalk.RevCommit;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.GitFileDiff;
 import ru.aiedt.mcp.server.support.GitRepositoryAccess;
+import ru.aiedt.mcp.server.support.MergeRestorePoint;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -34,7 +35,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
  * {@code git} - the repository the project lives in, worked inside the IDE: status, branches,
- * log, commit, checkout, a file diff and putting one file back.
+ * log, commit, checkout, a file diff, putting one file back, and a merge restore point.
  *
  * <p>Development happens in EDT, and the questions git answers - what changed, what branch is
  * this, what is behind - belong to the same window. JGit ships with both supported EDT releases,
@@ -47,6 +48,11 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 public class GitTool
     implements IMcpTool
 {
+    /** Every operation this tool accepts, in the order a refusal lists them. */
+    private static final String KNOWN =
+        "status | branches | log | commit | checkout | show_file_changes | revert_file | " //$NON-NLS-1$
+            + "create_merge_restore_point | restore_merge_point"; //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -63,10 +69,14 @@ public class GitTool
             + "revert_file writes one file's bytes back from a commit; dryRun previews and writes " //$NON-NLS-1$
             + "nothing. The index is not touched: afterwards the file matches HEAD, or it is listed " //$NON-NLS-1$
             + "as modified. An external edit of .form, .mdo or .dcs needs revalidate_objects. " //$NON-NLS-1$
+            + "create_merge_restore_point records the project files before a merge and does not move " //$NON-NLS-1$
+            + "HEAD: a commit and its hash when the project is in git, otherwise a copy of the project " //$NON-NLS-1$
+            + "directory. restore_merge_point puts those files back and does not roll back the infobase. " //$NON-NLS-1$
             + "Operations: status (work tree and index vs HEAD, ahead/behind the tracking branch), " //$NON-NLS-1$
             + "branches (local branches, current first), log (recent commits), " //$NON-NLS-1$
             + "commit (stage named paths and commit them - paths by name only, there is no add-all), " //$NON-NLS-1$
-            + "checkout (switch branch, or create it), show_file_changes, revert_file."; //$NON-NLS-1$
+            + "checkout (switch branch, or create it), show_file_changes, revert_file, " //$NON-NLS-1$
+            + "create_merge_restore_point, restore_merge_point."; //$NON-NLS-1$
     }
 
     @Override
@@ -86,7 +96,7 @@ public class GitTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "status | branches | log | commit | checkout | show_file_changes | revert_file (required)") //$NON-NLS-1$
+                KNOWN + " (required)") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Name of the EDT project; its repository is the one the operation reads.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
@@ -125,23 +135,30 @@ public class GitTool
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "revert_file: true previews the diff against fromRef and writes nothing " //$NON-NLS-1$
                     + "(default false).") //$NON-NLS-1$
+            .stringProperty("pointId", //$NON-NLS-1$
+                "restore_merge_point: the point to put back. Omit it to use the latest point for " //$NON-NLS-1$
+                    + "the project.") //$NON-NLS-1$
             .build();
     }
 
+    /**
+     * Runs one git operation for the project.
+     *
+     * @param params the call arguments; {@code operation} and {@code projectName} are required
+     * @return the answer JSON
+     */
     @Override
     public String execute(Map<String, String> params)
     {
         String operation = JsonUtils.extractStringArgument(params, "operation"); //$NON-NLS-1$
         if (operation == null || operation.trim().isEmpty())
         {
-            return ToolResult.error("operation is required: status | branches | log | commit | checkout | show_file_changes | revert_file").toJson(); //$NON-NLS-1$
+            return ToolResult.error("operation is required: " + KNOWN).toJson(); //$NON-NLS-1$
         }
         String op = operation.trim().toLowerCase(java.util.Locale.ROOT);
-        if (!op.equals("status") && !op.equals("branches") && !op.equals("log") && !op.equals("commit") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            && !op.equals("checkout") && !op.equals("show_file_changes") && !op.equals("revert_file")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (!known(op))
         {
-            return ToolResult.error("Unknown operation: " + operation //$NON-NLS-1$
-                + ". Known: status, branches, log, commit, checkout, show_file_changes, revert_file.").toJson(); //$NON-NLS-1$
+            return ToolResult.error("Unknown operation: " + operation + ". Known: " + KNOWN + ".").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
         if (op.equals("commit")) //$NON-NLS-1$
         {
@@ -162,10 +179,10 @@ public class GitTool
                 return ToolResult.error(gate).toJson();
             }
         }
-        if (op.equals("revert_file")) //$NON-NLS-1$
+        if (op.equals("revert_file") || op.equals("restore_merge_point")) //$NON-NLS-1$ //$NON-NLS-2$
         {
-            // Putting a file back writes it. The door is a registered tool, so a read-only preset
-            // refuses the call before the file is read. A preview is the same operation.
+            // Putting files back writes them. The door is a registered tool, so a read-only preset
+            // refuses the call before a file is read. A preview of revert_file is the same door.
             String gate = ToolGate.gateOrNull(GitFileRestore.DOOR);
             if (gate != null)
             {
@@ -182,17 +199,48 @@ public class GitTool
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
-        GitRepositoryAccess.Resolved resolved = GitRepositoryAccess.of(project);
-        if (resolved.error != null)
+        // The call is handed on under another name so the parameter read for one operation is not
+        // attributed to every operation this method handles.
+        Map<String, String> arguments = params;
+        return route(op, operation, projectName, project, arguments);
+    }
+
+    /**
+     * Routes one operation after the project is resolved. A merge restore point does not need a
+     * repository. The other operations open one and answer from it.
+     *
+     * @param op the operation, already trimmed and lower-cased
+     * @param operation the operation as the caller spelled it, used in the refusal text
+     * @param projectName the project name, used in the refusal text
+     * @param project the resolved project
+     * @param params the call arguments
+     * @return the answer JSON
+     */
+    private String route(String op, String operation, String projectName, IProject project,
+        Map<String, String> params)
+    {
+        boolean mergePoint = "create_merge_restore_point".equals(op) //$NON-NLS-1$
+            || "restore_merge_point".equals(op); //$NON-NLS-1$
+        GitRepositoryAccess.Resolved resolved = null;
+        if (!mergePoint)
         {
-            return ToolResult.error(resolved.error)
-                .put("projectName", projectName)
-                .toJson();
+            resolved = GitRepositoryAccess.of(project);
+            if (resolved.error != null)
+            {
+                return ToolResult.error(resolved.error)
+                    .put("projectName", projectName) //$NON-NLS-1$
+                    .toJson();
+            }
         }
         try (GitRepositoryAccess.Resolved session = resolved)
         {
             switch (op)
             {
+            case "create_merge_restore_point": //$NON-NLS-1$
+                return MergeRestorePoint.createJson(project);
+            case "restore_merge_point": //$NON-NLS-1$
+                return MergeRestorePoint.restoreJson(project,
+                    JsonUtils.extractStringArgument(params, "pointId")); //$NON-NLS-1$
             case "status": //$NON-NLS-1$
                 return doStatus(project, session.git);
             case "branches": //$NON-NLS-1$
@@ -216,6 +264,24 @@ public class GitTool
             Activator.logError("git operation " + op + " failed", e); //$NON-NLS-1$ //$NON-NLS-2$
             return ToolResult.error("The git operation failed: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Whether {@code op} is one of {@link #KNOWN}.
+     *
+     * @param op the operation, already trimmed and lower-cased
+     * @return {@code true} when this tool runs it
+     */
+    private static boolean known(String op)
+    {
+        for (String name : KNOWN.split(" \\| ")) //$NON-NLS-1$
+        {
+            if (name.equals(op))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

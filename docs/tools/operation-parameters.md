@@ -316,7 +316,9 @@
 | `GitTool` | `branches` | `projectName:string` | passed in as locals |
 | `GitTool` | `checkout` | `projectName:string` | passed in as locals |
 | `GitTool` | `commit` | `authorName:string`, `projectName:string` | passed in as locals |
+| `GitTool` | `create_merge_restore_point` | `projectName:string` | passed in as locals |
 | `GitTool` | `log` | `projectName:string` | passed in as locals |
+| `GitTool` | `restore_merge_point` | `pointId:string`, `projectName:string` | read in place |
 | `GitTool` | `revert_file` | `operation:string`, `projectName:string` | passed in as locals |
 | `GitTool` | `show_file_changes` | `projectName:string` | passed in as locals |
 | `GitTool` | `status` | `projectName:string` | passed in as locals |
