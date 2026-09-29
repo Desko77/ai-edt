@@ -54,6 +54,8 @@ import ru.aiedt.mcp.server.support.JUnitXmlReader;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
+import ru.aiedt.mcp.server.support.RunReceipts;
+import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
  * Runs YAXUnit tests for a 1C:Enterprise project. Updates the infobase unless the call turns that
@@ -96,6 +98,33 @@ public final class YaxunitTestRunner
     private static final Map<String, ILaunch> ACTIVE_LAUNCHES = new ConcurrentHashMap<>();
 
     private static final AtomicBoolean LISTENER_REGISTERED = new AtomicBoolean(false);
+
+    /** The tool a run receipt is filed under: the facade every run-mode call comes through. */
+    private static final String RECEIPT_TOOL = YaxunitTestsTool.NAME;
+
+    /**
+     * What a finished run is receipted under: the project the launch resolved to and the filters
+     * that chose what ran. Carried rather than kept in a field - the instance registered as the
+     * back-compat alias serves concurrent calls.
+     */
+    private static final class RunContext
+    {
+        final String projectName;
+
+        final String extensions;
+
+        final String modules;
+
+        final String tests;
+
+        RunContext(String projectName, String extensions, String modules, String tests)
+        {
+            this.projectName = projectName;
+            this.extensions = extensions;
+            this.modules = modules;
+            this.tests = tests;
+        }
+    }
 
     @Override
     public String getName()
@@ -399,6 +428,7 @@ public final class YaxunitTestRunner
             String runKey = matchingConfig.getName() + ":" //$NON-NLS-1$
                 + sha1(safe(extensions) + "|" + safe(modules) + "|" + safe(tests)); //$NON-NLS-1$ //$NON-NLS-2$
             Path reportDir = stableReportDir(runKey);
+            RunContext runContext = new RunContext(projectName, extensions, modules, tests);
 
             ILaunch existing = ACTIVE_LAUNCHES.get(runKey);
             if (existing != null)
@@ -409,12 +439,12 @@ public final class YaxunitTestRunner
                     File junitXml = findJunitXml(reportDir);
                     if (junitXml != null)
                     {
-                        return deliver(runKey, junitXml, null);
+                        return deliver(runKey, junitXml, null, runContext, true);
                     }
                     return "**Error:** The previous launch finished, but no JUnit XML report was found in " + reportDir //$NON-NLS-1$
                         + ". Confirm the YAXUnit extension is installed."; //$NON-NLS-1$
                 }
-                String pollResult = pollLaunch(existing, reportDir, timeout, runKey);
+                String pollResult = pollLaunch(existing, reportDir, timeout, runKey, runContext);
                 if (pollResult != null)
                 {
                     return pollResult;
@@ -437,7 +467,8 @@ public final class YaxunitTestRunner
                 Activator.logInfo("Serving the report of the finished YAXUnit run for " + runKey //$NON-NLS-1$
                     + (reuseRecent ? " (reuseRecent=true)" : " (uncollected)") //$NON-NLS-1$ //$NON-NLS-2$
                     + " from " + cached); //$NON-NLS-1$
-                return deliver(runKey, cached, cacheMark(reuseRecent, cached.lastModified()));
+                return deliver(runKey, cached, cacheMark(reuseRecent, cached.lastModified()), runContext,
+                    uncollected);
             }
 
             // Only a launch needs an infobase that is up to date: a call answered from a report
@@ -487,7 +518,7 @@ public final class YaxunitTestRunner
                 }
             }
 
-            String pollResult = pollLaunch(launch, reportDir, timeout, runKey);
+            String pollResult = pollLaunch(launch, reportDir, timeout, runKey, runContext);
             if (pollResult != null)
             {
                 return pollResult;
@@ -511,7 +542,8 @@ public final class YaxunitTestRunner
         }
     }
 
-    private String pollLaunch(ILaunch launch, Path reportDir, int timeoutSec, String runKey)
+    private String pollLaunch(ILaunch launch, Path reportDir, int timeoutSec, String runKey,
+        RunContext runContext)
         throws InterruptedException
     {
         long deadline = System.currentTimeMillis() + (timeoutSec * 1000L);
@@ -535,7 +567,7 @@ public final class YaxunitTestRunner
                 + " procedure after editing a test module - rebuild (clean_project) and run again;" //$NON-NLS-1$
                 + " (3) the test module has compile errors - verify with get_project_errors."; //$NON-NLS-1$
         }
-        return deliver(runKey, junitXml, null);
+        return deliver(runKey, junitXml, null, runContext, true);
     }
 
     /**
@@ -545,12 +577,16 @@ public final class YaxunitTestRunner
      * @param junitXml the report.
      * @param cacheMark the line saying the report is a previous run's, or <code>null</code> when
      *            this call ran the tests itself
+     * @param runContext the project and the filters the run was chosen by
+     * @param fileReceipt whether this delivery files the run's receipt - <code>false</code> for a
+     *            report already handed over once, whose receipt exists
      * @return the answer
      */
-    private String deliver(String runKey, File junitXml, String cacheMark)
+    private String deliver(String runKey, File junitXml, String cacheMark, RunContext runContext,
+        boolean fileReceipt)
     {
         UNDELIVERED_RUNS.remove(runKey);
-        return readResults(junitXml, cacheMark);
+        return readResults(junitXml, cacheMark, runContext, fileReceipt);
     }
 
     /**
@@ -587,7 +623,25 @@ public final class YaxunitTestRunner
         return result != null && result.contains(CACHED_MARK);
     }
 
-    private String readResults(File junitXml, String cacheMark)
+    /**
+     * Reads the JUnit report of a finished run and answers the outcome, filing the run's receipt
+     * when asked to.
+     * <p>
+     * The answer is the JSON object the facade's envelope passes through untouched: the markdown
+     * report in {@code output}, the run's counters beside it, {@code cached} for the report of an
+     * earlier run, and {@code receiptPath} naming the receipt on disk - or {@code receiptError}
+     * saying why there is none, with the result fields still in place. A report that cannot be
+     * parsed at all is no result, stays markdown and files no receipt.
+     * </p>
+     *
+     * @param junitXml the report the run left behind
+     * @param cacheMark the line saying the report is a previous run's, or <code>null</code>
+     * @param runContext the project and the filters the run was chosen by
+     * @param fileReceipt whether to file the run's receipt
+     * @return the answer
+     */
+    private String readResults(File junitXml, String cacheMark, RunContext runContext,
+        boolean fileReceipt)
     {
         try
         {
@@ -617,15 +671,74 @@ public final class YaxunitTestRunner
             }
             if (reportWritten)
             {
-                return markdown + "\n---\n*Complete report written to:* `" + reportFile + "`\n"; //$NON-NLS-1$ //$NON-NLS-2$
+                markdown += "\n---\n*Complete report written to:* `" + reportFile + "`\n"; //$NON-NLS-1$ //$NON-NLS-2$
             }
-            return markdown;
+            String reportPath = reportWritten ? reportFile.toString() : junitXml.getAbsolutePath();
+            ToolResult answer = ToolResult.success()
+                .put("operation", RECEIPT_TOOL) //$NON-NLS-1$
+                .put("output", markdown) //$NON-NLS-1$
+                .put("total", results.getTotal()) //$NON-NLS-1$
+                .put("passed", results.getPassed()) //$NON-NLS-1$
+                .put("failures", results.getFailures()) //$NON-NLS-1$
+                .put("errors", results.getErrors()) //$NON-NLS-1$
+                .put("skipped", results.getSkipped()) //$NON-NLS-1$
+                .put("reportPath", reportPath); //$NON-NLS-1$
+            if (cacheMark != null)
+            {
+                answer.put("cached", true); //$NON-NLS-1$
+            }
+            if (fileReceipt)
+            {
+                RunReceipts.Outcome receipt = writeReceipt(runContext, results, reportPath);
+                answer.put("receiptPath", receipt.path == null ? null : receipt.path.toString()) //$NON-NLS-1$
+                    .put("receiptError", receipt.error); //$NON-NLS-1$
+            }
+            return answer.toJson();
         }
         catch (Exception e)
         {
             Activator.logError("Failed to parse JUnit XML: " + junitXml, e); //$NON-NLS-1$
             return "**Error:** Could not parse the test results: " + e.getMessage(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Files the receipt of a run that reached a result. The mode is this runner's own: the
+     * debug-mode sibling answers through another tool and files no receipt here.
+     *
+     * @param runContext the project and the filters the run was chosen by
+     * @param results what the JUnit report said
+     * @param reportPath the report the caller is pointed at
+     * @return the outcome of the write - the file, or the reason there is none
+     */
+    private static RunReceipts.Outcome writeReceipt(RunContext runContext, JUnitRunOutcome results,
+        String reportPath)
+    {
+        Map<String, Object> filters = new LinkedHashMap<>();
+        filters.put("mode", "run"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (runContext.extensions != null && !runContext.extensions.isEmpty())
+        {
+            filters.put("extensions", runContext.extensions); //$NON-NLS-1$
+        }
+        if (runContext.modules != null && !runContext.modules.isEmpty())
+        {
+            filters.put("modules", runContext.modules); //$NON-NLS-1$
+        }
+        if (runContext.tests != null && !runContext.tests.isEmpty())
+        {
+            filters.put("tests", runContext.tests); //$NON-NLS-1$
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("tool", RECEIPT_TOOL); //$NON-NLS-1$
+        fields.put("projectName", runContext.projectName); //$NON-NLS-1$
+        fields.put("filters", filters); //$NON-NLS-1$
+        fields.put("total", results.getTotal()); //$NON-NLS-1$
+        fields.put("passed", results.getPassed()); //$NON-NLS-1$
+        fields.put("failures", results.getFailures()); //$NON-NLS-1$
+        fields.put("errors", results.getErrors()); //$NON-NLS-1$
+        fields.put("skipped", results.getSkipped()); //$NON-NLS-1$
+        fields.put("reportPath", reportPath); //$NON-NLS-1$
+        return RunReceipts.write(fields);
     }
 
     private static void ensureLaunchListenerRegistered()
