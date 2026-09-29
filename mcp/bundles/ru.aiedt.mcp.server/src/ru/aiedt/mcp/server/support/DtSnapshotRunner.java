@@ -59,6 +59,16 @@ public final class DtSnapshotRunner
     /** The operation that loads a {@code .dt} back into its infobase. */
     public static final String RESTORE_OPERATION = "restore_database_snapshot"; //$NON-NLS-1$
 
+    /**
+     * What {@link SnapshotIo#markLoaded} answers when the environment keeps no store record. The
+     * load still stands; the answer does not claim the copy was marked.
+     */
+    static final String NO_STORE_RECORD = "no store record"; //$NON-NLS-1$
+
+    /** The step a successful load names, the same one an incremental update is sent to. */
+    static final String REBUILD_COPY_STEP =
+        "sync_control syncOperation=rebuild_dump_info confirm=true"; //$NON-NLS-1$
+
     /** The soft wait's clamp range, the same one update_database and export_object use. */
     private static final int MIN_TIMEOUT_SECONDS = 5;
 
@@ -132,6 +142,21 @@ public final class DtSnapshotRunner
          * @throws Exception when the load failed
          */
         void importFrom(Path source, BooleanSupplier cancelled) throws Exception;
+
+        /**
+         * Records that a finished load replaced the infobase, on the store's dump-info record. A
+         * dump does not call this. The default keeps no store: a stand-in that does not override
+         * it leaves the copy unmarked, and the answer does not claim otherwise.
+         *
+         * @param source the {@code .dt} that was loaded
+         * @param when the moment the load finished, as text
+         * @return {@code null} when the record was written, {@link DtSnapshotRunner#NO_STORE_RECORD}
+         *         when this environment keeps no store, or why the record could not be written
+         */
+        default String markLoaded(Path source, String when)
+        {
+            return NO_STORE_RECORD;
+        }
     }
 
     /**
@@ -583,6 +608,10 @@ public final class DtSnapshotRunner
             }
             out.sizeBytes = sizeOf(path);
             out.done = true;
+            if (restore)
+            {
+                noteTheLoad(out, io, path);
+            }
         }
         catch (Throwable failed)
         {
@@ -881,7 +910,52 @@ public final class DtSnapshotRunner
             ok.put("backup", out.backupPath.toString()) //$NON-NLS-1$
                 .put("backupSizeBytes", out.backupSizeBytes); //$NON-NLS-1$
         }
+        if (RESTORE_OPERATION.equals(operation) && out.copyMarked)
+        {
+            ok.put("copyMarked", Boolean.TRUE) //$NON-NLS-1$
+                .put("infobaseChangeCheck", "the stored copy is marked: this load replaced the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "infobase from " + (out.path == null ? "the file" : out.path.toString()) //$NON-NLS-1$ //$NON-NLS-2$
+                    + " at " + out.loadedAt + ", so an incremental update is refused until the " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "copy is rebuilt from the base") //$NON-NLS-1$
+                .put("nextStep", REBUILD_COPY_STEP); //$NON-NLS-1$
+        }
+        else if (RESTORE_OPERATION.equals(operation) && out.markFailure != null)
+        {
+            ok.put("copyMarked", Boolean.FALSE) //$NON-NLS-1$
+                .put("infobaseChangeCheck", "the load replaced the infobase but the stored copy " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "could not be marked: " + out.markFailure); //$NON-NLS-1$
+        }
         return ok.toJson();
+    }
+
+    /**
+     * Records a finished load on the store's dump-info record, so the next incremental update can
+     * see that the infobase no longer holds what the copy describes.
+     *
+     * @param out the outcome being filled
+     * @param io the environment
+     * @param source the {@code .dt} that was loaded
+     */
+    private static void noteTheLoad(SnapshotOutcome out, SnapshotIo io, Path source)
+    {
+        String when = java.time.Instant.now().toString();
+        out.loadedAt = when;
+        try
+        {
+            String marked = io.markLoaded(source, when);
+            if (marked == null)
+            {
+                out.copyMarked = true;
+            }
+            else if (!NO_STORE_RECORD.equals(marked))
+            {
+                out.markFailure = marked;
+            }
+        }
+        catch (RuntimeException failed)
+        {
+            out.markFailure = failed.toString();
+        }
     }
 
     /**
@@ -1013,6 +1087,15 @@ public final class DtSnapshotRunner
         /** Whether the run finished its work. */
         boolean done;
 
+        /** Whether a finished load marked the store's dump-info record. */
+        boolean copyMarked;
+
+        /** When that load finished, as text, or {@code null} when it was not marked. */
+        String loadedAt;
+
+        /** Why the store record could not be marked, or {@code null}. */
+        String markFailure;
+
         /** Whether the infobase was held by somebody else. */
         boolean infobaseBusy;
 
@@ -1116,6 +1199,30 @@ public final class DtSnapshotRunner
         {
             runTheLauncherCall(() -> ctx.launcher.importDtToInfobase(ctx.component, ctx.infobase,
                 ctx.args, source));
+        }
+
+        @Override
+        public String markLoaded(Path source, String when)
+        {
+            if (ctx.project == null || ctx.infobase == null || ctx.infobase.getUuid() == null)
+            {
+                return "the infobase has no store record to mark"; //$NON-NLS-1$
+            }
+            if (source == null)
+            {
+                return "the load named no file"; //$NON-NLS-1$
+            }
+            Path copy = SyncBaseline.dumpInfoFile(ctx.project, ctx.infobase.getUuid().toString());
+            try
+            {
+                InfobaseOutsideChange.markLoaded(InfobaseOutsideChange.recordFileOf(copy),
+                    source.toAbsolutePath().toString(), when);
+                return null;
+            }
+            catch (java.io.IOException failed)
+            {
+                return failed.toString();
+            }
         }
 
         /**

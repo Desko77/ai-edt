@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper.HandshakeOutcome;
@@ -200,6 +201,60 @@ public final class DumpInfoRebuilder
     }
 
     /**
+     * What one read of the infobase's own dump-info established, without touching the stored copy.
+     * <p>
+     * A rebuild replaces that copy. This reading does not: the file it fingerprinted lived in a
+     * temporary directory and is gone when the read returns. {@link #error} is set when the read
+     * did not produce a fingerprint, and the caller refuses rather than updating against a copy it
+     * could not check.
+     * </p>
+     */
+    public static final class ContentProbe
+    {
+        /** Whether a fingerprint of the infobase's own dump was read. */
+        public boolean ok;
+
+        /** Why the read failed, or {@code null} when {@link #content} was read. */
+        public String error;
+
+        /** The infobase's own dump, or {@code null} when it was not read. */
+        public InfobaseOutsideChange content;
+
+        /** Whether the stored copy's bytes are the ones the read started with. */
+        public boolean storedCopyUntouched = true;
+
+        /** The steps that ran, in order. */
+        public final List<String> sequence = new ArrayList<>();
+
+        /**
+         * A probe a test hands to the comparison, naming content that was already read.
+         *
+         * @param content the infobase's own dump
+         * @return a successful probe
+         */
+        public static ContentProbe read(InfobaseOutsideChange content)
+        {
+            ContentProbe probe = new ContentProbe();
+            probe.ok = content != null && content.known();
+            probe.content = content;
+            return probe;
+        }
+
+        /**
+         * A probe a test hands to the comparison for a read that failed.
+         *
+         * @param error why the infobase's dump was not read
+         * @return a failed probe
+         */
+        public static ContentProbe failed(String error)
+        {
+            ContentProbe probe = new ContentProbe();
+            probe.error = error;
+            return probe;
+        }
+    }
+
+    /**
      * Every step of the rebuild that reaches outside this class. The production set is assembled by
      * the operation from EDT services; a test hands in a stand-in that records what ran.
      */
@@ -324,13 +379,67 @@ public final class DumpInfoRebuilder
             refused.infobaseName = ctx.infobaseName;
             return refused;
         }
-        java.util.UUID infobaseUuid = ctx.infobase.getUuid();
         String platformVersion = ctx.component.getInstallation().getVersionWithBuild();
         // The claim lives on the closure, not only in the thread-local: the cleanup that runs when
         // an abandoned Designer call finally returns does so on another thread.
         final MonopolyLock.Claim[] heldClaim = new MonopolyLock.Claim[1];
+        Outcome outcome = performRebuild(edtIo(ctx, timeoutMs, "rebuild_dump_info", heldClaim), //$NON-NLS-1$
+            STAMP_FORMAT.format(java.time.LocalDateTime.now()), platformVersion);
+        outcome.infobaseName = ctx.infobaseName;
+        return outcome;
+    }
 
-        RebuildIo io = new RebuildIo()
+    /**
+     * Reads the infobase's own {@code ConfigDumpInfo.xml} into a temporary directory and
+     * fingerprints it. The stored copy is not replaced.
+     * <p>
+     * The environment is the one a rebuild uses: the same claim, the same release, the same
+     * dump-info-only Designer run and the same reconnection. The full hierarchical dump is not a
+     * fallback here. A read that did not produce a file is a failed read, and the caller refuses
+     * the update rather than deciding it against a copy it could not check.
+     * </p>
+     *
+     * @param projectName the project whose infobase is read
+     * @param applicationId the application naming the infobase; required when the project has
+     *            several, resolved otherwise
+     * @param timeoutMs how long the Designer run is waited for before it is abandoned
+     * @return the fingerprint, or why it could not be read
+     */
+    public static ContentProbe readInfobaseContentViaEdt(String projectName, String applicationId,
+        long timeoutMs)
+    {
+        ThickClientLaunch.LauncherContext ctx =
+            ThickClientLaunch.resolveLauncher(projectName, applicationId);
+        if (ctx.error != null)
+        {
+            ContentProbe refused = new ContentProbe();
+            refused.error = ctx.error;
+            return refused;
+        }
+        final MonopolyLock.Claim[] heldClaim = new MonopolyLock.Claim[1];
+        return readInfobaseContent(edtIo(ctx, timeoutMs, "verify_infobase_content", heldClaim)); //$NON-NLS-1$
+    }
+
+    /**
+     * The production environment a rebuild and a content read share.
+     * <p>
+     * One Designer launch serves both: {@link RebuildIo#runDumpInfoOnly} is the dump-info-only run,
+     * and the content read calls that and not a second one. The claim's operation name is the
+     * caller's, so a refusal says which of the two is holding the infobase.
+     * </p>
+     *
+     * @param ctx the resolved launcher
+     * @param timeoutMs how long each Designer run is waited for
+     * @param claimOperation the name the claim records
+     * @param heldClaim the claim, shared with the cleanup that runs when an abandoned Designer call
+     *            returns on another thread
+     * @return the environment
+     */
+    private static RebuildIo edtIo(ThickClientLaunch.LauncherContext ctx, long timeoutMs,
+        String claimOperation, MonopolyLock.Claim[] heldClaim)
+    {
+        java.util.UUID infobaseUuid = ctx.infobase.getUuid();
+        return new RebuildIo()
         {
             @Override
             public String infobaseIdentity()
@@ -341,8 +450,7 @@ public final class DumpInfoRebuilder
             @Override
             public String takeLock()
             {
-                MonopolyLock.Claim attempt =
-                    MonopolyLock.claim(infobaseIdentity(), "rebuild_dump_info"); //$NON-NLS-1$
+                MonopolyLock.Claim attempt = MonopolyLock.claim(infobaseIdentity(), claimOperation);
                 if (attempt.granted())
                 {
                     heldClaim[0] = attempt;
@@ -355,7 +463,7 @@ public final class DumpInfoRebuilder
                 String refusal = attempt.refusal();
                 attempt.close();
                 return refusal != null ? refusal
-                    : "The rebuild was refused because the infobase lock was not granted."; //$NON-NLS-1$
+                    : "The infobase lock was not granted."; //$NON-NLS-1$
             }
 
             @Override
@@ -417,8 +525,8 @@ public final class DumpInfoRebuilder
                     DumpInfoProbe.stateFile());
                 // The swap has just replaced the stored copy with this base's own dump, so the
                 // record of what the store holds is written from the file the platform produced.
-                // Without it the next update would read the rebuild itself as a change made by
-                // someone else - which is what that record exists to distinguish.
+                // A load marker on the previous record is replaced with this reading: the file
+                // just written is this base's own dump, and the next update compares against it.
                 Path copy = SyncBaseline.dumpInfoFile(ctx.project, infobaseUuid.toString());
                 InfobaseOutsideChange.copyOf(copy, infobaseIdentity)
                     .writeTo(InfobaseOutsideChange.recordFileOf(copy));
@@ -430,10 +538,6 @@ public final class DumpInfoRebuilder
                 deleteTree(dir);
             }
         };
-        Outcome outcome = performRebuild(io, STAMP_FORMAT.format(java.time.LocalDateTime.now()),
-            platformVersion);
-        outcome.infobaseName = ctx.infobaseName;
-        return outcome;
     }
 
     /**
@@ -667,6 +771,171 @@ public final class DumpInfoRebuilder
         catch (IOException ignored)
         {
             // best effort
+        }
+    }
+
+    /**
+     * Reads the infobase's own dump-info into a temporary directory beside the store and
+     * fingerprints it. The stored copy is left byte for byte as it was found.
+     * <p>
+     * The order is the rebuild's up to the Designer run: identify, claim, release the infobase,
+     * the dump-info-only run, take the infobase back, delete the temporary directory, release the
+     * claim. {@link RebuildIo#runFullDump} is not called. A run that fails, or that leaves no
+     * readable file, is a failed read: {@link ContentProbe#error} says why, and nothing of the
+     * store was written.
+     * </p>
+     *
+     * @param io the environment, the same one a rebuild runs against
+     * @return the fingerprint, or why it could not be read
+     */
+    public static ContentProbe readInfobaseContent(RebuildIo io)
+    {
+        ContentProbe out = new ContentProbe();
+        boolean lockTaken = false;
+        boolean hold = false;
+        Path tempDir = null;
+        Path storedFile = null;
+        byte[] storedBefore = null;
+        HandshakeOutcome handshake = null;
+
+        out.sequence.add("identity"); //$NON-NLS-1$
+        String identity = io.infobaseIdentity();
+        if (identity == null || identity.isEmpty())
+        {
+            out.error = "The infobase cannot be identified, so its dump was not read and nothing " //$NON-NLS-1$
+                + "was released or claimed."; //$NON-NLS-1$
+            return out;
+        }
+
+        out.sequence.add("lock"); //$NON-NLS-1$
+        String lockRefusal = io.takeLock();
+        if (lockRefusal != null)
+        {
+            out.error = lockRefusal;
+            return out;
+        }
+        lockTaken = true;
+
+        try
+        {
+            Path storeDirectory = io.storeDirectory();
+            storedFile = storeDirectory.resolve(DumpInfoProbe.FILE_NAME);
+            if (Files.isRegularFile(storedFile))
+            {
+                storedBefore = Files.readAllBytes(storedFile);
+            }
+            out.sequence.add("tempDir"); //$NON-NLS-1$
+            final Path dumpDir = Files.createTempDirectory(storeDirectory, "content-dump-"); //$NON-NLS-1$
+            tempDir = dumpDir;
+            final Path[] fresh = new Path[1];
+            handshake = BmInfobaseExtensionHelper.runUnderHandshake(
+                () -> {
+                    out.sequence.add("release"); //$NON-NLS-1$
+                    return io.releaseInfobase();
+                },
+                () -> {
+                    out.sequence.add("work"); //$NON-NLS-1$
+                    out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
+                    fresh[0] = producedFile(io.runDumpInfoOnly(dumpDir), dumpDir);
+                },
+                () -> {
+                    out.sequence.add("reconnect"); //$NON-NLS-1$
+                    io.reconnectInfobase();
+                });
+            if (handshake.workError instanceof Abandoned
+                && ((Abandoned)handshake.workError).processStillRunning())
+            {
+                hold = true;
+                out.error = "The Designer run did not finish and was abandoned: " //$NON-NLS-1$
+                    + handshake.workError.getMessage()
+                    + ". The stored copy was not touched; the platform process finishes on its own."; //$NON-NLS-1$
+                return out;
+            }
+            if (handshake.releaseError != null)
+            {
+                out.error = "EDT could not release the infobase, so its dump was not read and the " //$NON-NLS-1$
+                    + "stored copy was not touched: " + oneLine(handshake.releaseError); //$NON-NLS-1$
+                return out;
+            }
+            if (handshake.workError != null)
+            {
+                out.error = "The infobase's ConfigDumpInfo.xml could not be read: " //$NON-NLS-1$
+                    + oneLine(handshake.workError);
+                return out;
+            }
+            if (handshake.reconnectError != null)
+            {
+                out.error = "EDT could not take the infobase back after reading its dump: " //$NON-NLS-1$
+                    + oneLine(handshake.reconnectError) + " " + RECONNECT_FAILED_HINT; //$NON-NLS-1$
+                return out;
+            }
+            if (fresh[0] == null)
+            {
+                out.error = "The Designer run left no readable " + DumpInfoProbe.FILE_NAME + "."; //$NON-NLS-1$ //$NON-NLS-2$
+                return out;
+            }
+            InfobaseOutsideChange content = InfobaseOutsideChange.copyOf(fresh[0], identity);
+            if (!content.known())
+            {
+                out.error = "The infobase's dump carried no records, so it was not compared."; //$NON-NLS-1$
+                return out;
+            }
+            out.content = content;
+            out.ok = true;
+            return out;
+        }
+        catch (Exception failed)
+        {
+            out.error = "The infobase's dump could not be read: " + oneLine(failed); //$NON-NLS-1$
+            return out;
+        }
+        finally
+        {
+            if (storedFile != null)
+            {
+                try
+                {
+                    byte[] after = Files.isRegularFile(storedFile) ? Files.readAllBytes(storedFile) : null;
+                    out.storedCopyUntouched = Arrays.equals(storedBefore, after);
+                }
+                catch (IOException unreadable)
+                {
+                    out.storedCopyUntouched = false;
+                }
+            }
+            if (tempDir != null && !hold)
+            {
+                out.sequence.add("cleanup"); //$NON-NLS-1$
+                io.deleteTempDir(tempDir);
+            }
+            if (lockTaken && !hold)
+            {
+                out.sequence.add("unlock"); //$NON-NLS-1$
+                io.releaseLock();
+            }
+            if (hold && handshake != null && handshake.workError instanceof Abandoned)
+            {
+                Path left = tempDir;
+                final boolean reconnectOwed = handshake.released;
+                ((Abandoned)handshake.workError).whenFinished(() -> {
+                    if (left != null)
+                    {
+                        io.deleteTempDir(left);
+                    }
+                    if (reconnectOwed)
+                    {
+                        try
+                        {
+                            io.reconnectInfobase();
+                        }
+                        catch (Exception ignored)
+                        {
+                            // The answer already said the infobase was left disconnected.
+                        }
+                    }
+                    io.releaseLock();
+                });
+            }
         }
     }
 

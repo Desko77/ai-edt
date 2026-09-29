@@ -273,6 +273,69 @@ public class InfobaseOutsideChangesTest
     }
 
     /**
+     * A load recorded on the copy stops an incremental update, names the file and the step that
+     * rewrites the copy, and does not stop a full update. The copy's content matching the record
+     * is the case a load hides: the file on disk did not move, and the mark is what says the
+     * infobase did.
+     */
+    @Test
+    public void aLoadMarkedOnTheRecordStopsAnIncrementalUpdateAndNotAFullOne()
+    {
+        DumpInfoProbe.Reading dumpInfo = DumpInfoProbe.reading("copy.xml", "2.7", "2.7", "8.3.27", null, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            InfobaseOutsideChange.of(CURRENT_BASE, "content-now", 1800), //$NON-NLS-1$
+            InfobaseOutsideChange.of(CURRENT_BASE, "content-now", 1800) //$NON-NLS-1$
+                .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String stop = DatabaseUpdater.stopOnAnotherInfobase(dumpInfo, false);
+
+        assertNotNull("an incremental update against a replaced infobase is stopped", stop); //$NON-NLS-1$
+        JsonObject refusal = JsonParser.parseString(stop).getAsJsonObject();
+        assertEquals("infobaseChanged", refusal.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("E:/snaps/before.dt", refusal.get("loadedFrom").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(DatabaseUpdater.REBUILD_COPY_STEP, refusal.get("nextStep").getAsString()); //$NON-NLS-1$
+        assertTrue(refusal.get("error").getAsString().contains("E:/snaps/before.dt")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refusal.get("error").getAsString().contains("fullUpdate=true")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull("a full update is not gated by the mark", //$NON-NLS-1$
+            DatabaseUpdater.stopOnAnotherInfobase(dumpInfo, true));
+
+        String line = DatabaseUpdater.describeInfobaseChangeCheck(dumpInfo);
+        assertTrue(line.contains("E:/snaps/before.dt")); //$NON-NLS-1$
+        assertTrue(line.contains("2026-09-29T10:00:00Z")); //$NON-NLS-1$
+        assertTrue(line.contains("fullUpdate=true")); //$NON-NLS-1$
+        assertTrue("a matching copy is not reported as matched while the mark stands", //$NON-NLS-1$
+            !line.startsWith("matched")); //$NON-NLS-1$
+    }
+
+    /**
+     * A fresh record of the copy, the write an update and a rebuild leave, replaces a load mark.
+     * The mark is a fact about the previous copy; the file just written is this base's own.
+     */
+    @Test
+    public void aFreshRecordReplacesALoadMark() throws IOException
+    {
+        Path dir = Files.createTempDirectory("load-mark-"); //$NON-NLS-1$
+        try
+        {
+            Path copy = write(dir.resolve("ConfigDumpInfo.xml"), record("Catalog.Goods", "aaaa")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            Path record = InfobaseOutsideChange.recordFileOf(copy);
+            InfobaseOutsideChange.markLoaded(record, "E:/snaps/before.dt", "2026-09-29T10:00:00Z"); //$NON-NLS-1$ //$NON-NLS-2$
+            InfobaseOutsideChange marked = InfobaseOutsideChange.read(record);
+            assertTrue(marked.replacedByLoad());
+            assertEquals("E:/snaps/before.dt", marked.replacedBy); //$NON-NLS-1$
+
+            InfobaseOutsideChange.copyOf(copy, CURRENT_BASE).writeTo(record);
+            InfobaseOutsideChange fresh = InfobaseOutsideChange.read(record);
+            assertTrue("the copy's content is what the fresh record holds", fresh.known()); //$NON-NLS-1$
+            assertTrue("a fresh record does not carry the load", !fresh.replacedByLoad()); //$NON-NLS-1$
+            assertEquals(CURRENT_BASE, fresh.identity);
+        }
+        finally
+        {
+            deleteTree(dir);
+        }
+    }
+
+    /**
      * The record file is a sidecar of the copy it describes: named beside it, so a store directory
      * carries both or neither, and a copy with no path has no record either.
      */

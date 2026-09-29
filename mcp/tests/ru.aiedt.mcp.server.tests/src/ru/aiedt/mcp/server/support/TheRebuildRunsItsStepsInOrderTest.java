@@ -301,6 +301,78 @@ public class TheRebuildRunsItsStepsInOrderTest
         return DumpInfoRebuilder.performRebuild(io, "stamp", "8.3.27.2214"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * A content read uses the dump-info-only Designer run and leaves the stored copy byte for byte
+     * as it was. The full dump is not a fallback, and the store's record is not rewritten.
+     */
+    @Test
+    public void aContentReadLeavesTheStoredCopyUntouched() throws IOException
+    {
+        Path stored = storedOld();
+        byte[] before = Files.readAllBytes(stored);
+        StandIn io = standIn();
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertTrue(probe.ok);
+        assertNull(probe.error);
+        assertTrue("the stored copy was not replaced", probe.storedCopyUntouched); //$NON-NLS-1$
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(stored)));
+        assertEquals("the fingerprint is the infobase's dump, not the stored copy", //$NON-NLS-1$
+            2, probe.content.records);
+        assertEquals(1, InfobaseOutsideChange.copyOf(stored, "file:///infobase").records); //$NON-NLS-1$
+        assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("rememberPair")); //$NON-NLS-1$
+        assertEquals(Arrays.asList("identity", "lock", "tempDir", "release", "work", "dumpInfoOnly", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            "reconnect", "cleanup", "unlock"), probe.sequence); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the temporary dump directory is deleted", Files.exists(io.tempDirs.get(0))); //$NON-NLS-1$
+        assertFalse("the lock is released", io.lockHeld); //$NON-NLS-1$
+    }
+
+    /**
+     * A Designer run that fails is a failed read: the stored copy stays, the full dump is not
+     * asked for, and the answer carries the failure.
+     */
+    @Test
+    public void aDesignerFailureIsAFailedReadAndTheStoreStays() throws IOException
+    {
+        Path stored = storedOld();
+        byte[] before = Files.readAllBytes(stored);
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new IOException("designer refused"); //$NON-NLS-1$
+        };
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertFalse(probe.ok);
+        assertTrue(probe.error.contains("designer refused")); //$NON-NLS-1$
+        assertTrue(probe.storedCopyUntouched);
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(stored)));
+        assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertFalse(io.lockHeld);
+    }
+
+    /**
+     * A base that is already held is not released and not read.
+     */
+    @Test
+    public void aContentReadRefusedTheLockDoesNotReleaseTheInfobase() throws IOException
+    {
+        Path stored = storedOld();
+        byte[] before = Files.readAllBytes(stored);
+        StandIn io = standIn();
+        io.refuseLock = true;
+
+        DumpInfoRebuilder.ContentProbe probe = DumpInfoRebuilder.readInfobaseContent(io);
+
+        assertFalse(probe.ok);
+        assertTrue(probe.error.contains("pid 4242")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("release")); //$NON-NLS-1$
+        assertFalse(io.asked.contains("dumpInfoOnly")); //$NON-NLS-1$
+        assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(stored)));
+    }
+
     // ---- success ---------------------------------------------------------------------------
 
     /**

@@ -225,7 +225,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
             + "register_infobase / delete_infobase / set_infobase_credentials / update_database / " //$NON-NLS-1$
             + "export_database_snapshot / restore_database_snapshot mutate, and a load replaces " //$NON-NLS-1$
-            + "everything the infobase holds; inspect_database_sync reads and changes nothing. " //$NON-NLS-1$
+            + "everything the infobase holds and marks the stored copy; inspect_database_sync reads and changes nothing. " //$NON-NLS-1$
             + "A real run of update_database / export_database_snapshot / " //$NON-NLS-1$
             + "restore_database_snapshot / sync_control may reply with a Pending status and " //$NON-NLS-1$
             + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
@@ -289,6 +289,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "unreadable file each answer dataLossCheck with the reason instead of a refusal - " //$NON-NLS-1$
             + "nothing is claimed from a partial reading. A refusal is taken before the infobase is " //$NON-NLS-1$
             + "claimed and before any client is stopped, and says so."); //$NON-NLS-1$
+        rules.put("verifyInfobaseContent", "update_database only. Off by default. When on, an " //$NON-NLS-1$
+            + "incremental update reads the infobase's own ConfigDumpInfo before it starts and " //$NON-NLS-1$
+            + "refuses with infobaseChanged when that dump does not match the stored copy. A dry " //$NON-NLS-1$
+            + "run and a full update do not read it and say so."); //$NON-NLS-1$
         rules.put("acceptDataLoss", "update_database only. Accepts the deletion the comparison found, " //$NON-NLS-1$
             + "for this call: the update then runs with the table gone. It is never implied by " //$NON-NLS-1$
             + "anything else, and it accepts only what was named in dataLossTables - a deletion the " //$NON-NLS-1$
@@ -417,6 +421,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .booleanProperty("fullUpdate", //$NON-NLS-1$
                 "update_database: true triggers a full reload; false runs an incremental " //$NON-NLS-1$
                     + "update instead (default false).") //$NON-NLS-1$
+            .booleanProperty("verifyInfobaseContent", //$NON-NLS-1$
+                "update_database: before an incremental update, read the infobase's own ConfigDumpInfo and refuse when it does not match the stored copy (default false).") //$NON-NLS-1$
             .booleanProperty("autoRestructure", //$NON-NLS-1$
                 "update_database: apply infobase restructuring automatically when required " //$NON-NLS-1$
                     + "(default true).")
