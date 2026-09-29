@@ -151,16 +151,34 @@ public class ExportConfigurationSafetyTest
 
     /**
      * A file stamped a moment before the start is still this run's product: the file system
-     * stamps coarser than the clock the start is read from.
+     * stamps coarser than the clock the start is read from. One and a half seconds is inside
+     * the allowance.
      */
     @Test
     public void aFileStampedJustBeforeTheStartIsStillTheProduct() throws Exception
     {
         Path fresh = file("coarse.cf", "this run");
         Instant start = Instant.now();
-        Files.setLastModifiedTime(fresh, java.nio.file.attribute.FileTime.from(start.minusMillis(900)));
+        Files.setLastModifiedTime(fresh, java.nio.file.attribute.FileTime.from(start.minusMillis(1500)));
 
         assertNull(BmInfobaseExtensionHelper.freshExportProblem(fresh, start));
+    }
+
+    /**
+     * The allowance ends at two seconds: a file stamped two and a half seconds before the start
+     * is a leftover, not this run's product.
+     */
+    @Test
+    public void aFileStampedPastTheAllowanceIsNotTheProduct() throws Exception
+    {
+        Path stale = file("past.cf", "previous run");
+        Instant start = Instant.now();
+        Files.setLastModifiedTime(stale, java.nio.file.attribute.FileTime.from(start.minusMillis(2500)));
+
+        String problem = BmInfobaseExtensionHelper.freshExportProblem(stale, start);
+
+        assertNotNull(problem);
+        assertTrue(problem, problem.contains("predates this run"));
     }
 
     @Test
