@@ -68,6 +68,7 @@ import ru.aiedt.mcp.server.support.FormBaseSetup;
 import ru.aiedt.mcp.server.support.FormEventRegistry;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.ModelEditabilityGuard;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -2403,10 +2404,18 @@ public class EditMetadataTool implements IMcpTool
         }
         if (isErrorOutcome(helperResult))
         {
-            return ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
+            ToolResult error = ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
                 .put("operation", op) //$NON-NLS-1$
-                .put("formFqn", formFqn) //$NON-NLS-1$
-                .toJson();
+                .put("formFqn", formFqn); //$NON-NLS-1$
+            // A refusal by the support registry carries its tag as a line of the helper's text;
+            // here is where that text becomes structured again, so the answer holds the same
+            // supportLock field the object path holds.
+            Map<String, Object> supportLock = ModelEditabilityGuard.parseSupportLockLine(helperResult);
+            if (supportLock != null)
+            {
+                error.put(ErrorTags.SUPPORT_LOCK.wire(), supportLock);
+            }
+            return error.toJson();
         }
         return putNotAsked(putAdopted(ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
@@ -2622,8 +2631,10 @@ public class EditMetadataTool implements IMcpTool
     {
         return "Structured error tags surfaced in the JSON response (1.37).\n\n" //$NON-NLS-1$
             + "Top-level fields next to `error`:\n" //$NON-NLS-1$
-            + "- `supportLock` { target, ownerType, userSupportMode, discoveredApi, hint } -\n" //$NON-NLS-1$
-            + "    object is on vendor support; use an extension instead.\n" //$NON-NLS-1$
+            + "- `supportLock` { object, userSupportMode, canEdit, guard, hint } -\n" //$NON-NLS-1$
+            + "    object is on vendor support; use an extension instead. `object` is the address\n" //$NON-NLS-1$
+            + "    the guard judged, `userSupportMode` the mode the registry holds,\n" //$NON-NLS-1$
+            + "    `guard` = model_editability_guard.\n" //$NON-NLS-1$
             + "- `standardAttributeConflict` { name, conflictsWith, ownerType, source } -\n" //$NON-NLS-1$
             + "    candidate name shadows a platform-standard attribute. Pick another name.\n" //$NON-NLS-1$
             + "- `alreadyExists` { name, ownerFqn, kind } - the child is already present.\n" //$NON-NLS-1$

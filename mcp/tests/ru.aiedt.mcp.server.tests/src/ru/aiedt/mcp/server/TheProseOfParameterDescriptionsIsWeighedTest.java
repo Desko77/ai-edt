@@ -516,6 +516,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * Raised from 93877 to 94099 for security_audit orphan cleanup: the facade now exposes its
      * role, apply behavior and full object-type contract.
      * </p>
+     * <p>
+     * Raised from 92685 to 92779 for normalizeInvalidCharacters on write_module_source: the module
+     * writer replaces the characters BSL has no place for unless the call turns that off, and the
+     * switch has to be in the schema to be turned off.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 96170;
+    private static final int DOCUMENT_PROSE = 96264;
 }

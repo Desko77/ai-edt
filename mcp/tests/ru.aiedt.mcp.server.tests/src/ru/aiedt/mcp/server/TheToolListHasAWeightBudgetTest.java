@@ -86,8 +86,12 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 170459 to 170725 for the security_audit orphan mode contract and its boolean
      * apply argument.
      * </p>
+     * <p>
+     * Raised from 168575 to 168736 for normalizeInvalidCharacters on write_module_source: the
+     * module writer replaces the characters BSL has no place for unless the call turns that off.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 174185;
+    private static final int DOCUMENT_BUDGET = 174346;
 
     private LiveServer server;
 

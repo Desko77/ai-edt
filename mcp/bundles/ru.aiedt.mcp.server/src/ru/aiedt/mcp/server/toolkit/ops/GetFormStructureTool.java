@@ -156,7 +156,7 @@ public class GetFormStructureTool implements IMcpTool
         final List<String> emptyPageNames = new ArrayList<>();
         final boolean includeCi = includeCommandInterface;
 
-        String operationError = helper.executeFormOperation(project, fqn, (transaction, form) -> {
+        String operationError = helper.executeFormReadOperation(project, fqn, (transaction, form) -> {
             try
             {
                 Object root = form;
