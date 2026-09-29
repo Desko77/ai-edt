@@ -130,6 +130,33 @@ public class ADataLossIsNamedFromTheBaselineTest
     }
 
     /**
+     * A recalculation of a calculation register and an enum value carry data: the baseline names them
+     * with the kinds {@code Recalculation} and {@code EnumValue}, and a model without them loses them.
+     *
+     * @throws IOException never, the stream is in memory
+     */
+    @Test
+    public void aRecalculationAndAnEnumValueAreData() throws IOException
+    {
+        String register = "1d6b8425-0000-4000-8000-0000000000c1"; //$NON-NLS-1$
+        String recalculation = "1d6b8425-0000-4000-8000-0000000000c2"; //$NON-NLS-1$
+        String enumeration = "1d6b8425-0000-4000-8000-0000000000c3"; //$NON-NLS-1$
+        String value = "1d6b8425-0000-4000-8000-0000000000c4"; //$NON-NLS-1$
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ConfigDumpInfo version=\"2.21\">\n" //$NON-NLS-1$
+            + record("CalculationRegister.Начисления", register) //$NON-NLS-1$
+            + record("CalculationRegister.Начисления.Recalculation.Перерасчет", recalculation) //$NON-NLS-1$
+            + record("Enum.Статусы", enumeration) //$NON-NLS-1$
+            + record("Enum.Статусы.EnumValue.Закрыт", value) //$NON-NLS-1$
+            + "</ConfigDumpInfo>\n"; //$NON-NLS-1$
+
+        DataLossPlan.Plan plan = planOver(xml, Set.of(register, enumeration));
+
+        assertTrue(plan.compared);
+        assertEquals(List.of("CalculationRegister.Начисления.Recalculation.Перерасчет", //$NON-NLS-1$
+            "Enum.Статусы.EnumValue.Закрыт"), plan.dataLoss); //$NON-NLS-1$
+    }
+
+    /**
      * A renamed entity is not a loss. The baseline carries the old name, the model the new one, and
      * the {@code uuid} is the same on both sides - which is the whole reason the comparison is by
      * {@code id}. Comparing names would report every rename as a table about to be dropped.
@@ -302,7 +329,9 @@ public class ADataLossIsNamedFromTheBaselineTest
         assertTrue("a constant carries its own value", DataLossPlan.carriesData("Constant.Курс")); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse("a form is metadata", DataLossPlan.carriesData("Catalog.Валюты.Form.Ф")); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse("a template is metadata", DataLossPlan.carriesData("Report.Р.Template.М")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse("an object that stores no rows", DataLossPlan.carriesData("Enum.Пол")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("an enum stores its values, and the data refers to them", //$NON-NLS-1$
+            DataLossPlan.carriesData("Enum.Пол")); //$NON-NLS-1$
+        assertFalse("an object that stores no rows", DataLossPlan.carriesData("DocumentJournal.Взаимодействия")); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse("a filter criterion is not a table", //$NON-NLS-1$
             DataLossPlan.carriesData("FilterCriterion.Отбор")); //$NON-NLS-1$
         assertFalse("a name with no kind is nothing", DataLossPlan.carriesData("Валюты")); //$NON-NLS-1$ //$NON-NLS-2$

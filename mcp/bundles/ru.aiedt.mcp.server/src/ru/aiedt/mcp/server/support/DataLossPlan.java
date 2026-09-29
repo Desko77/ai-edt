@@ -64,10 +64,10 @@ import ru.aiedt.mcp.server.Activator;
  * reach out of the workspace.</p>
  *
  * <p><b>Nothing here refuses on an incomplete answer.</b> A model that could not be walked whole, a
- * model that reported no identities at all, a baseline that does not parse, an entity with no
- * {@code id} to compare - each of those means the comparison was not made, and each is reported as
- * such rather than turned into a deletion. A refusal is built only from a comparison that was
- * whole on both sides.</p>
+ * model that reported no identities at all, a baseline that does not parse - each of those means the
+ * comparison was not made, and each is reported as such rather than turned into a deletion. A
+ * baseline record with no {@code id} is skipped and is not a finding. A refusal is built only from a
+ * comparison that was whole on both sides.</p>
  */
 public final class DataLossPlan
 {
@@ -83,16 +83,17 @@ public final class DataLossPlan
     private static final Set<String> DATA_OBJECT_KINDS = Set.of("Catalog", "Document", //$NON-NLS-1$ //$NON-NLS-2$
         "InformationRegister", "AccumulationRegister", "AccountingRegister", "CalculationRegister", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         "ChartOfCharacteristicTypes", "ChartOfAccounts", "ChartOfCalculationTypes", "ExchangePlan", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        "BusinessProcess", "Task", "Constant", "CommonAttribute", "Sequence"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "BusinessProcess", "Task", "Constant", "CommonAttribute", "Sequence", "Enum"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
 
     /**
      * Kinds of an entity under a data-carrying object. A form, a template, a command and a module
      * are metadata the base does not hold rows for, so losing one is not a data loss and is not
-     * named here.
+     * named here. A recalculation of a calculation register is a table of its own, and an enum
+     * value is a row the data refers to.
      */
     private static final Set<String> DATA_PART_KINDS = Set.of("Attribute", "TabularSection", //$NON-NLS-1$ //$NON-NLS-2$
         "Dimension", "Resource", "AccountingFlag", "ExtDimensionAccountingFlag", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        "AddressingAttribute"); //$NON-NLS-1$
+        "AddressingAttribute", "Recalculation", "EnumValue"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
     /**
      * How many segments a name needs before a name is an entity of a kind at all:

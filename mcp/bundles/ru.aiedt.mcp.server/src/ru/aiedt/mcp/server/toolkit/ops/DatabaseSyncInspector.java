@@ -237,7 +237,7 @@ public final class DatabaseSyncInspector
         if (!pendingDataLoss.isEmpty())
         {
             protection.put("nextStep", "an update_database call on this project would be refused " //$NON-NLS-1$ //$NON-NLS-2$
-                + "with these addresses; resend it with acceptDataLoss=true to carry the deletion "
+                + "with these addresses; resend it with acceptDataLoss=true to carry the deletion " //$NON-NLS-1$
                 + "through, or restore the missing entities in the configuration"); //$NON-NLS-1$
         }
         answer.put("dataLossProtection", protection); //$NON-NLS-1$
