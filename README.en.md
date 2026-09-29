@@ -603,7 +603,7 @@ The client follows the configuration's run mode. A configuration whose default r
 
 ## 🤝 Contributing
 
-Contributions are welcome in the form of reproducible bug reports, focused feature proposals, documentation improvements and pull requests. Bugs and proposals go to [Issues](https://github.com/Desko77/ai-edt/issues); questions and live discussion go to the [Telegram group](https://t.me/AI_EDT_1c) - the group speaks Russian.
+Contributions are welcome in the form of reproducible bug reports, focused feature proposals, documentation improvements and pull requests. Bugs and proposals go to [Issues](https://github.com/Desko77/ai-edt/issues/new/choose) through the Defect and Wish forms; questions and live discussion go to the [Plugin topic](https://t.me/AI_EDT_1c/23) of the Telegram group - the group speaks Russian. An agent prepares such an issue itself by the rule of the `skills/ai-edt` skill or with the `report-issue` skill of the rule collections: a draft without private data, sent only with your consent.
 
 Start with:
 

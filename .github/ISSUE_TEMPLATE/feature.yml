@@ -1,0 +1,21 @@
+name: "Пожелание / Wish"
+description: "Новый инструмент, операция или аргумент / A new tool, operation or argument"
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: task
+    attributes:
+      label: "Задача / Task"
+      description: "Что нужно сделать в проекте 1С / What has to be done in the 1C project"
+    validations:
+      required: true
+  - type: textarea
+    id: missing
+    attributes:
+      label: "Чего не хватает / What is missing"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "Как могло бы работать / How it could work"
