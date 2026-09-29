@@ -169,7 +169,7 @@ final class FormAppearanceOps
             return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
         }
         List<List<Map<String, Object>>> read = new ArrayList<>();
-        String outcome = helper.executeFormOperation(project, formFqn, (tx, form) -> {
+        String outcome = helper.executeFormReadOperation(project, formFqn, (tx, form) -> {
             read.add(describe(tx, form));
             return null;
         });
