@@ -96,6 +96,28 @@ public class ClientDialogReaderTest
     }
 
     /**
+     * A window's texts are another program's content: a long one is cut and marked, and past the
+     * limit the rest are counted in one last entry rather than listed.
+     */
+    @Test
+    public void aWindowsTextsAreBoundedInLengthAndNumber()
+    {
+        StringBuilder texts = new StringBuilder('"' + "x".repeat(2000) + '"'); //$NON-NLS-1$
+        for (int i = 1; i < ClientDialogReader.MAX_STRINGS + 3; i++)
+        {
+            texts.append(",\"line ").append(i).append('"'); //$NON-NLS-1$
+        }
+        ClientDialogReader.Outcome read = ClientDialogReader.parse("{\"windows\":[{\"pid\":1,\"title\":\"held\"," //$NON-NLS-1$
+            + "\"texts\":[" + texts + "],\"buttons\":[],\"modal\":true}]}"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> read0 = read.windows().get(0).texts();
+        assertEquals(ClientDialogReader.MAX_STRINGS + 1, read0.size());
+        assertEquals("x".repeat(ClientDialogReader.MAX_STRING_CHARS) + "...", read0.get(0)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("line 1", read0.get(1)); //$NON-NLS-1$
+        assertEquals("(3 more not shown)", read0.get(ClientDialogReader.MAX_STRINGS)); //$NON-NLS-1$
+    }
+
+    /**
      * An empty document and a document that is not JSON are an empty list plus a reason. A document
      * that lists no windows is a successful read of nothing.
      */

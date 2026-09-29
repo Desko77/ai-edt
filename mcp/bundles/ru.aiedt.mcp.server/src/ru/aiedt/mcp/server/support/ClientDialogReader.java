@@ -68,6 +68,18 @@ public final class ClientDialogReader
     /** Answer member carrying why the windows could not be read. */
     public static final String ERROR = "blockingWindowsError"; //$NON-NLS-1$
 
+    /**
+     * Longest string of a window that reaches the answer. A text is whatever another program put in
+     * its window, so its length is not ours to promise; a longer one is cut and marked.
+     */
+    static final int MAX_STRING_CHARS = 500;
+
+    /**
+     * Most strings of one kind a window contributes to the answer. The rest are counted in a last
+     * entry instead of being listed.
+     */
+    static final int MAX_STRINGS = 20;
+
     /** Name prefix of the temporary snapshot directory a read falls back to. */
     private static final String TEMPORARY_DIR_PREFIX = "blocking-windows-"; //$NON-NLS-1$
 
@@ -752,7 +764,12 @@ public final class ClientDialogReader
     }
 
     /**
-     * The strings in a JSON array.
+     * The strings in a JSON array, bounded.
+     * <p>
+     * A string longer than {@link #MAX_STRING_CHARS} is cut there and ends with {@code "..."}. Past
+     * {@link #MAX_STRINGS} strings the rest are not listed; one last entry says how many were left
+     * out. The strings themselves are not otherwise changed.
+     * </p>
      *
      * @param element the array, or anything else
      * @param trim whether each string loses its surrounding space, and an empty result is dropped
@@ -765,6 +782,7 @@ public final class ClientDialogReader
             return List.of();
         }
         List<String> values = new ArrayList<>();
+        int leftOut = 0;
         for (JsonElement item : element.getAsJsonArray())
         {
             String text = textOf(item);
@@ -780,7 +798,20 @@ public final class ClientDialogReader
                     continue;
                 }
             }
+            if (values.size() == MAX_STRINGS)
+            {
+                leftOut++;
+                continue;
+            }
+            if (text.length() > MAX_STRING_CHARS)
+            {
+                text = text.substring(0, MAX_STRING_CHARS) + "..."; //$NON-NLS-1$
+            }
             values.add(text);
+        }
+        if (leftOut > 0)
+        {
+            values.add("(" + leftOut + " more not shown)"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return values;
     }
