@@ -129,7 +129,7 @@ public class RunReceiptTest
 
         JsonObject receipt = readReceipt(written.path);
         assertEquals("yaxunit_tests", receipt.get("tool").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("SSL_Demo", receipt.get("projectName").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("DemoProject", receipt.get("projectName").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("the receipt says when the run happened", receipt.has("at")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(17, receipt.get("total").getAsInt()); //$NON-NLS-1$
         assertEquals(15, receipt.get("passed").getAsInt()); //$NON-NLS-1$
@@ -293,7 +293,7 @@ public class RunReceiptTest
         assertNotNull(written.path);
         assertTrue(Files.exists(written.path));
         String text = new String(Files.readAllBytes(written.path), StandardCharsets.UTF_8);
-        assertTrue(text, text.contains("SSL_Demo")); //$NON-NLS-1$
+        assertTrue(text, text.contains("DemoProject")); //$NON-NLS-1$
     }
 
     /**
@@ -487,7 +487,7 @@ public class RunReceiptTest
         filters.put("tests", "Module" + seed + ".Test"); //$NON-NLS-1$ //$NON-NLS-2$
         Map<String, Object> fields = new LinkedHashMap<>();
         fields.put("tool", "yaxunit_tests"); //$NON-NLS-1$ //$NON-NLS-2$
-        fields.put("projectName", "SSL_Demo"); //$NON-NLS-1$ //$NON-NLS-2$
+        fields.put("projectName", "DemoProject"); //$NON-NLS-1$ //$NON-NLS-2$
         fields.put("filters", filters); //$NON-NLS-1$
         fields.put("total", Integer.valueOf(10 + seed)); //$NON-NLS-1$
         fields.put("passed", Integer.valueOf(8 + seed)); //$NON-NLS-1$
