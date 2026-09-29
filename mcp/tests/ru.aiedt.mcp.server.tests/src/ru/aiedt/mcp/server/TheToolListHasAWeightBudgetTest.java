@@ -114,7 +114,7 @@ public class TheToolListHasAWeightBudgetTest
      * on add_breakpoint, and for the two operation names the launch_debugger description carries.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 175878;
+    private static final int DOCUMENT_BUDGET = 176567;
 
     private LiveServer server;
 

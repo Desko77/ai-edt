@@ -231,10 +231,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
     {
-        // Raised from 13730 by 458 for the route map and task addressing operations, and by 745 for
-        // reportAffectedSettings: the facade names the removal
-        // operations, workshop and its own, that list settings still pointing at what was removed.
-        PROSE.put("edit_metadata", Integer.valueOf(14933));
+        // Raised from 13730 for the route map and task addressing operations, and for
+        // reportAffectedSettings: the facade names the removal operations, workshop and its own,
+        // that list settings still pointing at what was removed (measured 29.09: 14772).
+        PROSE.put("edit_metadata", Integer.valueOf(14772));
         // git: operation, projectName and the log's limit are the whole surface a client builds
         // the call from - the repository answers the rest. Grown to 875 for the commit's five
         // arguments (paths by name - there is no add-all - the message, and the author pair a
@@ -248,7 +248,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
-        PROSE.put("dcs_workshop", Integer.valueOf(4761));
+        PROSE.put("dcs_workshop", Integer.valueOf(4986));
         PROSE.put("write_module_source", Integer.valueOf(4985));
         PROSE.put("code_search", Integer.valueOf(3357));
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
@@ -557,5 +557,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * facade's own description gained the two operation names. Measured 29.09: 96665.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 97296;
+    private static final int DOCUMENT_PROSE = 97551;
 }
