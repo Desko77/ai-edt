@@ -5180,8 +5180,28 @@ public class BmFormHelper
      */
     public String listSettingsFqn(Object form, String attributeName) throws Exception
     {
+        if (!(form instanceof IBmObject))
+        {
+            return null;
+        }
+        return listSettingsFqn(((IBmObject)form).bmGetFqn(), form, attributeName);
+    }
+
+    /**
+     * The FQN under which the settings of a dynamic-list attribute are registered, for a form whose
+     * own FQN is known.
+     *
+     * @param formFqn the form's FQN.
+     * @param form the form.
+     * @param attributeName the dynamic-list attribute, in any case.
+     * @return {@code <formFqn>.Attributes.<name as the model spells it>.ExtInfo.ListSettings}, or
+     *         <code>null</code> when the attribute is absent or the form FQN is empty
+     * @throws Exception if the attribute name cannot be read
+     */
+    String listSettingsFqn(String formFqn, Object form, String attributeName) throws Exception
+    {
         Object attribute = findFormAttributeByName(form, attributeName);
-        return attribute == null ? null : externalPropertyFqn(form, attribute, LIST_SETTINGS);
+        return attribute == null ? null : externalPropertyFqn(formFqn, attribute, LIST_SETTINGS);
     }
 
     /**
@@ -5205,7 +5225,22 @@ public class BmFormHelper
         {
             return null;
         }
-        String formFqn = ((IBmObject)form).bmGetFqn();
+        return externalPropertyFqn(((IBmObject)form).bmGetFqn(), attribute, propertyName);
+    }
+
+    /**
+     * The FQN under which an external property of a form attribute is registered, for a form whose
+     * own FQN is known.
+     *
+     * @param formFqn the form's FQN.
+     * @param attribute the attribute carrying the property.
+     * @param propertyName the property.
+     * @return the FQN, or <code>null</code> when the form FQN or the attribute name is empty
+     * @throws Exception if the attribute name cannot be read
+     */
+    private String externalPropertyFqn(String formFqn, Object attribute, String propertyName)
+        throws Exception
+    {
         if (formFqn == null || formFqn.isEmpty())
         {
             return null;
