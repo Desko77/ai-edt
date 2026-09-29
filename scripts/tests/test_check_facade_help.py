@@ -21,6 +21,7 @@ import importlib.util
 import pathlib
 import sys
 import tempfile
+import threading
 import unittest
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
@@ -30,6 +31,29 @@ SPEC = importlib.util.spec_from_file_location(
     "check_facade_help", SCRIPTS / "check-facade-help.py")
 CHECKER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECKER)
+
+
+def within_a_time_limit(function, seconds=20):
+    """What the call answered, under the keys `value` or `failure`, and no return at all is a failure.
+
+    The reading walks the source character by character, and a walk that does not finish is the
+    defect one of the samples below pins. The call runs on its own thread so the wait can be given
+    up on: a reading that hangs has to fail the test rather than hang the gate.
+    """
+    outcome = {}
+
+    def call():
+        try:
+            outcome["value"] = function()
+        except BaseException as failure:  # a defective reading reports itself by raising
+            outcome["failure"] = failure
+
+    caller = threading.Thread(target=call, daemon=True)
+    caller.start()
+    caller.join(seconds)
+    if caller.is_alive():
+        raise AssertionError("the call did not return within %d seconds" % seconds)
+    return outcome
 
 
 def facade(help_lines, cases, declaration="private static String buildHelp()"):
@@ -118,8 +142,7 @@ class AnUnreadableDeclarationFails(unittest.TestCase):
         with self.assertRaises(CHECKER.HelpUnreadable):
             CHECKER.help_text(source)
 
-    def test_a_body_that_is_never_closed(self):
-        # A truncated file, which is what a body that does not close looks like: the walk reaches
+    def test_a_body_that_is_never_closed(self):        # A truncated file, which is what a body that does not close looks like: the walk reaches
         # the end of the source with the brace still open.
         source = ("class SampleTool\n"
                   "{\n"
@@ -128,6 +151,46 @@ class AnUnreadableDeclarationFails(unittest.TestCase):
                   "        sb.append(\"### addField\\n\");\n")
         with self.assertRaises(CHECKER.HelpUnreadable):
             CHECKER.help_text(source)
+
+    def test_a_block_comment_that_is_never_closed(self):
+        # A declaration cut off inside a block comment. The reading used to step back to the start
+        # of the file from the opening marker, meet the same comment again and never return; the
+        # call is bounded here so a reading that does not finish fails instead of hanging the gate.
+        source = ("class SampleTool\n"
+                  "{\n"
+                  "    private static String buildHelp()\n"
+                  "    {\n"
+                  "        /* ### addField\n"
+                  "        sb.append(\"### addField\\n\");\n")
+        outcome = within_a_time_limit(lambda: CHECKER.help_text(source))
+        self.assertIsInstance(outcome.get("failure"), CHECKER.HelpUnreadable,
+                              "the unclosed comment must be reported as an unreadable declaration")
+
+    def test_the_census_fails_the_run_over_an_unclosed_comment(self):
+        # The same truncation through the run, which is what the gate reads: the census has to end
+        # with a non-zero code, and it is the run that used to spin here.
+        source = ("class SampleTool\n"
+                  "{\n"
+                  "    private static String buildHelp()\n"
+                  "    {\n"
+                  "        /* ### addField\n"
+                  "        sb.append(\"### addField\\n\");\n"
+                  "\n"
+                  "    private String dispatch(String operation)\n"
+                  "    {\n"
+                  "        switch (operation)\n"
+                  "        {\n"
+                  "            case \"add_field\":\n"
+                  "                return \"ok\";\n"
+                  "        }\n"
+                  "        return null;\n"
+                  "    }\n")
+        outcome = within_a_time_limit(lambda: run_over(source))
+        self.assertNotIn("failure", outcome,
+                         "the census must report the unreadable declaration: %s" % outcome)
+        code, output = outcome["value"]
+        self.assertEqual(1, code)
+        self.assertIn("could not be read", output)
 
     def test_the_declaration_of_a_facade_without_a_body(self):
         # A declaration that ends in a semicolon: read on, the block that follows is another

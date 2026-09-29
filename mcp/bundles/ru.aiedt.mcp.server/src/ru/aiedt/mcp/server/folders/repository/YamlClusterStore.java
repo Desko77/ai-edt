@@ -36,6 +36,9 @@ import java.nio.charset.CodingErrorAction;
 
 import java.nio.charset.StandardCharsets;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+
 import java.nio.file.DirectoryStream;
 
 import java.nio.file.FileAlreadyExistsException;
@@ -61,9 +64,11 @@ import java.util.Comparator;
 
 import java.util.List;
 
+import java.util.Map;
 import java.util.Set;
 
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 
@@ -152,6 +157,20 @@ import ru.aiedt.mcp.server.folders.model.ClusterStore;
 
  * </p>
 
+ * <p>
+
+ * The file on disk, not the resource tree, is what a project's clusters are read from: a file
+
+ * written by another process - git, a checkout, an editor outside the workspace - is read even while
+
+ * the resource tree still reports the resource absent. What a set was read from is remembered, and a
+
+ * save whose file no longer holds those bytes is refused rather than applied: replacing what nobody
+
+ * read is how a valid file loses the clusters it carried.
+
+ * </p>
+
  */
 
 public class YamlClusterStore
@@ -182,6 +201,22 @@ public class YamlClusterStore
         PosixFilePermission.OWNER_WRITE,
         PosixFilePermission.GROUP_READ,
         PosixFilePermission.OTHERS_READ);
+
+    /** What stands for a project whose clusters file was not there when its set was read. */
+    private static final String NO_FILE_FINGERPRINT = "-"; //$NON-NLS-1$
+
+    /**
+     * The digest of the bytes each project's set was read from, by project name.
+     * <p>
+     * The state is kept here rather than in {@link ClusterStore}, which is what the YAML is written
+     * from: a field on the store would be dumped into the file, and a reader of another build would
+     * meet a key it does not know. The map is per instance, and the manager that owns this store is
+     * the only writer for a project's file. A name that is absent means this store never read that
+     * project - which is not the same as having read no file, and is stored as
+     * {@link #NO_FILE_FINGERPRINT} instead.
+     * </p>
+     */
+    private final Map<String, String> loadedFingerprints = new ConcurrentHashMap<>();
 
 
     /** Performs one atomic replacement attempt. */
@@ -221,23 +256,165 @@ public class YamlClusterStore
 
         IFile file = clustersFile(project);
 
-        if (!file.exists())
+        byte[] bytes;
+
+        try
 
         {
+
+            bytes = readClustersBytes(file);
+
+        }
+
+        catch (CoreException | IOException e)
+
+        {
+
+            Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
+
+            forgetFingerprint(project);
+
+            return null;
+
+        }
+
+        if (bytes == null)
+
+        {
+
+            rememberFingerprint(project, NO_FILE_FINGERPRINT);
 
             return new ClusterStore();
 
         }
 
-        try (InputStream in = file.getContents();
+        return readClusters(project, bytes);
 
-            Reader reader = strictUtf8Reader(in))
+    }
+
+    /**
+     * Reads the clusters file, following it onto the local disk when the resource tree does not have
+     * it yet.
+     * <p>
+     * Another process writes the file - git checks a branch out, an editor outside the workspace saves
+     * it - while the tree still answers that there is no such resource. The bytes on disk are the ones
+     * the project has, so this refreshes that one resource and reads it; a refresh the workspace
+     * refuses, which a folder it does not know causes, leaves the disk bytes as the only source and
+     * they are read directly.
+     * </p>
+     *
+     * @param file the clusters file handle
+     * @return the bytes, or {@code null} when the file is not there at all
+     * @throws CoreException when the file cannot be read through the workspace
+     * @throws IOException when the file cannot be read from disk
+     */
+    private static byte[] readClustersBytes(IFile file) throws CoreException, IOException
+
+    {
+
+        if (file.exists())
+
+        {
+
+            return contents(file);
+
+        }
+
+        IPath location = file.getLocation();
+
+        if (location == null)
+
+        {
+
+            return null;
+
+        }
+
+        Path path = location.toFile().toPath();
+
+        if (!Files.exists(path))
+
+        {
+
+            return null;
+
+        }
+
+        try
+
+        {
+
+            file.refreshLocal(IResource.DEPTH_ZERO, null);
+
+        }
+
+        catch (CoreException e)
+
+        {
+
+            // The tree has no parent for this file, so the refresh has nothing to attach to; the
+            // bytes on disk are the project's own either way and are read below.
+
+        }
+
+        return file.exists() ? contents(file) : Files.readAllBytes(path);
+
+    }
+
+    /**
+     * Reads the bytes of a workspace file.
+
+     *
+
+     * @param file the file to read
+
+     * @return the bytes
+
+     * @throws CoreException when the workspace refuses the read
+
+     * @throws IOException when the stream cannot be read
+
+     */
+
+    private static byte[] contents(IFile file) throws CoreException, IOException
+
+    {
+
+        try (InputStream in = file.getContents())
+
+        {
+
+            return in.readAllBytes();
+
+        }
+
+    }
+
+    /**
+     * Reads a project's clusters out of the bytes the file held, and records those bytes.
+     * <p>
+     * What was read is remembered before the parse is judged: a set that came from these bytes is a
+     * base a later save may build on, and bytes the loader cannot read are remembered as nothing read
+     * at all, so no save overwrites them.
+     * </p>
+     *
+     * @param project the project, for the log line and the fingerprint
+     * @param bytes the file contents
+     * @return the clusters, or {@code null} when the bytes are not a document this loader accepts
+     */
+    private ClusterStore readClusters(IProject project, byte[] bytes)
+
+    {
+
+        try (Reader reader = strictUtf8Reader(new ByteArrayInputStream(bytes)))
 
         {
 
             Yaml yaml = createLoadYaml();
 
             ClusterStore storage = yaml.load(reader);
+
+            rememberFingerprint(project, fingerprint(bytes));
 
             if (storage == null)
 
@@ -257,6 +434,8 @@ public class YamlClusterStore
 
         {
 
+            forgetFingerprint(project);
+
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
 
                 + " could not be parsed and was left unchanged: " + e.getMessage()); //$NON-NLS-1$
@@ -265,13 +444,101 @@ public class YamlClusterStore
 
         }
 
-        catch (CoreException | IOException e)
+        catch (IOException e)
 
         {
+
+            forgetFingerprint(project);
 
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
 
             return null;
+
+        }
+
+    }
+
+    /**
+     * Remembers the fingerprint of the content a project's clusters were read from.
+
+     *
+
+     * @param project the project
+
+     * @param fingerprint the digest of the bytes, or {@link #NO_FILE_FINGERPRINT}
+
+     */
+
+    private void rememberFingerprint(IProject project, String fingerprint)
+
+    {
+
+        loadedFingerprints.put(project.getName(), fingerprint);
+
+    }
+
+    /**
+     * Forgets what a project's clusters were read from, so no save counts the file as a base.
+
+     *
+
+     * @param project the project
+
+     */
+
+    private void forgetFingerprint(IProject project)
+
+    {
+
+        loadedFingerprints.remove(project.getName());
+
+    }
+
+    /**
+     * The digest of a file's bytes, the identity of the content a set was read from.
+
+     *
+
+     * @param bytes the file contents
+
+     * @return the hexadecimal SHA-256 of the bytes
+
+     */
+
+    private static String fingerprint(byte[] bytes)
+
+    {
+
+        try
+
+        {
+
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes); //$NON-NLS-1$
+
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+
+            for (byte value : digest)
+
+            {
+
+                hex.append(Character.forDigit((value >> 4) & 0xf, 16));
+
+                hex.append(Character.forDigit(value & 0xf, 16));
+
+            }
+
+            return hex.toString();
+
+        }
+
+        catch (NoSuchAlgorithmException e)
+
+        {
+
+            // Every runtime that runs this bundle ships SHA-256. One that does not still has to tell
+            // the file it read from another one, and a shortened digest would not, so the content
+            // itself stands in for it.
+            return new String(bytes, StandardCharsets.ISO_8859_1);
 
         }
 
@@ -296,8 +563,10 @@ public class YamlClusterStore
      * Saves a project's clusters.
      * <p>
      * An existing file that this loader cannot parse is not replaced: the bytes stay and a copy is
-     * written beside the file, and this method answers {@code false}. Saving an empty set still
-     * deletes a file that did parse.
+     * written beside the file, and this method answers {@code false}. A file that changed after the
+     * set was read is not replaced either - see {@link #isTheFileThatWasRead(IProject)}. Saving an
+     * empty set still deletes a file that did parse, as long as it is the one the empty set came
+     * from.
      * </p>
      *
      * @param project the project
@@ -311,12 +580,108 @@ public class YamlClusterStore
         {
             return false;
         }
+        if (!isTheFileThatWasRead(project))
+        {
+            return false;
+        }
         if (storage == null || storage.isEmpty())
         {
-            return deleteIfExists(project);
+            if (!deleteIfExists(project))
+            {
+                return false;
+            }
+            rememberWhatTheFileHolds(project);
+            return true;
         }
         String content = dump(sortForOutput(storage));
-        return saveWithLock(project, content);
+        if (!saveWithLock(project, content))
+        {
+            return false;
+        }
+        rememberWhatTheFileHolds(project);
+        return true;
+    }
+
+    /**
+     * Tells whether the clusters file still holds what the set in hand was read from.
+     * <p>
+     * The set was read from the file as it stood. Another process may have written the file since -
+     * git checks a branch out, an editor outside the workspace saves it - and what the file then
+     * holds is a set nobody read. Writing over it replaces content that was never in hand, which is
+     * how a valid file loses the clusters it carried, so the write is refused and the file is left
+     * alone. A file that was absent when the set was read and is there now counts as changed for the
+     * same reason: the set was built without it.
+     * </p>
+     * <p>
+     * A store that never read this project has nothing the set could have come from. It may create a
+     * file where there is none and may not replace one that is there.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the write may go ahead
+     */
+    private boolean isTheFileThatWasRead(IProject project)
+    {
+        String onDisk = diskFingerprint(clustersFile(project));
+        if (onDisk == null)
+        {
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " could not be read before writing it; the write was refused"); //$NON-NLS-1$
+            return false;
+        }
+        String read = loadedFingerprints.get(project.getName());
+        if (read == null ? NO_FILE_FINGERPRINT.equals(onDisk) : read.equals(onDisk))
+        {
+            return true;
+        }
+        Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+            + " changed on disk after it was read; the write was refused and the file was left as " //$NON-NLS-1$
+            + "it is"); //$NON-NLS-1$
+        return false;
+    }
+
+    /**
+     * Records what the file holds after a write that changed or removed it, so the next save compares
+     * against what is really there.
+     *
+     * @param project the project
+     */
+    private void rememberWhatTheFileHolds(IProject project)
+    {
+        String onDisk = diskFingerprint(clustersFile(project));
+        if (onDisk == null)
+        {
+            forgetFingerprint(project);
+        }
+        else
+        {
+            rememberFingerprint(project, onDisk);
+        }
+    }
+
+    /**
+     * The fingerprint of the clusters file as it stands now, or {@code null} when it cannot be read.
+     * <p>
+     * The bytes are taken the same way {@link #load(IProject)} takes them, so a file that only exists
+     * on disk is compared by what it holds rather than by a resource the tree does not have.
+     * </p>
+     *
+     * @param file the clusters file handle
+     * @return the fingerprint, {@link #NO_FILE_FINGERPRINT} when there is no file, or {@code null}
+     *         when the file cannot be read
+     */
+    private static String diskFingerprint(IFile file)
+    {
+        try
+        {
+            byte[] bytes = readClustersBytes(file);
+            return bytes == null ? NO_FILE_FINGERPRINT : fingerprint(bytes);
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Failed to read aiedt-clusters.yaml before writing it", e); //$NON-NLS-1$
+            return null;
+        }
     }
 
 
