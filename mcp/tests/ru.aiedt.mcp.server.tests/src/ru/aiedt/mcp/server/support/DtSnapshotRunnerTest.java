@@ -408,6 +408,72 @@ public class DtSnapshotRunnerTest
     }
 
     /**
+     * A load that finishes marks the store's dump-info record with the file and the time, and the
+     * answer names that mark and the step that rewrites the copy. A load that fails marks nothing.
+     */
+    @Test
+    public void aFinishedLoadMarksTheStoredCopyAndAFailedOneDoesNot() throws IOException
+    {
+        ProbeIo io = new ProbeIo();
+        io.dumpBytes = 32L;
+        Path source = work.resolve("replaced.dt"); //$NON-NLS-1$
+        Files.write(source, "a whole infobase".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+        Path backup = work.resolve("before.dt"); //$NON-NLS-1$
+        io.recordFile = work.resolve(InfobaseOutsideChange.FILE_NAME);
+        InfobaseOutsideChange.of("file:e:/bases/demo", "content-then", 4).writeTo(io.recordFile); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject answer = answer(DtSnapshotRunner.dispatchRestore(call(), "Project", null, //$NON-NLS-1$
+            source.toString(), backup.toString(), null, false, factory(io), STARTER));
+
+        assertTrue(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("Loaded", answer.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the load asked for the copy to be marked", io.marked); //$NON-NLS-1$
+        assertTrue(answer.get("copyMarked").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(DtSnapshotRunner.REBUILD_COPY_STEP, answer.get("nextStep").getAsString()); //$NON-NLS-1$
+        assertTrue(answer.get("infobaseChangeCheck").getAsString().contains(source.toString())); //$NON-NLS-1$
+        InfobaseOutsideChange recorded = InfobaseOutsideChange.read(io.recordFile);
+        assertTrue(recorded.replacedByLoad());
+        assertEquals(source.toString(), recorded.replacedBy);
+        assertNotNull(recorded.replacedAt);
+        assertEquals("the fingerprint of the copy is kept", "content-then", recorded.fingerprint); //$NON-NLS-1$ //$NON-NLS-2$
+
+        ProbeIo failed = new ProbeIo();
+        failed.dumpBytes = 32L;
+        failed.failTheLoad = true;
+        failed.recordFile = work.resolve("failed-record.properties"); //$NON-NLS-1$
+        InfobaseOutsideChange.of("file:e:/bases/demo", "content-then", 4).writeTo(failed.recordFile); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject refused = answer(DtSnapshotRunner.dispatchRestore(call(), "Project", null, //$NON-NLS-1$
+            source.toString(), work.resolve("before-failed.dt").toString(), null, false, //$NON-NLS-1$
+            factory(failed), STARTER));
+        assertFalse(refused.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertFalse("a load that did not finish does not mark the copy", failed.marked); //$NON-NLS-1$
+        assertFalse(InfobaseOutsideChange.read(failed.recordFile).replacedByLoad());
+    }
+
+    /**
+     * A load whose store record could not be written still reports the load, and says the copy was
+     * not marked.
+     */
+    @Test
+    public void aLoadWhoseRecordCannotBeWrittenSaysSo() throws IOException
+    {
+        ProbeIo io = new ProbeIo();
+        io.dumpBytes = 16L;
+        io.markAnswer = "disk full"; //$NON-NLS-1$
+        Path source = work.resolve("replaced.dt"); //$NON-NLS-1$
+        Files.write(source, "a whole infobase".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+
+        JsonObject answer = answer(DtSnapshotRunner.dispatchRestore(call(), "Project", null, //$NON-NLS-1$
+            source.toString(), work.resolve("before.dt").toString(), null, false, factory(io), //$NON-NLS-1$
+            STARTER));
+
+        assertTrue(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertFalse(answer.get("copyMarked").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(answer.get("infobaseChangeCheck").getAsString().contains("disk full")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(answer.has("nextStep")); //$NON-NLS-1$
+    }
+
+    /**
      * The environment the runner is exercised against: a dump that writes bytes and a load that
      * records what it read, both recorded in the order they ran. No infobase is touched.
      */
@@ -439,6 +505,18 @@ public class DtSnapshotRunnerTest
 
         /** The names in the source's directory at the moment the load began. */
         List<String> filesWhenLoaded;
+
+        /** When set, the load throws instead of recording what it read. */
+        boolean failTheLoad;
+
+        /** The store record a successful load marks, or {@code null} when this probe keeps none. */
+        Path recordFile;
+
+        /** What {@link #markLoaded} answers, when set, instead of writing {@link #recordFile}. */
+        String markAnswer;
+
+        /** Whether a successful load asked for the store record to be marked. */
+        boolean marked;
 
         @Override
         public String infobaseIdentity()
@@ -477,11 +555,38 @@ public class DtSnapshotRunnerTest
         }
 
         @Override
-        public void importFrom(Path source, BooleanSupplier cancelled)
+        public void importFrom(Path source, BooleanSupplier cancelled) throws IOException
         {
             ran.add("load"); //$NON-NLS-1$
+            if (failTheLoad)
+            {
+                throw new IOException("probe load failure"); //$NON-NLS-1$
+            }
             loadedFrom = source;
             filesWhenLoaded = namesIn(source.getParent());
+        }
+
+        @Override
+        public String markLoaded(Path source, String when)
+        {
+            marked = true;
+            if (markAnswer != null)
+            {
+                return markAnswer;
+            }
+            if (recordFile == null)
+            {
+                return DtSnapshotRunner.NO_STORE_RECORD;
+            }
+            try
+            {
+                InfobaseOutsideChange.markLoaded(recordFile, source.toString(), when);
+                return null;
+            }
+            catch (IOException failed)
+            {
+                return failed.toString();
+            }
         }
 
         private static List<String> namesIn(Path dir)

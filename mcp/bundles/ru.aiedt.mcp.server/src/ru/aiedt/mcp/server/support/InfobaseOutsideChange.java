@@ -67,6 +67,12 @@ public final class InfobaseOutsideChange
     /** The record file's key for how many records the copy carried. */
     private static final String RECORDS_KEY = "records"; //$NON-NLS-1$
 
+    /** The record file's key for the {@code .dt} a load replaced the infobase from. */
+    private static final String REPLACED_BY_KEY = "replacedBy"; //$NON-NLS-1$
+
+    /** The record file's key for when that load finished. */
+    private static final String REPLACED_AT_KEY = "replacedAt"; //$NON-NLS-1$
+
     /** What a reading that counted nothing reports as its record count. */
     public static final int UNKNOWN_RECORDS = -1;
 
@@ -79,11 +85,23 @@ public final class InfobaseOutsideChange
     /** How many records the copy carried, or {@link #UNKNOWN_RECORDS} when it was not read. */
     public final int records;
 
-    private InfobaseOutsideChange(String identity, String fingerprint, int records)
+    /**
+     * The {@code .dt} a load replaced this infobase from, or {@code null} when no load is recorded
+     * on this reading.
+     */
+    public final String replacedBy;
+
+    /** When that load finished, as text, or {@code null} when {@link #replacedBy} is not set. */
+    public final String replacedAt;
+
+    private InfobaseOutsideChange(String identity, String fingerprint, int records, String replacedBy,
+        String replacedAt)
     {
         this.identity = identity;
         this.fingerprint = fingerprint;
         this.records = records;
+        this.replacedBy = replacedBy;
+        this.replacedAt = replacedAt;
     }
 
     /**
@@ -97,7 +115,39 @@ public final class InfobaseOutsideChange
      */
     public static InfobaseOutsideChange of(String identity, String fingerprint, int records)
     {
-        return new InfobaseOutsideChange(identity, fingerprint, records);
+        return new InfobaseOutsideChange(identity, fingerprint, records, null, null);
+    }
+
+    /**
+     * This reading with a load recorded on it. The fingerprint of the stored copy stays as it was:
+     * a load replaces the infobase, and the copy on disk is still the one the last update left.
+     *
+     * @param source the {@code .dt} that was loaded
+     * @param when the moment the load finished, as text
+     * @return the reading
+     */
+    public InfobaseOutsideChange withLoad(String source, String when)
+    {
+        return new InfobaseOutsideChange(identity, fingerprint, records, source, when);
+    }
+
+    /**
+     * Writes a load onto the store's record, keeping whatever that record already said about the
+     * copy. A record that was not there yet is created carrying the load alone, which is enough
+     * for the next incremental update to see that the infobase was replaced.
+     *
+     * @param recordFile the sidecar beside the copy, or {@code null} for nowhere
+     * @param source the {@code .dt} that was loaded
+     * @param when the moment the load finished, as text
+     * @throws IOException when the record cannot be written; the previous file is left as it was
+     */
+    public static void markLoaded(Path recordFile, String source, String when) throws IOException
+    {
+        if (recordFile == null || source == null || source.trim().isEmpty())
+        {
+            return;
+        }
+        read(recordFile).withLoad(source, when).writeTo(recordFile);
     }
 
     /**
@@ -113,7 +163,7 @@ public final class InfobaseOutsideChange
     public static InfobaseOutsideChange copyOf(Path dumpInfoFile, String identity)
     {
         Content content = contentOf(dumpInfoFile);
-        return new InfobaseOutsideChange(identity, content.fingerprint, content.records);
+        return new InfobaseOutsideChange(identity, content.fingerprint, content.records, null, null);
     }
 
     /**
@@ -127,7 +177,7 @@ public final class InfobaseOutsideChange
     {
         if (recordFile == null || !Files.isRegularFile(recordFile))
         {
-            return new InfobaseOutsideChange(null, null, UNKNOWN_RECORDS);
+            return new InfobaseOutsideChange(null, null, UNKNOWN_RECORDS, null, null);
         }
         Properties pairs = new Properties();
         try (Reader reader = Files.newBufferedReader(recordFile, StandardCharsets.UTF_8))
@@ -136,11 +186,12 @@ public final class InfobaseOutsideChange
         }
         catch (IOException | RuntimeException unreadable)
         {
-            return new InfobaseOutsideChange(null, null, UNKNOWN_RECORDS);
+            return new InfobaseOutsideChange(null, null, UNKNOWN_RECORDS, null, null);
         }
         String identity = trimmed(pairs.getProperty(IDENTITY_KEY));
         String fingerprint = trimmed(pairs.getProperty(CONTENT_KEY));
-        return new InfobaseOutsideChange(identity, fingerprint, asInt(pairs.getProperty(RECORDS_KEY)));
+        return new InfobaseOutsideChange(identity, fingerprint, asInt(pairs.getProperty(RECORDS_KEY)),
+            trimmed(pairs.getProperty(REPLACED_BY_KEY)), trimmed(pairs.getProperty(REPLACED_AT_KEY)));
     }
 
     /**
@@ -161,6 +212,14 @@ public final class InfobaseOutsideChange
     public boolean known()
     {
         return fingerprint != null;
+    }
+
+    /**
+     * @return whether a load of a {@code .dt} is recorded on this reading
+     */
+    public boolean replacedByLoad()
+    {
+        return replacedBy != null;
     }
 
     /**
@@ -211,7 +270,7 @@ public final class InfobaseOutsideChange
      */
     public void writeTo(Path recordFile) throws IOException
     {
-        if (recordFile == null || fingerprint == null)
+        if (recordFile == null || (fingerprint == null && replacedBy == null))
         {
             return;
         }
@@ -220,8 +279,19 @@ public final class InfobaseOutsideChange
         {
             pairs.setProperty(IDENTITY_KEY, identity);
         }
-        pairs.setProperty(CONTENT_KEY, fingerprint);
-        pairs.setProperty(RECORDS_KEY, String.valueOf(records));
+        if (fingerprint != null)
+        {
+            pairs.setProperty(CONTENT_KEY, fingerprint);
+            pairs.setProperty(RECORDS_KEY, String.valueOf(records));
+        }
+        if (replacedBy != null)
+        {
+            pairs.setProperty(REPLACED_BY_KEY, replacedBy);
+            if (replacedAt != null)
+            {
+                pairs.setProperty(REPLACED_AT_KEY, replacedAt);
+            }
+        }
 
         Path absolute = recordFile.toAbsolutePath();
         Path parent = absolute.getParent();

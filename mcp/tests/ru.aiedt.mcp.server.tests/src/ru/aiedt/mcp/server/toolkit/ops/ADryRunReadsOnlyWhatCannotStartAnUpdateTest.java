@@ -42,6 +42,8 @@ import com.e1c.g5.dt.applications.LifecycleState;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.DumpInfoProbe;
+import ru.aiedt.mcp.server.support.InfobaseOutsideChange;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 
 /**
@@ -94,6 +96,35 @@ public class ADryRunReadsOnlyWhatCannotStartAnUpdateTest
         assertEquals(List.of("readiness", "exportValidation"), notChecked); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("the answer says why readiness was not asked for", //$NON-NLS-1$
             json.get("notCheckedInDryRunNote").getAsString().contains("thick client")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A dry run asked to compare the infobase's own dump says it did not read it, and it still
+     * asks the environment for nothing beyond the update state. A load recorded on the copy is
+     * named in the same sentence and stops nothing.
+     */
+    @Test
+    public void aDryRunDoesNotReadTheInfobaseAndSaysSo()
+    {
+        RecordingApplications manager =
+            new RecordingApplications(ApplicationUpdateState.UPDATED);
+        IApplication application = new StubApplication("app-1"); //$NON-NLS-1$
+        DumpInfoProbe.Reading marked = DumpInfoProbe.reading("copy.xml", "2.7", "2.7", "8.3.27", null, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            InfobaseOutsideChange.of("file:e:/bases/demo", "same", 10), //$NON-NLS-1$ //$NON-NLS-2$
+            InfobaseOutsideChange.of("file:e:/bases/demo", "same", 10) //$NON-NLS-1$ //$NON-NLS-2$
+                .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = DatabaseUpdater.whatAnUpdateWouldFace(manager, application, null,
+            "app-1", "proj", false, "proj", marked, false, true); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertEquals(List.of("getUpdateState"), manager.calls); //$NON-NLS-1$
+        JsonObject json = JsonParser.parseString(answer).getAsJsonObject();
+        assertTrue(json.get("success").getAsBoolean()); //$NON-NLS-1$
+        String line = json.get("infobaseChangeCheck").getAsString(); //$NON-NLS-1$
+        assertTrue(line.contains("E:/snaps/before.dt")); //$NON-NLS-1$
+        assertTrue(line.contains("was not read")); //$NON-NLS-1$
+        assertTrue(line.contains("dry run")); //$NON-NLS-1$
+        assertFalse(json.has("tag")); //$NON-NLS-1$
     }
 
     /**

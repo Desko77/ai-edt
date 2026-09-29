@@ -146,8 +146,13 @@ public class TheToolListHasAWeightBudgetTest
      * And for retrieve_database_changes on the infobase_admin schema; the hidden sync_control alias
      * is not in tools/list, so the document moves by this facade only. Measured 29.09: 182933.
      * </p>
+     * <p>
+     * And for verifyInfobaseContent on the infobase_admin schema, and for the sentence that a
+     * load marks the stored copy. The hidden update_database alias is not in tools/list, so the
+     * document moves by this facade only. Measured 29.09: 183171.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 182933;
+    private static final int DOCUMENT_BUDGET = 183171;
 
     private LiveServer server;
 
@@ -309,8 +314,9 @@ public class TheToolListHasAWeightBudgetTest
         // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot
         // operations add backupTo and name themselves for path, timeoutSeconds, runKey and cancel,
         // and retrieve_database_changes adds the operation, replaceLocal, markSynchronized and the
-        // pending wait the schema describes.
-        BUDGETS.put("infobase_admin", Integer.valueOf(12255)); //$NON-NLS-1$
+        // pending wait the schema describes. And for verifyInfobaseContent and the sentence that
+        // a load marks the stored copy. Measured 29.09: 12493.
+        BUDGETS.put("infobase_admin", Integer.valueOf(12493)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the

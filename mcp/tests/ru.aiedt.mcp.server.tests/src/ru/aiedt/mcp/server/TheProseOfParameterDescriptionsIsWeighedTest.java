@@ -279,7 +279,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // operations add path, backupTo, timeoutSeconds, runKey and cancel sentences, and
         // retrieve_database_changes adds replaceLocal, markSynchronized and the sentences
         // timeoutSeconds, runKey and cancel gained for that pull.
-        PROSE.put("infobase_admin", Integer.valueOf(8212));
+        // And for verifyInfobaseContent: an incremental update can be asked to read the infobase's
+        // own ConfigDumpInfo and refuse when it does not match the stored copy. Measured 29.09: 8364.
+        PROSE.put("infobase_admin", Integer.valueOf(8364));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
         // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
@@ -608,6 +610,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * <p>
      * And for the retrieve_database_changes sentences on infobase_admin. Measured 29.09: 101612.
      * </p>
+     * <p>
+     * And for verifyInfobaseContent on infobase_admin: the sentence that an incremental update
+     * reads the infobase's own ConfigDumpInfo and refuses when it does not match the stored copy.
+     * Measured 29.09: 101764.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 101612;
+    private static final int DOCUMENT_PROSE = 101764;
 }
