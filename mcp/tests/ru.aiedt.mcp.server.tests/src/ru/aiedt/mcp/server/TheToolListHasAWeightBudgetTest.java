@@ -100,8 +100,14 @@ public class TheToolListHasAWeightBudgetTest
      * takes a report of a run finished within the last five minutes, and the refusal a call gets
      * when the update it asked for does not finish.
      * </p>
+     * <p>
+     * Raised from 174078 to 175731 for backupTo on infobase_admin, for the path, timeoutSeconds,
+     * runKey and cancel sentences that now name the two snapshot operations as well, and for the
+     * schema description that says a load replaces everything the infobase holds. Measured at
+     * 175731 bytes.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 174835;
+    private static final int DOCUMENT_BUDGET = 175731;
 
     private LiveServer server;
 
@@ -252,7 +258,10 @@ public class TheToolListHasAWeightBudgetTest
         // and bound to the project in one call, and the facade's schema is where a client learns
         // the operation and its two new arguments exist. And by 407 for the dump-info work: the
         // syncOperation value rebuild_dump_info, the rebuild's wait budget, the format override.
-        BUDGETS.put("infobase_admin", Integer.valueOf(9056)); //$NON-NLS-1$
+        // Raised by 1263 for the two snapshot operations: the facade declares backupTo, its
+        // description names them for path, timeoutSeconds, runKey and cancel, and the schema says
+        // what a load replaces.
+        BUDGETS.put("infobase_admin", Integer.valueOf(10319)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the

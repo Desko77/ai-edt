@@ -19,13 +19,14 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.DtSnapshotRunner;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
- * Unified infobase and launch administration facade with seven operations.
+ * Unified infobase and launch administration facade.
  *
  * <p>Collapses the infobase-lifecycle and launch-target tools under one name:
  * <ul>
@@ -51,6 +52,13 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *   <li>{@code update_database} - push the current configuration into an
  *       application's infobase (delegates to {@link DatabaseUpdater};
  *       MUTATING, may reply Pending with a runKey)</li>
+ *   <li>{@code export_database_snapshot} - dump an application's infobase into a
+ *       {@code .dt} file (handled here through {@link DtSnapshotRunner}; MUTATING,
+ *       may reply Pending with a runKey)</li>
+ *   <li>{@code restore_database_snapshot} - load a {@code .dt} back into an
+ *       application's infobase, writing a backup of what it holds first
+ *       (handled here through {@link DtSnapshotRunner}; MUTATING, DESTRUCTIVE -
+ *       the load replaces everything the infobase holds; may reply Pending)</li>
  *   <li>{@code sync_control} - inspect and control EDT&lt;-&gt;infobase
  *       synchronization (delegates to {@link SyncControlTool})</li>
  *   <li>{@code help} - built-in topic-driven help</li>
@@ -58,6 +66,10 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *
  * <p>Each operation routes to its standalone tool unchanged - params pass
  * through as-is, and the standalone tools stay registered for back-compat.
+ * {@code export_database_snapshot} and {@code restore_database_snapshot} are
+ * answered here rather than delegated: no standalone tool of theirs exists, and
+ * both operations share one runner ({@link DtSnapshotRunner}) with one registry
+ * domain, so a facade split in two would keep two copies of the same guards.
  * {@code sync_control} is the one exception worth calling out: it is itself a
  * multi-operation tool with its own {@code operation} parameter (status /
  * diagnose / suppress / ...), which collides with this facade's own routing
@@ -125,25 +137,34 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     }
 
     /**
-     * Polls an update when the operation is {@code update_database}.
+     * Polls a long run this facade started, when the operation is one of the three that read
+     * {@code runKey}.
      * <p>
-     * That operation calls {@link DatabaseUpdater#execute}, which reads {@code runKey}. The other
-     * operations do not, so a live update key must not exempt them.
+     * {@code update_database} calls {@link DatabaseUpdater#execute}; the two snapshot operations go
+     * through {@link DtSnapshotRunner}, which registers them under {@link
+     * PendingWorkRegistry#SNAPSHOT}. The other operations read no key, so a live run must not exempt
+     * them. The name returned is the one the run was started under, which is this facade's own for
+     * the snapshots and the delegate's for an update.
      * </p>
      *
      * @param domain the registry domain the key was found in
      * @param operation the operation argument; may be {@code null}
-     * @return {@code update_database} when this call polls one, or {@code null}
+     * @return the name the polling call runs under, or {@code null} when this call polls nothing
      */
     @Override
     public String resumes(String domain, String operation)
     {
-        if (!PendingWorkRegistry.UPDATE.domain().equals(domain))
-        {
-            return null;
-        }
         String normalized = JsonUtils.normalizeOperationToken(operation);
-        return "update_database".equals(normalized) ? DatabaseUpdater.NAME : null; //$NON-NLS-1$
+        if (PendingWorkRegistry.UPDATE.domain().equals(domain))
+        {
+            return "update_database".equals(normalized) ? DatabaseUpdater.NAME : null; //$NON-NLS-1$
+        }
+        if (PendingWorkRegistry.SNAPSHOT.domain().equals(domain))
+        {
+            return DtSnapshotRunner.EXPORT_OPERATION.equals(normalized)
+                || DtSnapshotRunner.RESTORE_OPERATION.equals(normalized) ? NAME : null;
+        }
+        return null;
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()
@@ -176,15 +197,20 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     {
         return "Infobase and launch administration - list applications, create / register / delete an " //$NON-NLS-1$
             + "infobase, set credentials, create a launch configuration, start a 1C client from " //$NON-NLS-1$
-            + "one, update the database, control EDT<->infobase sync. Operations: " //$NON-NLS-1$
+            + "one, update the database, dump or load the whole infobase as a .dt file, control " //$NON-NLS-1$
+            + "EDT<->infobase sync. Operations: " //$NON-NLS-1$
             + "get_applications, list_registered_infobases, read_event_log, create_infobase, " //$NON-NLS-1$
             + "register_infobase, delete_infobase, " //$NON-NLS-1$
             + "set_infobase_credentials, " //$NON-NLS-1$
             + "create_launch_config, start_client, branch_infobase, update_database, " //$NON-NLS-1$
-            + "sync_control, help. Pass operation=<name>; remaining parameters follow the per-operation " //$NON-NLS-1$
+            + "export_database_snapshot, restore_database_snapshot, sync_control, help. Pass " //$NON-NLS-1$
+            + "operation=<name>; remaining parameters follow the per-operation " //$NON-NLS-1$
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
-            + "register_infobase / delete_infobase / set_infobase_credentials / update_database mutate. " //$NON-NLS-1$
-            + "A real run of update_database / sync_control may reply with a Pending status and " //$NON-NLS-1$
+            + "register_infobase / delete_infobase / set_infobase_credentials / update_database / " //$NON-NLS-1$
+            + "export_database_snapshot / restore_database_snapshot mutate, and a load replaces " //$NON-NLS-1$
+            + "everything the infobase holds. " //$NON-NLS-1$
+            + "A real run of update_database / export_database_snapshot / " //$NON-NLS-1$
+            + "restore_database_snapshot / sync_control may reply with a Pending status and " //$NON-NLS-1$
             + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
             + "face and start nothing, answered in place with no runKey. sync_control has its own " //$NON-NLS-1$
             + "inner operation (status / diagnose / suppress / ...): pass it as syncOperation, " //$NON-NLS-1$
@@ -256,7 +282,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "get_applications / list_registered_infobases / read_event_log / create_infobase / " //$NON-NLS-1$
                     + "register_infobase / delete_infobase / " //$NON-NLS-1$
                     + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
-                    + "branch_infobase / update_database / sync_control / help (snake_case " //$NON-NLS-1$
+                    + "branch_infobase / update_database / export_database_snapshot / " //$NON-NLS-1$
+                    + "restore_database_snapshot / sync_control / help (snake_case " //$NON-NLS-1$
                     + "canonical; camelCase like getApplications is also accepted). " //$NON-NLS-1$
                     + "operation=help lists them; topic=<operation> answers what that one " //$NON-NLS-1$
                     + "takes.", true) //$NON-NLS-1$
@@ -290,7 +317,14 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("path", //$NON-NLS-1$
                 "create_infobase: absolute path to the infobase directory (required for that " //$NON-NLS-1$
                     + "operation) - an empty/new directory for the .1CD. register_infobase: an " //$NON-NLS-1$
-                    + "existing file infobase directory.") //$NON-NLS-1$
+                    + "existing file infobase directory. export_database_snapshot / " //$NON-NLS-1$
+                    + "restore_database_snapshot: the .dt file to write or to load (required for " //$NON-NLS-1$
+                    + "both); an existing file at that path is refused, not replaced.") //$NON-NLS-1$
+            .stringProperty("backupTo", //$NON-NLS-1$
+                "restore_database_snapshot: where the backup of the infobase's current contents " //$NON-NLS-1$
+                    + "goes before the load starts. Omitted - beside the .dt being loaded, named " //$NON-NLS-1$
+                    + "after it and stamped with the time. The load does not start until the backup " //$NON-NLS-1$
+                    + "is written; an existing file at the backup path is refused.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "register_infobase: a server infobase address, Srvr=<server>;Ref=<infobase>.") //$NON-NLS-1$
             .booleanProperty("makeDefault", //$NON-NLS-1$
@@ -361,19 +395,25 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "(default false).") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "update_database: soft wait limit in seconds (5-120, default 30) before " //$NON-NLS-1$
-                    + "replying Pending with a runKey to resume. sync_control " //$NON-NLS-1$
+                    + "replying Pending with a runKey to resume. export_database_snapshot / " //$NON-NLS-1$
+                    + "restore_database_snapshot: the same soft wait (waitSeconds is accepted as " //$NON-NLS-1$
+                    + "an alias); a dump or load of a large infobase routinely outlives it and is " //$NON-NLS-1$
+                    + "collected with the runKey. sync_control " //$NON-NLS-1$
                     + "syncOperation=rebuild_dump_info: how long each Designer run is waited " //$NON-NLS-1$
                     + "for (60-3600, default 600).") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
-                "update_database: resumes a Pending update issued earlier with this runKey; " //$NON-NLS-1$
-                    + "other params are ignored once runKey is supplied.") //$NON-NLS-1$
+                "update_database / export_database_snapshot / restore_database_snapshot: " //$NON-NLS-1$
+                    + "resumes a Pending run issued earlier with this runKey; other params are " //$NON-NLS-1$
+                    + "ignored once runKey is supplied.") //$NON-NLS-1$
             .booleanProperty("cancel", //$NON-NLS-1$
-                "update_database: combined with runKey, detach and stop tracking that update " //$NON-NLS-1$
-                    + "(best-effort only).") //$NON-NLS-1$
+                "update_database / export_database_snapshot / restore_database_snapshot: " //$NON-NLS-1$
+                    + "combined with runKey, detach and stop tracking that run (best-effort " //$NON-NLS-1$
+                    + "only; a load that has begun is not undone).") //$NON-NLS-1$
             .booleanProperty("statusOnly", //$NON-NLS-1$
                 "update_database: read what updates are being tracked and start nothing - " //$NON-NLS-1$
                     + "runKeys, state, elapsed time. projectName filters by project; any other " //$NON-NLS-1$
-                    + "run-shaping parameter beside runKey or cancel is refused.") //$NON-NLS-1$
+                    + "run-shaping parameter beside runKey or cancel is refused. A snapshot run " //$NON-NLS-1$
+                    + "is not in this list; poll it with its own runKey.") //$NON-NLS-1$
             .booleanProperty("refreshWorkspace", //$NON-NLS-1$
                 "update_database: refresh the project (and an extension's parent) from disk " //$NON-NLS-1$
                     + "before the update state is read (default true); the answer carries " //$NON-NLS-1$
@@ -413,6 +453,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "list_registered_infobases / read_event_log / " //$NON-NLS-1$
                 + "create_infobase / register_infobase / delete_infobase / set_infobase_credentials / " //$NON-NLS-1$
                 + "create_launch_config / start_client / branch_infobase / update_database / " //$NON-NLS-1$
+                + "export_database_snapshot / restore_database_snapshot / " //$NON-NLS-1$
                 + "sync_control / " //$NON-NLS-1$
                 + "help.").toJson(); //$NON-NLS-1$
         }
@@ -463,11 +504,57 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 return new BranchInfobaseTool().execute(params);
             case "update_database": //$NON-NLS-1$
                 return new DatabaseUpdater().execute(params);
+            case "export_database_snapshot": //$NON-NLS-1$
+                return runSnapshotExport(params);
+            case "restore_database_snapshot": //$NON-NLS-1$
+                return runSnapshotRestore(params);
             case "sync_control": //$NON-NLS-1$
                 return routeSyncControl(params);
             default:
                 return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Runs {@code export_database_snapshot}: reads the arguments a dump takes off the call and hands
+     * them to {@link DtSnapshotRunner}, which owns the guards, the run and the answer.
+     * <p>
+     * The reads happen here rather than in the runner so the runner sees a plain request and stays
+     * callable from a test without a facade. Nothing is created or updated at this point: the file
+     * and its directory are the runner's business, made only once a run actually starts.
+     * </p>
+     *
+     * @param params the call arguments
+     * @return the answer, or the {@code Pending} envelope naming the run's key
+     */
+    private static String runSnapshotExport(Map<String, String> params)
+    {
+        return DtSnapshotRunner.dispatchExport(params,
+            JsonUtils.extractStringArgument(params, "projectName"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "applicationId"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "path"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "runKey"), //$NON-NLS-1$
+            JsonUtils.extractBooleanArgument(params, "cancel", false), //$NON-NLS-1$
+            DtSnapshotRunner.EDT_IO, NAME);
+    }
+
+    /**
+     * Runs {@code restore_database_snapshot}: as the dump, with the path a load's backup must be
+     * written to before the infobase is touched.
+     *
+     * @param params the call arguments
+     * @return the answer, or the {@code Pending} envelope naming the run's key
+     */
+    private static String runSnapshotRestore(Map<String, String> params)
+    {
+        return DtSnapshotRunner.dispatchRestore(params,
+            JsonUtils.extractStringArgument(params, "projectName"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "applicationId"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "path"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "backupTo"), //$NON-NLS-1$
+            JsonUtils.extractStringArgument(params, "runKey"), //$NON-NLS-1$
+            JsonUtils.extractBooleanArgument(params, "cancel", false), //$NON-NLS-1$
+            DtSnapshotRunner.EDT_IO, NAME);
     }
 
     /**
@@ -543,6 +630,14 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "project. MUTATING.\n"); //$NON-NLS-1$
             sb.append("- **update_database** - push the current configuration into an " //$NON-NLS-1$
                 + "application's infobase. MUTATING; may reply Pending with a runKey.\n"); //$NON-NLS-1$
+            sb.append("- **export_database_snapshot** - dump the application's infobase into a " //$NON-NLS-1$
+                + ".dt file with the platform's own thick client (path required, an existing file " //$NON-NLS-1$
+                + "there is refused). MUTATING; may reply Pending with a runKey.\n"); //$NON-NLS-1$
+            sb.append("- **restore_database_snapshot** - load a .dt file back into the " //$NON-NLS-1$
+                + "application's infobase. The backup of what the infobase holds now is written " //$NON-NLS-1$
+                + "first (backupTo, or beside the .dt), and the load does not start without it. " //$NON-NLS-1$
+                + "MUTATING and DESTRUCTIVE - the load replaces everything the infobase holds; " //$NON-NLS-1$
+                + "may reply Pending with a runKey.\n"); //$NON-NLS-1$
             sb.append("- **sync_control** - inspect and control EDT<->infobase " //$NON-NLS-1$
                 + "synchronization. Pass its own action as syncOperation, not operation; " //$NON-NLS-1$
                 + "some syncOperation values (reseed_baseline, mark_synchronized, " //$NON-NLS-1$
@@ -580,6 +675,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("| Associate an existing infobase to a project | " //$NON-NLS-1$
                 + "create_launch_config |\n"); //$NON-NLS-1$
             sb.append("| Push the configuration into an infobase | update_database |\n"); //$NON-NLS-1$
+            sb.append("| Back the whole infobase up to a .dt file | export_database_snapshot |\n"); //$NON-NLS-1$
+            sb.append("| Load a .dt file into the infobase, keeping what it holds now | " //$NON-NLS-1$
+                + "restore_database_snapshot |\n"); //$NON-NLS-1$
             sb.append("| Predict or control whether the next update is FULL or incremental | " //$NON-NLS-1$
                 + "sync_control (syncOperation=status / diagnose / suppress / ...) |\n"); //$NON-NLS-1$
             return sb.toString();
@@ -599,7 +697,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             "delete_infobase", "set_infobase_credentials", //$NON-NLS-1$ //$NON-NLS-2$
             "create_launch_config", "start_client", //$NON-NLS-1$ //$NON-NLS-2$
             "branch_infobase", //$NON-NLS-1$
-            "update_database", "sync_control")) //$NON-NLS-1$ //$NON-NLS-2$
+            "update_database", "export_database_snapshot", "restore_database_snapshot", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "sync_control")) //$NON-NLS-1$
         {
             m.put(op, op);
         }

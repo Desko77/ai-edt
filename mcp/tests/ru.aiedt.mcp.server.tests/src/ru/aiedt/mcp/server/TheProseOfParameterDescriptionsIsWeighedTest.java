@@ -221,6 +221,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * way to say whether the new application becomes the project's default without the flag.
      * Their rules live in the operation help.
      * </p>
+     * <p>
+     * And by 945 on infobase_admin for the two snapshot operations: path says which .dt a dump
+     * writes and which one a load reads, backupTo names where the load's backup of the current
+     * contents goes, and timeoutSeconds, runKey and cancel are described for both - a run answered
+     * as Pending is waited on, looked at and stopped through the same three arguments the update
+     * takes.
+     * </p>
      */
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
@@ -249,7 +256,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // set_infobase_credentials on accessMode, userName and password: the credentials a base
         // with users needs are passed to the registration itself, so a client that can see one
         // operation store them can see the other take them.
-        PROSE.put("infobase_admin", Integer.valueOf(5771));
+        PROSE.put("infobase_admin", Integer.valueOf(6716));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
         // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
@@ -532,6 +539,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * debug_yaxunit_tests, gained declarations of the same flags and are not weighed here, because
      * {@code tools/list} under the default preset does not advertise them: 95864.
      * </p>
+     * <p>
+     * Raised to 97198 for the two snapshot operations on infobase_admin. Measured 29.09: 97198.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 96391;
+    private static final int DOCUMENT_PROSE = 97198;
 }

@@ -289,8 +289,8 @@ public final class DumpInfoRebuilder
      */
     public static Outcome rebuildViaEdt(String projectName, String applicationId, long timeoutMs)
     {
-        BmInfobaseExtensionHelper.LauncherContext ctx =
-            BmInfobaseExtensionHelper.resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx =
+            ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             Outcome refused = new Outcome();
@@ -422,7 +422,7 @@ public final class DumpInfoRebuilder
      * left to finish on its own, which the answer says plainly.
      */
     private static Path runDumpInfoOnlyUnderTimeout(
-        BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
+        ThickClientLaunch.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
         java.util.concurrent.atomic.AtomicBoolean launchClaim =
             new java.util.concurrent.atomic.AtomicBoolean();
@@ -438,7 +438,7 @@ public final class DumpInfoRebuilder
      * configuration.
      */
     private static Path runFullDumpUnderTimeout(
-        BmInfobaseExtensionHelper.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
+        ThickClientLaunch.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
         java.util.concurrent.atomic.AtomicBoolean launchClaim =
             new java.util.concurrent.atomic.AtomicBoolean();

@@ -109,6 +109,29 @@ public final class PendingWorkRegistry
     private static final long VANESSA_ABANDONED_TTL_MS = 70 * 60 * 1000L;
 
     /**
+     * How long a snapshot run nobody came back for is kept.
+     * <p>
+     * A launcher call is given ten minutes before it is abandoned, and a run answered as Pending
+     * lives on past that while the client is away. The default thirty minutes would evict a run that
+     * is still executing - and for a load that means an infobase being replaced with its entry and
+     * result gone, so the poll would report a missing run over a live one.
+     * </p>
+     */
+    private static final long SNAPSHOT_ABANDONED_TTL_MS = 70L * 60L * 1000L;
+
+    /**
+     * Async backend for {@code export_database_snapshot} and {@code restore_database_snapshot}.
+     * <p>
+     * Not {@link #EXPORT_INFOBASE}: that one belongs to the object export. This domain carries two
+     * operations, and a load replaces what the infobase holds, so its runKeys are unique per call -
+     * two identical calls are two runs, never one coalesced future and never a replayed cached
+     * answer. One at a time, because both operations hold the same infobase.
+     * </p>
+     */
+    public static final PendingWorkRegistry SNAPSHOT = new PendingWorkRegistry(
+        "database_snapshot", "dt-snapshot-async", 1, SNAPSHOT_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * Scenario runs.
      * <p>
      * Not {@link #GENERIC}: that one is reserved for reads that can be replayed, and a run drives a
@@ -523,8 +546,8 @@ public final class PendingWorkRegistry
     public static List<PendingWorkRegistry> domains()
     {
         return Collections.unmodifiableList(
-            Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, REFERENCES, IMPORT_BINARY, VANESSA,
-                NAPARNIK, GENERIC));
+            Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, SNAPSHOT, REFERENCES, IMPORT_BINARY,
+                VANESSA, NAPARNIK, GENERIC));
     }
 
     /**

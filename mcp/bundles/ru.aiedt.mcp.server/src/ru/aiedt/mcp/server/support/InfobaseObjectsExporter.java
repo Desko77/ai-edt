@@ -1129,7 +1129,7 @@ public final class InfobaseObjectsExporter
      */
     static final class EdtIo implements ExportIo
     {
-        private final BmInfobaseExtensionHelper.LauncherContext ctx;
+        private final ThickClientLaunch.LauncherContext ctx;
 
         private final Path outputPath;
 
@@ -1141,7 +1141,7 @@ public final class InfobaseObjectsExporter
 
         private MonopolyLock.Claim claim;
 
-        EdtIo(BmInfobaseExtensionHelper.LauncherContext ctx, Path outputPath, String runKey,
+        EdtIo(ThickClientLaunch.LauncherContext ctx, Path outputPath, String runKey,
             LiveRun live, BooleanSupplier callerCancelled)
         {
             this.ctx = ctx;
@@ -1350,8 +1350,8 @@ public final class InfobaseObjectsExporter
      */
     public static final IoFactory EDT_IO = (projectName, applicationId, outputPath, runKey, live,
         cancelled) -> {
-        BmInfobaseExtensionHelper.LauncherContext ctx =
-            BmInfobaseExtensionHelper.resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx =
+            ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             return IoResolution.refused(ctx.error, ctx.failureKind);

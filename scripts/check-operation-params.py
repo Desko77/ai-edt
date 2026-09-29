@@ -57,8 +57,12 @@ DELEGATE = re.compile(r"new\s+(\w+)\(\)\.(?:execute|dispatch)\(")
 # a helper of this shape belonging to neither list fails the check - see unclassified_helpers.
 READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalInt", "boolArg",
                   "intArg", "isTrue", "parseNumericArgument", "objectArgumentProblem")
+# dispatchExport and dispatchRestore take the map and the project name, and read nothing by literal
+# name themselves: their callers extract the arguments and hand them down, so the operation's
+# vocabulary is established at the facade (`read in place`) and not here.
 NOT_READERS = ("addContentEntry", "addTypedCollectionChild", "bind", "unbind", "branchArgument",
-               "dispatchExport", "doBorrow", "pathOf", "put", "removeContentEntry", "withMode")
+               "dispatchExport", "dispatchRestore", "doBorrow", "pathOf", "put",
+               "removeContentEntry", "withMode")
 READERS = r"\b(?:extract\w*|" + "|".join(READER_HELPERS) + r")"
 HELPER_SIGNATURE = re.compile(r"\b(\w+)\(Map<String, ?String> \w+, String \w+")
 SRC = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server"
