@@ -45,6 +45,18 @@ than all of them.
   connection string and additional parameters with the passwords masked, platform version, and the
   projects each is bound to.
 
+- **Changes made in the infobase, pulled into the project.** `infobase_admin
+  operation=sync_control syncOperation=retrieve_database_changes` (the standalone `sync_control`
+  takes the same action as its `operation`) pulls what the infobase now holds into the project -
+  the direction opposite to `update_database`. A project carrying changes of its own is refused
+  until `replaceLocal=true`; a thick client this EDT launched against the infobase is refused by
+  its launch name (`heldBy`) before anything starts. A slow pull answers `Pending` with a `runKey`.
+
+- **The whole infobase as one `.dt` file.** `infobase_admin operation=export_database_snapshot`
+  dumps the infobase into a `.dt`, and `restore_database_snapshot` loads one back after writing a
+  backup of what the infobase holds (`backupTo`, derived beside the file when omitted): the load
+  replaces everything the infobase holds and does not start without the backup.
+
 - **Working inside an extension.** Borrowing (`extension_workshop operation=borrow_object` /
   `borrow_module` / `borrow_child`) writes the link that makes the borrowed object actually
   extend the one it came from, and says so on the response; call borrow again on an object
@@ -116,7 +128,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `diagnostics` | Project errors, summaries, revalidation, export readiness, check documentation. |
 | `launch_debugger` | The whole debugger: launch and attach, breakpoints, stepping, variables, evaluation, profiling. |
 | `project_admin` | Projects, configurations, subsystems, resync to disk, restarting EDT. |
-| `infobase_admin` | Infobases and launching: applications, the infobases EDT has registered, create and delete, credentials, starting a client, database update, sync control. |
+| `infobase_admin` | Infobases and launching: applications, the infobases EDT has registered, create and delete, credentials, starting a client, database update, dumping and loading the whole infobase as a `.dt`, sync control. |
 | `config_io` | Import and export of the configuration and of individual artifacts, including the configuration or the extension the infobase itself holds, and unpacking a binary `.epf` / `.erf` into XML. |
 | `insights` | Metrics, dependency graphs, configuration comparison, impact analysis. |
 | `security_audit` | Role rights, RLS violations, sensitive-data scan. |
