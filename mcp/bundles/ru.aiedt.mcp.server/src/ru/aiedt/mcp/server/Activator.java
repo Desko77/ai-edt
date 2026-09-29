@@ -23,6 +23,7 @@ import com._1c.g5.v8.dt.core.platform.IConfigurationProjectManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDerivedDataManagerProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
+import com._1c.g5.v8.dt.core.platform.IEditingLanguageManager;
 import com._1c.g5.v8.dt.core.platform.IExtensionProjectManager;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProjectManager;
 import com._1c.g5.v8.dt.import_.IImportOperationFactory;
@@ -142,6 +143,8 @@ public class Activator
     private ServiceTracker<IResourceStoreManager, IResourceStoreManager> resourceStoreManagerTracker;
 
     private ServiceTracker<IConfigurationProvider, IConfigurationProvider> configurationProviderTracker;
+
+    private ServiceTracker<IEditingLanguageManager, IEditingLanguageManager> editingLanguageManagerTracker;
 
     /** The services other bundles publish for this server: tools and module source providers. */
     private volatile boolean uiPending;
@@ -511,6 +514,17 @@ public class Activator
     public IConfigurationProvider getConfigurationProvider()
     {
         return service(configurationProviderTracker);
+    }
+
+    /**
+     * Returns the manager of the projects' editing language - the code the New Form wizard keys
+     * generated titles by.
+     *
+     * @return the service, or <code>null</code> when EDT does not offer it
+     */
+    public IEditingLanguageManager getEditingLanguageManager()
+    {
+        return service(editingLanguageManagerTracker);
     }
 
     /**
@@ -919,6 +933,7 @@ public class Activator
         dtProjectManagerTracker = openTracker(context, IDtProjectManager.class);
         resourceStoreManagerTracker = openTracker(context, IResourceStoreManager.class);
         configurationProviderTracker = openTracker(context, IConfigurationProvider.class);
+        editingLanguageManagerTracker = openTracker(context, IEditingLanguageManager.class);
         markerManagerTracker = openTracker(context, IMarkerManager.class);
         checkSchedulerTracker = openTracker(context, ICheckScheduler.class);
         checkRepositoryTracker = openTracker(context, ICheckRepository.class);
@@ -963,6 +978,7 @@ public class Activator
         dtProjectManagerTracker = closeTracker(dtProjectManagerTracker);
         resourceStoreManagerTracker = closeTracker(resourceStoreManagerTracker);
         configurationProviderTracker = closeTracker(configurationProviderTracker);
+        editingLanguageManagerTracker = closeTracker(editingLanguageManagerTracker);
         markerManagerTracker = closeTracker(markerManagerTracker);
         checkSchedulerTracker = closeTracker(checkSchedulerTracker);
         checkRepositoryTracker = closeTracker(checkRepositoryTracker);

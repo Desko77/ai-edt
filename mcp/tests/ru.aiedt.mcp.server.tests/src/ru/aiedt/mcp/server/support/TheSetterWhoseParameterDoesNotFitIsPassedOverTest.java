@@ -28,13 +28,13 @@ import org.junit.Test;
  */
 public class TheSetterWhoseParameterDoesNotFitIsPassedOverTest
 {
-    /** The model type of the form's alignment, as an enum the base value is not a constant of. */
-    public enum AlignKind
+    /** The model type of the form's group, as an enum the base value is not a constant of. */
+    public enum GroupKind
     {
         /** Not the value {@link FormBaseSetup} applies - which is what makes this the hard case. */
-        ItemsLeft,
+        Horizontal,
 
-        ItemsRight
+        HorizontalIfPossible
     }
 
     /**
@@ -47,12 +47,12 @@ public class TheSetterWhoseParameterDoesNotFitIsPassedOverTest
 
         private String byText;
 
-        public void setChildrenAlign(AlignKind value)
+        public void setGroup(GroupKind value)
         {
             enumSetterCalled = true;
         }
 
-        public void setChildrenAlign(String value)
+        public void setGroup(String value)
         {
             byText = value;
         }
@@ -66,7 +66,7 @@ public class TheSetterWhoseParameterDoesNotFitIsPassedOverTest
 
         assertEquals("the form has a setter for the property, so it has to count as applied", //$NON-NLS-1$
             1, FormBaseSetup.applyDefaults(form));
-        assertEquals("ItemsCenter", form.byText); //$NON-NLS-1$
+        assertEquals("VERTICAL", form.byText); //$NON-NLS-1$
         assertFalse("no enum constant carries the value", form.enumSetterCalled); //$NON-NLS-1$
     }
 
@@ -75,11 +75,11 @@ public class TheSetterWhoseParameterDoesNotFitIsPassedOverTest
     public void theFirstCandidateThatTakesTheValueIsUsed() throws Exception
     {
         OverloadedFormDouble form = new OverloadedFormDouble();
-        Method modelType = OverloadedFormDouble.class.getMethod("setChildrenAlign", AlignKind.class); //$NON-NLS-1$
-        Method textual = OverloadedFormDouble.class.getMethod("setChildrenAlign", String.class); //$NON-NLS-1$
+        Method modelType = OverloadedFormDouble.class.getMethod("setGroup", GroupKind.class); //$NON-NLS-1$
+        Method textual = OverloadedFormDouble.class.getMethod("setGroup", String.class); //$NON-NLS-1$
 
-        assertTrue(FormBaseSetup.applyFirstThatTakes(form, List.of(modelType, textual), "ItemsCenter")); //$NON-NLS-1$
-        assertEquals("ItemsCenter", form.byText); //$NON-NLS-1$
+        assertTrue(FormBaseSetup.applyFirstThatTakes(form, List.of(modelType, textual), "VERTICAL")); //$NON-NLS-1$
+        assertEquals("VERTICAL", form.byText); //$NON-NLS-1$
         assertFalse(form.enumSetterCalled);
     }
 
@@ -88,11 +88,11 @@ public class TheSetterWhoseParameterDoesNotFitIsPassedOverTest
     public void aCandidateThatTakesTheValueEndsTheSearch() throws Exception
     {
         OverloadedFormDouble form = new OverloadedFormDouble();
-        Method modelType = OverloadedFormDouble.class.getMethod("setChildrenAlign", AlignKind.class); //$NON-NLS-1$
-        Method textual = OverloadedFormDouble.class.getMethod("setChildrenAlign", String.class); //$NON-NLS-1$
+        Method modelType = OverloadedFormDouble.class.getMethod("setGroup", GroupKind.class); //$NON-NLS-1$
+        Method textual = OverloadedFormDouble.class.getMethod("setGroup", String.class); //$NON-NLS-1$
 
-        assertTrue(FormBaseSetup.applyFirstThatTakes(form, List.of(textual, modelType), "ItemsCenter")); //$NON-NLS-1$
-        assertEquals("ItemsCenter", form.byText); //$NON-NLS-1$
+        assertTrue(FormBaseSetup.applyFirstThatTakes(form, List.of(textual, modelType), "VERTICAL")); //$NON-NLS-1$
+        assertEquals("VERTICAL", form.byText); //$NON-NLS-1$
     }
 
     /** A property whose setters all refuse the value is reported as not applied, not as applied. */
@@ -100,15 +100,15 @@ public class TheSetterWhoseParameterDoesNotFitIsPassedOverTest
     public void aPropertyNoSetterTakesIsNotCounted() throws Exception
     {
         OverloadedFormDouble form = new OverloadedFormDouble();
-        Method modelType = OverloadedFormDouble.class.getMethod("setChildrenAlign", AlignKind.class); //$NON-NLS-1$
+        Method modelType = OverloadedFormDouble.class.getMethod("setGroup", GroupKind.class); //$NON-NLS-1$
 
-        assertFalse(FormBaseSetup.applyFirstThatTakes(form, List.of(modelType), "ItemsCenter")); //$NON-NLS-1$
+        assertFalse(FormBaseSetup.applyFirstThatTakes(form, List.of(modelType), "VERTICAL")); //$NON-NLS-1$
     }
 
     /** Nothing to try is nothing applied. */
     @Test
     public void noCandidateIsNotApplied()
     {
-        assertFalse(FormBaseSetup.applyFirstThatTakes(new OverloadedFormDouble(), List.of(), "ItemsCenter")); //$NON-NLS-1$
+        assertFalse(FormBaseSetup.applyFirstThatTakes(new OverloadedFormDouble(), List.of(), "VERTICAL")); //$NON-NLS-1$
     }
 }
