@@ -164,7 +164,8 @@ public class GenerateEventHandlersTool implements IMcpTool
         boolean skipExisting = JsonUtils.extractBooleanArgument(params, "skipExisting", true); //$NON-NLS-1$
         if (writeToModule)
         {
-            appendToModule(project, objectFqn, generated, bsl.toString(), skipExisting, result);
+            appendToModule(project, objectFqn, handlerModulePath(objectFqn, kind), generated,
+                bsl.toString(), skipExisting, result);
         }
 
         ToolResult tr = ToolResult.success();
@@ -187,24 +188,28 @@ public class GenerateEventHandlersTool implements IMcpTool
      *
      * @param project the project that owns the object
      * @param objectFqn the object whose module receives the handlers
+     * @param handlerModule the module path under src/ from {@link #handlerModulePath}, or null when
+     *            the object type has no folder
      * @param generated the names of the handlers rendered above
      * @param bsl the rendered text
      * @param skipExisting whether a handler already present in the module is left alone
      * @param result the answer being assembled
      */
-    private static void appendToModule(IProject project, String objectFqn, List<String> generated,
-        String bsl, boolean skipExisting, Map<String, Object> result)
+    private static void appendToModule(IProject project, String objectFqn, String handlerModule,
+        List<String> generated, String bsl, boolean skipExisting, Map<String, Object> result)
     {
-        String modulePath = objectFqn + ".ObjectModule"; //$NON-NLS-1$
+        if (handlerModule == null)
+        {
+            result.put("written", Collections.emptyList()); //$NON-NLS-1$
+            result.put("writeFailed", "the type of " + objectFqn //$NON-NLS-1$ //$NON-NLS-2$
+                + " has no module folder under src/, so there is no module to write the handlers to"); //$NON-NLS-1$
+            return;
+        }
+        String modulePath = handlerModule;
         String existing = null;
         try
         {
-            BslModuleAccess.ModulePathResolution resolved =
-                BslModuleAccess.resolveModulePath(project, modulePath);
-            if (resolved.isResolved())
-            {
-                existing = BslModuleAccess.readFileText(project.getFile(resolved.getPath()));
-            }
+            existing = BslModuleAccess.readModuleIfPresent(project, modulePath);
         }
         catch (Exception cannotRead)
         {
@@ -348,6 +353,39 @@ public class GenerateEventHandlersTool implements IMcpTool
             set.add(ru != null ? ru : trimmed);
         }
         return set.isEmpty() ? null : set;
+    }
+
+    /**
+     * The module under src/ that holds the event handlers of an object: the record set module of
+     * a register, whose events are those of its record set, and the object module of anything else.
+     * <p>
+     * A path rather than an FQN, because the module writer takes a path to a {@code .bsl} file
+     * and refuses an FQN, and the module may not have a file yet.
+     * </p>
+     *
+     * @param objectFqn the object, e.g. {@code Catalog.Products} or {@code Справочник.Товары}
+     * @param kind the model class name of the object, e.g. {@code Catalog}, {@code InformationRegister}
+     * @return the path, e.g. {@code Catalogs/Products/ObjectModule.bsl}, or null when the FQN is not
+     *         {@code Type.Name} or the type has no folder
+     */
+    static String handlerModulePath(String objectFqn, String kind)
+    {
+        if (objectFqn == null)
+        {
+            return null;
+        }
+        String[] parts = objectFqn.trim().split("\\.", 2); //$NON-NLS-1$
+        if (parts.length != 2 || parts[1].isEmpty() || parts[1].contains(".")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        String dir = MetadataTypeCatalog.getDirectoryName(parts[0]);
+        if (dir == null)
+        {
+            return null;
+        }
+        String file = "Register".equals(kindFamily(kind)) ? "RecordSetModule.bsl" : "ObjectModule.bsl"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return dir + "/" + parts[1] + "/" + file; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     private static String kindFamily(String kind)
