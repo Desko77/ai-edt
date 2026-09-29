@@ -470,7 +470,7 @@ An `edit_metadata batch` answer also carries `progress`: how many operations are
 
 A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
 
-`tasks/cancel` and `cancel=true` with a `runKey` answer with the outcome of the stop: `STOPPED` - the work stopped, `STILL_RUNNING` - the platform call is still going, `NOTHING_TO_STOP` - there was nothing to stop. Until the stopped work ends, calling the same work again answers `stillStopping: true` and no second copy starts.
+`tasks/cancel` turns the task `cancelled`, and its `statusMessage` says what stopping came to: the work stopped; it was told to stop and is still going and may still write; or the server only stopped waiting, because a Designer-mode process cannot be interrupted once started. Until the stopped work ends, calling the same work again answers `stillStopping: true` and no second copy starts.
 
 Heavy calls - an infobase update, including one before a client starts, configuration export and import, a Designer run, infobase creation, project-wide scans - run at most three at a time, and once more than 92 % of EDT's heap survives a collection a new heavy call is refused before any work starts. An external client gets `503` with `Retry-After`. A `Pending` answer holds its permit until the background work ends; polling a `runKey` takes no permit.
 
