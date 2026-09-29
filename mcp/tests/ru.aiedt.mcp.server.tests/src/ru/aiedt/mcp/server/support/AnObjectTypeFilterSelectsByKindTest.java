@@ -50,6 +50,10 @@ public class AnObjectTypeFilterSelectsByKindTest
         assertTrue(RoleRightsAnalyzer.isKnownObjectType("ALL")); //$NON-NLS-1$
         assertTrue(RoleRightsAnalyzer.isKnownObjectType(null));
         assertFalse(RoleRightsAnalyzer.isKnownObjectType("Catlog")); //$NON-NLS-1$
+
+        String refusal = RoleRightsAnalyzer.unknownObjectTypeMessage("Catlog"); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("'Catlog'") && refusal.contains("Catalog")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(null, RoleRightsAnalyzer.unknownObjectTypeMessage("Register")); //$NON-NLS-1$
     }
 
     /**

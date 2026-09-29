@@ -399,6 +399,23 @@ public final class RoleRightsAnalyzer
     }
 
     /**
+     * The refusal text for an {@code objectType} filter that names no metadata type.
+     *
+     * @param objectType the filter the caller passed
+     * @return the text naming the accepted values, or {@code null} when
+     *         {@link #isKnownObjectType(String)} accepts the value
+     */
+    public static String unknownObjectTypeMessage(String objectType)
+    {
+        if (isKnownObjectType(objectType))
+        {
+            return null;
+        }
+        return "objectType '" + objectType + "' names no metadata type. Use all, Register or one of: " //$NON-NLS-1$ //$NON-NLS-2$
+            + String.join(", ", MetadataTypeCatalog.getAllEnglishSingularNames()); //$NON-NLS-1$
+    }
+
+    /**
      * Whether the filter names registers as a family rather than one register kind.
      *
      * @param objectType the filter, not {@code null}

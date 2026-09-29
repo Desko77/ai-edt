@@ -133,11 +133,10 @@ public class AuditRoleRightsTool implements IMcpTool
             return ToolResult.error("Configuration not available").toJson(); //$NON-NLS-1$
         }
         String objectType = JsonUtils.extractStringArgument(params, "objectType"); //$NON-NLS-1$
-        if (!RoleRightsAnalyzer.isKnownObjectType(objectType))
+        String unknownType = RoleRightsAnalyzer.unknownObjectTypeMessage(objectType);
+        if (unknownType != null)
         {
-            return ToolResult.error("objectType '" + objectType + "' names no metadata type. Use all, " //$NON-NLS-1$ //$NON-NLS-2$
-                + "Register or one of: " //$NON-NLS-1$
-                + String.join(", ", MetadataTypeCatalog.getAllEnglishSingularNames())).toJson(); //$NON-NLS-1$
+            return ToolResult.error(unknownType).toJson();
         }
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
         boolean includeRls = JsonUtils.extractBooleanArgument(params, "includeRls", false); //$NON-NLS-1$
