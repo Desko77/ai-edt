@@ -8,8 +8,10 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
@@ -26,10 +28,10 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * Conditional appearance of a managed form in {@code edit_metadata}: add a rule, list the rules,
  * remove a rule.
  * <p>
- * A rule is the conditional-appearance item of the composition model, held by
- * {@code Form.getConditionalAppearance()}: the form items it styles, a condition over the form's
- * data and the appearance. The condition and the appearance are built by the same builder as
- * {@code dcs_workshop add_appearance}.
+ * A rule is the conditional-appearance item of the composition model: the form items it styles, a
+ * condition over the form's data and the appearance. The rules live in the form's conditional
+ * appearance, which {@link BmFormHelper#conditionalAppearanceFor} resolves. The condition and the
+ * appearance are built by the same builder as {@code dcs_workshop add_appearance}.
  * </p>
  */
 final class FormAppearanceOps
@@ -105,7 +107,7 @@ final class FormAppearanceOps
                         + ". Nothing was written."; //$NON-NLS-1$
                 }
                 selectItems(built.item, names);
-                index[0] = addToForm(form, built.item);
+                index[0] = addToForm(tx, form, built.item);
                 return null;
             }
             catch (Exception e)
@@ -162,7 +164,7 @@ final class FormAppearanceOps
         }
         List<List<Map<String, Object>>> read = new ArrayList<>();
         String outcome = helper.executeFormOperation(project, formFqn, (tx, form) -> {
-            read.add(describe(form));
+            read.add(describe(tx, form));
             return null;
         });
         if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
@@ -216,7 +218,7 @@ final class FormAppearanceOps
         String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
             try
             {
-                removed.addAll(removeFromForm(form, index, field));
+                removed.addAll(removeFromForm(tx, form, index, field));
                 return null;
             }
             catch (RuntimeException refused)
@@ -243,14 +245,14 @@ final class FormAppearanceOps
      * Splits a comma-separated list of item names.
      *
      * @param csv the names, or <code>null</code>
-     * @return the trimmed, non-empty names in their order
+     * @return the trimmed, non-empty names in their order, each once
      */
     static List<String> splitNames(String csv)
     {
-        List<String> names = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
         if (csv == null)
         {
-            return names;
+            return new ArrayList<>(names);
         }
         for (String part : csv.split(",")) //$NON-NLS-1$
         {
@@ -260,7 +262,7 @@ final class FormAppearanceOps
                 names.add(name);
             }
         }
-        return names;
+        return new ArrayList<>(names);
     }
 
     /**
@@ -308,22 +310,18 @@ final class FormAppearanceOps
      * Appends a rule to the form's conditional appearance, creating the container when the form has
      * none.
      *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
      * @param form the form
      * @param item the rule
      * @return the index of the rule in the form's list
      * @throws IllegalStateException when the container cannot be read or created
      */
-    static int addToForm(Object form, Object item)
+    static int addToForm(Object transaction, Object form, Object item)
     {
-        Object container = invoke(form, "getConditionalAppearance"); //$NON-NLS-1$
+        EObject container = BmFormHelper.conditionalAppearanceFor(transaction, form, true);
         if (container == null)
         {
-            container = BmDcsHelper.createElement("createDataCompositionConditionalAppearance"); //$NON-NLS-1$
-            if (container == null
-                || BmDcsHelper.setProperty(form, "conditionalAppearance", container) != null) //$NON-NLS-1$
-            {
-                throw new IllegalStateException("the form's conditional appearance could not be created"); //$NON-NLS-1$
-            }
+            throw new IllegalStateException("the form's conditional appearance could not be created"); //$NON-NLS-1$
         }
         EList<EObject> items = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
         if (items == null)
@@ -337,15 +335,16 @@ final class FormAppearanceOps
     /**
      * Removes rules from the form's conditional appearance.
      *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
      * @param form the form
      * @param index the rule to remove, or <code>null</code> to remove by field
      * @param field the data path whose rules are removed, used when {@code index} is <code>null</code>
      * @return the indexes removed, as they were before the removal
      * @throws IllegalArgumentException when the index is out of range or no rule reads the field
      */
-    static List<Integer> removeFromForm(Object form, Integer index, String field)
+    static List<Integer> removeFromForm(Object transaction, Object form, Integer index, String field)
     {
-        Object container = invoke(form, "getConditionalAppearance"); //$NON-NLS-1$
+        EObject container = BmFormHelper.conditionalAppearanceFor(transaction, form, false);
         EList<EObject> items = container == null ? null : BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
         int size = items == null ? 0 : items.size();
         List<Integer> removed = new ArrayList<>();
@@ -381,16 +380,18 @@ final class FormAppearanceOps
      * <p>
      * Each rule is {@code index}, {@code use}, {@code itemNames} (the styled items; empty means the
      * whole form), {@code condition} (each comparison as {@code field}, {@code comparisonType},
-     * {@code value}) and {@code appearance} (parameter name to value).
+     * {@code value}; each group as {@code groupType} and its {@code items}) and {@code appearance}
+     * (parameter name to value).
      * </p>
      *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
      * @param form the form
      * @return the rules in their order; empty when the form has none
      */
-    static List<Map<String, Object>> describe(Object form)
+    static List<Map<String, Object>> describe(Object transaction, Object form)
     {
         List<Map<String, Object>> rules = new ArrayList<>();
-        Object container = invoke(form, "getConditionalAppearance"); //$NON-NLS-1$
+        EObject container = BmFormHelper.conditionalAppearanceFor(transaction, form, false);
         EList<EObject> items = container == null ? null : BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
         if (items == null)
         {
@@ -431,37 +432,72 @@ final class FormAppearanceOps
 
     /**
      * @param item a rule
-     * @return the fields the comparisons of the rule's condition read
+     * @return the fields the comparisons of the rule's condition read, groups included
      */
     private static List<String> conditionFields(Object item)
     {
         List<String> fields = new ArrayList<>();
-        for (Map<String, Object> comparison : conditions(item))
-        {
-            Object field = comparison.get("field"); //$NON-NLS-1$
-            if (field != null)
-            {
-                fields.add(field.toString());
-            }
-        }
+        collectFields(conditions(item), fields);
         return fields;
     }
 
     /**
+     * @param entries described conditions: comparisons and groups
+     * @param fields receives the field of every comparison, the ones inside groups included
+     */
+    private static void collectFields(List<Map<String, Object>> entries, List<String> fields)
+    {
+        for (Map<String, Object> entry : entries)
+        {
+            Object field = entry.get("field"); //$NON-NLS-1$
+            if (field != null)
+            {
+                fields.add(field.toString());
+            }
+            Object nested = entry.get("items"); //$NON-NLS-1$
+            if (nested instanceof List)
+            {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> group = (List<Map<String, Object>>)nested;
+                collectFields(group, fields);
+            }
+        }
+    }
+
+    /**
      * @param item a rule
-     * @return the comparisons of the rule's condition, each as field, comparisonType and value
+     * @return the entries of the rule's condition: a comparison as field, comparisonType and value,
+     *         a group as groupType and its items
      */
     private static List<Map<String, Object>> conditions(Object item)
     {
-        List<Map<String, Object>> out = new ArrayList<>();
         Object filter = invoke(item, "getFilter"); //$NON-NLS-1$
-        EList<EObject> comparisons = filter == null ? null : BmDcsHelper.getEObjectList(filter, "getItems"); //$NON-NLS-1$
+        return filter == null ? new ArrayList<>() : conditionEntries(filter);
+    }
+
+    /**
+     * @param container a filter or a filter group
+     * @return its entries, groups described with their own entries
+     */
+    private static List<Map<String, Object>> conditionEntries(Object container)
+    {
+        List<Map<String, Object>> out = new ArrayList<>();
+        EList<EObject> comparisons = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
         if (comparisons == null)
         {
             return out;
         }
         for (EObject comparison : comparisons)
         {
+            if (comparison.eClass().getEStructuralFeature("groupType") != null) //$NON-NLS-1$
+            {
+                Map<String, Object> group = new LinkedHashMap<>();
+                Object groupType = invoke(comparison, "getGroupType"); //$NON-NLS-1$
+                group.put("groupType", groupType == null ? null : groupType.toString()); //$NON-NLS-1$
+                group.put("items", conditionEntries(comparison)); //$NON-NLS-1$
+                out.add(group);
+                continue;
+            }
             Map<String, Object> one = new LinkedHashMap<>();
             one.put("field", fieldPath(invoke(comparison, "getLeft"))); //$NON-NLS-1$ //$NON-NLS-2$
             Object type = invoke(comparison, "getComparisonType"); //$NON-NLS-1$
@@ -523,13 +559,14 @@ final class FormAppearanceOps
     }
 
     /**
-     * The text of a model value: the value it carries, or the class of the value when it carries an
-     * object (a color, a font).
+     * The text of a model value: the value it carries. A color given by its components reads as
+     * {@code #RRGGBB} and a font given by its face as {@code Face,height[,bold][,italic]}, the
+     * spellings {@code appearance} accepts; any other carried object reads as its class name.
      *
      * @param value an mcore value
      * @return the text
      */
-    private static String valueText(Object value)
+    static String valueText(Object value)
     {
         Object carried = invoke(value, "getValue"); //$NON-NLS-1$
         if (carried == null)
@@ -538,13 +575,65 @@ final class FormAppearanceOps
         }
         if (carried instanceof EObject)
         {
-            return ((EObject)carried).eClass().getName();
+            String spelled = colorText(carried);
+            if (spelled == null)
+            {
+                spelled = fontText(carried);
+            }
+            return spelled != null ? spelled : ((EObject)carried).eClass().getName();
         }
         if (carried != null)
         {
             return carried.toString();
         }
         return value instanceof EObject ? ((EObject)value).eClass().getName() : String.valueOf(value);
+    }
+
+    /**
+     * @param color a carried model object
+     * @return {@code #RRGGBB} when it is a color given by its components, otherwise <code>null</code>
+     */
+    private static String colorText(Object color)
+    {
+        Object red = invoke(color, "getRed"); //$NON-NLS-1$
+        Object green = invoke(color, "getGreen"); //$NON-NLS-1$
+        Object blue = invoke(color, "getBlue"); //$NON-NLS-1$
+        if (!(red instanceof Integer) || !(green instanceof Integer) || !(blue instanceof Integer)
+            || (Integer)red < 0 || (Integer)green < 0 || (Integer)blue < 0)
+        {
+            return null;
+        }
+        return String.format("#%02X%02X%02X", red, green, blue); //$NON-NLS-1$
+    }
+
+    /**
+     * @param font a carried model object
+     * @return {@code Face,height[,bold][,italic]} when it is a font given by its face, otherwise
+     *         <code>null</code>
+     */
+    private static String fontText(Object font)
+    {
+        Object face = invoke(font, "getFaceName"); //$NON-NLS-1$
+        if (!(face instanceof String) || ((String)face).isEmpty())
+        {
+            return null;
+        }
+        StringBuilder text = new StringBuilder((String)face);
+        Object height = invoke(font, "getHeight"); //$NON-NLS-1$
+        if (height instanceof Number && ((Number)height).floatValue() > 0)
+        {
+            float points = ((Number)height).floatValue();
+            text.append(',').append(points == Math.rint(points) ? String.valueOf((int)points) : String.valueOf(points));
+        }
+        if (Boolean.TRUE.equals(invoke(font, "isBold"))) //$NON-NLS-1$
+        {
+            text.append(",bold"); //$NON-NLS-1$
+        }
+        if (Boolean.TRUE.equals(invoke(font, "isItalic"))) //$NON-NLS-1$
+        {
+            text.append(",italic"); //$NON-NLS-1$
+        }
+        return text.toString();
     }
 
     /**

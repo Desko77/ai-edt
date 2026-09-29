@@ -57,9 +57,9 @@ public class AFormAppearanceRuleIsKeptOnTheFormTest
             "true", "TextColor=#FF0000"); //$NON-NLS-1$ //$NON-NLS-2$
         FormAppearanceOps.selectItems(built.item, Arrays.asList("Наименование", "Код")); //$NON-NLS-1$ //$NON-NLS-2$
 
-        assertEquals(0, FormAppearanceOps.addToForm(form, built.item));
+        assertEquals(0, FormAppearanceOps.addToForm(null, form, built.item));
 
-        List<Map<String, Object>> rules = FormAppearanceOps.describe(form);
+        List<Map<String, Object>> rules = FormAppearanceOps.describe(null, form);
         assertEquals(1, rules.size());
         Map<String, Object> rule = rules.get(0);
         assertEquals(Arrays.asList("Наименование", "Код"), rule.get("itemNames")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -69,7 +69,20 @@ public class AFormAppearanceRuleIsKeptOnTheFormTest
         assertEquals("Объект.Флаг", comparison.get("field")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("Equal", String.valueOf(comparison.get("comparisonType"))); //$NON-NLS-1$ //$NON-NLS-2$
         Map<?, ?> appearance = (Map<?, ?>)rule.get("appearance"); //$NON-NLS-1$
-        assertTrue(appearance.toString(), appearance.containsKey("ЦветТекста")); //$NON-NLS-1$
+        assertEquals(appearance.toString(), "#FF0000", appearance.get("ЦветТекста")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A font reads back in the spelling {@code appearance} accepts.
+     */
+    @Test
+    public void aFontReadsBackAsItWasWritten()
+    {
+        FormAppearanceOps.addToForm(null, form,
+            builder.newAppearanceItem(null, null, null, "Font=Arial,10,bold").item); //$NON-NLS-1$
+
+        Map<?, ?> appearance = (Map<?, ?>)FormAppearanceOps.describe(null, form).get(0).get("appearance"); //$NON-NLS-1$
+        assertEquals(appearance.toString(), "Arial,10,bold", appearance.get("Шрифт")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -80,9 +93,9 @@ public class AFormAppearanceRuleIsKeptOnTheFormTest
     {
         DcsWorkshopTool.AppearanceItem built = builder.newAppearanceItem(null, null, null, "Format=ЧДЦ=2"); //$NON-NLS-1$
         FormAppearanceOps.selectItems(built.item, Collections.emptyList());
-        FormAppearanceOps.addToForm(form, built.item);
+        FormAppearanceOps.addToForm(null, form, built.item);
 
-        Map<String, Object> rule = FormAppearanceOps.describe(form).get(0);
+        Map<String, Object> rule = FormAppearanceOps.describe(null, form).get(0);
         assertEquals(Collections.emptyList(), rule.get("itemNames")); //$NON-NLS-1$
         assertEquals(Collections.emptyList(), rule.get("condition")); //$NON-NLS-1$
     }
@@ -94,18 +107,18 @@ public class AFormAppearanceRuleIsKeptOnTheFormTest
     @Test
     public void rulesAreRemovedByIndexOrByField()
     {
-        FormAppearanceOps.addToForm(form, builder.newAppearanceItem("Объект.Флаг", null, "true", null).item); //$NON-NLS-1$ //$NON-NLS-2$
-        FormAppearanceOps.addToForm(form, builder.newAppearanceItem(null, null, null, "Font=Arial,10,bold").item); //$NON-NLS-1$
-        FormAppearanceOps.addToForm(form, builder.newAppearanceItem("объект.флаг", null, "false", null).item); //$NON-NLS-1$ //$NON-NLS-2$
+        FormAppearanceOps.addToForm(null, form, builder.newAppearanceItem("Объект.Флаг", null, "true", null).item); //$NON-NLS-1$ //$NON-NLS-2$
+        FormAppearanceOps.addToForm(null, form, builder.newAppearanceItem(null, null, null, "Font=Arial,10,bold").item); //$NON-NLS-1$
+        FormAppearanceOps.addToForm(null, form, builder.newAppearanceItem("объект.флаг", null, "false", null).item); //$NON-NLS-1$ //$NON-NLS-2$
 
-        assertEquals(Arrays.asList(0, 2), FormAppearanceOps.removeFromForm(form, null, "Объект.Флаг")); //$NON-NLS-1$
-        assertEquals(1, FormAppearanceOps.describe(form).size());
+        assertEquals(Arrays.asList(0, 2), FormAppearanceOps.removeFromForm(null, form, null, "Объект.Флаг")); //$NON-NLS-1$
+        assertEquals(1, FormAppearanceOps.describe(null, form).size());
 
-        assertRefused(() -> FormAppearanceOps.removeFromForm(form, Integer.valueOf(5), null));
-        assertRefused(() -> FormAppearanceOps.removeFromForm(form, null, "Объект.Нет")); //$NON-NLS-1$
+        assertRefused(() -> FormAppearanceOps.removeFromForm(null, form, Integer.valueOf(5), null));
+        assertRefused(() -> FormAppearanceOps.removeFromForm(null, form, null, "Объект.Нет")); //$NON-NLS-1$
 
-        assertEquals(Arrays.asList(0), FormAppearanceOps.removeFromForm(form, Integer.valueOf(0), null));
-        assertEquals(0, FormAppearanceOps.describe(form).size());
+        assertEquals(Arrays.asList(0), FormAppearanceOps.removeFromForm(null, form, Integer.valueOf(0), null));
+        assertEquals(0, FormAppearanceOps.describe(null, form).size());
     }
 
     /**
@@ -125,7 +138,7 @@ public class AFormAppearanceRuleIsKeptOnTheFormTest
     @Test
     public void itemNamesAreSplitOnCommas()
     {
-        assertEquals(Arrays.asList("А", "Б"), FormAppearanceOps.splitNames(" А, ,Б ")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals(Arrays.asList("А", "Б"), FormAppearanceOps.splitNames(" А, ,Б ,А")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertEquals(Collections.emptyList(), FormAppearanceOps.splitNames(null));
     }
 
