@@ -75,6 +75,7 @@ def next_code(source: str, index: int) -> int:
     @param source the text being read
     @param index where the reading is
     @return where the next brace that counts begins
+    @raises HelpUnreadable when a block comment opened here is never closed
     """
     character = source[index]
     if character in "\"'":
@@ -85,7 +86,13 @@ def next_code(source: str, index: int) -> int:
     if source.startswith("//", index):
         return source.find("\n", index) + 1 or len(source)
     if source.startswith("/*", index):
-        return source.find("*/", index) + 2
+        closing = source.find("*/", index)
+        # An unterminated comment used to answer index 1, which is where the walk had come from:
+        # the same comment was read again and the run never ended. A declaration is cut short here
+        # and the census has to say so rather than hang.
+        if closing < 0:
+            raise HelpUnreadable("the block comment at character %d is not closed" % index)
+        return closing + 2
     return index + 1
 
 

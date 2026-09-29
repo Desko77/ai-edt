@@ -532,11 +532,10 @@ public class BmFormHelper
                     String refusal = dryRunRefusal(preview);
                     if (refusal != null)
                     {
-                        // Prefix with "Error:" so callers' startsWith("Error:") checks
-                        // treat a dry-run that previews a FAILURE as an error, not as
-                        // success with a buried message (was a false-success across all
-                        // form ops). A dry-run that previews SUCCESS keeps the non-Error
-                        // branch below and stays success.
+                        // The "Error:" prefix is what the callers classify this text by, so a dry
+                        // run that previews a FAILURE is answered as a failure, with the refusal
+                        // as its message. A dry run that previews SUCCESS takes the non-Error
+                        // branch below and stays a success.
                         return "Error: dry run - action would FAIL: " + refusal //$NON-NLS-1$
                             + " (rolled back, no changes written to Form.form)."; //$NON-NLS-1$
                     }
