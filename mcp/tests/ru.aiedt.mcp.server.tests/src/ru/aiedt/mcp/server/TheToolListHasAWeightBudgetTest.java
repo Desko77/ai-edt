@@ -94,8 +94,14 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 170444 to 170476 for the docs_lookup description, which names system_enum_values
      * among the operations it accepts and no longer counts them.
      * </p>
+     * <p>
+     * Raised from 173621 to 174078 for reuseRecent on the yaxunit_tests facade and for the
+     * sentences that say what a call does about the infobase before it launches: the flag that
+     * takes a report of a run finished within the last five minutes, and the refusal a call gets
+     * when the update it asked for does not finish.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 174378;
+    private static final int DOCUMENT_BUDGET = 174835;
 
     private LiveServer server;
 
@@ -273,7 +279,11 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("external_object_workshop", Integer.valueOf(2602)); //$NON-NLS-1$
         BUDGETS.put("docs_lookup", Integer.valueOf(2547)); //$NON-NLS-1$
         BUDGETS.put("validate_query", Integer.valueOf(2460)); //$NON-NLS-1$
-        BUDGETS.put("yaxunit_tests", Integer.valueOf(2395)); //$NON-NLS-1$
+        // Raised from 2395 to 2639 for reuseRecent, its sentence, and the sentences that say the
+        // infobase is updated before the launch and that a refused update starts nothing. The two
+        // hidden aliases carry the same declarations and are not weighed: tools/list under the
+        // default preset does not advertise them. Measured 29.09: 2639.
+        BUDGETS.put("yaxunit_tests", Integer.valueOf(2639)); //$NON-NLS-1$
         // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains
