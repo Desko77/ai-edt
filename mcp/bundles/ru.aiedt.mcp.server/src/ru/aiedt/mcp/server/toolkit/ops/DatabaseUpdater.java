@@ -503,8 +503,8 @@ public class DatabaseUpdater implements IMcpTool
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
         return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
-            () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, checkOnly, fProtect, fAcceptLoss, params));
+            entry -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
+                fSkipValidation, checkOnly, fProtect, fAcceptLoss, params, entry));
     }
 
     /**
@@ -555,9 +555,34 @@ public class DatabaseUpdater implements IMcpTool
     static String runOrAnswer(boolean answerInPlace, String runKey, PendingWorkRegistry registry,
         String projectName, long timeoutMs, java.util.function.Supplier<String> work)
     {
+        return runOrAnswer(answerInPlace, runKey, registry, projectName, timeoutMs,
+            entry -> work.get());
+    }
+
+    /**
+     * As {@link #runOrAnswer(boolean, String, PendingWorkRegistry, String, long, java.util.function.Supplier)}
+     * for a body that has to see the entry it runs under.
+     * <p>
+     * The update claims the launch boundary on it: past {@code appManager.update} a cancel cannot
+     * reach the work, and before it a raised flag keeps the call from starting.
+     * </p>
+     *
+     * @param answerInPlace whether this call is a probe, answered on the calling thread
+     * @param runKey the key a real run under these arguments owns
+     * @param registry the run registry, which a probe does not touch
+     * @param projectName the project, named in a Pending body
+     * @param timeoutMs how long a real run is waited for before a Pending answer
+     * @param work the body, handed the entry it runs under
+     * @return a JSON result body
+     */
+    static String runOrAnswer(boolean answerInPlace, String runKey, PendingWorkRegistry registry,
+        String projectName, long timeoutMs,
+        java.util.function.Function<PendingWorkRegistry.PendingEntry, String> work)
+    {
         if (answerInPlace)
         {
-            return work.get();
+            // A probe is not a run: it has no entry, and nothing about it is claimed.
+            return work.apply(null);
         }
         registry.pruneExpired();
         // A FRESH call must never be silently served a finished cached result for the same params:
@@ -1060,12 +1085,14 @@ public class DatabaseUpdater implements IMcpTool
      * @param protectData whether the update stops for a restructure that would delete data
      * @param acceptDataLoss whether the caller accepted that loss up front
      * @param params the full call, for the refreshWorkspace flag
+     * @param entry the run this update belongs to, or <code>null</code> for a probe, which is
+     *            answered on the caller's thread and is not a run
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
         boolean skipValidation, boolean checkOnly, boolean protectData, boolean acceptDataLoss,
-        Map<String, String> params)
+        Map<String, String> params, PendingWorkRegistry.PendingEntry entry)
     {
         String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
             DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
@@ -1302,6 +1329,25 @@ public class DatabaseUpdater implements IMcpTool
                 switched.put("freedClients", freedClients); //$NON-NLS-1$
                 switched.put("branchRecheckedBeforeUpdate", true); //$NON-NLS-1$
                 return switched.toJson();
+            }
+
+            // The launch boundary. Past this line the work is inside a blocking platform call with
+            // no budget: a cancel arriving later cannot pull it out, and the answer says so
+            // (STILL_RUNNING). A cancel that arrived earlier raised the flag, and here it keeps the
+            // call from starting at all - which is what makes cancelling an update mean something
+            // before the base is touched.
+            if (entry != null && !entry.claimTheLaunch())
+            {
+                ToolResult cancelled = ToolResult.error("The update was cancelled before it reached "
+                    + "the infobase. Nothing was started; the base is as it was.");
+                cancelled.put("tag", ErrorTags.CANCELLED.wire()); //$NON-NLS-1$
+                cancelled.put("projectName", projectName); //$NON-NLS-1$
+                cancelled.put("applicationId", applicationId); //$NON-NLS-1$
+                if (freedClients != null)
+                {
+                    cancelled.put("freedClients", freedClients); //$NON-NLS-1$
+                }
+                return cancelled.toJson();
             }
 
             ApplicationUpdateState stateAfter =

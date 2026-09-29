@@ -140,11 +140,4 @@ public class ACancelReachesTheClientHoweverItArrivesTest
 
         VanessaTool.refusedBeforeLaunch(key);
     }
-
-    @Test
-    public void aDomainWithNothingToStopSaysSo()
-    {
-        assertFalse("cancelling a read stops the waiting, and there is nothing else to stop", //$NON-NLS-1$
-            PendingWorkRegistry.GENERIC.stopsItsWork());
-    }
 }

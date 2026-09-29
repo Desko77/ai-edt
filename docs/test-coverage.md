@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 134 | a test class named after it |
-| exercised | 200 | reached by some other test |
-| tool-sweep | 48 | declaration checked by the registry-wide contract sweep |
+| exercised | 203 | reached by some other test |
+| tool-sweep | 47 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 41 | needs a display or an extension point |
 | workspace-bound | 24 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **447** | across 525 test classes |
+| **total** | **449** | across 530 test classes |
 
 ## untested (0)
 
@@ -120,7 +120,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (48)
+## tool-sweep (47)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -168,11 +168,10 @@ _none_
 - SemanticMetadataSearchTool
 - TaggedObjectsReader
 - TagsReader
-- TasksReader
 - UninstallExtensionTool
 - XdtoWorkshopTool
 
-## exercised (200)
+## exercised (203)
 
 **(root)**
 - Activator
@@ -249,6 +248,7 @@ _none_
 - ClientLaunchMode
 - ConfigurationListProperties
 - ContainerScope
+- DataLossPlan
 - DcsExtensionExportHelper
 - DcsSchemaRestorer
 - DebugSessionBook
@@ -326,6 +326,7 @@ _none_
 - ConfigIoFacadeTool
 - ContentAssistReader
 - ContentOps
+- DatabaseSyncInspector
 - DatabaseUpdater
 - DcsWorkshopTool
 - DebugFrameResolution
@@ -392,6 +393,7 @@ _none_
 - SuspendWaiter
 - SymbolInfoReader
 - SyncControlTool
+- TasksReader
 - TemplateOps
 - ValidateForExportTool
 - VanessaTool
@@ -592,9 +594,9 @@ closes.
 | 9-16 | 54 |
 | 17+ | 22 |
 
-4257 test methods across 525 test classes; 134 classes have a test of their own, median 10 methods each.
+4292 test methods across 530 test classes; 134 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 134 of 447 classes have one: 48 are covered by the registry-wide contract sweep and 24 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 134 of 449 classes have one: 47 are covered by the registry-wide contract sweep and 24 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

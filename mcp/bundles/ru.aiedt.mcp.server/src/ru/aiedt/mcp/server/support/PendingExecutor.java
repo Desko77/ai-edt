@@ -158,7 +158,10 @@ public final class PendingExecutor
         String result = entry.await(waitMs);
         if (result != null)
         {
-            registry.remove(runKey);
+            // The entry that was awaited, not whatever the key holds now: a call made with the same
+            // arguments while this one was waiting coalesces onto a new run once the key is free,
+            // and removing by key would drop that run with nothing tracking it.
+            registry.remove(runKey, entry);
             return result;
         }
         return buildPendingJson(operationName, runKey, entry, waitMs, pendingFields);
@@ -187,7 +190,8 @@ public final class PendingExecutor
         String result = entry.await(waitMs);
         if (result != null)
         {
-            registry.remove(runKey);
+            // Same reason as in start: the await can outlive the entry it read.
+            registry.remove(runKey, entry);
             return result;
         }
         return buildPendingJson(operationName, runKey, entry, waitMs, pendingFields);
