@@ -1259,7 +1259,8 @@ public class CompareConfigurationsTool implements IMcpTool
         private boolean stopped;
 
         /**
-         * Whether this walk did not look under a path.
+         * Whether this walk did not look at a path: the path itself was not read, or it lies under
+         * a directory that was not.
          *
          * @param key the path an entry is being judged for.
          * @return whether the path is covered by something this walk did not read
@@ -1268,7 +1269,8 @@ public class CompareConfigurationsTool implements IMcpTool
         {
             for (NotRead skipped : notRead)
             {
-                if (skipped.key().isEmpty() || key.startsWith(skipped.key() + "/")) //$NON-NLS-1$
+                if (skipped.key().isEmpty() || key.equals(skipped.key())
+                    || key.startsWith(skipped.key() + "/")) //$NON-NLS-1$
                 {
                     return true;
                 }

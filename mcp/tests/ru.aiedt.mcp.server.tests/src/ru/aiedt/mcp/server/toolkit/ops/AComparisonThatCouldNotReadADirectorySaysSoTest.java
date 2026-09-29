@@ -168,6 +168,32 @@ public class AComparisonThatCouldNotReadADirectorySaysSoTest
             answer.contains("\"failedCount\":2")); //$NON-NLS-1$
     }
 
+    /**
+     * A path one side could not read is not claimed by the other side either: a file standing where
+     * the unread directory stands is neither added nor removed.
+     *
+     * @throws Exception when the file cannot be written
+     */
+    @Test
+    public void aFileWhereTheOtherSideCouldNotReadIsNotClaimed() throws Exception
+    {
+        Files.delete(second.resolve(INSIDE));
+        Files.delete(second.resolve("Catalogs/Locked")); //$NON-NLS-1$
+        write(second, "Catalogs/Locked", "<mdo/>"); //$NON-NLS-1$ //$NON-NLS-2$
+        firstDenied = denyListing(first.resolve("Catalogs/Locked")); //$NON-NLS-1$
+        Assume.assumeTrue("this file system refused to make the directory unreadable", //$NON-NLS-1$
+            firstDenied);
+
+        String answer = compare();
+
+        assertTrue("the unread directory is named: " + answer, //$NON-NLS-1$
+            answer.contains("directory not read")); //$NON-NLS-1$
+        assertFalse("the path the first side could not read is not added by the second: " + answer, //$NON-NLS-1$
+            answer.contains("\"added\":[\"Catalogs/Locked\"]")); //$NON-NLS-1$
+        assertFalse("nor removed: " + answer, //$NON-NLS-1$
+            answer.contains("\"removed\":[\"Catalogs/Locked\"]")); //$NON-NLS-1$
+    }
+
     /** An export that reads cleanly says so: the control for the three above. */
     @Test
     public void anExportThatReadsCleanlyNamesNoFailure()
