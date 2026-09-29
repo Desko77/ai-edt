@@ -17,7 +17,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
+import org.junit.Assume;
 import org.junit.Test;
 
 import com.google.gson.JsonObject;
@@ -396,11 +398,13 @@ public class InfobaseOutsideChangesTest
 
     /**
      * A mark that cannot be rewritten stays, and the reason is returned for the answer that names
-     * the record.
+     * the record. On Windows a read-only record file cannot be replaced; elsewhere the replacing
+     * move is not stopped by it, so the test runs on Windows only.
      */
     @Test
     public void aLoadMarkThatCannotBeRewrittenNamesTheReason() throws IOException
     {
+        Assume.assumeTrue(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Path dir = Files.createTempDirectory("clear-load-fail-"); //$NON-NLS-1$
         Path record = dir.resolve(InfobaseOutsideChange.FILE_NAME);
         try
