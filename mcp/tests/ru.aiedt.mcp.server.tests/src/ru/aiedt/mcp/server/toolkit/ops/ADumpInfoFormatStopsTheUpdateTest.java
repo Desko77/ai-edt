@@ -436,11 +436,11 @@ public class ADumpInfoFormatStopsTheUpdateTest
     @Test
     public void theFormatOverrideIsPartOfTheRunIdentity()
     {
-        String plain = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false); //$NON-NLS-1$ //$NON-NLS-2$
-        String overriding = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, true); //$NON-NLS-1$ //$NON-NLS-2$
+        String plain = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false, true, false); //$NON-NLS-1$ //$NON-NLS-2$
+        String overriding = DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, true, true, false); //$NON-NLS-1$ //$NON-NLS-2$
         assertNotEquals("the override separates two otherwise identical runs", plain, overriding); //$NON-NLS-1$
         assertEquals("the same arguments still key the same run", plain, //$NON-NLS-1$
-            DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false)); //$NON-NLS-1$ //$NON-NLS-2$
+            DatabaseUpdater.runKeyFor("proj", "app-1", false, true, false, false, false, true, false)); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

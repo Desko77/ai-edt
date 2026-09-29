@@ -51,6 +51,7 @@ import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.BranchInfobaseBook;
+import ru.aiedt.mcp.server.support.DataLossPlan;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.GitBranch;
@@ -61,6 +62,7 @@ import ru.aiedt.mcp.server.support.MonopolyLock;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
+import ru.aiedt.mcp.server.support.TextSuggest;
 
 /**
  * Pushes a project's configuration into its infobase - a full reload or just the changes - through
@@ -141,6 +143,10 @@ public class DatabaseUpdater implements IMcpTool
             + "For an extension project - which has no infobase of its own - the infobase of the " //$NON-NLS-1$
             + "configuration it extends is updated, which is what carries the extension's code into it. " //$NON-NLS-1$
             + "Handles both a full update (complete reload) and an incremental update (changes only). " //$NON-NLS-1$
+            + "Before the update starts, protectData (default on) compares the infobase's synchronization " //$NON-NLS-1$
+            + "baseline with the model: a data-carrying entity the base holds and the model does not " //$NON-NLS-1$
+            + "stops the call before anything is started, with the addresses in dataLossTables and " //$NON-NLS-1$
+            + "status=confirmationRequired; resend with acceptDataLoss=true to carry it through. " //$NON-NLS-1$
             + "A slow full / restructure run replies with a Pending status and a runKey instead of blocking - " //$NON-NLS-1$
             + "call this tool again passing that runKey to keep waiting (cancel=true plus the runKey stops tracking)."; //$NON-NLS-1$
     }
@@ -168,6 +174,27 @@ public class DatabaseUpdater implements IMcpTool
                     + "claimed.") //$NON-NLS-1$
             .booleanProperty("fullUpdate", "true triggers a full reload; false runs an incremental update instead (default: false)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("autoRestructure", "Apply infobase restructuring automatically when it is required (default: true)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("protectData", //$NON-NLS-1$
+                "Stop the update before it starts when it would delete data (default: true). The " //$NON-NLS-1$
+                    + "deletion is computed from the infobase's synchronization baseline - the " //$NON-NLS-1$
+                    + "ConfigDumpInfo.xml of its last synchronization, one record per entity the " //$NON-NLS-1$
+                    + "base holds, matched by uuid against the model. A data-carrying entity the " //$NON-NLS-1$
+                    + "base holds and the model does not (a catalog, document, register, constant or " //$NON-NLS-1$
+                    + "common attribute, and under them an attribute, tabular section, dimension, " //$NON-NLS-1$
+                    + "resource or accounting flag) means the restructure would drop its table. The " //$NON-NLS-1$
+                    + "answer carries dataLossTables with those addresses, dataLossCheck saying what " //$NON-NLS-1$
+                    + "was compared, and status=confirmationRequired; nothing is started - no " //$NON-NLS-1$
+                    + "update, no claim on the infobase, no client stopped. A rename keeps the uuid " //$NON-NLS-1$
+                    + "and is not a deletion. A base with no baseline file, or a model that cannot " //$NON-NLS-1$
+                    + "be read whole, is not compared and says so in dataLossCheck instead of " //$NON-NLS-1$
+                    + "refusing. Off, nothing is compared and the platform restructures silently, " //$NON-NLS-1$
+                    + "which the answer says.") //$NON-NLS-1$
+            .booleanProperty("acceptDataLoss", //$NON-NLS-1$
+                "Go ahead with a data deletion protectData found (default: false). Without it " //$NON-NLS-1$
+                    + "such an update is refused before it starts, and resending the same call " //$NON-NLS-1$
+                    + "with acceptDataLoss=true is what carries it through; the answer then names " //$NON-NLS-1$
+                    + "what it accepted. Only the deletion this comparison found is ever accepted, " //$NON-NLS-1$
+                    + "and only for that call.") //$NON-NLS-1$
             .booleanProperty("ignoreBranchBinding", "Update even when the branch this project is " //$NON-NLS-1$ //$NON-NLS-2$
                 + "on is bound to a different application (see branch_infobase). Off by default: " //$NON-NLS-1$
                 + "the binding exists to stop an update restructuring the wrong infobase after a " //$NON-NLS-1$
@@ -387,6 +414,8 @@ public class DatabaseUpdater implements IMcpTool
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         boolean fullUpdate = JsonUtils.extractBooleanArgument(params, "fullUpdate", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoRestructure = JsonUtils.extractBooleanArgument(params, "autoRestructure", true); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean protectData = JsonUtils.extractBooleanArgument(params, "protectData", true); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean acceptDataLoss = JsonUtils.extractBooleanArgument(params, "acceptDataLoss", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean autoFreeClients = JsonUtils.extractBooleanArgument(params, "autoFreeClients", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean ignoreBranchBinding =
             JsonUtils.extractBooleanArgument(params, "ignoreBranchBinding", false); //$NON-NLS-1$
@@ -458,20 +487,24 @@ public class DatabaseUpdater implements IMcpTool
         final boolean fFree = autoFreeClients;
         final boolean fIgnoreBranch = ignoreBranchBinding;
         final boolean fSkipValidation = skipValidation;
+        final boolean fProtect = protectData;
+        final boolean fAcceptLoss = acceptDataLoss;
         final boolean fIgnoreDumpInfo =
             JsonUtils.extractBooleanArgument(params, "ignoreDumpInfoFormat", false); //$NON-NLS-1$ //$NON-NLS-2$
         // The override is part of the run's identity: the same call with and without it is two
         // different intentions, and coalescing them would let a refusal be served as the answer
-        // to a caller who had said to go ahead. A probe carries none of it - it is not a run, and
-        // the key below is the one a real update under these arguments owns.
+        // to a caller who had said to go ahead. The data-loss pair is part of it for the same
+        // reason - a refused call and its accepted resend are two intentions, and a caller who
+        // accepted the loss must not be served a run that refused it. A probe carries none of it -
+        // it is not a run, and the key below is the one a real update under these arguments owns.
         String runKey = runKeyFor(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-            fIgnoreDumpInfo);
+            fIgnoreDumpInfo, fProtect, fAcceptLoss);
         long timeoutMs = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT_SECONDS,
             MIN_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS) * 1000L;
 
         return runOrAnswer(checkOnly, runKey, PendingWorkRegistry.UPDATE, fProjectName, timeoutMs,
             () -> updateDatabase(fProjectName, fApplicationId, fFull, fRestr, fFree, fIgnoreBranch,
-                fSkipValidation, checkOnly, params));
+                fSkipValidation, checkOnly, fProtect, fAcceptLoss, params));
     }
 
     /**
@@ -485,15 +518,18 @@ public class DatabaseUpdater implements IMcpTool
      * @param autoFreeClients whether client sessions are freed
      * @param ignoreBranchBinding whether the branch-binding check is bypassed
      * @param ignoreDumpInfoFormat whether the stored dump-info format check is bypassed
+     * @param protectData whether the data-loss comparison is made before the update
+     * @param acceptDataLoss whether a deletion it finds is carried through rather than refused
      * @return the run key
      */
     static String runKeyFor(String projectName, String applicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean ignoreDumpInfoFormat)
+        boolean ignoreDumpInfoFormat, boolean protectData, boolean acceptDataLoss)
     {
         return PendingWorkRegistry.computeRunKey(projectName, applicationId,
             String.valueOf(fullUpdate), String.valueOf(autoRestructure), String.valueOf(autoFreeClients),
-            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat));
+            String.valueOf(ignoreBranchBinding), String.valueOf(ignoreDumpInfoFormat),
+            String.valueOf(protectData), String.valueOf(acceptDataLoss));
     }
 
     /**
@@ -1021,12 +1057,15 @@ public class DatabaseUpdater implements IMcpTool
      * @param skipValidation whether to skip the checks that refuse what the infobase would refuse
      * @param checkOnly whether to answer what an update would face and start nothing. Reached only
      *            from the caller's thread - a probe is never a tracked run, see {@link #runOrAnswer}
+     * @param protectData whether the update stops for a restructure that would delete data
+     * @param acceptDataLoss whether the caller accepted that loss up front
      * @param params the full call, for the refreshWorkspace flag
      * @return a JSON result body
      */
     private String updateDatabase(String projectName, String requestedApplicationId, boolean fullUpdate,
         boolean autoRestructure, boolean autoFreeClients, boolean ignoreBranchBinding,
-        boolean skipValidation, boolean checkOnly, Map<String, String> params)
+        boolean skipValidation, boolean checkOnly, boolean protectData, boolean acceptDataLoss,
+        Map<String, String> params)
     {
         String blocked = exportScanBefore(projectName, skipValidation, checkOnly,
             DatabaseUpdater::refuseWhatTheInfobaseWillRefuse);
@@ -1152,6 +1191,20 @@ public class DatabaseUpdater implements IMcpTool
                 workspaceRefresh = refreshFromDisk(project, infobaseProject);
             }
 
+            // The data-loss decision, and the place it is taken: after the model has been re-read
+            // from disk, so the comparison is against what the update would carry, and before
+            // anything is claimed or stopped, so a refusal leaves the base exactly as it was. The
+            // deletion is read from the base's own baseline rather than from the platform's
+            // confirmation window - see DataLossPlan for why the window cannot name it.
+            DataLossPlan.Plan dataLoss =
+                readDataLossPlan(infobaseProject, project, application, protectData);
+            String dataLossStop = passTheDataLossGate(dataLoss, protectData, acceptDataLoss,
+                () -> null);
+            if (dataLossStop != null)
+            {
+                return dataLossStop;
+            }
+
             ApplicationUpdateState stateBefore = appManager.getUpdateState(application);
             if (stateBefore == ApplicationUpdateState.BEING_UPDATED)
             {
@@ -1251,7 +1304,12 @@ public class DatabaseUpdater implements IMcpTool
                 return switched.toJson();
             }
 
-            ApplicationUpdateState stateAfter = appManager.update(application, updateType, context, monitor);
+            ApplicationUpdateState stateAfter =
+                appManager.update(application, updateType, context, monitor);
+            if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
+            {
+                stateAfter = awaitUpdateEnd(appManager, application);
+            }
 
             // update() can hand back BEING_UPDATED: the work goes on inside EDT after this call
             // returns. Releasing the claim then would announce the infobase free while it is being
@@ -1262,14 +1320,10 @@ public class DatabaseUpdater implements IMcpTool
             String stillUpdating = null;
             if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
             {
-                stateAfter = awaitUpdateEnd(appManager, application);
-                if (stateAfter == ApplicationUpdateState.BEING_UPDATED)
-                {
-                    stillUpdating = "The update was still running after " //$NON-NLS-1$
-                        + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
-                        + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
-                        + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
-                }
+                stillUpdating = "The update was still running after " //$NON-NLS-1$
+                    + (BEING_UPDATED_WAIT_MS / 1000) + " seconds of waiting, and the claim on " //$NON-NLS-1$
+                    + "this infobase has been released. Another instance may now take it while " //$NON-NLS-1$
+                    + "EDT is still working - check the state before starting anything else."; //$NON-NLS-1$
             }
 
             boolean updateComplete = stateAfter == ApplicationUpdateState.UPDATED;
@@ -1289,6 +1343,10 @@ public class DatabaseUpdater implements IMcpTool
             {
                 result.put("withoutCrossProcessClaim", infobaseClaim.unprotectedReason()); //$NON-NLS-1$
             }
+
+            // What the pre-flight comparison found, said in the same answer the update answers
+            // with: the file it read, how many records it compared, and the addresses it named.
+            putDataLossCheck(result, dataLoss, protectData, acceptDataLoss);
 
             if (stillUpdating != null)
             {
@@ -1346,6 +1404,7 @@ public class DatabaseUpdater implements IMcpTool
                     .put("stateBefore", stateBefore.name()) //$NON-NLS-1$
                     .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                     .put("updateComplete", Boolean.FALSE); //$NON-NLS-1$
+                putDataLossCheck(refusal, dataLoss, protectData, acceptDataLoss);
                 if (stillUpdating != null)
                 {
                     refusal.put("claimReleased", stillUpdating); //$NON-NLS-1$
@@ -1525,6 +1584,207 @@ public class DatabaseUpdater implements IMcpTool
             }
         }
         return ApplicationUpdateState.BEING_UPDATED;
+    }
+
+    /**
+     * Reads the data-loss comparison for this call, or answers {@code null} when the caller did not
+     * ask for it.
+     * <p>
+     * The project that owns the infobase carries the baseline; the model compared with it is the
+     * union of the projects this update would write, which for an extension routed to its parent is
+     * both of them. Reading is all this does - a plan that could not be built comes back saying so.
+     * </p>
+     *
+     * @param infobaseProject the project that owns the infobase
+     * @param project the project the call named
+     * @param application the application the call resolved to
+     * @param protectData whether the caller asked for the protection
+     * @return the plan, or {@code null} when nothing was to be compared
+     */
+    static DataLossPlan.Plan readDataLossPlan(IProject infobaseProject, IProject project,
+        IApplication application, boolean protectData)
+    {
+        if (!protectData)
+        {
+            return null;
+        }
+        List<IProject> modelProjects = new ArrayList<>();
+        modelProjects.add(project);
+        if (!project.equals(infobaseProject))
+        {
+            modelProjects.add(infobaseProject);
+        }
+        try
+        {
+            return DataLossPlan.fromStore.read(infobaseProject, application, modelProjects);
+        }
+        catch (RuntimeException | LinkageError cannotRead)
+        {
+            // A comparison that could not be made is reported, never turned into a refusal: what a
+            // refusal must rest on is two sides that were really read.
+            return DataLossPlan.notCompared(null, "the baseline could not be read (" //$NON-NLS-1$
+                + TextSuggest.safeMessage(cannotRead) + ")"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The update path's data-loss gate: a deletion the comparison found returns before
+     * {@code launch} runs.
+     * <p>
+     * This is the same shape as {@link #passTheFormatGate}, for the same reason: production passes a
+     * supplier answering {@code null}, because what follows the gate in {@link #updateDatabase} IS
+     * the path that starts the update, while a test passes a recording stand-in - which is what
+     * makes "a refusal launches nothing" a measurement rather than a reading of the source. The
+     * gate sits before the infobase is claimed and before any client is stopped, so a refusal
+     * leaves the base free and the answer can say nothing was started.
+     * </p>
+     *
+     * @param plan the comparison, or {@code null} when the caller asked for no protection
+     * @param protectData whether the caller asked for the protection
+     * @param acceptDataLoss whether the caller accepted the deletion up front
+     * @param launch what the update does once the comparison allows it; not called on a refusal
+     * @return the refusal JSON, or whatever {@code launch} returned
+     */
+    static String passTheDataLossGate(DataLossPlan.Plan plan, boolean protectData,
+        boolean acceptDataLoss, java.util.function.Supplier<String> launch)
+    {
+        if (protectData && plan != null && plan.compared && !plan.isEmpty() && !acceptDataLoss)
+        {
+            return dataLossRefusal(plan);
+        }
+        return launch == null ? null : launch.get();
+    }
+
+    /**
+     * The refusal an update answers when the comparison found data the restructure would delete.
+     * <p>
+     * It names what was compared and what was found, and says in the same breath that nothing was
+     * started - the caller has to be able to tell this from an update that ran and failed.
+     * </p>
+     *
+     * @param plan the comparison, non-empty and compared
+     * @return the refusal as a JSON body
+     */
+    static String dataLossRefusal(DataLossPlan.Plan plan)
+    {
+        return ToolResult.error("The update was not started: it would delete data this infobase " //$NON-NLS-1$
+            + "holds. The synchronization baseline " + plan.file + " records " //$NON-NLS-1$
+            + plan.dataLoss.size() + (plan.dataLoss.size() == 1 //$NON-NLS-1$
+                ? " entity that holds data and is missing from the model, so a restructure " //$NON-NLS-1$
+                    + "would drop the table behind it: " //$NON-NLS-1$
+                : " entities that hold data and are missing from the model, so a restructure " //$NON-NLS-1$
+                    + "would drop the tables behind them: ") //$NON-NLS-1$
+            + String.join(", ", plan.dataLoss) + ". Nothing was started - no update, no claim on " //$NON-NLS-1$ //$NON-NLS-2$
+            + "the infobase, no client stopped - and the base is as it was. Read the addresses and " //$NON-NLS-1$
+            + "resend the same call with acceptDataLoss=true if the loss is intended.") //$NON-NLS-1$
+            .put("status", "confirmationRequired") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("nothingStarted", Boolean.TRUE) //$NON-NLS-1$
+            .put("protectData", Boolean.TRUE) //$NON-NLS-1$
+            .put("dataLossCompared", Boolean.TRUE) //$NON-NLS-1$
+            .put("dataLossTables", plan.dataLoss) //$NON-NLS-1$
+            .put("dataLossCount", plan.dataLoss.size()) //$NON-NLS-1$
+            .put("dataLossFile", plan.file) //$NON-NLS-1$
+            .put("dataLossCheck", plan.check()) //$NON-NLS-1$
+            .put("nextStep", "resend the same call with acceptDataLoss=true") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
+
+    /**
+     * Adds what the comparison found to an answer.
+     * <p>
+     * An unprotected update says just that, because a caller reading {@code protectData} needs to
+     * know the update ran with the platform restructuring unasked. A protected one says what was
+     * compared and how many records it covered, whether or not anything was found - an answer that
+     * left the comparison out would read the same whether nothing was lost or nothing was read.
+     * </p>
+     *
+     * @param answer the answer being built
+     * @param plan the comparison, or {@code null} when {@code protectData} was off
+     * @param protectData whether the caller asked for the protection
+     * @param acceptDataLoss whether the caller accepted a deletion up front
+     */
+    static void putDataLossCheck(ToolResult answer, DataLossPlan.Plan plan, boolean protectData,
+        boolean acceptDataLoss)
+    {
+        answer.put("protectData", Boolean.valueOf(protectData)); //$NON-NLS-1$
+        if (!protectData)
+        {
+            answer.put("dataLossCompared", Boolean.FALSE); //$NON-NLS-1$
+            answer.put("dataLossCheck", "not compared: protectData=false, so the model was not " //$NON-NLS-1$
+                + "matched against the infobase's synchronization baseline; the platform " //$NON-NLS-1$
+                + "restructures without asking."); //$NON-NLS-1$
+            return;
+        }
+        if (plan == null)
+        {
+            answer.put("dataLossCompared", Boolean.FALSE); //$NON-NLS-1$
+            answer.put("dataLossCheck", "not compared: no comparison was made for this call."); //$NON-NLS-1$
+            return;
+        }
+        answer.put("dataLossCompared", Boolean.valueOf(plan.compared)); //$NON-NLS-1$
+        if (plan.compared)
+        {
+            answer.put("dataLossTables", plan.dataLoss); //$NON-NLS-1$
+            answer.put("dataLossCount", plan.dataLoss.size()); //$NON-NLS-1$
+            answer.put("dataLossFile", plan.file); //$NON-NLS-1$
+        }
+        answer.put("dataLossCheck", plan.check() //$NON-NLS-1$
+            + (plan.compared && !plan.isEmpty() && acceptDataLoss //$NON-NLS-1$
+                ? "; acceptDataLoss=true carried it through" //$NON-NLS-1$
+                : "")); //$NON-NLS-1$
+    }
+
+    /**
+     * The preference access against the running environment: the platform's own infobase
+     * preferences manager, wherever it is tracked, and no preference rather than an error where
+     * it is not.
+     *
+     * @return the access, whose reads answer {@code null} when the service is missing
+     */
+    static PromptAccess platformPromptAccess()
+    {
+        return infobaseId -> {
+            if (infobaseId == null)
+            {
+                return null;
+            }
+            Activator activator = Activator.getDefault();
+            com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager manager =
+                activator == null ? null : activator.getInfobasePreferencesManager();
+            if (manager == null)
+            {
+                return null;
+            }
+            try
+            {
+                return Boolean.valueOf(manager.getPromptConfirmationOnRestructure(infobaseId));
+            }
+            catch (RuntimeException | LinkageError unreadable)
+            {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * Reads an infobase's ask-confirmation-on-restructure preference - read only.
+     * <p>
+     * Nothing in this server writes it any more: the preference decides whether the platform opens
+     * its own restructure window, and an update that switched it on would leave every later update
+     * of that base asking a person. What an update protects itself with is the comparison made
+     * before it starts, not a window somebody has to answer.
+     * </p>
+     */
+    @FunctionalInterface
+    interface PromptAccess
+    {
+        /**
+         * The preference of one infobase.
+         *
+         * @param infobaseId the infobase's UUID
+         * @return the value, or {@code null} when it cannot be read
+         */
+        Boolean promptConfirmationOnRestructure(java.util.UUID infobaseId);
     }
 
     /**

@@ -36,6 +36,7 @@ import com._1c.g5.v8.dt.navigator.providers.INavigatorContentProviderStateProvid
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager;
 import com._1c.g5.v8.dt.platform.services.core.operations.IInfobaseCreationOperation;
 import com._1c.g5.v8.dt.platform.services.core.operations.ISectionDeleteOperation;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallationManager;
@@ -169,6 +170,8 @@ public class Activator
     private ServiceTracker<IInfobaseAccessManager, IInfobaseAccessManager> infobaseAccessManagerTracker;
 
     private ServiceTracker<IInfobaseManager, IInfobaseManager> infobaseManagerTracker;
+
+    private ServiceTracker<IInfobasePreferencesManager, IInfobasePreferencesManager> infobasePreferencesManagerTracker;
 
     private ServiceTracker<IInfobaseAssociationManager, IInfobaseAssociationManager> infobaseAssociationManagerTracker;
 
@@ -622,6 +625,17 @@ public class Activator
     }
 
     /**
+     * Returns the manager of per-infobase preferences, among them whether a restructure asks for
+     * confirmation before it deletes data.
+     *
+     * @return the service, or <code>null</code> when EDT does not offer it
+     */
+    public IInfobasePreferencesManager getInfobasePreferencesManager()
+    {
+        return service(infobasePreferencesManagerTracker);
+    }
+
+    /**
      * Returns the manager of the links between projects and infobases.
      *
      * @return the service, or <code>null</code> when EDT does not offer it
@@ -916,6 +930,7 @@ public class Activator
         applicationManagerTracker = openTracker(context, IApplicationManager.class);
         infobaseAccessManagerTracker = openTracker(context, IInfobaseAccessManager.class);
         infobaseManagerTracker = openTracker(context, IInfobaseManager.class);
+        infobasePreferencesManagerTracker = openTracker(context, IInfobasePreferencesManager.class);
         infobaseAssociationManagerTracker = openTracker(context, IInfobaseAssociationManager.class);
         infobaseCreationOperationTracker = openTracker(context, IInfobaseCreationOperation.class);
         sectionDeleteOperationTracker = openTracker(context, ISectionDeleteOperation.class);
@@ -959,6 +974,7 @@ public class Activator
         applicationManagerTracker = closeTracker(applicationManagerTracker);
         infobaseAccessManagerTracker = closeTracker(infobaseAccessManagerTracker);
         infobaseManagerTracker = closeTracker(infobaseManagerTracker);
+        infobasePreferencesManagerTracker = closeTracker(infobasePreferencesManagerTracker);
         infobaseAssociationManagerTracker = closeTracker(infobaseAssociationManagerTracker);
         infobaseCreationOperationTracker = closeTracker(infobaseCreationOperationTracker);
         sectionDeleteOperationTracker = closeTracker(sectionDeleteOperationTracker);
