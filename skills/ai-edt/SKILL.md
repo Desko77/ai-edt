@@ -204,20 +204,25 @@ goes to the plugin repository `Desko77/ai-edt` as an issue.
 - Not a plugin defect, not filed: EDT not running or the project not loaded, `*ApiNotFound` and
   `dcsFactoryMethodNotFound` (the running EDT lacks the API), a mistake in the configuration or in
   the call itself. Say so to the user instead.
+- Another product, not filed here: a defect of the 1C platform, of another EDT plugin or of the MCP
+  client - name the product and where it takes reports. A question without a defect goes to the
+  Telegram topic `https://t.me/AI_EDT_1c/23`.
 - Reproduce first: the tool and operation, the arguments, the answer with the error tag and text
   verbatim, what was expected. Look for a duplicate with
-  `gh issue list --repo Desko77/ai-edt --state all --search "<words>"`; an existing issue gets a
-  comment, not a twin.
-- Title `<tool or operation>: <what is wrong>`, up to 80 characters. A defect has the sections What
-  happened, How to reproduce, Expected, Environment (plugin version - `version` of `GET /mcp` or
-  `serverInfo.version`; EDT version - `get_edt_version`; MCP client; 1C platform; OS). A wish has
-  Task, What is missing, How it could work.
+  `gh issue list --repo Desko77/ai-edt --state all --search "<words>"`, or without `gh` give the user
+  `https://github.com/Desko77/ai-edt/issues?q=<words>`; an existing issue gets a comment, not a twin.
+- The draft is a temporary file outside the user's repository, deleted once the issue is sent or
+  handed over. Title `<tool or operation>: <what is wrong>`, up to 80 characters. A defect has the
+  sections What happened, How to reproduce, Expected, Environment (plugin version - `version` of
+  `GET /mcp` or `serverInfo.version`; EDT version - `get_edt_version`; MCP client; 1C platform; OS).
+  A wish has Task, What is missing, How it could work.
 - Generic names only: `Catalog.Items`, `C:/Projects/my-project`, `my-base`. No customer, company or
   person names, connection strings, credentials, whole logs or screenshots with data.
 - Show the user the title and the whole text, name the repository and the labels, and send only
-  after their explicit consent: `gh issue create --repo Desko77/ai-edt --title "<title>"
-  --body-file <draft> --label bug --label from-agent` (`enhancement` for a wish). Without `gh`, give
-  the user `https://github.com/Desko77/ai-edt/issues/new/choose` and the text to paste.
+  after their explicit consent. When `gh auth status` exits 0: `gh issue create --repo Desko77/ai-edt
+  --title "<title>" --body-file <draft> --label bug --label from-agent` (`enhancement` for a wish); a
+  refusal over a missing label is repeated without that label. Otherwise give the user
+  `https://github.com/Desko77/ai-edt/issues/new/choose` and the text to paste.
 - The `report-issue` skill of the 1C rule collections (`Desko77/claude-code-skills-1c`,
   `Desko77/cursor-1c-skills`) runs these steps and checks the draft for private data with a script;
   use it when it is installed.
