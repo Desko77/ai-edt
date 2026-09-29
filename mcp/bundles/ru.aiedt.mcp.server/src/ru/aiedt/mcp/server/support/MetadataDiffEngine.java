@@ -79,47 +79,61 @@ public final class MetadataDiffEngine
 
         /**
          * Keeps the entries that name the given object or something under it.
+         * <p>
+         * Both sides of the comparison are put through {@link MetadataTypeCatalog#normalizeFqn}
+         * first. The entries are named after the EMF collection the object came from -
+         * {@code Catalogs.Goods} - while a caller names the type as the catalogue spells it -
+         * {@code Catalog.Goods} - so comparing the text as it stands dropped every entry for an
+         * object that was asked for by its canonical name. Normalizing is idempotent, so an entry
+         * that already carries the canonical spelling keeps it.
+         * </p>
          *
-         * @param fqn the object a {@code scope=objectFqn} call named.
+         * @param fqn the object a {@code scope=objectFqn} call named, in any recognized spelling.
          */
         public void retainOnly(String fqn)
         {
-            String under = fqn + "."; //$NON-NLS-1$
-            added.removeIf(name -> !name.equals(fqn) && !name.startsWith(under));
-            removed.removeIf(name -> !name.equals(fqn) && !name.startsWith(under));
-            modified.removeIf(entry -> {
-                Object name = entry.get("fqn"); //$NON-NLS-1$
-                return name == null || !name.toString().equals(fqn) && !name.toString().startsWith(under);
-            });
-            renamed.removeIf(entry -> coversNeither(entry, fqn, under));
+            if (fqn == null)
+            {
+                return;
+            }
+            String wanted = MetadataTypeCatalog.normalizeFqn(fqn);
+            String under = wanted + "."; //$NON-NLS-1$
+            added.removeIf(name -> !covers(name, wanted, under));
+            removed.removeIf(name -> !covers(name, wanted, under));
+            modified.removeIf(entry -> !covers(entry.get("fqn"), wanted, under)); //$NON-NLS-1$
+            renamed.removeIf(entry -> coversNeither(entry, wanted, under));
+        }
+
+        /**
+         * Whether an entry names the retained object or something under it.
+         *
+         * @param name the entry's name, or a half of a rename; may be absent.
+         * @param fqn the retained object, already normalized.
+         * @param under the retained object's prefix, already normalized.
+         * @return whether the name falls inside the object; false for an absent name
+         */
+        private static boolean covers(Object name, String fqn, String under)
+        {
+            if (name == null)
+            {
+                return false;
+            }
+            String normalized = MetadataTypeCatalog.normalizeFqn(name.toString());
+            return normalized.equals(fqn) || normalized.startsWith(under);
         }
 
         /**
          * Whether neither half of a rename names the retained object.
          *
          * @param rename the rename entry.
-         * @param fqn the retained object.
-         * @param under the retained object's prefix.
+         * @param fqn the retained object, already normalized.
+         * @param under the retained object's prefix, already normalized.
          * @return whether both halves fall outside the object
          */
         private static boolean coversNeither(Map<String, Object> rename, String fqn, String under)
         {
-            return !names(rename.get("from"), fqn, under) //$NON-NLS-1$
-                && !names(rename.get("to"), fqn, under); //$NON-NLS-1$
-        }
-
-        /**
-         * Whether one half of a rename names the retained object.
-         *
-         * @param side one half of the rename.
-         * @param fqn the retained object.
-         * @param under the retained object's prefix.
-         * @return whether that half falls inside the object
-         */
-        private static boolean names(Object side, String fqn, String under)
-        {
-            return side != null
-                && (side.toString().equals(fqn) || side.toString().startsWith(under));
+            return !covers(rename.get("from"), fqn, under) //$NON-NLS-1$
+                && !covers(rename.get("to"), fqn, under); //$NON-NLS-1$
         }
     }
 

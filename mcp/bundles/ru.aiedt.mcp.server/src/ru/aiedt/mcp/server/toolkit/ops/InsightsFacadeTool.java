@@ -118,7 +118,8 @@ public class InsightsFacadeTool implements IMcpTool
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project name.") //$NON-NLS-1$
+                "EDT project name; compare_configurations mode=files: the path of the first " //$NON-NLS-1$
+                    + "export.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
                 "FQN of the object in question, e.g. 'Catalog.Products'.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
@@ -151,7 +152,8 @@ public class InsightsFacadeTool implements IMcpTool
             .integerProperty("maxEdges", //$NON-NLS-1$
                 "dependency_graph: cap on edges returned (default 500).") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
-                "compare_configurations: projects / files. Required for that operation.") //$NON-NLS-1$
+                "compare_configurations: projects / files. Required for that operation. The " //$NON-NLS-1$
+                    + "answer's failed / failedCount name what the comparison could not read.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
                 "compare_configurations: for mode=projects, the second project's name; for " //$NON-NLS-1$
                     + "mode=files, the path to the second export.") //$NON-NLS-1$
@@ -539,6 +541,34 @@ public class InsightsFacadeTool implements IMcpTool
                 + "answer says notApplied; calls edges merge the same way. Other operations do " //$NON-NLS-1$
                 + "not read it."); //$NON-NLS-1$
         rules.put("dependency_graph", Collections.unmodifiableMap(graph)); //$NON-NLS-1$
+        Map<String, String> comparison = new LinkedHashMap<>();
+        comparison.put("projectName", //$NON-NLS-1$
+            "mode=projects: name of the first open project, and target names the second. " //$NON-NLS-1$
+                + "mode=files: path of the first export - a module or template file, or the " //$NON-NLS-1$
+                + "directory of an export - and target is the path of the second export."); //$NON-NLS-1$
+        comparison.put("target", //$NON-NLS-1$
+            "Both sides have to be of the same kind: two files or two directories. A file on " //$NON-NLS-1$
+                + "one side and a directory on the other is refused by name, as is a path that " //$NON-NLS-1$
+                + "is a symbolic link, which this comparison does not follow."); //$NON-NLS-1$
+        comparison.put("mode", //$NON-NLS-1$
+            "Required. mode=files answers with failed and failedCount beside the diff: files " //$NON-NLS-1$
+                + "that could not be read, directories whose listing failed together with " //$NON-NLS-1$
+                + "everything under them, and symbolic links. success:true with failedCount " //$NON-NLS-1$
+                + "above zero is an incomplete diff, not a clean one. truncated says the four " //$NON-NLS-1$
+                + "lists were cut at the entry cap while addedCount, removedCount, " //$NON-NLS-1$
+                + "modifiedCount and failedCount carry the totals that were found. cancelled " //$NON-NLS-1$
+                + "says the operator stopped the scan, and what is below is what had been " //$NON-NLS-1$
+                + "found by then."); //$NON-NLS-1$
+        comparison.put("level", //$NON-NLS-1$
+            "attribute needs mode=projects. On mode=files with two single files the level has " //$NON-NLS-1$
+                + "to fit both names: a .mdo named with level=module, or a .bsl named with " //$NON-NLS-1$
+                + "level=template, is refused rather than compared as a file of that kind."); //$NON-NLS-1$
+        comparison.put("scope", //$NON-NLS-1$
+            "scope=objectFqn narrows a comparison of two export directories, and needs " //$NON-NLS-1$
+                + "objectFqn; two single files are already as narrow as this comparison gets. " //$NON-NLS-1$
+                + "The answer repeats the name it narrowed to in narrowedTo, in the canonical " //$NON-NLS-1$
+                + "singular spelling (Catalog.Goods), whatever spelling was passed."); //$NON-NLS-1$
+        rules.put("compare_configurations", Collections.unmodifiableMap(comparison)); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 

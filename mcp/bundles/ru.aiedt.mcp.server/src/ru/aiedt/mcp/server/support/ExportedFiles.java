@@ -9,7 +9,9 @@ package ru.aiedt.mcp.server.support;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -123,6 +125,12 @@ public final class ExportedFiles
 
     /**
      * A digest of every file under the given directories, keyed by its path relative to a root.
+     * <p>
+     * A directory that is not there is skipped: it has no files, and nothing about it is uncertain.
+     * One that is there but cannot be read - or whose attributes cannot even be asked for, which
+     * {@code Files.isDirectory} answers with the same {@code false} as an absent path - is marked
+     * as unread instead, because its files are unknown rather than absent.
+     * </p>
      *
      * @param root what the keys are relative to.
      * @param directories the directories to read; one that is not there is skipped, and one that
@@ -138,10 +146,35 @@ public final class ExportedFiles
         }
         for (Path directory : directories)
         {
-            if (directory != null && Files.isDirectory(directory))
+            if (directory == null)
             {
-                readInto(digests, root, directory);
+                continue;
             }
+            try
+            {
+                if (!Files.readAttributes(directory, BasicFileAttributes.class).isDirectory())
+                {
+                    // A file where a directory was named: it holds no objects, and the files
+                    // beside it are not this directory's to report.
+                    continue;
+                }
+            }
+            catch (NoSuchFileException absent)
+            {
+                continue;
+            }
+            catch (IOException | RuntimeException unreadable)
+            {
+                // Present and unreadable, or not even statable - which of the two it is cannot be
+                // told from here, and the difference is the whole point: an absent directory
+                // contributes nothing, while an unread one may hold anything. Marked, so the
+                // comparison keeps quiet about everything under it.
+                digests.put(keyOf(root, directory), NOT_READ);
+                Activator.logDebug("resync: could not read the state of " + directory + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                    + unreadable);
+                continue;
+            }
+            readInto(digests, root, directory);
         }
         return digests;
     }
@@ -261,6 +294,19 @@ public final class ExportedFiles
         return false;
     }
 
+    /**
+     * Adds the files under one directory to a reading, by digest.
+     * <p>
+     * The directory itself is not checked first: this is called once its being there has already
+     * been established, and the reading it writes into belongs to the caller. A directory that
+     * cannot be walked is marked as unread rather than left out, and a file inside it that cannot
+     * be read is marked per file by {@link #digestOf}.
+     * </p>
+     *
+     * @param digests the reading to add to, keyed relative to the root.
+     * @param root what the keys are relative to.
+     * @param directory the directory to read; a failure here marks the directory, not each file
+     */
     private static void readInto(Map<String, String> digests, Path root, Path directory)
     {
         try (Stream<Path> walk = Files.walk(directory))

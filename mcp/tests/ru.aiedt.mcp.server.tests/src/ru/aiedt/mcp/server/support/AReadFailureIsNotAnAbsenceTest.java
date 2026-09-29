@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -103,6 +104,61 @@ public class AReadFailureIsNotAnAbsenceTest
         assertTrue("nothing under an unknown scope is named created", changes.created().isEmpty()); //$NON-NLS-1$
         assertTrue(changes.removed().isEmpty());
         assertTrue(changes.written().isEmpty());
+    }
+
+    /**
+     * A path whose state cannot even be asked for is marked, not treated as absent.
+     * <p>
+     * {@code Files.isDirectory} answers {@code false} both for a directory that is not there and
+     * for one whose attributes cannot be read: a name the file system refuses to answer for, a
+     * share that went away, a directory whose own rights deny the query. The two are not the same
+     * fact - an absent directory holds no objects, and an unanswerable one may hold anything - so
+     * the difference is what the caller needs the reading to keep.
+     * </p>
+     */
+    @Test
+    public void aStateThatCannotBeAskedForIsMarkedNotOmitted()
+    {
+        // A name longer than the file system will answer for. Where it does answer - a POSIX file
+        // system takes a component this long for the ordinary answer "not there" - the path is
+        // absent rather than undetermined, which is a different case and not this one.
+        Path unanswerable = elsewhere.resolve("x".repeat(300)); //$NON-NLS-1$
+        Assume.assumeFalse("this file system answers for a name this long: the path is simply absent", //$NON-NLS-1$
+            answers(unanswerable));
+
+        Map<String, String> reading = ExportedFiles.underDirectories(elsewhere,
+            List.of(unanswerable));
+
+        assertEquals("one entry, standing for the directory whose state is unknown", 1, //$NON-NLS-1$
+            reading.size());
+        assertTrue("the entry is marked as not read: " + reading, reading.containsValue(NOT_READ)); //$NON-NLS-1$
+
+        assertTrue("the control - an absent directory contributes nothing", //$NON-NLS-1$
+            ExportedFiles.underDirectories(elsewhere, List.of(elsewhere.resolve("nothing-here"))) //$NON-NLS-1$
+                .isEmpty());
+    }
+
+    /**
+     * Whether the file system has an answer for this path at all.
+     *
+     * @param path the path.
+     * @return whether asking for its attributes settles the question one way or the other
+     */
+    private static boolean answers(Path path)
+    {
+        try
+        {
+            Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
+            return true;
+        }
+        catch (java.nio.file.NoSuchFileException absent)
+        {
+            return true;
+        }
+        catch (Exception undetermined)
+        {
+            return false;
+        }
     }
 
     /** The marking is scoped: directories both sides read keep naming their changes. */
