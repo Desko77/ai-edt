@@ -92,6 +92,37 @@ hand-edit does not.
 2. `yaxunit_tests mode=run` with filters narrow enough to be quick.
 3. `mode=debug` when a test fails and you need breakpoints inside it.
 
+## Run a check in the client without a person at it
+
+For what YAxUnit and Vanessa do not cover: an external data processor opens in a client started by a
+launch, reads its task from the `/C` startup string and writes its answer to a file.
+
+1. `external_object_workshop operation=create kind=ExternalDataProcessor parentProjectName=<configuration>`.
+   The parent needs an application with an infobase; without one the launch cannot build the processor.
+2. `edit_metadata operation=create_form ownerFqn=ExternalDataProcessor.<name>` - the first form becomes the
+   processor's `defaultForm`, which `/Execute` opens. Then `edit_metadata operation=add_form_event_handler
+   event=OnOpen`: a procedure named `ПриОткрытии` in the module is not called until the form event names it.
+3. `write_module_source` for the form module. `ПриОткрытии` (`OnOpen`) attaches an idle handler
+   (`ПодключитьОбработчикОжидания`); the handler reads `ПараметрЗапуска` (`LaunchParameter`, the `/C` string,
+   for example `scenario=<file>;result=<file>`), calls a `&НаСервереБезКонтекста` procedure and ends the
+   session with `ЗавершитьРаботуСистемы(Ложь)`. The server procedure writes the answer to `<result>.tmp` and
+   renames it with `ПереместитьФайл`, so the result file is either whole or absent; each check catches its
+   own error and puts it into the answer.
+4. `launch_debugger action=launch` with `externalObjectProject`, `externalObjectName`,
+   `enableExternalObjectDump=true` and `startupOption=scenario=<file>;result=<file>`. The client receives
+   `/Execute <processor>.epf` and `/C` with that string, unquoted on its command line - use paths without
+   spaces.
+5. Wait for the result file, not for the process: the client ends by itself after the file is written.
+
+The platform refuses a method called on a `Новый` expression - `Новый Запрос(Текст).Выполнить()` is
+"Неопознанный оператор" when the client compiles the form - while EDT validation reports nothing. Create
+the object on its own line. A compile error shows up as a dialog in the client, and no result file appears.
+
+With `updateBeforeLaunch=false` and an infobase out of sync with the project, EDT asks whether to update
+before launching, and the launch call waits for that question. `project_admin operation=answer_dialog`
+answers it from a second call; the default `updateBeforeLaunch=true` runs the update before the
+launch instead.
+
 ## Update the infobase
 
 1. `validate_for_export`. Findings block the update: fix, do not force.
