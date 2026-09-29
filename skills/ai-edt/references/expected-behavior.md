@@ -8,7 +8,7 @@ the message before deciding.
 
 | Signal | What it means | What to do |
 |---|---|---|
-| `Pending` with a `runKey` | A long operation (references on a large object, a test run, an export) did not finish inside the soft budget. | Repeat the same call with the same `runKey` and the same parameters. Changing the filters starts a different search. |
+| `Pending` with a `runKey` | A long operation (references on a large object, a test run, an export) did not finish inside the soft budget. A facade operation that leads to a soft-wait tool answers the same way, and it and the direct call with the same arguments share one `runKey`. | Repeat the same call with the same `runKey` and the same parameters. Changing the filters starts a different search. |
 | A timeout on a large configuration | The search had no filter, or the index is still building. | Narrow it: `metadataType` or `fileMask`. For references, `skipBsl=true` or a larger `timeoutSeconds` with a retry. |
 | `BSL model is not available` | Either the semantic model is not built, or the module path or FQN is wrong. | Check the path first. A wrong path produces exactly this message, and the model itself works on very large modules. |
 | `propertyMismatch` with `mismatches` | The object already exists and its properties differ. It is a refusal to overwrite silently, not a failure. | Do not retry the creation. Walk `mismatches` and set each property. |
@@ -43,6 +43,11 @@ is left.
   actual model failure, not preemptively because a module looks big.
 - Line numbers from a text search mark the matching line, not the method boundary. Take boundaries
   from `read_method_source`.
+- `get_module_structure` counts a region's bounds from the `#Область` / `#КонецОбласти` pair in the
+  text and in the model: the end is the closing directive's line, an unclosed region ends at the
+  module's last line, and regions are listed by increasing start line. Its `Params` column reads a
+  signature written over several lines and keeps the brackets of default values. `Экспорт` after a
+  parameter list is matched without regard to case here and in `read_method_source`.
 
 ## Synchronization between EDT and the infobase
 
@@ -61,6 +66,44 @@ update are not gated by it.
 your own initiative.** Both make EDT believe the infobase already matches the project. If a real
 difference exists, EDT will silently skip genuine changes. Only the user knows what has not
 changed.
+
+## An update that would delete data
+
+`update_database` compares the infobase's synchronization baseline with the model before it starts
+anything (`protectData`, on by default): the manifest of the last synchronization (`ConfigDumpInfo.xml`),
+one record per entity the base holds, matched against the model by `uuid`. An entity that carries
+data and is gone from the model means the restructure would drop its table, and the call is refused
+with `status=confirmationRequired` and `nothingStarted=true` - no update, no claim on the infobase,
+no client stopped. The answer names the addresses in `dataLossTables` (`Catalog.X`,
+`Catalog.X.Attribute.Y`), their number in `dataLossCount`, the baseline file in `dataLossFile` and
+what was compared in `dataLossCheck`. A rename keeps the uuid and is not a deletion. A base with no
+baseline file, or a model that cannot be read whole, is not compared: `dataLossCheck` says so and
+the update is not stopped.
+
+**`acceptDataLoss=true` is the user's decision, not yours.** Passing it is the one way to carry the
+deletion through, and only what this comparison found is accepted, for that call alone. Show the
+user `dataLossTables` and let them decide; a silent restructure is exactly what losing the table
+and its data looks like from their side.
+
+`infobase_admin operation=inspect_database_sync` answers the same comparison without starting any
+update: its `dataLossProtection` block carries `pendingDataLoss`, `pendingDataLossCount`,
+`dataLossCheck`, `baseline` and `nextStep`, beside `dataLossCompared`, `nextUpdateProtectsData` and
+`acceptDataLossDefault=false`. Read it when the decision is still open and an update has not been
+attempted.
+
+## Before a merge, and the way back from it
+
+`insights operation=compare_three_way` with an intent other than a report records a restore point
+of the PROJECT FILES before the merge begins and answers `mergeRestorePoint` and
+`mergeRestoreNote`. A point that cannot be taken stops the merge before it starts
+(`mergeStarted: false`) - read that as nothing having happened, not as a partial merge.
+`git operation=create_merge_restore_point` takes such a point on demand, and
+`git operation=restore_merge_point` puts those files back: the answer lists `restoredFiles`,
+`restoredCount` and `removedFiles` - project files the point does not hold are removed.
+
+**The point and the restore cover project files only. The infobase is not copied and is not rolled
+back.** A merge that reached the base has to be undone in the base by other means; a restore that
+put the files back does not put the data back.
 
 ## Things that fail early by design
 
@@ -91,6 +134,20 @@ nobody has established is protected and stays: only a person can establish what 
 behind. `sync_control operation=release_support_snapshot name=<file>` takes the protection off one
 snapshot, after which the limit applies to it. Deliberate, and one at a time.
 
+## An object the support registry will not let you change
+
+A write into an object whose support entry closes it (`ChangesNotAllowed`, and the environment
+agrees) is refused before the transaction opens - in `edit_metadata`, in the form operations and in
+`write_module_source`. The refusal names the object's FQN, the mode it is set to, `canEdit` and how
+the protection is lifted, and carries the tag `supportLock`. A nested subsystem
+(`Subsystem.A.Subsystem.B`) is checked by its own support entry. Reading operations
+(`get_form_structure`, `list_named_areas`, `read_template`, `check_print_width` and the like) do not
+ask about support.
+
+**Lifting support protection is the user's decision.** Do not change a support mode to get a write
+through. Report the refusal and what it names, and let the user say whether the object may be
+changed.
+
 ## An answer that is part of the work says so
 
 Eight scans stop when the call is withdrawn, at a boundary that leaves what they have gathered
@@ -111,6 +168,13 @@ appears only when the module scan finished or a test module was actually found.
 
 A withdrawal comes from the client as `notifications/cancelled` naming the call's `requestId`, or
 from the person at the status bar. Either way the tool is not interrupted mid-unit.
+
+A cancelled task turns `cancelled`, and its `statusMessage` says what stopping came to: the work
+stopped; it was told to stop and had not ("It may still be running and still writing"); or only the
+waiting stopped, because a Designer-mode process cannot be interrupted once started. The run key is held until the body of the call finishes, so the same
+work asked for again inside that window answers `stillStopping: true` instead of starting a second
+run - that is the cancel being allowed to finish, not a failure to act on. `get_tasks` names the
+closed projects it did not read.
 
 ## A metadata dependency graph names metadata
 
