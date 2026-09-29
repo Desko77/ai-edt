@@ -46,8 +46,8 @@ public class TheParamsColumnKeepsAMultilineSignatureTest
     private static final class Probe implements IModuleSourceProvider, IModuleSource
     {
         final List<String> lines = new ArrayList<>(List.of("#Область ПрограммныйИнтерфейс", "", //$NON-NLS-1$ //$NON-NLS-2$
-            "Функция Расчёт(Парам1,", "\tПарам2)", "\tВозврат 1;", "КонецФункции", "", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
-            "Функция Отчёт(Дата = НачалоДня(ТекущаяДата()))", "\tВозврат Дата;", "КонецФункции", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Функция Расчет(Парам1,", "\tПарам2)", "\tВозврат 1;", "КонецФункции", "", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+            "Функция Отчет(Дата = НачалоДня(ТекущаяДата()))", "\tВозврат Дата;", "КонецФункции", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "", "#КонецОбласти")); //$NON-NLS-1$ //$NON-NLS-2$
 
         @Override
