@@ -4460,8 +4460,17 @@ public class DcsWorkshopTool implements IMcpTool
      * 1.41 / 4a: shared implementation for addSettingsTable / addSettingsChart -
      * both append a structure item of the corresponding type to
      * {@code Schema.getDefaultSettings().getStructure().getItems()}.
+     * <p>
+     * A structure item is created with nothing selected, and a table or a chart with an empty
+     * selection outputs nothing. The item therefore takes the schema's resources into its selected
+     * fields, and the answer names them - so a caller that gets an empty selection learns it from
+     * the answer rather than from the file.
+     * </p>
      *
+     * @param params the operation arguments; {@code name} is optional
+     * @param schema the schema root
      * @param kind {@code "Table"} or {@code "Chart"}
+     * @return what was added, together with what was selected
      */
     private Object doAddSettingsStructureItem(Map<String, String> params, EObject schema, String kind)
     {
@@ -4500,7 +4509,132 @@ public class DcsWorkshopTool implements IMcpTool
         EList<EObject> items = resolveStructureItems(structure);
         items.add((EObject) item);
         return "settings " + kind.toLowerCase() //$NON-NLS-1$
-            + (name != null ? " '" + name + "'" : "") + " added"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            + (name != null ? " '" + name + "'" : "") + " added; " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + selectResourcesFor(item, schema);
+    }
+
+    /**
+     * Writes the schema's resources into a structure item's selected fields.
+     * <p>
+     * A resource is a total field: the schema keeps the aggregate in the total's
+     * {@code expression} and the path it runs over in its {@code dataPath}, which is the name a
+     * selected field refers to. The field role of a data set field carries no resource flag in this
+     * model and the schema holds no resource collection, so the total fields are the only carrier
+     * of an aggregate.
+     * </p>
+     * <p>
+     * A selection that already holds items is left alone. A resource named by two totals - one path,
+     * two aggregates - is selected once. A schema with no resources is not an error: nothing is
+     * selected and the answer says so.
+     * </p>
+     *
+     * @param item the structure item the resources are selected in, a table or a chart
+     * @param schema the schema root
+     * @return what was selected, for the answer
+     */
+    private String selectResourcesFor(Object item, EObject schema)
+    {
+        List<String> resources = resourceFieldNames(schema);
+        if (resources.isEmpty())
+        {
+            return "the schema declares no resources, so no field was selected"; //$NON-NLS-1$
+        }
+        Object selection = ensureChild(item, "getSelection", //$NON-NLS-1$
+            "createDataCompositionSelectedFields", "selection"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (selection == null)
+        {
+            return "the item carries no selection container, so the resources of the schema " //$NON-NLS-1$
+                + "were not selected"; //$NON-NLS-1$
+        }
+        EList<EObject> selected = BmDcsHelper.getEObjectList(selection, "getItems"); //$NON-NLS-1$
+        if (selected != null && !selected.isEmpty())
+        {
+            return "its selected fields were already set (" + selected.size() //$NON-NLS-1$
+                + "), so the resources were not written over them"; //$NON-NLS-1$
+        }
+        for (String resource : resources)
+        {
+            appendSelectedField(selection, resource, null);
+        }
+        return "selected fields: " + String.join(", ", resources); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The names the schema's resources are addressed by, in the order the schema declares them.
+     * <p>
+     * Read off the total fields' data paths. A path two totals share appears once, because a
+     * selected field names a path rather than an aggregate. A total with no path carries no name to
+     * select and is skipped.
+     * </p>
+     *
+     * @param schema the schema root
+     * @return the resource names, empty when the schema declares no resource
+     */
+    private List<String> resourceFieldNames(EObject schema)
+    {
+        List<String> names = new ArrayList<>();
+        EList<EObject> totals = BmDcsHelper.getEObjectList(schema, "getTotalFields"); //$NON-NLS-1$
+        if (totals == null)
+        {
+            return names;
+        }
+        for (EObject total : totals)
+        {
+            Object path = invokeGetter(total, "getDataPath"); //$NON-NLS-1$
+            String name = path == null ? null : path.toString().trim();
+            if (name == null || name.isEmpty())
+            {
+                continue;
+            }
+            boolean known = false;
+            for (String seen : names)
+            {
+                if (seen.equalsIgnoreCase(name))
+                {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known)
+            {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Appends one selected field to a selection container.
+     * <p>
+     * The one place a selected field element is built, so the explicit operation and the resource
+     * selection of a new table write the same element. The field property is a
+     * {@code DataCompositionField} value carrier rather than a string, which
+     * {@link #setFieldProperty} builds.
+     * </p>
+     *
+     * @param selection the {@code DataCompositionSelectedFields} the field goes into
+     * @param field the data path the selected field names
+     * @param title the presentation of the field, or null to leave it out
+     */
+    private void appendSelectedField(Object selection, String field, String title)
+    {
+        Object item = BmDcsHelper.createElement("createDataCompositionSelectedField"); //$NON-NLS-1$
+        if (item == null)
+        {
+            item = BmDcsHelper.createElement("createSettingsSelectedField"); //$NON-NLS-1$
+        }
+        if (item == null)
+        {
+            throw factoryMissingTag("createDataCompositionSelectedField, createSettingsSelectedField"); //$NON-NLS-1$
+        }
+        setFieldProperty(item, "field", field); //$NON-NLS-1$
+        setPresentationProperty(item, "title", title); //$NON-NLS-1$
+        EList<EObject> items = BmDcsHelper.getEObjectList(selection, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            throw new RuntimeException("Selection.getItems() not available"); //$NON-NLS-1$
+        }
+        items.add((EObject) item);
     }
 
     /**
@@ -4555,6 +4689,10 @@ public class DcsWorkshopTool implements IMcpTool
     /**
      * 1.41 / 4b: appends a SelectedField to
      * {@code Settings.getSelection().getItems()}.
+     *
+     * @param params the operation arguments; {@code field} is required, {@code title} optional
+     * @param schema the schema root
+     * @return what was added
      */
     private Object doAddSettingsSelectedField(Map<String, String> params, EObject schema)
     {
@@ -4572,23 +4710,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("Could not create the Selection container"); //$NON-NLS-1$
         }
-        Object item = BmDcsHelper.createElement("createDataCompositionSelectedField"); //$NON-NLS-1$
-        if (item == null)
-        {
-            item = BmDcsHelper.createElement("createSettingsSelectedField"); //$NON-NLS-1$
-        }
-        if (item == null)
-        {
-            throw factoryMissingTag("createDataCompositionSelectedField, createSettingsSelectedField"); //$NON-NLS-1$
-        }
-        setFieldProperty(item, "field", field); //$NON-NLS-1$
-        setPresentationProperty(item, "title", title); //$NON-NLS-1$
-        EList<EObject> items = BmDcsHelper.getEObjectList(selection, "getItems"); //$NON-NLS-1$
-        if (items == null)
-        {
-            throw new RuntimeException("Selection.getItems() not available"); //$NON-NLS-1$
-        }
-        items.add((EObject) item);
+        appendSelectedField(selection, field, title);
         return "selected field '" + field + "' added"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
