@@ -224,13 +224,37 @@ public class CallHierarchyReader
      * @param modulePath the resolved {@code src/}-relative module path
      * @param methodName the method name, case-insensitive
      * @param limit the maximum number of callers to collect
-     * @return the formatted Markdown report
+     * @return the formatted Markdown report, or the index failure when the walk produced no rows
      */
     private String findCallers(String projectName, String modulePath, String methodName, int limit)
     {
         Harvest harvest = harvestCallers(projectName, modulePath, methodName, limit);
-        return harvest.error != null ? harvest.error
-            : formatCallersOutput(modulePath, methodName, harvest.callers, limit, harvest.total);
+        return renderCallers(harvest, modulePath, methodName, limit);
+    }
+
+    /**
+     * Renders a direct caller walk. An index failure with no rows is the whole answer: an empty
+     * table would say nothing calls the method, which is a different fact. Rows already collected
+     * stay, and the failure is named under them.
+     *
+     * @param harvest what the index returned
+     * @param modulePath the method's module
+     * @param methodName the method
+     * @param limit the row cap
+     * @return the error text, or the caller table
+     */
+    private String renderCallers(Harvest harvest, String modulePath, String methodName, int limit)
+    {
+        if (harvest.error != null && harvest.callers.isEmpty())
+        {
+            return harvest.error;
+        }
+        String report = formatCallersOutput(modulePath, methodName, harvest.callers, limit, harvest.total);
+        if (harvest.error != null)
+        {
+            return report + "\n**Incomplete:** " + harvest.error.replace("\n", " ") + "\n"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        return report;
     }
 
     /**
@@ -290,10 +314,8 @@ public class CallHierarchyReader
             return harvest;
         }
 
-        List<CallerInfo> callers = new ArrayList<>();
         List<URI> targetURIs = new ArrayList<>();
         targetURIs.add(methodUri);
-        final int[] totalReferences = {0};
         final org.eclipse.emf.ecore.resource.ResourceSet sharedResourceSet =
             new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl();
 
@@ -313,21 +335,7 @@ public class CallHierarchyReader
 
         try
         {
-            finder.findAllReferences(targetURIs, null, (IReferenceDescription refDesc) -> {
-                totalReferences[0]++;
-                if (callers.size() < limit)
-                {
-                    CallerInfo caller = extractCallerInfo(refDesc, sharedResourceSet);
-                    if (caller != null)
-                    {
-                        callers.add(caller);
-                    }
-                }
-            }, new NullProgressMonitor());
-        }
-        catch (Exception e)
-        {
-            Activator.logError("Collecting callers raised an exception", e); //$NON-NLS-1$
+            collectFromIndex(finder, targetURIs, sharedResourceSet, harvest, limit);
         }
         finally
         {
@@ -345,9 +353,58 @@ public class CallHierarchyReader
             sharedResourceSet.getResources().clear();
         }
 
-        harvest.callers = callers;
-        harvest.total = totalReferences[0];
         return harvest;
+    }
+
+    /**
+     * Asks the index for every caller. A failure is stored on the harvest so both the direct
+     * report and the transitive walk say the list is incomplete, instead of answering that
+     * nothing calls the method.
+     *
+     * @param finder the reference index
+     * @param targetURIs the methods whose callers are wanted
+     * @param sharedResourceSet the set caller details are read from
+     * @param harvest where the rows and any failure are recorded
+     * @param limit how many callers to keep
+     */
+    private void collectFromIndex(IReferenceFinder finder, List<URI> targetURIs,
+        org.eclipse.emf.ecore.resource.ResourceSet sharedResourceSet, Harvest harvest, int limit)
+    {
+        try
+        {
+            finder.findAllReferences(targetURIs, null, (IReferenceDescription refDesc) -> {
+                harvest.total++;
+                if (harvest.callers.size() < limit)
+                {
+                    CallerInfo caller = extractCallerInfo(refDesc, sharedResourceSet);
+                    if (caller != null)
+                    {
+                        harvest.callers.add(caller);
+                    }
+                }
+            }, new NullProgressMonitor());
+        }
+        catch (Exception e)
+        {
+            Activator.logError("Collecting callers raised an exception", e); //$NON-NLS-1$
+            harvest.error = indexFailure(e);
+        }
+    }
+
+    /**
+     * The text both the direct and the transitive caller walks show when the reference index throws.
+     *
+     * @param failure the exception {@code findAllReferences} raised
+     * @return the error line stored on the harvest
+     */
+    private static String indexFailure(Exception failure)
+    {
+        String detail = failure.getMessage();
+        if (detail == null || detail.isEmpty())
+        {
+            detail = failure.getClass().getSimpleName();
+        }
+        return "Error: collecting callers failed: " + detail; //$NON-NLS-1$
     }
 
     /**
@@ -641,12 +698,33 @@ public class CallHierarchyReader
             }
             frontier = next;
         }
-        if (collected.isEmpty() && firstError != null)
+        return finishTransitive(modulePath, methodName, collected, limit, depth, reachedDepth,
+            !frontier.isEmpty() && collected.size() >= limit, firstError);
+    }
+
+    /**
+     * Renders a transitive walk. When nothing was collected and a step failed, the failure is the
+     * whole answer rather than "nothing calls this method".
+     *
+     * @param modulePath the starting module
+     * @param methodName the starting method
+     * @param callers rows kept
+     * @param limit the row cap
+     * @param requestedDepth how deep the caller asked to go
+     * @param reachedDepth how deep the walk got
+     * @param stoppedByLimit whether the limit ended the walk
+     * @param firstError the first index failure, or {@code null} when there was none
+     * @return the failure text when the walk has no rows, otherwise the table
+     */
+    private String finishTransitive(String modulePath, String methodName, List<CallerInfo> callers,
+        int limit, int requestedDepth, int reachedDepth, boolean stoppedByLimit, String firstError)
+    {
+        if (callers.isEmpty() && firstError != null)
         {
             return firstError;
         }
-        return formatTransitiveOutput(modulePath, methodName, collected, limit, depth, reachedDepth,
-            !frontier.isEmpty() && collected.size() >= limit, firstError);
+        return formatTransitiveOutput(modulePath, methodName, callers, limit, requestedDepth, reachedDepth,
+            stoppedByLimit, firstError);
     }
 
     /**
