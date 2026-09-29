@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 131 | a test class named after it |
-| exercised | 182 | reached by some other test |
-| tool-sweep | 51 | declaration checked by the registry-wide contract sweep |
+| direct | 133 | a test class named after it |
+| exercised | 185 | reached by some other test |
+| tool-sweep | 49 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 43 | needs a display or an extension point |
 | workspace-bound | 28 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **435** | across 493 test classes |
+| **total** | **438** | across 508 test classes |
 
 ## untested (0)
 
@@ -126,7 +126,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (51)
+## tool-sweep (49)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -164,7 +164,6 @@ _none_
 - LaunchConfigsLister
 - ListExtensionsTool
 - OutgoingStructuresReader
-- PlatformDocReader
 - ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
@@ -179,9 +178,8 @@ _none_
 - TasksReader
 - UninstallExtensionTool
 - XdtoWorkshopTool
-- YaxunitDebugRunner
 
-## exercised (182)
+## exercised (185)
 
 **(root)**
 - Activator
@@ -281,6 +279,7 @@ _none_
 - ProjectStateGuard
 - QlValidator
 - RoleRightsAnalyzer
+- RunReceipts
 - SubsystemMembership
 - SupportSnapshotStore
 - SyncBaseline
@@ -367,6 +366,7 @@ _none_
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
+- PlatformDocReader
 - PredefinedOps
 - ProblemSummaryReader
 - ProjectAdminFacadeTool
@@ -386,6 +386,7 @@ _none_
 - ValidateForExportTool
 - VanessaTool
 - WorkspaceMarksFacadeTool
+- YaxunitDebugRunner
 - YaxunitTestsTool
 
 **wire**
@@ -401,7 +402,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (131)
+## direct (133)
 
 **(root)**
 - BrowserOrigin
@@ -461,6 +462,7 @@ _none_
 - IdleComparisonSweep
 - InfobaseHolders
 - InstanceRegistry
+- InvalidCharacters
 - JUnitReportFormatter
 - JUnitXmlReader
 - LaunchApplicationIds
@@ -473,6 +475,7 @@ _none_
 - MetadataTypeCatalog
 - MethodSignature
 - ModalDialogWatch
+- ModelEditabilityGuard
 - MonopolyLock
 - MutatorIdempotency
 - MutatorIdempotencyStore
@@ -574,13 +577,13 @@ closes.
 | 1 | 0 |
 | 2 | 2 |
 | 3-4 | 14 |
-| 5-8 | 43 |
-| 9-16 | 52 |
-| 17+ | 20 |
+| 5-8 | 42 |
+| 9-16 | 53 |
+| 17+ | 22 |
 
-4031 test methods across 493 test classes; 131 classes have a test of their own, median 9 methods each.
+4168 test methods across 508 test classes; 133 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 131 of 435 classes have one: 51 are covered by the registry-wide contract sweep and 28 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 133 of 438 classes have one: 49 are covered by the registry-wide contract sweep and 28 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 
