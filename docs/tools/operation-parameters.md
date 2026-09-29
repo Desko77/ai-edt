@@ -406,17 +406,18 @@
 | `SupportRegistryTool` | `restore_modes` | `apply:boolean`, `limit:integer`, `objectFqn:string`, `offset:integer`, `parentId:string`, `projectName:string`, `snapshotPath:string`, `userMode:string` | read in place |
 | `SupportRegistryTool` | `snapshot_modes` | `apply:boolean`, `limit:integer`, `objectFqn:string`, `offset:integer`, `parentId:string`, `projectName:string`, `snapshotPath:string`, `userMode:string` | read in place |
 | `SupportRegistryTool` | `status` | `apply:boolean`, `limit:integer`, `objectFqn:string`, `offset:integer`, `parentId:string`, `projectName:string`, `snapshotPath:string`, `userMode:string` | passed in as locals |
-| `SyncControlTool` | `diagnose` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `diagnose_delta` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `diagnose_stuck_locks` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `list_support_snapshots` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `mark_synchronized` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `rebuild_dump_info` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `recover_stuck_merge` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `release_support_snapshot` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `reseed_baseline` | `applicationId:string`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
-| `SyncControlTool` | `status` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | passed in as locals |
-| `SyncControlTool` | `suppress` | `applicationId:string`, `enabled:boolean`, `infobaseUuid:string`, `name:string`, `projectName:string` | read in place |
+| `SyncControlTool` | `diagnose` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | passed in as locals |
+| `SyncControlTool` | `diagnose_delta` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
+| `SyncControlTool` | `diagnose_stuck_locks` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | passed in as locals |
+| `SyncControlTool` | `list_support_snapshots` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | passed in as locals |
+| `SyncControlTool` | `mark_synchronized` | `applicationId:string`, `cancel:boolean`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
+| `SyncControlTool` | `rebuild_dump_info` | `applicationId:string`, `cancel:boolean`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
+| `SyncControlTool` | `recover_stuck_merge` | `applicationId:string`, `cancel:boolean`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
+| `SyncControlTool` | `release_support_snapshot` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
+| `SyncControlTool` | `reseed_baseline` | `applicationId:string`, `cancel:boolean`, `confirm:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
+| `SyncControlTool` | `retrieve_database_changes` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean`, `runKey:string` | read in place |
+| `SyncControlTool` | `status` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | passed in as locals |
+| `SyncControlTool` | `suppress` | `applicationId:string`, `cancel:boolean`, `enabled:boolean`, `infobaseUuid:string`, `markSynchronized:boolean`, `name:string`, `projectName:string`, `replaceLocal:boolean` | read in place |
 | `WorkspaceMarksFacadeTool` | `get_bookmarks` | `filePath:string`, `limit:integer`, `projectName:string` | delegate BookmarksReader |
 | `WorkspaceMarksFacadeTool` | `get_objects_by_tags` | `limit:integer`, `projectName:string`, `tags:string[]` | delegate TaggedObjectsReader |
 | `WorkspaceMarksFacadeTool` | `get_tags` | `projectName:string` | delegate TagsReader |

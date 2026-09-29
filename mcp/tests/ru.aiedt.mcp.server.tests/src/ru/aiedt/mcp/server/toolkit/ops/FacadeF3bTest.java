@@ -175,6 +175,8 @@ public class FacadeF3bTest
         assertTrue(result.contains("syncOperation")); //$NON-NLS-1$
         assertTrue("the missing-operation error names rebuild_dump_info", //$NON-NLS-1$
             result.contains("rebuild_dump_info")); //$NON-NLS-1$
+        assertTrue("the missing-operation error names retrieve_database_changes", //$NON-NLS-1$
+            result.contains("retrieve_database_changes")); //$NON-NLS-1$
     }
 
     @Test

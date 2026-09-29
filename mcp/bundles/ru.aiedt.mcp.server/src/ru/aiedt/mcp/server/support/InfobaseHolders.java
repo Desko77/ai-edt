@@ -158,6 +158,64 @@ public final class InfobaseHolders
     }
 
     /**
+     * Launch configuration names of thick clients EDT itself has running against this application.
+     * <p>
+     * This is the holder a pull can see before it asks the platform. A Designer opened by hand and
+     * a client started outside EDT are not in the list: nothing here can see them, and an empty
+     * list is not a claim that nobody holds the base.
+     * </p>
+     *
+     * @param applicationId the application whose infobase is concerned; may be <code>null</code>
+     * @return the launch names, never <code>null</code>
+     */
+    public static List<String> thickClientLaunchNames(String applicationId)
+    {
+        List<String> names = new ArrayList<>();
+        if (applicationId == null || applicationId.isEmpty())
+        {
+            return names;
+        }
+        try
+        {
+            DebugPlugin debugPlugin = DebugPlugin.getDefault();
+            ILaunchManager manager = debugPlugin == null ? null : debugPlugin.getLaunchManager();
+            if (manager == null)
+            {
+                return names;
+            }
+            for (ILaunch launch : manager.getLaunches())
+            {
+                if (launch.isTerminated())
+                {
+                    continue;
+                }
+                if (!applicationId.equals(DebugSessionBook.findApplicationIdFor(launch)))
+                {
+                    continue;
+                }
+                ILaunchConfiguration cfg = launch.getLaunchConfiguration();
+                if (cfg == null)
+                {
+                    continue;
+                }
+                if (!LaunchConfigAccess.CLIENT_TYPE_THICK.equals(LaunchConfigAccess.getClientTypeIdFor(cfg)))
+                {
+                    continue;
+                }
+                names.add(cfg.getName());
+            }
+        }
+        catch (Exception e)
+        {
+            // An empty list is read as "no thick client I can see". A failure to look is logged
+            // and answered the same way, never as a holder this method invented.
+            Activator.logWarning("Could not list the thick clients holding " + applicationId //$NON-NLS-1$
+                + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        return names;
+    }
+
+    /**
      * The other AI-EDT servers on this machine that have one of these projects open.
      *
      * @param projectNames the projects that own the infobase.

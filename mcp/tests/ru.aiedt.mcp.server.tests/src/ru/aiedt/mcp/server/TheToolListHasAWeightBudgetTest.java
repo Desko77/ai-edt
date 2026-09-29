@@ -142,8 +142,12 @@ public class TheToolListHasAWeightBudgetTest
      * that name the two snapshot operations, and the schema description that says a load
      * replaces everything the infobase holds. Measured 29.09: 181766.
      * </p>
+     * <p>
+     * And for retrieve_database_changes on the infobase_admin schema; the hidden sync_control alias
+     * is not in tools/list, so the document moves by this facade only. Measured 29.09: 182933.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 181766;
+    private static final int DOCUMENT_BUDGET = 182933;
 
     private LiveServer server;
 
@@ -302,9 +306,11 @@ public class TheToolListHasAWeightBudgetTest
         // Raised to the measured 9864 for the data-loss protection of update_database and
         // inspect_database_sync: protectData now says the comparison is made before the update
         // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
-        // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot operations add backupTo and name themselves for
-        // path, timeoutSeconds, runKey and cancel.
-        BUDGETS.put("infobase_admin", Integer.valueOf(11088)); //$NON-NLS-1$
+        // facade's help names acceptDataLoss beside protectData (measured 29.09). The two snapshot
+        // operations add backupTo and name themselves for path, timeoutSeconds, runKey and cancel,
+        // and retrieve_database_changes adds the operation, replaceLocal, markSynchronized and the
+        // pending wait the schema describes.
+        BUDGETS.put("infobase_admin", Integer.valueOf(12255)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
