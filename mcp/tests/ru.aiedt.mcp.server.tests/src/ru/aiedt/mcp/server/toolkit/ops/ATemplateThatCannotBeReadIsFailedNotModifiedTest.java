@@ -133,8 +133,45 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
 
         assertTrue(answer, answer.contains("\"failedCount\":1")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("src/" + UNREAD)); //$NON-NLS-1$
-        assertTrue("the failed key is not also in the modified list", //$NON-NLS-1$
-            answer.indexOf("src/" + UNREAD) == answer.lastIndexOf("src/" + UNREAD)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the failed key is not also in the modified list", //$NON-NLS-1$
+            modifiedListsName(com.google.gson.JsonParser.parseString(answer), "src/" + UNREAD)); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether any {@code modified} list in the answer names the key. The failed entry carries the
+     * read error, whose text holds the file path, so the key is looked for in the lists only.
+     *
+     * @param node the answer, or a part of it
+     * @param key the key looked for
+     * @return whether a modified list names it
+     */
+    private static boolean modifiedListsName(com.google.gson.JsonElement node, String key)
+    {
+        if (node.isJsonObject())
+        {
+            for (Map.Entry<String, com.google.gson.JsonElement> entry : node.getAsJsonObject().entrySet())
+            {
+                if ("modified".equals(entry.getKey()) && entry.getValue().toString().contains(key)) //$NON-NLS-1$
+                {
+                    return true;
+                }
+                if (modifiedListsName(entry.getValue(), key))
+                {
+                    return true;
+                }
+            }
+        }
+        else if (node.isJsonArray())
+        {
+            for (com.google.gson.JsonElement item : node.getAsJsonArray())
+            {
+                if (modifiedListsName(item, key))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** The templates that could be read keep their answers: same and changed. */
