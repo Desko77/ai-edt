@@ -171,8 +171,7 @@ public final class DebugPauser implements IMcpTool
                 result.put("timeoutCapped", Boolean.TRUE) //$NON-NLS-1$
                     .put("requestedSeconds", requested) //$NON-NLS-1$
                     .put("capNote", "A single request does not live long enough for the wait you " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "asked for, so it was cut to " + SuspendWaiter.MAX_TIMEOUT
-                        + " seconds. Nothing was armed on the session, so asking again is free.");
+                        + "asked for, so it was cut to " + SuspendWaiter.MAX_TIMEOUT + " seconds."); //$NON-NLS-1$ //$NON-NLS-2$
             }
             return result.toJson();
         }
