@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 130 | a test class named after it |
-| exercised | 177 | reached by some other test |
-| tool-sweep | 53 | declaration checked by the registry-wide contract sweep |
+| direct | 131 | a test class named after it |
+| exercised | 182 | reached by some other test |
+| tool-sweep | 51 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 43 | needs a display or an extension point |
-| workspace-bound | 30 | drives a live EDT project or debug session |
+| workspace-bound | 28 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **433** | across 480 test classes |
+| **total** | **435** | across 493 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (30)
+## workspace-bound (28)
 
 **folders**
 - IClusterManager
@@ -50,8 +50,6 @@ _none_
 - ExternalProjectResolver
 - InfobaseIdentity
 - ProjectReadinessGate
-- ProjectScopeResolver
-- RoleRightsAnalyzer
 
 **toolkit/mdreport**
 - EObjectProbe
@@ -128,17 +126,15 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (53)
+## tool-sweep (51)
 
 **toolkit/ops**
 - ApplicationsReader
 - AttributeAdder
-- AuditRoleRightsTool
 - BookmarksReader
 - BreakpointRemover
 - BreakpointSetter
 - BreakpointsLister
-- CallHierarchyReader
 - CodeTemplateTool
 - CommonPictureExporter
 - CompareConfigurationsTool
@@ -185,7 +181,7 @@ _none_
 - XdtoWorkshopTool
 - YaxunitDebugRunner
 
-## exercised (177)
+## exercised (182)
 
 **(root)**
 - Activator
@@ -281,8 +277,10 @@ _none_
 - PictureValidator
 - ProjectMetricsCollector
 - ProjectResolver
+- ProjectScopeResolver
 - ProjectStateGuard
 - QlValidator
+- RoleRightsAnalyzer
 - SubsystemMembership
 - SupportSnapshotStore
 - SyncBaseline
@@ -312,8 +310,10 @@ _none_
 - MetadataFormatter
 
 **toolkit/ops**
+- AuditRoleRightsTool
 - BslCodeReviewTool
 - BslModuleAccess
+- CallHierarchyReader
 - CheckDocReader
 - CodeSearchTool
 - CodeTextSearcher
@@ -333,6 +333,7 @@ _none_
 - ExpressionEvaluator
 - ExternalObjectWorkshopTool
 - FindRlsViolationsTool
+- FormAppearanceOps
 - FormCommandInterfaceOps
 - FormCreateOps
 - FormItemsOps
@@ -400,7 +401,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (130)
+## direct (131)
 
 **(root)**
 - BrowserOrigin
@@ -488,6 +489,7 @@ _none_
 - SensitivePatternLibrary
 - SensitiveTextMasker
 - StandardCommandRegistry
+- StockPictures
 - SupportSnapshot
 - SystemEnumValues
 - TaskDirectory
@@ -572,13 +574,13 @@ closes.
 | 1 | 0 |
 | 2 | 2 |
 | 3-4 | 14 |
-| 5-8 | 42 |
+| 5-8 | 43 |
 | 9-16 | 52 |
 | 17+ | 20 |
 
-3930 test methods across 480 test classes; 130 classes have a test of their own, median 9 methods each.
+4031 test methods across 493 test classes; 131 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 130 of 433 classes have one: 53 are covered by the registry-wide contract sweep and 30 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 131 of 435 classes have one: 51 are covered by the registry-wide contract sweep and 28 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 
