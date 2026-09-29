@@ -274,7 +274,8 @@ public class AGitAnswerComesFromTheRepositoryTest
     @Test
     public void aCommitOfAMissingPathIsRefused()
     {
-        JsonObject answer = call("commit", "paths", PROJECT + "/src/Nowhere.bsl", "message", "Nowhere"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        JsonObject answer = call("commit", "paths", PROJECT + "/src/Nowhere.bsl", "message", "Nowhere", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "authorName", "Probe", "authorEmail", "probe@example.invalid"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         assertFalse(answer.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(answer.toString(), answer.get("error").getAsString().contains("does not exist")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(answer.toString(), answer.get("error").getAsString().contains("not tracked")); //$NON-NLS-1$ //$NON-NLS-2$

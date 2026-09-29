@@ -226,8 +226,10 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
     private static void readOnly(Path file, boolean readOnly) throws Exception
     {
         file.toFile().setWritable(!readOnly);
+        // Linux offers the DOS view through extended attributes, which a file that is no longer
+        // writable refuses to change; the permission bit alone makes it read-only there.
         DosFileAttributeView dos = Files.getFileAttributeView(file, DosFileAttributeView.class);
-        if (dos != null)
+        if (dos != null && System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).startsWith("windows")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         {
             dos.setReadOnly(readOnly);
         }

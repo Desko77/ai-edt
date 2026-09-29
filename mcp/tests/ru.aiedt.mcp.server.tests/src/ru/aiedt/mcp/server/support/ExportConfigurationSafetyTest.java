@@ -149,6 +149,20 @@ public class ExportConfigurationSafetyTest
         assertTrue(problem, problem.contains("predates this run"));
     }
 
+    /**
+     * A file stamped a moment before the start is still this run's product: the file system
+     * stamps coarser than the clock the start is read from.
+     */
+    @Test
+    public void aFileStampedJustBeforeTheStartIsStillTheProduct() throws Exception
+    {
+        Path fresh = file("coarse.cf", "this run");
+        Instant start = Instant.now();
+        Files.setLastModifiedTime(fresh, java.nio.file.attribute.FileTime.from(start.minusMillis(900)));
+
+        assertNull(BmInfobaseExtensionHelper.freshExportProblem(fresh, start));
+    }
+
     @Test
     public void aFreshFilePasses() throws Exception
     {

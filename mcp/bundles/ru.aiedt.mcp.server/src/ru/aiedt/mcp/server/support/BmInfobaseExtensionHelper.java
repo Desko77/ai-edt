@@ -1129,11 +1129,20 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
+     * How much earlier than the start of a run the modification time of its product may be.
+     */
+    static final java.time.Duration FILE_TIME_SLACK = java.time.Duration.ofSeconds(2);
+
+    /**
      * Tells what is wrong with a file an export run claims to have written.
      * <p>
      * Three judgements, in order: the file must exist, it must be non-empty (the platform
      * creates an empty file before writing into one), and it must not predate the run -
      * the check that keeps a previous run's leftover from passing as this one's product.
+     * The file system stamps a modification time coarser than the clock the start is read
+     * from (a coarse kernel clock on Linux, two seconds on FAT), so a file written right after
+     * the start can carry a time slightly before it: the comparison allows
+     * {@link #FILE_TIME_SLACK}.
      * Package-visible: the .cf/.cfe export and the .epf/.erf dump both judge their product
      * through it, and a test can exercise it without an infobase.
      * </p>
@@ -1158,7 +1167,7 @@ public final class BmInfobaseExtensionHelper
             {
                 java.nio.file.attribute.FileTime modified =
                     java.nio.file.Files.getLastModifiedTime(file);
-                if (modified.toInstant().isBefore(notBefore))
+                if (modified.toInstant().isBefore(notBefore.minus(FILE_TIME_SLACK)))
                 {
                     return "the written file predates this run (last modified " + modified //$NON-NLS-1$
                         + ", the run started " + notBefore //$NON-NLS-1$
