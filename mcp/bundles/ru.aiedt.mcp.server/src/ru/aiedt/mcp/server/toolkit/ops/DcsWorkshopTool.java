@@ -3184,10 +3184,11 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * Adds a field path, and the dataset-qualified form when the path names no dataset.
+     * Adds a field path and its dataset-qualified form.
      * <p>
-     * Settings store {@code Sales.Amount} for a field whose data path is {@code Amount}. Both
-     * spellings have to be identifiers, or that setting is reported as untouched.
+     * Settings store {@code Sales.Amount} for a field whose data path is {@code Amount}, and
+     * {@code Sales.Customer.TaxId} for {@code Customer.TaxId}. Both spellings have to be
+     * identifiers, or that setting is reported as untouched.
      * </p>
      *
      * @param dataSetName the dataset the field belongs to, or <code>null</code> when the path is
@@ -3202,7 +3203,7 @@ public class DcsWorkshopTool implements IMcpTool
             return;
         }
         addUniquePath(paths, path);
-        if (dataSetName != null && !dataSetName.isEmpty() && path.indexOf('.') < 0)
+        if (dataSetName != null && !dataSetName.isEmpty())
         {
             addUniquePath(paths, dataSetName + "." + path); //$NON-NLS-1$
         }
@@ -3229,8 +3230,8 @@ public class DcsWorkshopTool implements IMcpTool
     /**
      * Reads the data path and the field name off one dataset, calculated or total field.
      *
-     * @param dataSetName the dataset, used to qualify a path that has no dot, or <code>null</code>
-     *            for a calculated or total field
+     * @param dataSetName the dataset, used to qualify the path, or <code>null</code> for a
+     *            calculated or total field
      * @param field the field object
      * @param paths the identifiers being built
      */

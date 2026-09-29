@@ -292,6 +292,27 @@ public class DcsSettingsImpactTest
     }
 
     /**
+     * A field whose data path has a dot is stored qualified by its dataset, and that spelling is
+     * the field too.
+     *
+     * @throws Exception if a call refuses
+     */
+    @Test
+    public void aQualifiedCompoundPathIsListed() throws Exception
+    {
+        run("add_dataset", "name", "Продажи"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("add_field", "dataSetName", "Продажи", "name", "Контрагент.ИНН"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        run("add_dataset", "name", "Возвраты"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("select_field", "field", "Продажи.Контрагент.ИНН"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        List<Map<String, Object>> hits = impact("remove_dataset_field", //$NON-NLS-1$
+            "dataSetName", "Продажи", "name", "Контрагент.ИНН"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+        assertEquals("the qualified spelling is this field: " + hits, 1, hits.size()); //$NON-NLS-1$
+        assertEquals("Продажи.Контрагент.ИНН", hits.get(0).get("item")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * A grouping field is reported under the structure, not under the selection.
      *
      * @throws Exception if a call refuses
