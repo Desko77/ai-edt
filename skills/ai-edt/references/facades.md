@@ -78,8 +78,8 @@ evidence - an object that changed beyond the mirrors does not pair. Contained ch
 compared by content, so a change invisible to a name-only walk (an attribute whose type moved)
 shows at `level=attribute`.
 
-`compare_configurations mode=files` compares two dumps on disk: `projectName` names the project and
-`target` the file or the dump directory to compare against. The answer carries `failed` and
+`compare_configurations mode=files` compares two dumps on disk: `projectName` is the path of the first
+dump and `target` the path of the second, each a file or the directory of a dump. The answer carries `failed` and
 `failedCount` - files that could not be read, directories whose listing failed, and symbolic links
 the walk does not follow. Read them: `success:true` beside a `failedCount` above zero is an
 INCOMPLETE diff, not a clean one, and an unread module or a template that would not open lands in
@@ -211,7 +211,8 @@ Two things worth knowing before the first call:
 - `add_radio_button` answers JSON.
 
 Under `dryRun`, a form operation whose action is refused inside the preview answers the refusal as a
-refusal (`success: false`) with its own text, in `edit_form` as well as in `edit_metadata`.
+refusal with its own text: `success: false` from `edit_metadata`, `status: error` in the front matter
+of the `edit_form` answer.
 
 Reading a form back: `get_form_structure` collects the empty containers by walking the model from the
 `subtree` root, whatever `depth` and `maxElements` were given, and answers them as `emptyGroups`,
@@ -240,9 +241,10 @@ form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
   the object did not receive and why, beside `propertiesAtModelDefault` and `synonym`.
 - `add_object_attribute`, `add_tabular_section_attribute` and `set_object_type` answer
   `qualifierIgnored` when the qualifier applies to none of the types in the composition (`length` on
-  a `Number`, for one). Under `dryRun` the first two do not borrow the reference types' targets, and
-  a borrow into an extension is reported as `wouldBorrow`; `add_metadata_attribute` reads `dryRun`
-  as well.
+  a `Number`, for one). Under `dryRun` the first two do not borrow the reference types' targets and
+  list them in `autoBorrowSkipped` (`targetFqn`, `reason: dryRun`); `add_metadata_attribute` reads
+  `dryRun` as well. The adoption operations (`adopt_object`, `adopt_objects`, `adopt_child`,
+  `adopt_form_item`, `adopt_module`) answer a dry run with a `wouldBorrow` plan.
 - `remove_object_attribute`, `remove_tabular_section` and `remove_tabular_section_attribute` refuse
   with the tag `requiresCascadeForms` and the list of forms and items when a form item of the owner
   reaches the element by its data path; `cascadeForms=true` removes those items in the same
@@ -258,8 +260,9 @@ form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
   naming the kind and the FQN. `add_url_template` and `create_http_service` refuse a template with no
   leading `/` before anything is written.
 - `add_template` checks `templateType` against the model's own literals before the transaction and
-  refuses an unknown one; when the name was corrected (`GraphicalScheme` for `GraphicalSchema`) the
-  answer carries the model literal and `requestedTemplateType`. An owner FQN written with a Russian
+  refuses an unknown one; synonyms (`GraphicalScheme`, Russian names) are taken as the model literal
+  (`GraphicalSchema`), `templateType` answers the type the model wrote, and `requestedTemplateType`
+  appears when that differs from the one asked for. An owner FQN written with a Russian
   kind is translated through the type catalogue. `set_template_content` with an explicit
   `templateType` refuses a template that carries no catalogue, and one of another format.
 - `create_route_map` writes the business process's `Flowchart.scheme`: points with `location` (four
@@ -508,8 +511,7 @@ nearest `.git` walking up from the project's directory, so a project anywhere in
 is answered about that repository.
 
 `commit` stages only what `paths` names - comma-separated, relative to the repository root - and
-refuses a call without them: there is no add-all, because a commit of everything lying in the work
-tree is what a review cannot be told apart from. `.`, `*`, a pattern, a directory, an absolute path
+refuses a call without them: there is no add-all. `.`, `*`, a pattern, a directory, an absolute path
 and a path leaving the repository through `..` are refused before a file is read, and so is a path
 that names nothing on disk and nothing in the index; a tracked file that is gone is staged as a
 deletion. Nothing else in the index enters the commit. The author is the repository's
@@ -628,7 +630,8 @@ and its record when the settings carry neither. Its name is checked against the 
 output parameters: an unknown one is refused with the closest name, and where that list cannot be
 read the record is written and the answer carries `outputParameterNameChecked: false` with
 `outputParameterNameCheckNote`. `remove_dataset` also removes the calculated and total fields whose
-expression starts with the dataset's name, compared without regard to case; in `affectedSettings` a
+expression reads the dataset - its name as a whole word followed by a dot, anywhere in the expression
+(`Sum(Sales.Amount)`), compared without regard to case; in `affectedSettings` a
 path beginning with a dataset name is read as one identifier. `remove_query_condition` removes the `AND`/`OR` beside the condition; one
 between an `AND` and an `OR` is refused. An unknown `comparisonType`, `conditionType`, `orderType` or
 `groupingType` is refused with the list under `Allowed:`, and a `parentPath` step is compared without
@@ -637,7 +640,8 @@ setter did not accept, naming the link and the property. `remove_dataset`, `remo
 `remove_parameter`, `remove_calculated_field` and `remove_total_field` read every settings variant
 and name in `affectedSettings` the selection, order, filter, structure, conditional appearance and
 data parameters that point at what is being removed, without changing them;
-`reportAffectedSettings` (default true) turns that off. `add_settings_table` and `add_settings_chart`
+`reportAffectedSettings` defaults to true, and `false` leaves `affectedSettings` and `affectedCount`
+out of the answer. `add_settings_table` and `add_settings_chart`
 write the resources the schema declares into the selected structure fields and name them in the
 answer; a schema that declares none answers that nothing was selected. `remove_conditional_appearance`
 reads `target` the way `add_conditional_appearance` does - `schema` and `settings` for the default
