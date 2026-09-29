@@ -89,8 +89,8 @@ so `CatalogRef.A` becoming `CatalogRef.B` shows at `attribute` level, and `level
 
 `compare_three_way` with decisions refuses the merge as a whole (`decisionsRefused`) when a decision
 names an object the comparison does not hold, an unknown rule or `CUSTOM_MERGE`; the decisions that
-are left are marked. An unread tree or a missing root is refused before the merge. After a merge
-every touched object is revalidated and the answer says so in `revalidationNote`. A node the walk
+are left are marked. An unread tree or a missing root is refused before the merge. After a merge the objects the decisions named and this page of the comparison are revalidated;
+when changes remain past that page (`moreChanged`), the answer says so in `revalidationNote`. A node the walk
 could not classify (`UNKNOWN`) is held by `UPDATE_KEEPING_OURS`, a module root that has methods is
 not merged whole, `sectionsOffset` pages the sections, and a module of an object or a manager is
 named a module. See `expected-behavior.md` for the restore point taken before a merge.
@@ -195,8 +195,8 @@ Two things worth knowing before the first call:
   in. The answer carries `stubWritten`, `stubSkippedReason` (`alreadyPresent` or `dryRun`),
   `modulePath`, `stubRegion`, `stubRegionCreated` and `stubError`. A procedure the module already
   declares with another directive or another number of parameters is reported as
-  `existingProcedureMismatch` and left as it is. `remove_form_event_handler` names the procedure it
-  removed in `moduleProcedure`.
+  `existingProcedureMismatch` and left as it is. `remove_form_event_handler` leaves the form module as it is, and `moduleProcedure` says to
+  remove the procedure with `write_module_source` when nothing else calls it.
 - `remove_item` removes a form item: `formFqn` (synonym `containerFqn`) and `name`, with the item
   looked up across the whole form and `dryRun` supported. Success is reported only when the item was
   removed. A template or a metadata object is refused, and the refusal names the operation that
@@ -484,9 +484,9 @@ receipt. `run_yaxunit_tests` is an alias of this tool that declares and answers 
 
 `vanessa` writes the same receipts. Its answer names the files Vanessa wrote in `resultsDir` and `resultFiles` and, when
 the result was read from a JUnit report instead, `junitXmlPath`. A run that reaches its timeout
-reads the 1C client windows holding it before the process is stopped and answers them as
-`blockingWindows` (`pid`, `title`, `texts`, `buttons`, `modal`, `imageFile`), or as
-`blockingWindowsError` when they could not be read; with a window found, the advice does not suggest
+reads the 1C client windows holding it before the process is stopped and answers them as `blockingWindows` (`pid`, `title`, `texts`, `buttons`, `modal`, and `imageFile` when a
+screenshot was taken; an empty list when no window was found) and `blockingWindowsError` (only when
+the windows could not be read); with a window found, the advice does not suggest
 waiting longer. The image is taken with `PrintWindow`; texts come from `Pane` and `Text` elements,
 without repeats and without the line equal to the title, a line longer than 500 characters is cut
 with `...`, at most 20 lines of one kind are listed and the rest is named as a number. The
