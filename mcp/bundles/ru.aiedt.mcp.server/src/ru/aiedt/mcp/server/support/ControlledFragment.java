@@ -196,9 +196,21 @@ public final class ControlledFragment
     private static List<String> normalise(List<String> lines)
     {
         List<String> out = new ArrayList<>();
+        LiteralState literal = new LiteralState();
         for (String line : lines)
         {
-            String comparable = line == null ? "" : lowerIdentifiers(line.trim()); //$NON-NLS-1$
+            String text = line == null ? "" : line; //$NON-NLS-1$
+            if (!literal.inString)
+            {
+                text = text.stripLeading();
+            }
+            String comparable = lowerIdentifiers(text, literal);
+            if (!literal.inString)
+            {
+                // Trailing blanks are formatting only outside a literal; while a literal is
+                // still open they are data the platform compares character for character.
+                comparable = comparable.stripTrailing();
+            }
             if (!comparable.isEmpty())
             {
                 out.add(comparable);
@@ -215,18 +227,62 @@ public final class ControlledFragment
      * of the line. Everything else is identifiers and punctuation, and BSL does not distinguish
      * the case of an identifier.
      * </p>
+     * <p>
+     * <b>A literal does not end with its line.</b> A line whose first non-blank character is
+     * {@code |} continues a literal the previous line left open, and everything on it up to the
+     * closing quote is the literal's own text - the blanks after the {@code |} included, so only
+     * the indent before the {@code |} is formatting. The closing quote on such a line closes the
+     * literal, and what follows it is code again.
+     * </p>
      *
      * @param line the line as written, never <code>null</code>.
+     * @param literal the string-literal state, carried over from the previous line and updated
+     *        for the next one.
      * @return the line with identifiers lower cased and everything else as written
      */
-    private static String lowerIdentifiers(String line)
+    private static String lowerIdentifiers(String line, LiteralState literal)
     {
         StringBuilder out = new StringBuilder(line.length());
-        boolean inString = false;
-        for (int i = 0; i < line.length(); i++)
+        int at = 0;
+        if (literal.inString)
+        {
+            while (at < line.length() && Character.isWhitespace(line.charAt(at)))
+            {
+                at++;
+            }
+            if (at < line.length() && line.charAt(at) == '|')
+            {
+                out.append('|');
+                at++;
+                while (at < line.length())
+                {
+                    char c = line.charAt(at);
+                    if (c == '"' && at + 1 < line.length() && line.charAt(at + 1) == '"')
+                    {
+                        out.append(c).append(line.charAt(at + 1));
+                        at += 2;
+                        continue;
+                    }
+                    out.append(c);
+                    at++;
+                    if (c == '"')
+                    {
+                        literal.inString = false;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                // Without the continuation marker the line is code, whatever the previous line
+                // left open.
+                literal.inString = false;
+            }
+        }
+        for (int i = at; i < line.length(); i++)
         {
             char c = line.charAt(i);
-            if (inString)
+            if (literal.inString)
             {
                 if (c == '"' && i + 1 < line.length() && line.charAt(i + 1) == '"')
                 {
@@ -240,13 +296,13 @@ public final class ControlledFragment
                 out.append(c);
                 if (c == '"')
                 {
-                    inString = false;
+                    literal.inString = false;
                 }
                 continue;
             }
             if (c == '"')
             {
-                inString = true;
+                literal.inString = true;
                 out.append(c);
                 continue;
             }
@@ -258,6 +314,21 @@ public final class ControlledFragment
             out.append(Character.toLowerCase(c));
         }
         return out.toString();
+    }
+
+    /**
+     * Whether a line ended inside a string literal.
+     * <p>
+     * A BSL literal can span lines, each continuation opening with {@code |}, so the state cannot
+     * be local to one line the way it used to be: a continuation line processed as code had its
+     * text lowered and read as a match against a delivery that re-cased it, where the platform
+     * compares the literal as written and refuses the extension.
+     * </p>
+     */
+    private static final class LiteralState
+    {
+        /** Set while the lines seen so far end inside a string literal. */
+        boolean inString;
     }
 
     /**

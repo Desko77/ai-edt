@@ -128,4 +128,35 @@ public class AChildModeIsPutBackNotCountedMissingTest
         assertTrue("a nested subsystem is an ordinary entry of the registry and has to be in the"
             + " index a restore writes from", index.containsKey(nested.getUuid()));
     }
+
+    /**
+     * A subsystem cycle is indexed, not recursed into forever.
+     * <p>
+     * {@code Subsystem.subsystems} is a reference, not a containment, so a damaged model can point
+     * two subsystems at each other. The index has to walk each of them once and stop, because the
+     * alternative is a {@code StackOverflowError} in place of an answer.
+     * </p>
+     */
+    @Test
+    public void aSubsystemCycleIsIndexedOnceAndDoesNotBreakTheIndex() throws Exception
+    {
+        Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
+        configuration.setUuid(UUID.randomUUID());
+        Subsystem first = MdClassFactory.eINSTANCE.createSubsystem();
+        first.setName("Продажи"); //$NON-NLS-1$
+        first.setUuid(UUID.randomUUID());
+        configuration.getSubsystems().add(first);
+        Subsystem second = MdClassFactory.eINSTANCE.createSubsystem();
+        second.setName("Розница"); //$NON-NLS-1$
+        second.setUuid(UUID.randomUUID());
+        first.getSubsystems().add(second);
+        second.getSubsystems().add(first);
+
+        Map<UUID, MdObject> index = indexObjects(configuration);
+
+        assertTrue("the cycle is walked once, not recursed into until the stack gives out",
+            index.containsKey(first.getUuid()));
+        assertTrue("every subsystem of the cycle keeps its own entry in the index",
+            index.containsKey(second.getUuid()));
+    }
 }

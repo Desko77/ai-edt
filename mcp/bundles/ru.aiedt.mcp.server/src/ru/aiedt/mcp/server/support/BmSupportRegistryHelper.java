@@ -9,9 +9,11 @@ package ru.aiedt.mcp.server.support;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 
@@ -1752,6 +1754,7 @@ public final class BmSupportRegistryHelper
     private static Map<UUID, MdObject> indexObjects(Configuration configuration)
     {
         Map<UUID, MdObject> objects = new LinkedHashMap<>();
+        Set<MdObject> visited = Collections.newSetFromMap(new IdentityHashMap<>());
         if (configuration.getUuid() != null)
         {
             objects.put(configuration.getUuid(), configuration);
@@ -1776,7 +1779,7 @@ public final class BmSupportRegistryHelper
                 if (object != null && object.getUuid() != null)
                 {
                     objects.put(object.getUuid(), object);
-                    indexSubordinates(object, objects);
+                    indexSubordinates(object, objects, visited);
                 }
             }
         }
@@ -1803,12 +1806,18 @@ public final class BmSupportRegistryHelper
      * Nested subsystems are asked for by the typed accessor on top of the walk, because they do
      * not arrive through {@code eAllContents} - the naming walk below the snapshot found the same
      * thing, and a subsystem nested one level down kept a mode the index could not hand back.
+     * The reference is not a containment, so nothing stops a damaged model from pointing a
+     * subsystem at itself or at its own parent: the walk remembers where it has been and declines
+     * the second visit, or the recursion would end in a {@code StackOverflowError} instead of an
+     * index.
      * </p>
      *
      * @param owner the object to walk under.
      * @param objects the index to add to.
+     * @param visited the subsystems already walked, by identity, shared by the whole index run.
      */
-    private static void indexSubordinates(MdObject owner, Map<UUID, MdObject> objects)
+    private static void indexSubordinates(MdObject owner, Map<UUID, MdObject> objects,
+        Set<MdObject> visited)
     {
         try
         {
@@ -1833,18 +1842,27 @@ public final class BmSupportRegistryHelper
         }
         if (owner instanceof com._1c.g5.v8.dt.metadata.mdclass.Subsystem)
         {
-            for (com._1c.g5.v8.dt.metadata.mdclass.Subsystem nested
-                : ((com._1c.g5.v8.dt.metadata.mdclass.Subsystem)owner).getSubsystems())
+            try
             {
-                if (nested == null)
+                for (com._1c.g5.v8.dt.metadata.mdclass.Subsystem nested
+                    : ((com._1c.g5.v8.dt.metadata.mdclass.Subsystem)owner).getSubsystems())
                 {
-                    continue;
+                    if (nested == null || !visited.add(nested))
+                    {
+                        continue;
+                    }
+                    if (nested.getUuid() != null)
+                    {
+                        objects.put(nested.getUuid(), nested);
+                    }
+                    indexSubordinates(nested, objects, visited);
                 }
-                if (nested.getUuid() != null)
-                {
-                    objects.put(nested.getUuid(), nested);
-                }
-                indexSubordinates(nested, objects);
+            }
+            catch (RuntimeException | LinkageError refused)
+            {
+                // A subsystem whose children will not list costs those children, not the index.
+                Activator.logDebug("support: could not list the nested subsystems of an object: " //$NON-NLS-1$
+                    + refused);
             }
         }
     }

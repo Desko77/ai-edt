@@ -205,4 +205,67 @@ public class ControlledFragmentTest
         assertTrue(caveat, caveat.contains("compared as written"));
         assertTrue(caveat, caveat.contains("promise"));
     }
+
+    @Test
+    public void aRecasedContinuationLineOfALiteralIsADriftNotAMatch()
+    {
+        // A query text is the commonest multi-line literal in BSL, and every continuation line
+        // of it is literal data the platform compares as written. A comparison that processed
+        // such a line as code lowered its case on both sides and called a re-cased delivery a
+        // match - a clean answer where the platform refuses the extension.
+        String handler = String.join("\n",
+            "	Текст = \"ВЫБРАТЬ",
+            "	|Товар КАК Товар",
+            "	|ИЗ Справочник.Товары\";",
+            "	Записать();");
+        String recased = String.join("\n",
+            "	Текст = \"ВЫБРАТЬ",
+            "	|ТОВАР КАК ТОВАР",
+            "	|ИЗ Справочник.Товары\";",
+            "	Записать();");
+
+        assertNotNull("a continuation line is literal data, and re-casing it is a change: ",
+            ControlledFragment.describeDrift(handler, recased));
+    }
+
+    @Test
+    public void codeAfterTheClosingQuoteOfAContinuationLineIsStillCode()
+    {
+        // The closing quote on a continuation line ends the literal; what follows it - and every
+        // later line - is code again, and its identifiers compare case-blind as they always did.
+        String handler = String.join("\n",
+            "	Текст = \"ВЫБРАТЬ",
+            "	|Товар КАК Товар",
+            "	|ИЗ Справочник.Товары\";",
+            "	Записать();");
+        String recasedCode = String.join("\n",
+            "	ТЕКСТ = \"ВЫБРАТЬ",
+            "	|Товар КАК Товар",
+            "	|ИЗ Справочник.Товары\";",
+            "	ЗАПИСАТЬ();");
+
+        assertNull("identifier case outside the literal is still not a change: " + handler,
+            ControlledFragment.describeDrift(handler, recasedCode));
+    }
+
+    @Test
+    public void anEscapedQuoteOnAContinuationLineDoesNotCloseTheLiteral()
+    {
+        // "" on a continuation line is an escaped quote like anywhere else in a literal. A parser
+        // that closed the literal at the first quote of the pair would treat the rest of the line
+        // as code, lower its case, and miss a re-cased word the delivery changed.
+        String handler = String.join("\n",
+            "	Текст = \"ВЫБРАТЬ",
+            "	|Товар КАК \"\"Ромашка\"\" Готов",
+            "	|ИЗ Справочник.Товары\";",
+            "	Записать();");
+        String recased = String.join("\n",
+            "	Текст = \"ВЫБРАТЬ",
+            "	|Товар КАК \"\"Ромашка\"\" ГОТОВ",
+            "	|ИЗ Справочник.Товары\";",
+            "	Записать();");
+
+        assertNotNull("the word after the escaped quotes is still inside the literal: ",
+            ControlledFragment.describeDrift(handler, recased));
+    }
 }
