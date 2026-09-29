@@ -10,17 +10,21 @@ package ru.aiedt.mcp.server.support;
  * Whether a tool's answer reads as a failure, for the two callers that have to know.
  * <p>
  * A tool reports trouble in more than one way, because a tool answers in more than one shape: a
- * JSON body carries {@code success:false}, a text or markdown answer opens with {@code Error:},
- * {@code write_module_source} says it failed while writing, {@code edit_form} answers in yaml. None
- * of them throws - a refusal is a normal answer here - so anything that needs to tell success from
- * failure has to read the shape.
+ * JSON body carries {@code success:false}, a text answer opens with {@code Error:}, a markdown
+ * answer opens with {@code **Error:**}, {@code write_module_source} says it failed while writing,
+ * {@code edit_form} answers in yaml. None of them throws - a refusal is a normal answer here - so
+ * anything that needs to tell success from failure has to read the shape.
  * </p>
  * <p>
- * It lives in one place because it used to live in two. The idempotency store knew all four shapes;
- * the request router carried its own copy that knew only the JSON one, so a tool refusing in plain
- * text was recorded in the call history as having succeeded - and the history window's "failures
- * only" filter hid exactly the calls somebody opened it to find. Two copies of a rule are two
- * answers to the same question, and the one nobody is looking at is the one that goes stale.
+ * It lives in one place because it used to live in two, and because a shape missing here is a
+ * shape missing everywhere. The idempotency store knew all four shapes; the request router carried
+ * its own copy that knew only the JSON one, so a tool refusing in plain text was recorded in the
+ * call history as having succeeded - and the history window's "failures only" filter hid exactly
+ * the calls somebody opened it to find. The markdown header was missing from both for as long as
+ * it existed: {@code run_yaxunit_tests} refuses with it, and so do six other markdown tools, so
+ * their refusals reached the client without {@code isError} and entered the history as successes.
+ * Two copies of a rule are two answers to the same question, and the one nobody is looking at is
+ * the one that goes stale.
  * </p>
  * <p>
  * Conservative on purpose: only well-known failure shapes count. For the idempotency store a false
@@ -43,6 +47,17 @@ public final class FailureShape
      */
     private static final java.util.regex.Pattern STATUS_ERROR_LINE =
         java.util.regex.Pattern.compile("^status:\\s*error\\s*$", java.util.regex.Pattern.MULTILINE);
+
+    /**
+     * How the markdown tools open a refusal: the word as a bold heading, not as the plain
+     * {@code Error:} the text tools use.
+     * <p>
+     * Read at the head of the answer only, like the other two shapes. Searched for anywhere it
+     * would read the source of a module that mentions it, or a report that lists one failed item
+     * among successful ones, as a failed call.
+     * </p>
+     */
+    static final String MARKDOWN_ERROR = "**Error:**"; //$NON-NLS-1$
 
     private FailureShape()
     {
@@ -72,7 +87,8 @@ public final class FailureShape
             return true;
         }
         String head = result.stripLeading();
-        if (head.startsWith("Error:") || head.startsWith("Failed while writing")) //$NON-NLS-1$ //$NON-NLS-2$
+        if (head.startsWith("Error:") || head.startsWith(MARKDOWN_ERROR) //$NON-NLS-1$
+            || head.startsWith("Failed while writing")) //$NON-NLS-1$
         {
             return true;
         }

@@ -6,7 +6,6 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
 
 import com.google.gson.JsonElement;
@@ -44,22 +43,31 @@ import ru.aiedt.mcp.server.support.YaxunitHelp;
  * <ul>
  *   <li>{@code help=topics|writing|assertions|setup|events|advanced} - returns
  *       a Markdown topic from {@link YaxunitHelp} without launching anything</li>
- *   <li>{@code updateBeforeLaunch=true} (default) - syncs the infobase before
+ *   <li>{@code updateBeforeLaunch=true} (default) - updates the infobase before
  *       launching, avoiding the "Update configuration?" modal blocking the
- *       headless run (uses {@link ru.aiedt.mcp.server.support.ApplicationUpdater})</li>
+ *       headless run (uses {@link ru.aiedt.mcp.server.support.ApplicationUpdater}
+ *       through {@code DebugSessionStarter}); an update that does not finish
+ *       refuses the launch and nothing is started</li>
  *   <li>Pending JSON shape (run mode): {@code {status:Pending, runKey, reportDir,
  *       junitXml, hint}}</li>
  *   <li>0-tests hint: when JUnit XML reports zero suites/cases, the markdown
  *       body explains the three usual causes and points at {@code help=writing}</li>
- *   <li>Filter parity: extensions, modules, tests, suites, tags,
- *       contexts (Server/Client/ExternalConnection)</li>
+ *   <li>Filters: extensions, modules, tests - the three the launch
+ *       configuration's filter carries. A call naming suites, tags or contexts
+ *       is refused, because the launch would otherwise run every test in the
+ *       suite under a filter the caller believes is narrowing it</li>
+ *   <li>{@code reuseRecent=true} - take the report of a run that finished
+ *       within the last 5 minutes instead of starting a new one. Defaults to
+ *       false: a second call after a delivered report runs the tests again, so
+ *       an edit-and-rerun loop cannot read a stale report as its own result</li>
  * </ul>
  *
  * <p>Implementation strategy: the tool delegates to the existing
  * {@link YaxunitTestRunner} / {@link YaxunitDebugRunner} which carry
  * the heavy lifting (launch tracking, JUnit parsing, report formatting).
- * The unified surface adds: help dispatch, mode routing, the optional
- * {@code updateBeforeLaunch} pre-step. Old tools remain registered as
+ * The unified surface adds: help dispatch and mode routing, and it forwards
+ * {@code updateBeforeLaunch} and {@code reuseRecent} unchanged - both modes read
+ * them themselves, so what the delegate decides is what happens. Old tools remain registered as
  * deprecated aliases until 2.0 to preserve skill compatibility.
  */
 public class YaxunitTestsTool implements IMcpTool
@@ -79,8 +87,12 @@ public class YaxunitTestsTool implements IMcpTool
             + "Pass mode=run|debug to switch between synchronous polling and " //$NON-NLS-1$
             + "breakpoint-aware debug. Pass help=<topic> to load built-in YAxUnit guidance " //$NON-NLS-1$
             + "(topics/writing/assertions/setup/events/advanced). " //$NON-NLS-1$
-            + "Filters: extensions, modules, tests, suites, tags, contexts (CSV). " //$NON-NLS-1$
-            + "updateBeforeLaunch=true (default) auto-syncs the infobase before launching. " //$NON-NLS-1$
+            + "Filters: extensions, modules, tests (CSV); the launch configuration's filter takes "
+            + "those three only, so any other filter argument is refused rather than ignored. " //$NON-NLS-1$
+            + "updateBeforeLaunch=true (default) updates the infobase before launching and refuses "
+            + "the launch when the update does not finish. " //$NON-NLS-1$
+            + "reuseRecent=true returns the report of a run finished within the last 5 minutes "
+            + "instead of running the tests again (default false). " //$NON-NLS-1$
             + "run_yaxunit_tests (mode=run) and debug_yaxunit_tests (mode=debug) are back-compat " //$NON-NLS-1$
             + "aliases of this facade; prefer it for new prompts."; //$NON-NLS-1$
     }
@@ -101,8 +113,11 @@ public class YaxunitTestsTool implements IMcpTool
             .stringProperty("tests", "CSV: test FQNs (Module.Method).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "Polling window in seconds (default 60). Legacy alias: timeout.") //$NON-NLS-1$
-            .stringProperty("updateBeforeLaunch", //$NON-NLS-1$
+            .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. Set false to skip pre-launch infobase sync.")
+            .booleanProperty("reuseRecent", //$NON-NLS-1$
+                "Default false. Set true to take the report of a run that finished within the " //$NON-NLS-1$
+                    + "last 5 minutes instead of running the tests again.") //$NON-NLS-1$
             .booleanProperty("installYaxunit", //$NON-NLS-1$
                 "Default false. When true, if the YAxUnit engine extension is not yet " //$NON-NLS-1$
                     + "installed in the infobase, its latest release is downloaded from " //$NON-NLS-1$
@@ -182,19 +197,8 @@ public class YaxunitTestsTool implements IMcpTool
             return ToolResult.error(presetGate).put("operation", NAME).put("mode", mode).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
-        // updateBeforeLaunch handling - delegate already triggers it when
-        // applicable; here we just record the requested behavior for the
-        // structured response. Default true matches the upstream surface.
-        boolean updateBeforeLaunch = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true);
-        if (updateBeforeLaunch)
-        {
-            // Inject into params so downstream tool can act on it.
-            // Existing DebugSessionStarter already supports this flag; Run tool
-            // gains it via a helper method in 1.40.
-            Map<String, String> forwarded = new LinkedHashMap<>(params);
-            forwarded.putIfAbsent("updateBeforeLaunch", "true");
-            params = forwarded;
-        }
+        // updateBeforeLaunch is passed through as it arrived: both delegates read it themselves
+        // with the same default, and the update happens inside the runner that launches, not here.
 
         // installYaxunit pre-step: ensure the YAxUnit engine extension is in the
         // infobase before launching. Idempotent - if already present, nothing is
@@ -286,10 +290,17 @@ public class YaxunitTestsTool implements IMcpTool
                 .put("operation", NAME) //$NON-NLS-1$
                 .toJson();
         }
-        return ToolResult.success()
+        ToolResult answered = ToolResult.success()
             .put("operation", NAME) //$NON-NLS-1$
-            .put("output", result) //$NON-NLS-1$
-            .toJson();
+            .put("output", result); //$NON-NLS-1$
+        if (YaxunitTestRunner.isCachedAnswer(result))
+        {
+            // The runner answers markdown, so the one place it can say "this report is a previous
+            // run's" is the text. Said again as a field, because a client reading fields rather
+            // than prose would otherwise read a reused report as this call's result.
+            answered.put("cached", true); //$NON-NLS-1$
+        }
+        return answered.toJson();
     }
 
     /**

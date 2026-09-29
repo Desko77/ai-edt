@@ -22,6 +22,11 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import ru.aiedt.mcp.server.wire.ToolResult;
+
 /**
  * What the scenario runner resolves and what it hands back.
  * <p>
@@ -134,5 +139,53 @@ public class WhatTheScenarioRunnerHandsBackTest
         assertTrue(VanessaTool.collectScreenshots(dir.toFile()).isEmpty());
         assertTrue("a directory that is not there is not an error either", //$NON-NLS-1$
             VanessaTool.collectScreenshots(dir.resolve("no-such-dir").toFile()).isEmpty()); //$NON-NLS-1$
+    }
+
+    /**
+     * A run read from Vanessa's own result files names those files, not a JUnit report.
+     * <p>
+     * Measured: the tool asks Vanessa for an Allure result and never for a JUnit one, yet every
+     * answer named {@code out/junit.xml} - a path nothing wrote. A caller that opened it found
+     * nothing where the run's results were said to be.
+     *
+     * @throws Exception when the stand-in result files cannot be written
+     */
+    @Test
+    public void aRunReadFromVanessasOwnFilesNamesThoseFiles() throws Exception
+    {
+        Files.write(dir.resolve("0f8c-result.json"), "{}".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$ //$NON-NLS-2$
+        Files.write(dir.resolve("1a2b-result.json"), "{}".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$ //$NON-NLS-2$
+        File junitNotWritten = dir.resolve("junit.xml").toFile(); //$NON-NLS-1$
+
+        String json = VanessaTool.withProducedPaths(ToolResult.success(), dir.toFile(),
+            junitNotWritten, true).toJson();
+
+        JsonObject answer = JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(dir.toFile().getAbsolutePath(), answer.get("resultsDir").getAsString()); //$NON-NLS-1$
+        assertEquals("the names Vanessa chose, not the one the tool invented", 2, //$NON-NLS-1$
+            answer.getAsJsonArray("resultFiles").size()); //$NON-NLS-1$
+        assertTrue(json, json.contains("0f8c-result.json") && json.contains("1a2b-result.json")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("no file is named where none was read: " + json, json.contains("junitXmlPath")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A run read from a JUnit report - the path a caller-supplied {@code vanessaParams} document
+     * takes by ordering JUnit output itself - names that report, and no Allure directory.
+     *
+     * @throws Exception when the stand-in report cannot be written
+     */
+    @Test
+    public void aRunReadFromAJUnitReportNamesThatReport() throws Exception
+    {
+        File junit = dir.resolve("junit.xml").toFile(); //$NON-NLS-1$
+        Files.write(junit.toPath(), "<testsuites/>".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+
+        String json = VanessaTool.withProducedPaths(ToolResult.success(), dir.toFile(), junit,
+            false).toJson();
+
+        JsonObject answer = JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(junit.getAbsolutePath(), answer.get("junitXmlPath").getAsString()); //$NON-NLS-1$
+        assertFalse("the Allure fields belong to the other branch: " + json, //$NON-NLS-1$
+            json.contains("resultsDir")); //$NON-NLS-1$
     }
 }
