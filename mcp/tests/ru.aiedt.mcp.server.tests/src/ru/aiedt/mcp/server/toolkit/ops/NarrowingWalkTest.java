@@ -411,6 +411,15 @@ public class NarrowingWalkTest
         assertTrue(json, json.contains("HARDCODED_SECRET")); //$NON-NLS-1$
     }
 
+    /** An unknown check name beside all refuses the call the same way. */
+    @Test
+    public void sensitiveUnknownCheckBesideAllRefuses() throws Exception
+    {
+        String json = sensitiveWith("all,hardcoded_secretz"); //$NON-NLS-1$
+        assertTrue(json, json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json, json.contains("hardcoded_secretz")); //$NON-NLS-1$
+    }
+
     /**
      * Findings the severity filter drops are still counted.
      * <p>
@@ -533,11 +542,26 @@ public class NarrowingWalkTest
         return new ProjectMetricsTool().collect(project, decision, true, 60, "json"); //$NON-NLS-1$
     }
 
+    /**
+     * Runs sensitive_data_scan with the HARDCODED_SECRET check.
+     *
+     * @param pairs further arguments as name, value pairs
+     * @return the JSON answer
+     * @throws Exception when the scan fails
+     */
     private static String sensitive(String... pairs) throws Exception
     {
         return sensitiveWith("HARDCODED_SECRET", pairs); //$NON-NLS-1$
     }
 
+    /**
+     * Runs sensitive_data_scan with the named checks.
+     *
+     * @param checks the checks argument
+     * @param pairs further arguments as name, value pairs
+     * @return the JSON answer
+     * @throws Exception when the scan fails
+     */
     private static String sensitiveWith(String checks, String... pairs) throws Exception
     {
         Map<String, String> params = args(pairs);

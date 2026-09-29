@@ -89,8 +89,8 @@ public class SensitiveDataScanTool implements IMcpTool
             .stringProperty("severity_filter", "info | warning | error | all (default warning). " //$NON-NLS-1$ //$NON-NLS-2$
                 + "Findings below it are counted as omittedBelowSeverityFilter.") //$NON-NLS-1$
             .stringProperty("customPatterns", //$NON-NLS-1$
-                "Comma-separated (or a JSON array of) additional regex patterns for " //$NON-NLS-1$
-                    + "ATTRIBUTE_NAME. A pattern that does not compile refuses the call.") //$NON-NLS-1$
+                "Comma-separated additional regex patterns for ATTRIBUTE_NAME, or a JSON array of them " //$NON-NLS-1$
+                    + "written as text. A pattern that does not compile refuses the call.") //$NON-NLS-1$
             .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
@@ -702,7 +702,7 @@ public class SensitiveDataScanTool implements IMcpTool
      * Names are matched without regard to case, because the schema spells them upper case and
      * callers do not. The word {@code all} - which the facade schema names as the default - selects
      * every check and reads as no selection. A name that is none of these is rejected rather than
-     * dropped: an unknown name used to switch every check off and answer an empty success.
+     * dropped, beside {@code all} as well as alone.
      * </p>
      *
      * @param raw the argument value, or <code>null</code>
@@ -716,6 +716,7 @@ public class SensitiveDataScanTool implements IMcpTool
             return null;
         }
         Set<String> set = new HashSet<>();
+        boolean all = false;
         for (String part : raw.split("\\s*,\\s*")) //$NON-NLS-1$
         {
             if (part.isEmpty())
@@ -724,7 +725,8 @@ public class SensitiveDataScanTool implements IMcpTool
             }
             if ("all".equalsIgnoreCase(part)) //$NON-NLS-1$
             {
-                return null;
+                all = true;
+                continue;
             }
             String canonical = null;
             for (String known : CHECK_NAMES)
@@ -744,7 +746,7 @@ public class SensitiveDataScanTool implements IMcpTool
             }
             set.add(canonical);
         }
-        return set;
+        return all ? null : set;
     }
 
     /**

@@ -65,6 +65,11 @@ public class ACustomPatternIsHonoredOrRefusedTest
         }
     }
 
+    /**
+     * @param patterns the compiled patterns
+     * @param name an attribute name
+     * @return whether any pattern finds a match in the name
+     */
     private static boolean matchesAny(Set<Pattern> patterns, String name)
     {
         for (Pattern pattern : patterns)
