@@ -283,7 +283,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // parameters - the test runners already pass theirs the same way) and for waitForEndpoint:
         // a process that exists is not an opened processor that answers, and the wait is the only
         // way to tell them apart.
-        PROSE.put("launch_debugger", Integer.valueOf(4186));
+        // Raised by 534 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
+        // add_breakpoint (measured 29.09: 4720).
+        PROSE.put("launch_debugger", Integer.valueOf(4720));
         // Each argument is one sentence naming the unit the call takes. Measured 4039 bytes.
         PROSE.put("mxl_workshop", Integer.valueOf(4039));
         PROSE.put("diagnostics", Integer.valueOf(2058));
@@ -549,6 +551,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 444 for reportAffectedSettings on dcs_workshop and edit_metadata: the
      * removal operations list settings that still reference what was removed.
      * </p>
+     * <p>
+     * And a thirty-fifth, by 274, for breakpointEnabled on set_breakpoint_state and replaceModuleSet
+     * on add_breakpoint: both sentences have to say what the argument does to the session, and the
+     * facade's own description gained the two operation names. Measured 29.09: 96665.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 97022;
+    private static final int DOCUMENT_PROSE = 97296;
 }

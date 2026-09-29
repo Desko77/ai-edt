@@ -109,8 +109,12 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 174185 to 174710 for reportAffectedSettings on dcs_workshop: a removal lists the
      * settings that still reference what was removed.
      * </p>
+     * <p>
+     * Raised from 174835 to 175155 for breakpointEnabled on set_breakpoint_state and replaceModuleSet
+     * on add_breakpoint, and for the two operation names the launch_debugger description carries.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 175558;
+    private static final int DOCUMENT_BUDGET = 175878;
 
     private LiveServer server;
 
@@ -277,7 +281,10 @@ public class TheToolListHasAWeightBudgetTest
         // startup receives its parameters, and the test runners already pass theirs the same way.
         // Raised by 1073 for runMode and clientType on launch, the same two arguments start_client
         // takes, so a debug launch of a configuration on ordinary forms opens the same client.
-        BUDGETS.put("launch_debugger", Integer.valueOf(7158)); //$NON-NLS-1$
+        // Raised by 840 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
+        // add_breakpoint, and for the two operation names the facade description and help now carry
+        // (measured 29.09: 7998).
+        BUDGETS.put("launch_debugger", Integer.valueOf(7998)); //$NON-NLS-1$
         // The entry names the operations and the model; what each argument takes is the schema's
         // to say. Measured 7813 bytes.
         BUDGETS.put("mxl_workshop", Integer.valueOf(7813)); //$NON-NLS-1$

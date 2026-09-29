@@ -129,11 +129,13 @@ public enum ToolCategory
         "Breakpoints, stepping, variable inspection, expression evaluation, and profiling", //$NON-NLS-1$
         "set_breakpoint", //$NON-NLS-1$
         "remove_breakpoint", //$NON-NLS-1$
+        "set_breakpoint_state", //$NON-NLS-1$
         "list_breakpoints", //$NON-NLS-1$
         "wait_for_break", //$NON-NLS-1$
         "get_variables", //$NON-NLS-1$
         "step", //$NON-NLS-1$
         "resume", //$NON-NLS-1$
+        "pause_thread", //$NON-NLS-1$
         "evaluate_expression", //$NON-NLS-1$
         "debug_yaxunit_tests", //$NON-NLS-1$
         "debug_status", //$NON-NLS-1$

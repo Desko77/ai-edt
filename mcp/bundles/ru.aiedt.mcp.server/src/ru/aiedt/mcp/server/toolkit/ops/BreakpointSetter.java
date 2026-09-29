@@ -7,9 +7,11 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.debug.core.model.IBreakpoint;
@@ -66,6 +68,10 @@ public class BreakpointSetter
     private static final String KEY_BATCH = "batch"; //$NON-NLS-1$
     private static final String KEY_OK = "ok"; //$NON-NLS-1$
     private static final String KEY_FAIL = "fail"; //$NON-NLS-1$
+    private static final String KEY_REPLACE_MODULE_SET = "replaceModuleSet"; //$NON-NLS-1$
+    private static final String KEY_REPLACED_MODULE_SET = "replacedModuleSet"; //$NON-NLS-1$
+    private static final String KEY_CLEARED_MODULES = "clearedModules"; //$NON-NLS-1$
+    private static final String KEY_REMOVED_COUNT = "removedCount"; //$NON-NLS-1$
     private static final String KEY_BREAKPOINT_RESULTS = "breakpointResults"; //$NON-NLS-1$
     private static final String KEY_INDEX = "index"; //$NON-NLS-1$
     private static final String KEY_RESPONSE = "response"; //$NON-NLS-1$
@@ -112,6 +118,8 @@ public class BreakpointSetter
                 "Hit-count comparison: EQUALS (default) / EQUAL_OR_LESS / EQUAL_OR_HIGHER / MULTIPLIER. Only meaningful alongside hitCount.") //$NON-NLS-1$
             .stringProperty(KEY_LOG_EXPRESSION,
                 "Logpoint (tracepoint): evaluates this BSL expression and CONTINUES without suspending. Instruments a hot path with no code edit and no worker block; the value is written with a stack trace to the debug output.") //$NON-NLS-1$
+            .booleanProperty(KEY_REPLACE_MODULE_SET,
+                "Batch mode: remove the breakpoints the addressed modules already carry, so the batch becomes their whole set. Default false - a batch adds to what is there. Only with `breakpoints`; the answer carries removedCount and clearedModules.") //$NON-NLS-1$
             .build();
     }
 
@@ -128,6 +136,13 @@ public class BreakpointSetter
         if (breakpointsRaw != null && !breakpointsRaw.trim().isEmpty())
         {
             return executeBatch(breakpointsRaw, params);
+        }
+        if (JsonUtils.extractBooleanArgument(params, KEY_REPLACE_MODULE_SET, false))
+        {
+            return ToolResult.error("replaceModuleSet needs a `breakpoints` batch: the batch names the " //$NON-NLS-1$
+                + "modules whose breakpoints it replaces. To drop a module's breakpoints without arming " //$NON-NLS-1$
+                + "any, use remove_breakpoint with mode=allOfModule.") //$NON-NLS-1$
+                .toJson();
         }
         return setOne(params);
     }
@@ -265,6 +280,37 @@ public class BreakpointSetter
         }
 
         String outerProject = JsonUtils.extractStringArgument(outer, KEY_PROJECT_NAME);
+        boolean replaceModuleSet =
+            JsonUtils.extractBooleanArgument(outer, KEY_REPLACE_MODULE_SET, false);
+        List<Map<String, Object>> clearedModules = new ArrayList<>();
+        int removedCount = 0;
+        if (replaceModuleSet)
+        {
+            // Cleared before the first breakpoint is armed: the batch that follows has to be the
+            // module's whole set, and arming first would have the arming removed with the rest.
+            List<Map<String, String>> addressed = new ArrayList<>();
+            for (int i = 0; i < arr.size(); i++)
+            {
+                try
+                {
+                    addressed.add(normalizeItem(arr.get(i), outerProject));
+                }
+                catch (Exception notAnObject)
+                {
+                    // The main pass reports the malformed item; there is no module to clear for it.
+                }
+            }
+            clearedModules = clearModuleSet(addressed, MODULE_CLEARER);
+            for (Map<String, Object> cleared : clearedModules)
+            {
+                Object removed = cleared.get(KEY_REMOVED_COUNT);
+                if (removed instanceof Integer)
+                {
+                    removedCount += ((Integer)removed).intValue();
+                }
+            }
+        }
+
         List<Map<String, Object>> results = new ArrayList<>();
         int okCount = 0;
         int failCount = 0;
@@ -277,7 +323,7 @@ public class BreakpointSetter
             Map<String, String> item;
             try
             {
-                item = flattenItem(arr.get(i));
+                item = normalizeItem(arr.get(i), outerProject);
             }
             catch (Exception itemEx)
             {
@@ -286,19 +332,6 @@ public class BreakpointSetter
                 failCount++;
                 results.add(entry);
                 continue;
-            }
-
-            if (!item.containsKey(KEY_MODULE) && item.containsKey(KEY_MODULE_PATH))
-            {
-                item.put(KEY_MODULE, item.get(KEY_MODULE_PATH));
-            }
-            if (!item.containsKey(KEY_LINE_NUMBER) && item.containsKey(KEY_LINE))
-            {
-                item.put(KEY_LINE_NUMBER, item.get(KEY_LINE));
-            }
-            if (!item.containsKey(KEY_PROJECT_NAME) && outerProject != null && !outerProject.isEmpty())
-            {
-                item.put(KEY_PROJECT_NAME, outerProject);
             }
 
             entry.put(KEY_MODULE, item.get(KEY_MODULE));
@@ -334,12 +367,123 @@ public class BreakpointSetter
             results.add(entry);
         }
 
-        return ToolResult.success()
+        ToolResult answer = ToolResult.success()
             .put(KEY_BATCH, true)
             .put(KEY_OK, okCount)
             .put(KEY_FAIL, failCount)
-            .put(KEY_BREAKPOINT_RESULTS, results)
-            .toJson();
+            .put(KEY_BREAKPOINT_RESULTS, results);
+        if (replaceModuleSet)
+        {
+            answer.put(KEY_REPLACED_MODULE_SET, true)
+                .put(KEY_REMOVED_COUNT, removedCount)
+                .put(KEY_CLEARED_MODULES, clearedModules);
+        }
+        return answer.toJson();
+    }
+
+    /**
+     * Removes the breakpoints a module already carries: the module file is resolved and every
+     * breakpoint attached to it goes, whether it is a line breakpoint, an exception one or a
+     * run-to-line one.
+     * <p>
+     * The live clearer reads the EDT workspace, so a test hands in one that answers the addresses it
+     * was asked for instead - the decision under test is which modules are cleared, in what order and
+     * how the answer reports them.
+     * </p>
+     */
+    interface ModuleClearer
+    {
+        /**
+         * @param projectName the project the module belongs to; may be <code>null</code> for an
+         *            absolute module path
+         * @param module the module address as the batch item wrote it
+         * @return how many breakpoints were removed from that module
+         * @throws Exception when the module cannot be resolved or the platform refuses a removal
+         */
+        int clear(String projectName, String module) throws Exception;
+    }
+
+    /** The live clearer: resolves the module file, then drops every breakpoint on it. */
+    private static final ModuleClearer MODULE_CLEARER = (projectName, module) ->
+    {
+        IFile file = BreakpointAccess.resolveModuleFile(projectName, module);
+        return file == null ? 0 : BreakpointAccess.removeAllBreakpointsInResource(file);
+    };
+
+    /**
+     * Clears every distinct module a batch addresses, so the batch that follows is the module's whole
+     * set. Each module is cleared once however many items name it, and one module that cannot be
+     * cleared does not stop the rest - its item carries the reason and the others are still replaced.
+     *
+     * @param items the batch items, already normalized, in the order the caller wrote them
+     * @param clearer how to clear one module
+     * @return one entry per distinct module: its address, how many breakpoints went, or why it could
+     *         not be cleared
+     */
+    static List<Map<String, Object>> clearModuleSet(List<Map<String, String>> items,
+        ModuleClearer clearer)
+    {
+        List<Map<String, Object>> cleared = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Map<String, String> item : items)
+        {
+            String module = item.get(KEY_MODULE);
+            if (module == null || module.isEmpty())
+            {
+                continue;
+            }
+            String project = item.get(KEY_PROJECT_NAME);
+            String address = (project == null ? "" : project) + "|" + module; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!seen.add(address))
+            {
+                continue;
+            }
+
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put(KEY_MODULE, module);
+            if (project != null && !project.isEmpty())
+            {
+                entry.put(KEY_PROJECT_NAME, project);
+            }
+            try
+            {
+                entry.put(KEY_REMOVED_COUNT, Integer.valueOf(clearer.clear(project, module)));
+            }
+            catch (Exception e)
+            {
+                entry.put(KEY_ERROR, e.getMessage() != null ? e.getMessage() : e.toString());
+            }
+            cleared.add(entry);
+        }
+        return cleared;
+    }
+
+    /**
+     * Unpacks one batch item into the flat map {@link #setOne(Map)} reads, with the alias and the
+     * inherited project applied - the shape both the replacing pass and the arming pass work on.
+     *
+     * @param element the item as the parser saw it
+     * @param outerProject the project the outer call named, inherited by an item that omits one
+     * @return the flat map
+     * @throws Exception when the item is not an object
+     */
+    private static Map<String, String> normalizeItem(JsonElement element, String outerProject)
+        throws Exception
+    {
+        Map<String, String> item = flattenItem(element);
+        if (!item.containsKey(KEY_MODULE) && item.containsKey(KEY_MODULE_PATH))
+        {
+            item.put(KEY_MODULE, item.get(KEY_MODULE_PATH));
+        }
+        if (!item.containsKey(KEY_LINE_NUMBER) && item.containsKey(KEY_LINE))
+        {
+            item.put(KEY_LINE_NUMBER, item.get(KEY_LINE));
+        }
+        if (!item.containsKey(KEY_PROJECT_NAME) && outerProject != null && !outerProject.isEmpty())
+        {
+            item.put(KEY_PROJECT_NAME, outerProject);
+        }
+        return item;
     }
 
     /**

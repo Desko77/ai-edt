@@ -151,10 +151,12 @@ import ru.aiedt.mcp.server.toolkit.ops.ProjectMetricsTool;
 import ru.aiedt.mcp.server.toolkit.ops.MethodSourceReader;
 import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceReader;
 import ru.aiedt.mcp.server.toolkit.ops.BreakpointRemover;
+import ru.aiedt.mcp.server.toolkit.ops.BreakpointStateSetter;
 import ru.aiedt.mcp.server.toolkit.ops.MetadataObjectRenamer;
 import ru.aiedt.mcp.server.toolkit.ops.DialogAnswerer;
 import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
 import ru.aiedt.mcp.server.toolkit.ops.DebugResumer;
+import ru.aiedt.mcp.server.toolkit.ops.DebugPauser;
 import ru.aiedt.mcp.server.toolkit.ops.DiskResynchronizer;
 import ru.aiedt.mcp.server.toolkit.ops.ObjectsRevalidator;
 import ru.aiedt.mcp.server.toolkit.ops.RunToLineTool;
@@ -1458,12 +1460,14 @@ public class McpHttpEndpoint
             new SetExceptionBreakpointTool(),
             new RunToLineTool(),
             new BreakpointRemover(),
+            new BreakpointStateSetter(),
             new BreakpointsLister(),
             new SuspendWaiter(),
             new DebugVariablesReader(),
             new DebugVariableWriter(),
             new DebugStepper(),
             new DebugResumer(),
+            new DebugPauser(),
             new LaunchTerminator(),
             new RestartEdtTool(),
             new DialogAnswerer(),
