@@ -55,6 +55,12 @@ public final class FormBaseSetup
     /** The container properties applied beside {@link #BASE_PROPERTIES}: autoCommandBar, commandInterface. */
     private static final int CONTAINER_PROPERTIES = 2;
 
+    /** The name EDT gives a form's auto command bar. */
+    private static final String AUTO_COMMAND_BAR_NAME = "ФормаКоманднаяПанель"; //$NON-NLS-1$
+
+    /** The id EDT gives a form's auto command bar. */
+    private static final String AUTO_COMMAND_BAR_ID = "-1"; //$NON-NLS-1$
+
     /**
      * Candidate class names of the form model factory, tried in this order.
      */
@@ -164,9 +170,10 @@ public final class FormBaseSetup
 
     /**
      * Gives the form its {@code autoCommandBar}: the container the form already holds is
-     * configured, and a form without one receives a new container from the model factory. Either
-     * way the container ends up with {@code horizontalAlign=Left} and {@code autoFill=true},
-     * matching the generator's bar.
+     * configured, and a form without one receives a new container from the model factory, named
+     * {@code ФормаКоманднаяПанель} with {@code id=-1} as in every form EDT writes. Either way the
+     * container ends up with {@code horizontalAlign=Left} and {@code autoFill=true}, matching the
+     * generator's bar.
      *
      * @param form the form root
      * @return true when the form holds a command bar carrying both settings
@@ -182,7 +189,13 @@ public final class FormBaseSetup
                 return false;
             }
             bar = createViaFactory(factory, "createAutoCommandBar"); //$NON-NLS-1$
-            if (bar == null || !invokeObjectSetter(form, "setAutoCommandBar", bar)) //$NON-NLS-1$
+            if (bar == null)
+            {
+                return false;
+            }
+            applyOne(bar, "Id", AUTO_COMMAND_BAR_ID); //$NON-NLS-1$
+            applyOne(bar, "Name", AUTO_COMMAND_BAR_NAME); //$NON-NLS-1$
+            if (!invokeObjectSetter(form, "setAutoCommandBar", bar)) //$NON-NLS-1$
             {
                 return false;
             }

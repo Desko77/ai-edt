@@ -28,7 +28,8 @@ import com._1c.g5.v8.dt.form.model.ItemHorizontalAlignment;
  * form with no title and no close button. A form the EDT generator builds instead carries
  * {@code saveWindowSettings}, {@code autoTitle}, {@code autoUrl}, {@code group=Vertical},
  * {@code autoFillCheck}, {@code allowFormCustomize}, {@code enabled}, {@code showTitle},
- * {@code showCloseButton}, an {@code autoCommandBar} aligned left and auto-filling, and an empty
+ * {@code showCloseButton}, an {@code autoCommandBar} named {@code ФормаКоманднаяПанель} with id -1,
+ * aligned left and auto-filling, and an empty
  * {@code commandInterface} with both panels. {@link FormBaseSetup#applyDefaults} has to bring the
  * factory form to that state - nine scalar properties and two containers, eleven in all.
  * </p>
@@ -56,6 +57,8 @@ public class TheGeneratorBasePropertiesLandOnAFactoryFormTest
         assertEquals(FormChildrenGroup.VERTICAL, form.getGroup());
         AutoCommandBar bar = form.getAutoCommandBar();
         assertNotNull("the generator's root carries a command bar container", bar); //$NON-NLS-1$
+        assertEquals("every form EDT writes names its bar so", "ФормаКоманднаяПанель", bar.getName()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(-1, bar.getId());
         assertTrue(bar.isAutoFill());
         assertEquals(ItemHorizontalAlignment.LEFT, bar.getHorizontalAlign());
         FormCommandInterface commandInterface = form.getCommandInterface();

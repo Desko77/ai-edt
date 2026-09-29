@@ -812,7 +812,7 @@ public final class BmFormGeneratorHelper
      * 4th slot of the 5-argument {@code getFormGeneratorFields}: {@code IV8Project.getVersion()}
      * through {@code IV8ProjectManager}, the source
      * {@code FormNewWizardRelatedModelsFactory.createModels} reads it from. Falls back to
-     * {@code IRuntimeVersionSupport.getRuntimeVersion} (this helper's previous source) when the
+     * {@code IRuntimeVersionSupport.getRuntimeVersion} when the
      * project manager does not answer, and to null when neither does.
      *
      * @param project the host project; may be null
@@ -880,7 +880,16 @@ public final class BmFormGeneratorHelper
             Activator.logWarning("resolveLanguageCode failed: " //$NON-NLS-1$
                 + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
         }
-        return DefaultLanguage.codeFor(project);
+        try
+        {
+            return DefaultLanguage.codeFor(project);
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveLanguageCode default language failed: " //$NON-NLS-1$
+                + e.getClass().getSimpleName() + ": " + e.getMessage()); //$NON-NLS-1$
+            return DefaultLanguage.FALLBACK;
+        }
     }
 
     /**

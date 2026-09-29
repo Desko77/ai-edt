@@ -667,8 +667,11 @@ final class FormCreateOps
         }
         ToolResult result = r.ok ? ToolResult.success() : ToolResult.error(r.error != null ? r.error : "createForm failed");
         result.put("operation", "create_form")
-            .put("ownerFqn", r.fqn)
-            .put("message", r.message != null ? r.message : "ok");
+            .put("ownerFqn", r.fqn);
+        if (r.message != null || r.ok)
+        {
+            result.put("message", r.message != null ? r.message : "ok");
+        }
         if (scaffoldedProps.get() > 0)
         {
             result.put("formScaffolded", scaffoldedProps.get());
