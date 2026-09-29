@@ -104,10 +104,23 @@ final class RouteMapOps
         {
             modulePath = bpFqn + ".ObjectModule"; //$NON-NLS-1$
         }
-        HandlerStubs stubs = planHandlerStubs(wr.handlers, readModuleText(project, modulePath));
+        String moduleText = null;
+        String unreadable = null;
+        try
+        {
+            moduleText = BslModuleAccess.readModuleIfPresent(project, modulePath);
+        }
+        catch (Exception cannotRead)
+        {
+            unreadable = "the module " + modulePath + " exists and could not be read (" //$NON-NLS-1$ //$NON-NLS-2$
+                + cannotRead.getMessage() + "), so no procedure was appended: the handlers it already " //$NON-NLS-1$
+                + "declares cannot be told apart and would be written twice"; //$NON-NLS-1$
+            Activator.logWarning("create_route_map: " + unreadable); //$NON-NLS-1$
+        }
+        HandlerStubs stubs = planHandlerStubs(wr.handlers, moduleText);
         if (dryRun)
         {
-            return ToolResult.success()
+            ToolResult preview = ToolResult.success()
                 .put("operation", "create_route_map") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("ownerFqn", bpFqn) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
@@ -120,10 +133,15 @@ final class RouteMapOps
                 .put("stubsAlreadyPresent", stubs.alreadyPresent) //$NON-NLS-1$
                 .put("previewXml", wr.xml) //$NON-NLS-1$
                 .put("message", "Preview: generated Flowchart.scheme (no changes applied). " //$NON-NLS-1$
-                    + "Run without dryRun to write it, then update_database to verify.") //$NON-NLS-1$
-                .toJson();
+                    + "Run without dryRun to write it, then update_database to verify."); //$NON-NLS-1$
+            if (unreadable != null)
+            {
+                preview.put("stubWriteFailed", unreadable); //$NON-NLS-1$
+            }
+            return preview.toJson();
         }
         String stubFailure = stubs.names.isEmpty() ? null
+            : unreadable != null ? unreadable
             : appendToModule(project, modulePath, stubs.text.toString());
         ToolResult result = ToolResult.success()
             .put("operation", "create_route_map") //$NON-NLS-1$ //$NON-NLS-2$
@@ -233,30 +251,6 @@ final class RouteMapOps
         boolean refused = answer.contains("\"success\": false") || answer.contains("\"success\":false") //$NON-NLS-1$ //$NON-NLS-2$
             || answer.startsWith("Error:") || answer.startsWith("**Error"); //$NON-NLS-1$ //$NON-NLS-2$
         return refused ? answer : null;
-    }
-
-    /**
-     * The text of a module by its address, or null when it has no file yet or cannot be read.
-     *
-     * @param project the project that owns the module
-     * @param modulePath the module path under src/, e.g. {@code BusinessProcesses/X/ObjectModule.bsl}
-     * @return the module text, or null
-     */
-    private static String readModuleText(IProject project, String modulePath)
-    {
-        try
-        {
-            return BslModuleAccess.readModuleIfPresent(project, modulePath);
-        }
-        catch (Exception cannotRead)
-        {
-            // An unreadable module is treated as one without the handlers: the append that follows
-            // reports its own failure, and a handler already there is then declared twice, which
-            // get_project_errors names.
-            Activator.logWarning("create_route_map could not read " + modulePath //$NON-NLS-1$
-                + ": " + cannotRead.getMessage()); //$NON-NLS-1$
-            return null;
-        }
     }
 
     /**

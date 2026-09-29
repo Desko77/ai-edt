@@ -784,7 +784,9 @@ final class SpecializedOps
             performerFqn));
         if (r.ok)
         {
-            r.message = "Task addressing written and read back: " //$NON-NLS-1$
+            r.message = (dryRun
+                ? "dryRun: Task addressing applied, read back and rolled back, nothing was written: " //$NON-NLS-1$
+                : "Task addressing written and read back: ") //$NON-NLS-1$
                 + describeAddressing(readBack) + "."; //$NON-NLS-1$
         }
         if (dryRun && r.ok)
