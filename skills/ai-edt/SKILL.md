@@ -166,9 +166,9 @@ EDT runtime supports.
    file write is invisible to EDT until a refresh, and it skips validation. Prefer the targeted
    modes (`replaceMethod`, `replaceLines`, `insertBefore` / `insertAfter`) over whole-module
    `replace`, which overwrites everything. `normalizeInvalidCharacters` (default true) replaces
-   typographic dashes with a hyphen and no-break spaces with a space and drops soft hyphens, outside
-   BSL string literals; `invalidCharactersReplaced` is the count of changes and
-   `invalidCharactersPositions` their line and column.
+   U+2012-U+2015 and the minus sign U+2212 with a hyphen, U+00A0 with a space, and drops U+00AD,
+   outside BSL string literals; `invalidCharactersReplaced` is the count of changes and
+   `invalidCharactersPositions` their line and column, the first 50 with the list marked when it was cut.
 2. **Edit managed forms through `edit_metadata` form operations**, not by hand-writing `.form` XML.
 3. **Validate every query you write or change** with `validate_query`, immediately, not in a batch
    at the end. For data composition queries pass `dcsMode=true`. Add `describeResult=true` before
