@@ -19,14 +19,21 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.NullProgressMonitor;
 
 import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
 import com._1c.g5.v8.dt.core.resource.EdtResourceMetadata;
 import com._1c.g5.v8.dt.core.resource.IResourceStoreManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseChangesResolutionResult;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState;
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseSyncResolution;
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseSynchronizationException;
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.ObjectChangeType;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.v2.IInfobaseSynchronizationStateManager;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
 import com._1c.g5.v8.dt.platform.services.model.ModelFactory;
@@ -34,6 +41,7 @@ import com._1c.g5.wiring.ServiceAccess;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
 import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
+import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -41,8 +49,12 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
+import ru.aiedt.mcp.server.support.BuildTaskHelper;
+import ru.aiedt.mcp.server.support.DatabaseChangesResolver;
 import ru.aiedt.mcp.server.support.DumpInfoRebuilder;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ProjectStateGuard;
+import ru.aiedt.mcp.server.support.RemovedObjectFiles;
 import ru.aiedt.mcp.server.support.SyncBaseline;
 import ru.aiedt.mcp.server.support.SupportSnapshotStore;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -123,6 +135,16 @@ public class SyncControlTool implements IMcpTool
             + "the new file carries is recorded for THIS infobase together with the platform it was measured on " //$NON-NLS-1$
             + "(formatPair). A record from another platform is not compared. Later checks compare against that " //$NON-NLS-1$
             + "record only when it was stored; a failed record is not described as a comparison the next update will make. " //$NON-NLS-1$
+            + "operation=retrieve_database_changes (applicationId=... when the project has several; " //$NON-NLS-1$
+            + "replaceLocal=false): pulls the changes made in the INFOBASE into the project, the opposite " //$NON-NLS-1$
+            + "direction to update_database, through EDT's own synchronization manager. This is what makes a " //$NON-NLS-1$
+            + "change made in Designer visible in the project. A project that carries changes of its own is " //$NON-NLS-1$
+            + "REFUSED and left exactly as it was; replaceLocal=true takes the infobase's version of those " //$NON-NLS-1$
+            + "objects and discards the project's changes to them. Sources of the objects the infobase no " //$NON-NLS-1$
+            + "longer has are removed from the project afterwards, and the project is refreshed and its " //$NON-NLS-1$
+            + "build waited for. markSynchronized=true then runs the same baseline rewrite as " //$NON-NLS-1$
+            + "operation=mark_synchronized for the same infobase. The call BLOCKS until EDT finishes the " //$NON-NLS-1$
+            + "pull and ignores cancel signals while it runs. " //$NON-NLS-1$
             + "reseed_baseline, mark_synchronized, recover_stuck_merge and rebuild_dump_info are DANGEROUS - only on explicit user request " //$NON-NLS-1$
             + "and only when you are CERTAIN of the state (project KNOWN to match the infobase / no update really " //$NON-NLS-1$
             + "running); otherwise EDT silently drops real changes or a genuine merge is aborted. NEVER call autonomously."; //$NON-NLS-1$
@@ -134,7 +156,8 @@ public class SyncControlTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", "status | diagnose | diagnose_delta | suppress | reseed_baseline | " //$NON-NLS-1$ //$NON-NLS-2$
                 + "mark_synchronized | diagnose_stuck_locks | recover_stuck_merge | " //$NON-NLS-1$
-                + "list_support_snapshots | release_support_snapshot | rebuild_dump_info (required)", true) //$NON-NLS-1$
+                + "list_support_snapshots | release_support_snapshot | rebuild_dump_info | " //$NON-NLS-1$
+                + "retrieve_database_changes (required)", true) //$NON-NLS-1$
             .stringProperty("name", "For operation=release_support_snapshot: the snapshot's file " //$NON-NLS-1$ //$NON-NLS-2$
                 + "name, as list_support_snapshots reports it. A protected snapshot is the only way back " //$NON-NLS-1$
                 + "from a merge whose outcome is not known here; releasing it says that merge has been " //$NON-NLS-1$
@@ -146,12 +169,25 @@ public class SyncControlTool implements IMcpTool
             .stringProperty("infobaseUuid", "For operation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$ //$NON-NLS-2$
                 + "recover_stuck_merge: the target infobase (an 'infobaseUuid' from status / diagnose_stuck_locks).") //$NON-NLS-1$
             .stringProperty("applicationId", "For operation=rebuild_dump_info: the application " //$NON-NLS-1$ //$NON-NLS-2$
-                + "naming the infobase whose stored file is rebuilt. Required when the project has " //$NON-NLS-1$
+                + "naming the infobase whose stored file is rebuilt. For " //$NON-NLS-1$
+                + "operation=retrieve_database_changes: the application naming the infobase the " //$NON-NLS-1$
+                + "changes are pulled from. Required when the project has " //$NON-NLS-1$
                 + "several applications (see infobase_admin operation=get_applications); resolved " //$NON-NLS-1$
                 + "otherwise.") //$NON-NLS-1$
+            .booleanProperty("replaceLocal", "For operation=retrieve_database_changes: false (the " //$NON-NLS-1$ //$NON-NLS-2$
+                + "default) refuses the pull and changes nothing when the project carries changes of " //$NON-NLS-1$
+                + "its own; true takes the infobase's version of those objects and discards the " //$NON-NLS-1$
+                + "project's changes to them.") //$NON-NLS-1$
+            .booleanProperty("markSynchronized", "For operation=retrieve_database_changes: true runs " //$NON-NLS-1$ //$NON-NLS-2$
+                + "the same baseline rewrite as operation=mark_synchronized for the infobase just " //$NON-NLS-1$
+                + "pulled, once the pull succeeded. Default false leaves the baseline to the pull " //$NON-NLS-1$
+                + "itself.") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", "For operation=rebuild_dump_info: how long each " //$NON-NLS-1$ //$NON-NLS-2$
                 + "Designer run is waited for, 60-3600 (default 600). Past it the run is abandoned, " //$NON-NLS-1$
-                + "the stored file is not touched and the infobase is reconnected.") //$NON-NLS-1$
+                + "the stored file is not touched and the infobase is reconnected. For " //$NON-NLS-1$
+                + "operation=retrieve_database_changes: how long the project is waited for to become " //$NON-NLS-1$
+                + "readable afterwards, 30-3600 (default 300). The pull itself is not bounded by it - " //$NON-NLS-1$
+                + "the platform call has no budget.") //$NON-NLS-1$
             .booleanProperty("confirm", "For operation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$ //$NON-NLS-2$
                 + "recover_stuck_merge / rebuild_dump_info: " //$NON-NLS-1$
                 + "must be true to proceed. Confirms you are CERTAIN of the state (project matches the infobase, or " //$NON-NLS-1$
@@ -191,6 +227,19 @@ public class SyncControlTool implements IMcpTool
     IInfobaseSynchronizationStateManager syncStateManager()
     {
         return ServiceAccess.get(IInfobaseSynchronizationStateManager.class);
+    }
+
+    /**
+     * The EDT synchronization manager - the service both the diagnosis and
+     * {@code retrieve_database_changes} ask. A method for the same reason as
+     * {@link #syncStateManager()}: the pull is a call into it, and that call has to be observable
+     * without EDT running.
+     *
+     * @return the manager, or {@code null} when this runtime offers none
+     */
+    IInfobaseSynchronizationManager synchronizationManager()
+    {
+        return ServiceAccess.get(IInfobaseSynchronizationManager.class);
     }
 
     /**
@@ -290,11 +339,13 @@ public class SyncControlTool implements IMcpTool
                 return doReleaseSupportSnapshot(project, params);
             case "rebuild_dump_info": //$NON-NLS-1$
                 return doRebuildDumpInfo(project, params);
+            case "retrieve_database_changes": //$NON-NLS-1$
+                return doRetrieveDatabaseChanges(project, params);
             default:
                 return ToolResult.error("Unknown operation '" + operation //$NON-NLS-1$
                     + "'. Valid: status, diagnose, diagnose_delta, suppress, reseed_baseline, mark_synchronized, " //$NON-NLS-1$
                     + "diagnose_stuck_locks, recover_stuck_merge, list_support_snapshots, " //$NON-NLS-1$
-                    + "release_support_snapshot, rebuild_dump_info.").toJson(); //$NON-NLS-1$
+                    + "release_support_snapshot, rebuild_dump_info, retrieve_database_changes.").toJson(); //$NON-NLS-1$
         }
     }
 
@@ -1376,6 +1427,341 @@ public class SyncControlTool implements IMcpTool
         }
         long askedMs = askedSeconds.intValue() * 1000L;
         return Math.max(REBUILD_MIN_TIMEOUT_MS, Math.min(REBUILD_MAX_TIMEOUT_MS, askedMs));
+    }
+
+    // ---- retrieve_database_changes (pull the infobase's changes into the project) -------
+
+    /** The least patience a pull's waits are given. */
+    private static final long RETRIEVE_MIN_TIMEOUT_MS = 30_000L;
+
+    /** The most, for a configuration whose model takes long to rebuild after the pull. */
+    private static final long RETRIEVE_MAX_TIMEOUT_MS = 3_600_000L;
+
+    /** The default: five minutes. */
+    private static final long RETRIEVE_DEFAULT_TIMEOUT_MS = 300_000L;
+
+    /**
+     * Pulls the changes made in the infobase into the project, through EDT's own synchronization
+     * manager - the opposite direction to {@code update_database}.
+     *
+     * <p>The change list is read by the platform, which then asks {@link DatabaseChangesResolver}
+     * whether the infobase side may replace what the project holds. Nothing is written by this tool
+     * itself: the platform applies the changes, and this method reports what it did. A refusal
+     * ({@code replaceLocal=false} with changes in the project) reaches here as
+     * {@code CHANGES_IGNORE} and is answered as a failed call carrying the resolver's own wording
+     * and the size of what the project holds, because a pull that silently did nothing reads like a
+     * pull that found nothing.</p>
+     *
+     * <p>What the platform does not do is remove the sources of objects the infobase no longer has:
+     * the object leaves the model and its files stay behind. Those are removed afterwards, by name,
+     * through {@link RemovedObjectFiles}, and the project is refreshed and its build waited for so
+     * the caller's next call (usually {@code update_database dryRun=true}) sees a settled model.</p>
+     *
+     * <p>The platform call blocks and cannot be cancelled from here - a monitor handed to it would
+     * only be able to interrupt the read, not to undo the load - so this one is not advertised as
+     * cancellable. The wait for readiness and for the build afterwards is bounded by
+     * {@code timeoutSeconds}.</p>
+     *
+     * @param project the project to pull into
+     * @param params the call; {@code applicationId} names the binding when the project has several,
+     *            {@code replaceLocal} allows the infobase side to replace the project's changes and
+     *            {@code markSynchronized} asks for the baseline to be rewritten afterwards
+     * @return the outcome as a JSON answer
+     */
+    private String doRetrieveDatabaseChanges(IProject project, Map<String, String> params)
+    {
+        boolean replaceLocal = JsonUtils.extractBooleanArgument(params, "replaceLocal", false); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean markSynchronized = JsonUtils.extractBooleanArgument(params, "markSynchronized", false); //$NON-NLS-1$ //$NON-NLS-2$
+        String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
+        long timeoutMs = readRetrieveTimeout(params);
+
+        IInfobaseSynchronizationManager manager = synchronizationManager();
+        if (manager == null)
+        {
+            return ToolResult.error("IInfobaseSynchronizationManager is not available in this EDT runtime - " //$NON-NLS-1$
+                + "retrieve_database_changes must run inside EDT.").toJson(); //$NON-NLS-1$
+        }
+
+        // The pull reads the project model, so a build in progress is waited out first - the rule
+        // every other reader here follows. What is NOT waited for is the infobase's own state: the
+        // platform call below reads that itself.
+        String notReady = ProjectStateGuard.checkReadyOrWait(project, timeoutMs);
+        if (notReady != null)
+        {
+            return ToolResult.error(notReady).toJson();
+        }
+
+        IApplicationManager appManager = applicationManager();
+        if (appManager == null)
+        {
+            return ToolResult.error("The IApplicationManager service is currently unavailable, so the " //$NON-NLS-1$
+                + "infobase to pull from cannot be named.").toJson(); //$NON-NLS-1$
+        }
+
+        IProject infobaseProject = project;
+        List<IApplication> applications;
+        try
+        {
+            applications = appManager.getApplications(project);
+            if (applications == null || applications.isEmpty())
+            {
+                // An extension project has no infobase of its own - it shares the one belonging to
+                // the configuration it extends, and pulling that one is what brings the changes of
+                // that database into reach of the extension.
+                IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+                if (parent != null && parent.exists() && parent.isOpen())
+                {
+                    applications = appManager.getApplications(parent);
+                    infobaseProject = parent;
+                }
+            }
+        }
+        catch (Throwable t)
+        {
+            return ToolResult.error("The applications of " + project.getName() + " could not be read: " //$NON-NLS-1$ //$NON-NLS-2$
+                + TextSuggest.safeMessage(t)).toJson();
+        }
+        if (applications == null)
+        {
+            return ToolResult.error("The applications of " + infobaseProject.getName() //$NON-NLS-1$
+                + " could not be read in this runtime, so no infobase can be named to pull from.").toJson(); //$NON-NLS-1$
+        }
+
+        boolean named = applicationId != null && !applicationId.isEmpty();
+        IApplication application = null;
+        List<String> available = new ArrayList<>();
+        for (IApplication candidate : applications)
+        {
+            if (!(candidate instanceof IInfobaseApplication))
+            {
+                continue;
+            }
+            available.add(candidate.getId());
+            if (!named || applicationId.equals(candidate.getId()))
+            {
+                // Without a name the first infobase binding is taken, which is what a project with
+                // one infobase has; a project with several is answered below with their ids.
+                application = candidate;
+                break;
+            }
+        }
+        if (application == null)
+        {
+            return ToolResult.error((named
+                ? "No application with id '" + applicationId + "' on " //$NON-NLS-1$ //$NON-NLS-2$
+                : "No infobase application on ") //$NON-NLS-1$
+                + infobaseProject.getName() + ". Bound infobases: " //$NON-NLS-1$
+                + (available.isEmpty() ? "none" : String.join(", ", available)) //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Call infobase_admin operation=get_applications to list valid application ids.").toJson(); //$NON-NLS-1$
+        }
+        InfobaseReference infobase = ((IInfobaseApplication)application).getInfobase();
+        if (infobase == null || infobase.getUuid() == null)
+        {
+            return ToolResult.error("The application " + application.getId() //$NON-NLS-1$
+                + " carries no infobase reference, so there is nothing to pull from.").toJson(); //$NON-NLS-1$
+        }
+
+        String infobaseUuid = infobase.getUuid().toString();
+        boolean viaParent = !infobaseProject.getName().equals(project.getName());
+        Boolean connected = null;
+        InfobaseEqualityState equalityBefore = null;
+        try
+        {
+            connected = Boolean.valueOf(manager.isConnected(infobaseProject, infobase));
+            equalityBefore = manager.getEqualityState(infobaseProject, infobase);
+        }
+        catch (Throwable t)
+        {
+            // Reading the state is a diagnosis, not a condition of the pull: a failure here is
+            // reported as "not read", never as a refusal.
+            Activator.logWarning("sync_control retrieve_database_changes: the state of infobase " //$NON-NLS-1$
+                + infobaseUuid + " was not read: " + TextSuggest.safeMessage(t)); //$NON-NLS-1$
+        }
+
+        DatabaseChangesResolver resolver = new DatabaseChangesResolver(replaceLocal);
+        long started = System.currentTimeMillis();
+        InfobaseSyncResolution resolution;
+        try
+        {
+            // The boolean says "pull even while EDT does not know the infobase's state". The call
+            // was asked for by name, and an unknown state is reported in the answer below - as a
+            // no-op it would be indistinguishable from a pull that found nothing.
+            resolution = manager.retrieveInfobaseChanges(infobaseProject, infobase, resolver, true,
+                new NullProgressMonitor());
+        }
+        catch (InfobaseSynchronizationException e)
+        {
+            ToolResult failed = ToolResult.error("Pulling the infobase's changes into " //$NON-NLS-1$
+                + infobaseProject.getName() + " failed: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
+            return describePull(failed, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+        long durationMs = System.currentTimeMillis() - started;
+
+        InfobaseChangesResolutionResult result = resolution == null
+            ? null : resolution.getInfobaseChangesResolutionResult();
+        if (result == null)
+        {
+            ToolResult empty = ToolResult.error("EDT answered nothing about the changes of infobase " //$NON-NLS-1$
+                + infobaseUuid + ", so it is not known whether anything was pulled."); //$NON-NLS-1$
+            return describePull(empty, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+        if (result == InfobaseChangesResolutionResult.UNKNOWN)
+        {
+            ToolResult unknown = ToolResult.error("EDT could not tell whether infobase " + infobaseUuid //$NON-NLS-1$
+                + " differs from " + infobaseProject.getName() + " (equality state " //$NON-NLS-1$ //$NON-NLS-2$
+                + (equalityBefore == null ? "not read" : equalityBefore.name()) //$NON-NLS-1$
+                + ", connected=" + connected + "), so nothing was pulled. Run operation=status to see " //$NON-NLS-1$ //$NON-NLS-2$
+                + "which baseline EDT holds for this infobase."); //$NON-NLS-1$
+            return describePull(unknown, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+        if (result == InfobaseChangesResolutionResult.CHANGES_IGNORE)
+        {
+            // The resolver refused, which is the only answer this tool gives to a conflict it was
+            // not allowed to settle.
+            String why = resolver.refusal();
+            ToolResult refused = ToolResult.error(why != null ? why
+                : "EDT dropped the changes of infobase " + infobaseUuid //$NON-NLS-1$
+                    + " without applying them, and did not say why."); //$NON-NLS-1$
+            return describePull(refused, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+        if (result == InfobaseChangesResolutionResult.CHANGES_NOT_RESOLVED)
+        {
+            ToolResult unresolved = ToolResult.error("EDT loaded the changes of infobase " + infobaseUuid //$NON-NLS-1$
+                + " but left them unresolved - the conflict was deferred to a resolution this call " //$NON-NLS-1$
+                + "cannot complete. Nothing is reported as applied; call operation=status before " //$NON-NLS-1$
+                + "starting anything else."); //$NON-NLS-1$
+            return describePull(unresolved, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+
+        boolean pulled = result == InfobaseChangesResolutionResult.CHANGES_RESOLVED;
+        RemovedObjectFiles.Outcome removal = new RemovedObjectFiles.Outcome();
+        boolean refreshed = false;
+        String refreshError = null;
+        String buildWaitError = null;
+        if (pulled)
+        {
+            // The object left the model, its sources did not: they are removed here by the names
+            // the infobase's own change list gave, and nothing outside those objects is touched.
+            removal = RemovedObjectFiles.deleteFor(infobaseProject, resolver.deletedObjectNames());
+            try
+            {
+                infobaseProject.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+                refreshed = true;
+            }
+            catch (CoreException e)
+            {
+                refreshError = TextSuggest.safeMessage(e);
+            }
+            try
+            {
+                BuildTaskHelper.waitForBuildAndDerivedData(infobaseProject, timeoutMs, new NullProgressMonitor());
+            }
+            catch (RuntimeException e)
+            {
+                buildWaitError = TextSuggest.safeMessage(e);
+            }
+        }
+
+        ToolResult answer = ToolResult.success();
+        answer.put("pulled", Boolean.valueOf(pulled)); //$NON-NLS-1$
+        answer.put("resolution", result.name()); //$NON-NLS-1$
+        answer.put("durationMs", Long.valueOf(durationMs)); //$NON-NLS-1$
+        answer.put("removedSources", removal.removed); //$NON-NLS-1$
+        answer.put("skippedObjects", removal.skipped); //$NON-NLS-1$
+        answer.put("removalFailures", removal.failures); //$NON-NLS-1$
+        answer.put("refreshed", Boolean.valueOf(refreshed)); //$NON-NLS-1$
+        if (resolver.fullReloadRequired())
+        {
+            answer.put("fullReloadRequired", Boolean.TRUE); //$NON-NLS-1$
+        }
+        if (refreshError != null)
+        {
+            answer.put("refreshError", refreshError); //$NON-NLS-1$
+        }
+        if (buildWaitError != null)
+        {
+            answer.put("buildWaitError", buildWaitError); //$NON-NLS-1$
+        }
+        answer.put("message", pulled //$NON-NLS-1$
+            ? "The changes of infobase " + infobaseUuid + " were pulled into " //$NON-NLS-1$ //$NON-NLS-2$
+                + infobaseProject.getName() + "." //$NON-NLS-1$
+            : "The project already matches infobase " + infobaseUuid + "; nothing was pulled."); //$NON-NLS-1$
+        describePull(answer, project, infobaseProject, application, infobaseUuid, replaceLocal, resolver,
+            viaParent);
+        if (markSynchronized)
+        {
+            // Only on a successful pull: the mark asserts that the project and the infobase are the
+            // same, and after a pull that is exactly what the platform just applied.
+            Map<String, String> markParams = new LinkedHashMap<>();
+            markParams.put("infobaseUuid", infobaseUuid); //$NON-NLS-1$
+            markParams.put("confirm", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+            answer.put("baselineMark", JsonParser.parseString(doMarkSynchronized(infobaseProject, markParams))); //$NON-NLS-1$
+        }
+        return answer.toJson();
+    }
+
+    /**
+     * Adds what every answer of {@code retrieve_database_changes} carries, whichever way the pull
+     * ended: which project and application the call named, what the resolver saw, and who owns the
+     * infobase.
+     *
+     * @param answer the answer under construction
+     * @param project the project the call named
+     * @param infobaseProject the project the infobase belongs to
+     * @param application the binding the pull was aimed at
+     * @param infobaseUuid the infobase pulled from
+     * @param replaceLocal the flag the call carried
+     * @param resolver what the pull's conflict question saw
+     * @param viaParent whether the infobase belongs to the configuration this project extends
+     * @return the same answer
+     */
+    private static ToolResult describePull(ToolResult answer, IProject project, IProject infobaseProject,
+        IApplication application, String infobaseUuid, boolean replaceLocal,
+        DatabaseChangesResolver resolver, boolean viaParent)
+    {
+        answer.put("operation", "retrieve_database_changes"); //$NON-NLS-1$ //$NON-NLS-2$
+        answer.put("projectName", project.getName()); //$NON-NLS-1$
+        answer.put("applicationId", application.getId()); //$NON-NLS-1$
+        answer.put("applicationName", application.getName()); //$NON-NLS-1$
+        answer.put("infobaseUuid", infobaseUuid); //$NON-NLS-1$
+        answer.put("replaceLocal", Boolean.valueOf(replaceLocal)); //$NON-NLS-1$
+        answer.put("localChanges", Integer.valueOf(resolver.localChangeCount())); //$NON-NLS-1$
+        answer.put("conflictAsked", Boolean.valueOf(resolver.sawChangeSet())); //$NON-NLS-1$
+        answer.put("infobaseChangesNew", Integer.valueOf(resolver.countOf(ObjectChangeType.NEW))); //$NON-NLS-1$
+        answer.put("infobaseChangesModified", Integer.valueOf(resolver.countOf(ObjectChangeType.MODIFIED))); //$NON-NLS-1$
+        answer.put("infobaseChangesDeleted", Integer.valueOf(resolver.countOf(ObjectChangeType.DELETED))); //$NON-NLS-1$
+        if (viaParent)
+        {
+            answer.put("infobaseProject", infobaseProject.getName()); //$NON-NLS-1$
+            answer.put("viaParentProject", "This is an extension project and has no infobase of its " //$NON-NLS-1$ //$NON-NLS-2$
+                + "own. The infobase of the configuration it extends (" + infobaseProject.getName() //$NON-NLS-1$
+                + ") was the one pulled from."); //$NON-NLS-1$
+        }
+        return answer;
+    }
+
+    /**
+     * The wait budget off the call, clamped to this operation's bounds and defaulted to five
+     * minutes - the update's 5-120s range leaves no room for a configuration whose model is rebuilt
+     * from scratch after a pull.
+     *
+     * @param params the call
+     * @return the budget in milliseconds
+     */
+    private static long readRetrieveTimeout(Map<String, String> params)
+    {
+        Integer askedSeconds = TimeoutArgs.requestedSeconds(params);
+        if (askedSeconds == null)
+        {
+            return RETRIEVE_DEFAULT_TIMEOUT_MS;
+        }
+        long askedMs = askedSeconds.intValue() * 1000L;
+        return Math.max(RETRIEVE_MIN_TIMEOUT_MS, Math.min(RETRIEVE_MAX_TIMEOUT_MS, askedMs));
     }
 
     /**

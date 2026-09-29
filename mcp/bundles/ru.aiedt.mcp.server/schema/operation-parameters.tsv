@@ -401,17 +401,18 @@ SupportRegistryTool	object_mode	limit:integer,objectFqn:string,offset:integer	re
 SupportRegistryTool	restore_modes	apply:boolean,snapshotPath:string	read in place	limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
 SupportRegistryTool	snapshot_modes	snapshotPath:string	read in place	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,projectName:string,userMode:string
 SupportRegistryTool	status	projectName:string	passed in as locals	apply:boolean,limit:integer,objectFqn:string,offset:integer,parentId:string,snapshotPath:string,userMode:string
-SyncControlTool	diagnose	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	diagnose_delta	infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
-SyncControlTool	diagnose_stuck_locks	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	list_support_snapshots	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	mark_synchronized	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
-SyncControlTool	rebuild_dump_info	applicationId:string,confirm:boolean	read in place	enabled:boolean,infobaseUuid:string,name:string,projectName:string
-SyncControlTool	recover_stuck_merge	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
-SyncControlTool	release_support_snapshot	name:string	read in place	applicationId:string,enabled:boolean,infobaseUuid:string,projectName:string
-SyncControlTool	reseed_baseline	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,name:string,projectName:string
-SyncControlTool	status	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,name:string
-SyncControlTool	suppress	enabled:boolean	read in place	applicationId:string,infobaseUuid:string,name:string,projectName:string
+SyncControlTool	diagnose	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,markSynchronized:boolean,name:string,replaceLocal:boolean
+SyncControlTool	diagnose_delta	infobaseUuid:string	read in place	applicationId:string,enabled:boolean,markSynchronized:boolean,name:string,projectName:string,replaceLocal:boolean
+SyncControlTool	diagnose_stuck_locks	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,markSynchronized:boolean,name:string,replaceLocal:boolean
+SyncControlTool	list_support_snapshots	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,markSynchronized:boolean,name:string,replaceLocal:boolean
+SyncControlTool	mark_synchronized	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,markSynchronized:boolean,name:string,projectName:string,replaceLocal:boolean
+SyncControlTool	rebuild_dump_info	applicationId:string,confirm:boolean	read in place	enabled:boolean,infobaseUuid:string,markSynchronized:boolean,name:string,projectName:string,replaceLocal:boolean
+SyncControlTool	recover_stuck_merge	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,markSynchronized:boolean,name:string,projectName:string,replaceLocal:boolean
+SyncControlTool	release_support_snapshot	name:string	read in place	applicationId:string,enabled:boolean,infobaseUuid:string,markSynchronized:boolean,projectName:string,replaceLocal:boolean
+SyncControlTool	reseed_baseline	confirm:boolean,infobaseUuid:string	read in place	applicationId:string,enabled:boolean,markSynchronized:boolean,name:string,projectName:string,replaceLocal:boolean
+SyncControlTool	retrieve_database_changes	applicationId:string,markSynchronized:boolean,replaceLocal:boolean	read in place	enabled:boolean,infobaseUuid:string,name:string,projectName:string
+SyncControlTool	status	projectName:string	passed in as locals	applicationId:string,enabled:boolean,infobaseUuid:string,markSynchronized:boolean,name:string,replaceLocal:boolean
+SyncControlTool	suppress	enabled:boolean	read in place	applicationId:string,infobaseUuid:string,markSynchronized:boolean,name:string,projectName:string,replaceLocal:boolean
 WorkspaceMarksFacadeTool	get_bookmarks	filePath:string,limit:integer,projectName:string	delegate BookmarksReader	
 WorkspaceMarksFacadeTool	get_objects_by_tags	limit:integer,projectName:string,tags:string[]	delegate TaggedObjectsReader	
 WorkspaceMarksFacadeTool	get_tags	projectName:string	delegate TagsReader	

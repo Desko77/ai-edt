@@ -124,7 +124,7 @@ start_client	required=[] type="object" allowSecondSession{type="boolean"} applic
 start_profiling	required=[applicationId] type="object" applicationId{type="string"}
 step	required=[kind,threadId] type="object" kind{type="string"} threadId{type="integer"} timeoutSeconds{type="integer"}
 support_registry	required=[operation] type="object" apply{type="boolean"} find{type="string"} limit{type="integer"} objectFqn{type="string"} offset{type="integer"} operation{type="string"} parentId{type="string"} projectName{type="string"} snapshotPath{type="string"} topic{type="string"} userMode{type="string"}
-sync_control	required=[operation,projectName] type="object" applicationId{type="string"} confirm{type="boolean"} enabled{type="boolean"} infobaseUuid{type="string"} name{type="string"} operation{type="string"} projectName{type="string"} timeoutSeconds{type="string"}
+sync_control	required=[operation,projectName] type="object" applicationId{type="string"} confirm{type="boolean"} enabled{type="boolean"} infobaseUuid{type="string"} markSynchronized{type="boolean"} name{type="string"} operation{type="string"} projectName{type="string"} replaceLocal{type="boolean"} timeoutSeconds{type="string"}
 terminate_launch	required=[] type="object" all{type="boolean"} applicationId{type="string"}
 uninstall_extension	required=[extensionName,projectName] type="object" applicationId{type="string"} extensionName{type="string"} projectName{type="string"}
 unpack_external_binary	required=[projectName,sourcePath,targetPath] type="object" applicationId{type="string"} projectName{type="string"} sourcePath{type="string"} targetPath{type="string"}
