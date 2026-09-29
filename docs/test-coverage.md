@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 133 | a test class named after it |
-| exercised | 185 | reached by some other test |
-| tool-sweep | 49 | declaration checked by the registry-wide contract sweep |
+| direct | 130 | a test class named after it |
+| exercised | 180 | reached by some other test |
+| tool-sweep | 53 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 43 | needs a display or an extension point |
-| workspace-bound | 28 | drives a live EDT project or debug session |
+| workspace-bound | 27 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **438** | across 508 test classes |
+| **total** | **433** | across 485 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (28)
+## workspace-bound (27)
 
 **folders**
 - IClusterManager
@@ -41,7 +41,6 @@ _none_
 - BmExtensionProjectHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
-- BmRouteMapHelper
 - BmXdtoHelper
 - BreakpointAccess
 - BslCallGraphHelper
@@ -50,6 +49,8 @@ _none_
 - ExternalProjectResolver
 - InfobaseIdentity
 - ProjectReadinessGate
+- ProjectScopeResolver
+- RoleRightsAnalyzer
 
 **toolkit/mdreport**
 - EObjectProbe
@@ -58,8 +59,6 @@ _none_
 **toolkit/ops**
 - CommandInterfaceOps
 - FormEventOps
-- RouteMapOps
-- SpecializedOps
 
 ## ui-bound (43)
 
@@ -126,15 +125,17 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (49)
+## tool-sweep (53)
 
 **toolkit/ops**
 - ApplicationsReader
 - AttributeAdder
+- AuditRoleRightsTool
 - BookmarksReader
 - BreakpointRemover
 - BreakpointSetter
 - BreakpointsLister
+- CallHierarchyReader
 - CodeTemplateTool
 - CommonPictureExporter
 - CompareConfigurationsTool
@@ -164,6 +165,7 @@ _none_
 - LaunchConfigsLister
 - ListExtensionsTool
 - OutgoingStructuresReader
+- PlatformDocReader
 - ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
@@ -178,8 +180,9 @@ _none_
 - TasksReader
 - UninstallExtensionTool
 - XdtoWorkshopTool
+- YaxunitDebugRunner
 
-## exercised (185)
+## exercised (180)
 
 **(root)**
 - Activator
@@ -237,6 +240,7 @@ _none_
 - BmObjectHelper
 - BmReferencesHelper
 - BmRightsHelper
+- BmRouteMapHelper
 - BmSubsystemHelper
 - BmSupportRegistryHelper
 - BmTemplateHelper
@@ -275,11 +279,8 @@ _none_
 - PictureValidator
 - ProjectMetricsCollector
 - ProjectResolver
-- ProjectScopeResolver
 - ProjectStateGuard
 - QlValidator
-- RoleRightsAnalyzer
-- RunReceipts
 - SubsystemMembership
 - SupportSnapshotStore
 - SyncBaseline
@@ -309,10 +310,8 @@ _none_
 - MetadataFormatter
 
 **toolkit/ops**
-- AuditRoleRightsTool
 - BslCodeReviewTool
 - BslModuleAccess
-- CallHierarchyReader
 - CheckDocReader
 - CodeSearchTool
 - CodeTextSearcher
@@ -332,7 +331,6 @@ _none_
 - ExpressionEvaluator
 - ExternalObjectWorkshopTool
 - FindRlsViolationsTool
-- FormAppearanceOps
 - FormCommandInterfaceOps
 - FormCreateOps
 - FormItemsOps
@@ -366,7 +364,6 @@ _none_
 - ObjectOps
 - ObjectSummaryTool
 - ObjectsRevalidator
-- PlatformDocReader
 - PredefinedOps
 - ProblemSummaryReader
 - ProjectAdminFacadeTool
@@ -375,10 +372,12 @@ _none_
 - ReferenceLocator
 - RestartEdtTool
 - RoleOps
+- RouteMapOps
 - SecurityAuditFacadeTool
 - SensitiveDataScanTool
 - ServiceOps
 - SetExceptionBreakpointTool
+- SpecializedOps
 - SuspendWaiter
 - SymbolInfoReader
 - SyncControlTool
@@ -386,7 +385,6 @@ _none_
 - ValidateForExportTool
 - VanessaTool
 - WorkspaceMarksFacadeTool
-- YaxunitDebugRunner
 - YaxunitTestsTool
 
 **wire**
@@ -402,7 +400,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (133)
+## direct (130)
 
 **(root)**
 - BrowserOrigin
@@ -462,7 +460,6 @@ _none_
 - IdleComparisonSweep
 - InfobaseHolders
 - InstanceRegistry
-- InvalidCharacters
 - JUnitReportFormatter
 - JUnitXmlReader
 - LaunchApplicationIds
@@ -475,7 +472,6 @@ _none_
 - MetadataTypeCatalog
 - MethodSignature
 - ModalDialogWatch
-- ModelEditabilityGuard
 - MonopolyLock
 - MutatorIdempotency
 - MutatorIdempotencyStore
@@ -492,7 +488,6 @@ _none_
 - SensitivePatternLibrary
 - SensitiveTextMasker
 - StandardCommandRegistry
-- StockPictures
 - SupportSnapshot
 - SystemEnumValues
 - TaskDirectory
@@ -578,12 +573,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 14 |
 | 5-8 | 42 |
-| 9-16 | 53 |
-| 17+ | 22 |
+| 9-16 | 52 |
+| 17+ | 20 |
 
-4168 test methods across 508 test classes; 133 classes have a test of their own, median 9 methods each.
+3957 test methods across 485 test classes; 130 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 133 of 438 classes have one: 49 are covered by the registry-wide contract sweep and 28 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 130 of 433 classes have one: 53 are covered by the registry-wide contract sweep and 27 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

@@ -75,6 +75,11 @@ public class TheToolListHasAWeightBudgetTest
      * and add_schema_parameter write them into the schema parameter.
      * </p>
      * <p>
+     * Raised from 173621 to 173715 for addressingRegister, addressingAttributes,
+     * mainAddressingAttribute and currentPerformer on edit_metadata: set_task_addressing writes
+     * the addressing of a Task.
+     * </p>
+     * <p>
      * Raised from 169962 to 170245 for itemNames, field and index on edit_metadata:
      * add_form_appearance_rule, list_form_appearance_rules and remove_form_appearance_rule.
      * </p>
@@ -101,7 +106,7 @@ public class TheToolListHasAWeightBudgetTest
      * when the update it asked for does not finish.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 174835;
+    private static final int DOCUMENT_BUDGET = 175033;
 
     private LiveServer server;
 
