@@ -194,6 +194,59 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
     }
 
     /**
+     * The load's own launcher call is the backup of what the infobase holds now, so it crosses the
+     * same boundary: a cancel that arrives while the backup runs is answered as a platform process
+     * still running, keeps the infobase claim, and names the backup's temporary file. The restore
+     * itself is not started, and the file to load is left as it was.
+     */
+    @Test
+    public void aCancelDuringALoadsBackupHoldsTheClaimAndNamesThatFile() throws Exception
+    {
+        LauncherFixture fixture = new LauncherFixture(work);
+        Path source = work.resolve("source.dt"); //$NON-NLS-1$
+        Files.write(source, new byte[] { 1, 2, 3 });
+        Path backup = work.resolve("backup.dt"); //$NON-NLS-1$
+        AtomicReference<String> runKey = new AtomicReference<>();
+        AtomicReference<String> answer = new AtomicReference<>();
+
+        Thread run = startTheLoad(fixture, runKey, answer, source, backup);
+        if (!fixture.entered.await(PATIENCE_MS, TimeUnit.MILLISECONDS))
+        {
+            run.join(5_000L);
+            throw new AssertionError("the backup call did not start; the run answered: " //$NON-NLS-1$
+                + answer.get() + ", calls " + fixture.calls + ", run alive " + run.isAlive()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        assertEquals(PendingWorkRegistry.StopOutcome.STILL_RUNNING,
+            DtSnapshotRunner.stopTheRun(runKey.get()));
+        run.join(PATIENCE_MS);
+        assertFalse("the run answered while the platform call was held", run.isAlive()); //$NON-NLS-1$
+
+        JsonObject failed = parsed(answer.get());
+        assertTrue(failed.toString(), failed.get("cancelled").getAsBoolean()); //$NON-NLS-1$
+        assertTrue("the restore was not started: " + failed, //$NON-NLS-1$
+            failed.get("error").getAsString().contains("The restore was not started")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the answer says the platform is still working: " + failed, //$NON-NLS-1$
+            failed.get("error").getAsString().contains(PROCESS_STILL_RUNNING)); //$NON-NLS-1$
+        Path left = Path.of(failed.get("leftBehind").getAsString()); //$NON-NLS-1$
+        assertEquals("the answer names the backup's own temporary file: " + failed, //$NON-NLS-1$
+            partFilesIn(work), List.of(left.getFileName().toString()));
+        assertTrue("the file a live process is writing is not deleted", Files.exists(left)); //$NON-NLS-1$
+        assertTrue("the answer says the claim is held for that process: " + failed, //$NON-NLS-1$
+            failed.get("lockHeldForProcess").getAsBoolean()); //$NON-NLS-1$
+        assertFalse("the infobase is not free while the answer says a process is still running", //$NON-NLS-1$
+            canClaim(fixture.identity));
+        assertEquals("the file the load was pointed at is left as it was", //$NON-NLS-1$
+            List.of(1, 2, 3), readAll(source));
+        assertFalse("the backup is not placed by a run that never returned", //$NON-NLS-1$
+            Files.exists(backup));
+
+        fixture.release.set(true); // the platform call returns
+        assertTrue("the claim comes back when that process returns", //$NON-NLS-1$
+            awaitClaimable(fixture.identity));
+    }
+
+    /**
      * Starts one dump on a thread of its own, so the test can act while the run is inside it.
      *
      * @param fixture the launcher the run goes through
@@ -211,6 +264,42 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
         run.setDaemon(true);
         run.start();
         return run;
+    }
+
+    /**
+     * Starts one load on a thread of its own, so the test can act while its backup is inside the
+     * launcher.
+     *
+     * @param fixture the launcher the run goes through
+     * @param runKey filled with the run's key
+     * @param answer filled with the answer the run came to
+     * @param source the {@code .dt} the load was pointed at
+     * @param backup where the backup of the infobase's current contents goes
+     * @return the running thread
+     */
+    private static Thread startTheLoad(LauncherFixture fixture, AtomicReference<String> runKey,
+        AtomicReference<String> answer, Path source, Path backup)
+    {
+        Thread run = new Thread(() -> answer.set(DtSnapshotRunner.dispatchRestore(call(),
+            "Project", null, source.toString(), backup.toString(), null, false, //$NON-NLS-1$
+            factory(fixture, runKey), STARTER)), "snapshot-boundary-test"); //$NON-NLS-1$
+        run.setDaemon(true);
+        run.start();
+        return run;
+    }
+
+    /**
+     * @param file the file to read
+     * @return its bytes as a list, so an assertion can name what it expected
+     */
+    private static List<Integer> readAll(Path file) throws IOException
+    {
+        List<Integer> bytes = new ArrayList<>();
+        for (byte b : Files.readAllBytes(file))
+        {
+            bytes.add((int)b);
+        }
+        return bytes;
     }
 
     /**
