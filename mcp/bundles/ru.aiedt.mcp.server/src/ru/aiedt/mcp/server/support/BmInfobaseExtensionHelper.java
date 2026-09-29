@@ -13,17 +13,12 @@ import java.util.concurrent.locks.Lock;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
-import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
-import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessType;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseEqualityState;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallation;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallationManager;
-import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ComponentExecutorInfo;
-import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.ILaunchableRuntimeComponent;
-import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentManager;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IRuntimeComponentTypes;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.IThickClientLauncher;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.execution.RuntimeExecutionArguments;
@@ -55,8 +50,6 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class BmInfobaseExtensionHelper
 {
-    private static final String RUNTIME_TYPE_ENTERPRISE =
-        "com._1c.g5.v8.dt.platform.services.core.runtimeType.EnterprisePlatform"; //$NON-NLS-1$
 
     private BmInfobaseExtensionHelper()
     {
@@ -119,7 +112,7 @@ public final class BmInfobaseExtensionHelper
     public static ListResult listExtensions(String projectName, String applicationId)
     {
         ListResult r = new ListResult();
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -161,7 +154,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
     }
@@ -175,7 +168,7 @@ public final class BmInfobaseExtensionHelper
     {
         DeleteResult r = new DeleteResult();
         r.extensionName = extensionName;
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -213,7 +206,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
     }
@@ -333,7 +326,7 @@ public final class BmInfobaseExtensionHelper
      * @param binary the {@code .epf} / {@code .erf} to read (second launcher argument)
      * @throws Exception when the Designer run fails
      */
-    private static void convertUnderInfobaseLock(LauncherContext ctx, java.nio.file.Path xmlDir,
+    private static void convertUnderInfobaseLock(ThickClientLaunch.LauncherContext ctx, java.nio.file.Path xmlDir,
         java.nio.file.Path binary)
         throws Exception
     {
@@ -370,7 +363,7 @@ public final class BmInfobaseExtensionHelper
      * @param work the launcher call
      * @throws Exception whatever the call throws
      */
-    static void underThickClientHandshake(LauncherContext ctx, Work work) throws Exception
+    static void underThickClientHandshake(ThickClientLaunch.LauncherContext ctx, Work work) throws Exception
     {
         handshakeOrder(ctx.lock, () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
     }
@@ -393,6 +386,91 @@ public final class BmInfobaseExtensionHelper
             if (lock != null)
             {
                 lock.lock();
+            }
+            try
+            {
+                work.run();
+            }
+            finally
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+            }
+        }
+        finally
+        {
+            if (disconnected)
+            {
+                reconnect.run();
+            }
+        }
+    }
+
+    /**
+     * The release/lock/reconnect order of
+     * {@link #underThickClientHandshake(ThickClientLaunch.LauncherContext, Work)}, with the launch
+     * boundary claimed by the worker under the per-infobase lock and before the work runs.
+     * <p>
+     * The boundary is the one state a bounded run and its abandonment cross: whichever claims it
+     * first owns the launch. Claiming it on the worker side is what makes the abandonment's own
+     * answer true - an abandonment that claimed the boundary first then finds the worker did not,
+     * so the work was never handed to the platform, while a worker that claimed it first is a
+     * launcher call the abandonment has to report as still running.
+     * </p>
+     * <p>
+     * The lock wait is interruptible, unlike {@link #handshakeOrder}: the abandonment interrupts a
+     * worker that has not crossed yet, and this one leaves the wait instead of taking the lock when
+     * the caller that held it lets go.
+     * </p>
+     *
+     * @param ctx the resolved launcher context; its {@code launchClaim} is this call's boundary
+     * @param work the launcher call, run under the lock and only once the boundary is this run's
+     * @throws InterruptedException when the boundary was claimed before this worker reached it; the
+     *             launcher is not called then
+     * @throws Exception whatever the call throws, after the infobase has been taken back
+     */
+    static void underThickClientHandshakeWithLaunchClaim(ThickClientLaunch.LauncherContext ctx,
+        Work work) throws Exception
+    {
+        handshakeOrderWithLaunchClaim(ctx.lock, ctx.launchClaim,
+            () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
+    }
+
+    /**
+     * The order itself, as {@link #handshakeOrder} and with the launch boundary claimed between the
+     * lock and the work, with every step handed in so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param launchClaim the launch boundary this call claims before the work runs, or
+     *            <code>null</code> for a call that has no boundary
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and after the boundary was claimed
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @throws InterruptedException when the boundary was already claimed; the lock, when it was
+     *             taken, is given back and the work does not run
+     * @throws Exception whatever the work throws, after the infobase has been taken back
+     */
+    static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
+        java.util.concurrent.atomic.AtomicBoolean launchClaim,
+        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+    {
+        boolean disconnected = release.getAsBoolean();
+        try
+        {
+            if (lock != null)
+            {
+                lock.lockInterruptibly();
+            }
+            if (launchClaim != null && !launchClaim.compareAndSet(false, true))
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+                throw new InterruptedException("the launch was abandoned before the launcher call " //$NON-NLS-1$
+                    + "started");
             }
             try
             {
@@ -507,7 +585,7 @@ public final class BmInfobaseExtensionHelper
         catch (java.nio.file.InvalidPathException e)
         {
             r.error = "sourcePath or targetPath is not a valid file path: " //$NON-NLS-1$
-                + oneLine(causeChainText(e));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
             r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
             return r;
         }
@@ -522,7 +600,7 @@ public final class BmInfobaseExtensionHelper
             return r;
         }
 
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -565,7 +643,7 @@ public final class BmInfobaseExtensionHelper
         catch (java.io.IOException | RuntimeException e)
         {
             r.error = "Cannot create the target directory " + target + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                + oneLine(causeChainText(e));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
             r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
             return r;
         }
@@ -598,19 +676,19 @@ public final class BmInfobaseExtensionHelper
                     {
                         r.reconnectError = "EDT could not reconnect the infobase " + ctx.infobaseName //$NON-NLS-1$
                             + " after the Designer run; it shows as disconnected in EDT - reconnect it " //$NON-NLS-1$
-                            + "by hand: " + oneLine(causeChainText(handshake.reconnectError)); //$NON-NLS-1$
+                            + "by hand: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(handshake.reconnectError)); //$NON-NLS-1$
                     }
                     if (handshake.releaseError != null)
                     {
                         r.error = "EDT could not release the infobase " + ctx.infobaseName //$NON-NLS-1$
                             + " for the Designer, so the conversion did not start: " //$NON-NLS-1$
-                            + oneLine(causeChainText(handshake.releaseError));
+                            + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(handshake.releaseError));
                         r.failureKind = ErrorTags.INFOBASE_NOT_RELEASED.wire();
                         return r;
                     }
                     if (handshake.workError != null)
                     {
-                        classifyThickClientFailure(handshake.workError,
+                        ThickClientLaunch.classifyFailure(handshake.workError,
                             s -> { r.error = s.error; r.failureKind = s.failureKind; });
                         return r;
                     }
@@ -656,7 +734,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
         }
         return r;
         }
@@ -820,7 +898,7 @@ public final class BmInfobaseExtensionHelper
         ExportResult r = new ExportResult();
         r.extensionName = extensionName;
         r.outputPath = outputPath;
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             r.error = ctx.error;
@@ -840,7 +918,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (java.nio.file.InvalidPathException e)
         {
-            r.error = "outputPath is not a valid file path: " + oneLine(causeChainText(e)); //$NON-NLS-1$
+            r.error = "outputPath is not a valid file path: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
             r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
             return r;
         }
@@ -854,7 +932,7 @@ public final class BmInfobaseExtensionHelper
             catch (java.io.IOException | RuntimeException e)
             {
                 r.error = "Cannot create the output directory " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(e));
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
                 r.failureKind = ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
                 return r;
             }
@@ -894,7 +972,7 @@ public final class BmInfobaseExtensionHelper
         catch (java.io.IOException | RuntimeException e)
         {
             r.error = "Cannot create the temporary export file in " + parent + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                + oneLine(causeChainText(e));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
             r.failureKind = ErrorTags.WRITE_FAILED.wire();
             return r;
         }
@@ -934,7 +1012,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
             deleteQuietly(temp);
             return r;
         }
@@ -1031,7 +1109,7 @@ public final class BmInfobaseExtensionHelper
      *         synchronization manager on this runtime, or the read failed) - the caller
      *         refuses on <code>null</code>, because a guard that could not run cleared nothing
      */
-    private static InfobaseEqualityState readEqualityState(LauncherContext ctx)
+    private static InfobaseEqualityState readEqualityState(ThickClientLaunch.LauncherContext ctx)
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null || ctx.project == null)
@@ -1045,7 +1123,7 @@ public final class BmInfobaseExtensionHelper
         catch (Throwable e)
         {
             Activator.logWarning("getEqualityState failed; treating the synchronization state " //$NON-NLS-1$
-                + "as unreadable: " + oneLine(causeChainText(e))); //$NON-NLS-1$
+                + "as unreadable: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e))); //$NON-NLS-1$
             return null;
         }
     }
@@ -1090,7 +1168,7 @@ public final class BmInfobaseExtensionHelper
         }
         catch (java.io.IOException | RuntimeException e)
         {
-            return "the written file could not be verified: " + oneLine(causeChainText(e)); //$NON-NLS-1$
+            return "the written file could not be verified: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
         }
         return null;
     }
@@ -1130,7 +1208,7 @@ public final class BmInfobaseExtensionHelper
         catch (java.io.IOException | RuntimeException e)
         {
             return "The export succeeded but the file could not be moved into place at " //$NON-NLS-1$
-                + dest + ": " + oneLine(causeChainText(e)); //$NON-NLS-1$
+                + dest + ": " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
         }
     }
 
@@ -1231,7 +1309,7 @@ public final class BmInfobaseExtensionHelper
             catch (Exception ghEx)
             {
                 r.error = "Failed to resolve the latest release of " + repoSource[0] //$NON-NLS-1$
-                    + " from GitHub: " + oneLine(causeChainText(ghEx)); //$NON-NLS-1$
+                    + " from GitHub: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(ghEx)); //$NON-NLS-1$
                 r.failureKind = ErrorTags.GITHUB_RESOLVE_FAILED.wire();
                 return r;
             }
@@ -1249,7 +1327,7 @@ public final class BmInfobaseExtensionHelper
                 // the empty/partial temp file so repeated failures do not litter temp.
                 deleteQuietly(tmp);
                 r.error = "Failed to download extension from " + resolvedUrl + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(dlEx));
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(dlEx));
                 r.failureKind = ErrorTags.INPUT_DOWNLOAD_FAILED.wire();
                 return r;
             }
@@ -1266,7 +1344,7 @@ public final class BmInfobaseExtensionHelper
             catch (Exception dlEx)
             {
                 r.error = "Failed to download extension from " + inputPath + ": " //$NON-NLS-1$ //$NON-NLS-2$
-                    + oneLine(causeChainText(dlEx));
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(dlEx));
                 r.failureKind = ErrorTags.INPUT_DOWNLOAD_FAILED.wire();
                 return r;
             }
@@ -1279,7 +1357,7 @@ public final class BmInfobaseExtensionHelper
             }
             catch (java.nio.file.InvalidPathException e)
             {
-                r.error = "inputPath is not a valid file path: " + oneLine(causeChainText(e)); //$NON-NLS-1$
+                r.error = "inputPath is not a valid file path: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)); //$NON-NLS-1$
                 r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
                 return r;
             }
@@ -1293,7 +1371,7 @@ public final class BmInfobaseExtensionHelper
             }
         }
 
-        LauncherContext ctx = resolveLauncher(projectName, applicationId);
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
         if (ctx.error != null)
         {
             // A downloaded temp file (URL/GitHub source) has no install try/finally yet -
@@ -1364,12 +1442,12 @@ public final class BmInfobaseExtensionHelper
         catch (java.lang.reflect.InvocationTargetException e)
         {
             Throwable cause = e.getCause() != null ? e.getCause() : e;
-            classifyThickClientFailure(cause, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(cause, s -> { r.error = s.error; r.failureKind = s.failureKind; });
             return r;
         }
         catch (Throwable e)
         {
-            classifyThickClientFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
+            ThickClientLaunch.classifyFailure(e, s -> { r.error = s.error; r.failureKind = s.failureKind; });
             return r;
         }
         finally
@@ -1599,11 +1677,21 @@ public final class BmInfobaseExtensionHelper
      * state for a nominally read-only operation. {@code disconnectInfobase} on an already-disconnected
      * infobase is a successful no-op, so it cannot tell the two apart on its own.
      * </p>
+     * <p>
+     * A context carrying no project names no connection to ask about, so the synchronization
+     * service is not requested for it: {@code ServiceAccess.get} answers with a service or throws,
+     * and on a runtime where the platform services are not registered yet it throws, which would
+     * end a call that had nothing to release in the first place.
+     * </p>
      */
-    private static boolean disconnectForThickClient(LauncherContext ctx)
+    private static boolean disconnectForThickClient(ThickClientLaunch.LauncherContext ctx)
     {
+        if (ctx.project == null)
+        {
+            return false;
+        }
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (mgr == null)
         {
             return false;
         }
@@ -1616,7 +1704,7 @@ public final class BmInfobaseExtensionHelper
         catch (Throwable e)
         {
             Activator.logWarning("disconnectInfobase failed; running thick-client without it: " //$NON-NLS-1$
-                + oneLine(causeChainText(e)));
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)));
             return false;
         }
     }
@@ -1630,7 +1718,7 @@ public final class BmInfobaseExtensionHelper
      * @return <code>true</code> when the infobase was connected and is now released
      * @throws Exception when the release failed
      */
-    static boolean releaseForThickClient(LauncherContext ctx) throws Exception
+    static boolean releaseForThickClient(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1663,9 +1751,9 @@ public final class BmInfobaseExtensionHelper
                 catch (Throwable alsoFailed)
                 {
                     rethrowIfFatal(alsoFailed);
-                    throw new IllegalStateException(oneLine(causeChainText(failed))
+                    throw new IllegalStateException(ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(failed))
                         + "; the infobase could not be reconnected either and stays disconnected - " //$NON-NLS-1$
-                        + "reconnect it by hand: " + oneLine(causeChainText(alsoFailed)), failed); //$NON-NLS-1$
+                        + "reconnect it by hand: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(alsoFailed)), failed); //$NON-NLS-1$
                 }
             }
             if (failed instanceof Exception)
@@ -1688,7 +1776,7 @@ public final class BmInfobaseExtensionHelper
      * @param ctx the resolved launcher context
      * @throws Exception when the reconnection failed
      */
-    static void takeInfobaseBack(LauncherContext ctx) throws Exception
+    static void takeInfobaseBack(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null)
@@ -1724,7 +1812,7 @@ public final class BmInfobaseExtensionHelper
      * @param tempDir the directory the dump-info file is written into
      * @throws Exception when EDT does not expose the execution internals, or the Designer failed
      */
-    static void runDesignerDumpInfoOnly(LauncherContext ctx, java.nio.file.Path tempDir)
+    static void runDesignerDumpInfoOnly(ThickClientLaunch.LauncherContext ctx, java.nio.file.Path tempDir)
         throws Exception
     {
         java.lang.reflect.Method splitM =
@@ -1777,7 +1865,7 @@ public final class BmInfobaseExtensionHelper
      * @throws Exception when EDT does not expose the execution internals, or the Designer failed
      */
     static String runDesignerExportList(
-        BmInfobaseExtensionHelper.LauncherContext ctx, java.nio.file.Path targetDir,
+        ThickClientLaunch.LauncherContext ctx, java.nio.file.Path targetDir,
         java.nio.file.Path listFile) throws Exception
     {
         java.lang.reflect.Method splitM =
@@ -1818,7 +1906,7 @@ public final class BmInfobaseExtensionHelper
      * @return the fresh dump-info file, or {@code null} for the conventional name
      * @throws Exception when the Designer run failed
      */
-    static java.nio.file.Path runFullDumpUnderInfobaseLock(LauncherContext ctx,
+    static java.nio.file.Path runFullDumpUnderInfobaseLock(ThickClientLaunch.LauncherContext ctx,
         java.nio.file.Path tempDir) throws Exception
     {
         lockForRebuild(ctx);
@@ -1866,7 +1954,7 @@ public final class BmInfobaseExtensionHelper
     /**
      * Invokes a Designer run of the dump-info rebuild under the per-infobase lock. Differs from
      * {@link #invokeUnderInfobaseLock} only in how the run is entered: see
-     * {@link #lockForRebuild(LauncherContext)}.
+     * {@link #lockForRebuild(ThickClientLaunch.LauncherContext)}.
      *
      * @param ctx the launcher context of the rebuild's current run
      * @param method the method to invoke
@@ -1876,7 +1964,7 @@ public final class BmInfobaseExtensionHelper
      * @throws InterruptedException when the rebuild was abandoned before the run started
      * @throws Exception the cause of an {@link java.lang.reflect.InvocationTargetException}
      */
-    static Object invokeUnderRebuildLock(LauncherContext ctx,
+    static Object invokeUnderRebuildLock(ThickClientLaunch.LauncherContext ctx,
         java.lang.reflect.Method method, Object target, Object... args) throws Exception
     {
         lockForRebuild(ctx);
@@ -1895,7 +1983,7 @@ public final class BmInfobaseExtensionHelper
      * @throws InterruptedException when the run was abandoned before the boundary was claimed;
      *             the lock is not held then
      */
-    static void lockForRebuild(LauncherContext ctx) throws InterruptedException
+    static void lockForRebuild(ThickClientLaunch.LauncherContext ctx) throws InterruptedException
     {
         if (ctx.lock != null)
         {
@@ -1956,7 +2044,7 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static void reconnectInfobase(LauncherContext ctx)
+    private static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx)
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
         if (mgr == null || ctx.project == null)
@@ -1970,123 +2058,8 @@ public final class BmInfobaseExtensionHelper
         catch (Throwable e)
         {
             Activator.logWarning("connectInfobase failed; the infobase may show as " //$NON-NLS-1$
-                + "disconnected in EDT - reconnect it manually: " + oneLine(causeChainText(e))); //$NON-NLS-1$
+                + "disconnected in EDT - reconnect it manually: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e))); //$NON-NLS-1$
         }
-    }
-
-    /** The resolved thick-client environment one launcher call runs in. */
-    static final class LauncherContext
-    {
-        IThickClientLauncher launcher;
-        ILaunchableRuntimeComponent component;
-        InfobaseReference infobase;
-        IProject project;
-        Lock lock;
-        RuntimeExecutionArguments args;
-        String infobaseName;
-        String error;
-        String failureKind;
-
-        /**
-         * The Designer launch boundary of the rebuild's current run, claimed once by whoever
-         * crosses it first: the worker under the per-infobase lock, right before it calls the
-         * launcher, or the abandonment side when it gives the run up. Fresh for every run - a
-         * rebuild asks twice, the quick dump and the fallback - so each launch is claimed or
-         * abandoned on its own.
-         */
-        java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
-    }
-
-    /**
-     * Resolves the ThickClient launcher + component + execution args for the IB. Package-visible:
-     * the dump-info rebuild in this package runs its Designer step through the same resolution.
-     */
-    static LauncherContext resolveLauncher(String projectName, String applicationId)
-    {
-        LauncherContext ctx = new LauncherContext();
-        IProject project = ProjectResolver.resolve(projectName);
-        if (project == null)
-        {
-            ctx.error = ProjectResolver.describeNotFound(projectName);
-            ctx.failureKind = ErrorTags.PROJECT_NOT_FOUND.wire();
-            return ctx;
-        }
-        InfobaseReference infobase = resolveInfobase(project, applicationId, ctx);
-        if (infobase == null)
-        {
-            return ctx; // ctx.error set
-        }
-        ctx.infobase = infobase;
-        ctx.infobaseName = infobase.getName();
-        ctx.project = project;
-
-        Activator a = Activator.getDefault();
-        IResolvableRuntimeInstallationManager riMgr =
-            a != null ? a.getResolvableRuntimeInstallationManager() : null;
-        IRuntimeComponentManager compMgr = a != null ? a.getRuntimeComponentManager() : null;
-        IInfobaseAccessManager accessMgr = a != null ? a.getInfobaseAccessManager() : null;
-        IInfobaseManager infobaseManager = a != null ? a.getInfobaseManager() : null;
-        if (riMgr == null || compMgr == null || accessMgr == null || infobaseManager == null)
-        {
-            ctx.error = "Runtime / infobase managers (incl. the per-infobase lock service) " //$NON-NLS-1$
-                + "are not available on this EDT runtime."; //$NON-NLS-1$
-            ctx.failureKind = ErrorTags.MANAGER_UNAVAILABLE.wire();
-            return ctx;
-        }
-        // EDT holds the connected infobase through a persistent designer session, so a
-        // spawned DESIGNER batch cannot take the platform config lock on its own. EDT's
-        // own UI (ExportConfigurationFileService) wraps every thick-client IB call in
-        // IInfobaseManager.getLock(infobase) to coordinate with that session; mirror it
-        // here. Callers still null-guard ctx.lock for the rare getLock()-returns-null case.
-        ctx.lock = infobaseManager.getLock(infobase);
-
-        // The credential read below touches encrypted secure storage; prime it so
-        // the master-password dialog is not posted on this background thread.
-        String primeErr = BmInfobaseCredentialsHelper.primeSecureStorage();
-        if (primeErr != null)
-        {
-            ctx.error = primeErr;
-            ctx.failureKind = ErrorTags.STORAGE_LOCKED.wire();
-            return ctx;
-        }
-
-        try
-        {
-            IResolvableRuntimeInstallation resolvable = riMgr.resolveByProjectAndInfobase(
-                RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
-            RuntimeInstallation installation = resolvable.resolve(
-                Collections.singletonList(IRuntimeComponentTypes.THICK_CLIENT), infobase.getAppArch());
-            ComponentExecutorInfo<ILaunchableRuntimeComponent, IThickClientLauncher> info =
-                compMgr.resolveExecutor(ILaunchableRuntimeComponent.class, IThickClientLauncher.class,
-                    installation, IRuntimeComponentTypes.THICK_CLIENT);
-            ctx.launcher = info.getExecutor();
-            ctx.component = info.getComponent();
-        }
-        catch (Throwable e)
-        {
-            classifyThickClientFailure(e, s -> { ctx.error = s.error; ctx.failureKind = s.failureKind; });
-            return ctx;
-        }
-
-        RuntimeExecutionArguments args = new RuntimeExecutionArguments();
-        try
-        {
-            IInfobaseAccessSettings s = accessMgr.resolveSettings(infobase);
-            if (s != null)
-            {
-                args.setAccess(s.access());
-                args.setUsername(emptyToNull(s.userName()));
-                args.setPassword(emptyToNull(s.password()));
-            }
-        }
-        catch (Throwable e)
-        {
-            Activator.logWarning("extension mgmt: resolveSettings failed (proceeding without " //$NON-NLS-1$
-                + "credentials): " + msg(e)); //$NON-NLS-1$
-        }
-        ctx.args = args;
-        return ctx;
     }
 
     /**
@@ -2113,7 +2086,7 @@ public final class BmInfobaseExtensionHelper
                 return null;
             }
             IResolvableRuntimeInstallation resolvable = riMgr.resolveByProjectAndInfobase(
-                RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
+                ThickClientLaunch.RUNTIME_TYPE_ENTERPRISE, project, infobase, InfobaseAccessType.UPDATE);
             RuntimeInstallation installation = resolvable.resolve(
                 Collections.singletonList(IRuntimeComponentTypes.THICK_CLIENT), infobase.getAppArch());
             return installation.getVersionWithBuild();
@@ -2124,173 +2097,4 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static InfobaseReference resolveInfobase(IProject project, String applicationId,
-        LauncherContext ctx)
-    {
-        IApplicationManager appMgr = Activator.getDefault() != null
-            ? Activator.getDefault().getApplicationManager() : null;
-        if (appMgr == null)
-        {
-            ctx.error = "IApplicationManager is not available on this EDT runtime."; //$NON-NLS-1$
-            ctx.failureKind = ErrorTags.MANAGER_UNAVAILABLE.wire();
-            return null;
-        }
-        try
-        {
-            IApplication app;
-            if (applicationId != null && !applicationId.isEmpty())
-            {
-                app = appMgr.getApplication(project, applicationId).orElse(null);
-                if (app == null)
-                {
-                    ctx.error = "No application '" + applicationId + "' in project '" //$NON-NLS-1$ //$NON-NLS-2$
-                        + project.getName() + "'. Use get_applications to list ids."; //$NON-NLS-1$
-                    ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                    return null;
-                }
-            }
-            else
-            {
-                List<IApplication> apps = appMgr.getApplications(project);
-                if (apps == null || apps.isEmpty())
-                {
-                    ctx.error = "Project '" + project.getName() + "' has no infobase application."; //$NON-NLS-1$ //$NON-NLS-2$
-                    ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                    return null;
-                }
-                if (apps.size() > 1)
-                {
-                    ctx.error = "Project '" + project.getName() + "' has multiple applications; " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "pass applicationId (see get_applications)."; //$NON-NLS-1$
-                    ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                    return null;
-                }
-                app = apps.get(0);
-            }
-            if (!(app instanceof IInfobaseApplication))
-            {
-                ctx.error = "Application is not an infobase application; extension management " //$NON-NLS-1$
-                    + "applies only to infobases."; //$NON-NLS-1$
-                ctx.failureKind = ErrorTags.NOT_INFOBASE.wire();
-                return null;
-            }
-            InfobaseReference ib = ((IInfobaseApplication) app).getInfobase();
-            if (ib == null)
-            {
-                ctx.error = "The infobase application has no infobase reference."; //$NON-NLS-1$
-                ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-                return null;
-            }
-            return ib;
-        }
-        catch (Exception e)
-        {
-            ctx.error = "Failed to resolve the infobase: " + msg(e); //$NON-NLS-1$
-            ctx.failureKind = ErrorTags.RESOLVE_FAILED.wire();
-            return null;
-        }
-    }
-
-    // --- failure classification ---
-
-    private static final class Classified
-    {
-        String error;
-        String failureKind;
-    }
-
-    private interface Sink
-    {
-        void accept(Classified c);
-    }
-
-    private static void classifyThickClientFailure(Throwable cause, Sink sink)
-    {
-        Classified c = new Classified();
-        String chain = causeChainText(cause);
-        String lower = chain.toLowerCase(Locale.ROOT);
-        if (lower.contains("runtimeversionrequired")) //$NON-NLS-1$
-        {
-            // The .cfe / operation requires a platform version that the infobase's
-            // associated runtime does not match. Public launcher verbs retry on a
-            // fallback installation (findFallbackClient); the direct install path
-            // cannot, so surface this distinctly instead of as a generic failure.
-            c.failureKind = ErrorTags.PLATFORM_VERSION_MISMATCH.wire();
-            c.error = "This operation requires a 1C:Enterprise platform version that does not " //$NON-NLS-1$
-                + "match the infobase's associated runtime. Associate/install the required " //$NON-NLS-1$
-                + "platform version for this infobase, then retry. Underlying: " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        else if (lower.contains("matchingruntimenotfound") //$NON-NLS-1$
-            || (lower.contains("runtime") && (lower.contains("not found") //$NON-NLS-1$ //$NON-NLS-2$
-                || lower.contains("no matching") || lower.contains("cannot be resolved")))) //$NON-NLS-1$ //$NON-NLS-2$
-        {
-            c.failureKind = ErrorTags.RUNTIME_NOT_FOUND.wire();
-            c.error = "No resolvable 1C:Enterprise platform runtime (with a thick client) for " //$NON-NLS-1$
-                + "this infobase. Install/associate a matching platform version. Underlying: " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        else if (lower.contains("authentication") || lower.contains("noaccessright") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.contains("access right") || lower.contains("no access") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.contains("аутентификаци") || lower.contains("недостаточно прав") //$NON-NLS-1$ //$NON-NLS-2$
-            || lower.contains("прав доступа")) //$NON-NLS-1$
-        {
-            c.failureKind = ErrorTags.AUTH_FAILED.wire();
-            c.error = "The infobase rejected the stored credentials. Set the correct user / " //$NON-NLS-1$
-                + "password with set_infobase_credentials, then retry. Underlying: " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        else
-        {
-            c.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
-            c.error = "The thick-client operation failed (the infobase may be locked by a " //$NON-NLS-1$
-                + "running 1C client, unreachable, or the extension was not found): " //$NON-NLS-1$
-                + oneLine(chain);
-        }
-        sink.accept(c);
-    }
-
-    private static String causeChainText(Throwable t)
-    {
-        StringBuilder sb = new StringBuilder();
-        int depth = 0;
-        Throwable c = t;
-        while (c != null && depth < 8)
-        {
-            if (sb.length() > 0)
-            {
-                sb.append(" | "); //$NON-NLS-1$
-            }
-            sb.append(c.getClass().getSimpleName());
-            if (c.getMessage() != null)
-            {
-                sb.append(": ").append(c.getMessage()); //$NON-NLS-1$
-            }
-            c = c.getCause();
-            depth++;
-        }
-        return sb.toString();
-    }
-
-    private static String oneLine(String s)
-    {
-        if (s == null)
-        {
-            return ""; //$NON-NLS-1$
-        }
-        // Flatten to a single line, preserving the whole cause chain (joined by
-        // " | ") rather than truncating at the first embedded newline.
-        String line = s.replace('\n', ' ').replace('\r', ' ');
-        return line.length() > 500 ? line.substring(0, 500) + "..." : line; //$NON-NLS-1$
-    }
-
-    private static String emptyToNull(String s)
-    {
-        return (s == null || s.isEmpty()) ? null : s;
-    }
-
-    private static String msg(Throwable e)
-    {
-        return e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-    }
 }

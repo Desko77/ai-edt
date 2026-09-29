@@ -47,6 +47,7 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
 import ru.aiedt.mcp.server.toolkit.ToolWhiteboard;
 import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
+import ru.aiedt.mcp.server.toolkit.ops.InfobaseAdminFacadeTool;
 
 /**
  * The bundle's word for an export: an internal call through {@code IToolRoad} answers the Pending
@@ -190,6 +191,97 @@ public class TheBundlesWordForAnExportTest
         assertTrue(answer, answer.contains("# export_database_extension")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("**Failed:**")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("projectNotFound")); //$NON-NLS-1$
+    }
+
+    /**
+     * A snapshot run answers the Pending envelope through the road, and the runKey it carries
+     * resumes to the dump's own answer: the envelope, the resume and the cancel the object export
+     * goes through, carried by the snapshot's own domain.
+     */
+    @Test
+    public void aSnapshotRunAnswersPendingAndItsRunKeyResumesThroughTheRoad() throws Exception
+    {
+        Path destination = Files.createTempDirectory("snapshot-road-result");
+        try
+        {
+            Path file = destination.resolve("infobase.dt"); //$NON-NLS-1$
+            SnapshotProbe probe = new SnapshotProbe("road_snapshot_probe_" + System.nanoTime(), //$NON-NLS-1$
+                file, false);
+            publish(probe);
+            waitFor(probe.name);
+
+            ToolRoadOutcome first = road.call(probe.name, Map.of(), "snapshot-test"); //$NON-NLS-1$
+            assertFalse(first.finished());
+            assertNotNull(first.runKey());
+
+            ToolRoadOutcome done = road.resume(first.runKey(), 15_000L);
+            assertTrue("the resumed call finished", done.finished()); //$NON-NLS-1$
+            assertTrue(done.text(), done.text().contains("\"status\":\"Exported\"")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the dump is where the caller asked", Files.isRegularFile(file)); //$NON-NLS-1$
+        }
+        finally
+        {
+            deleteTree(destination);
+        }
+    }
+
+    /**
+     * A cancel through the road reaches a snapshot's work: the flag the dump watches rises, the run
+     * answers its own abandonment, and the runKey is no longer tracked afterwards.
+     */
+    @Test
+    public void aCancelThroughTheRoadReachesASnapshotRun() throws Exception
+    {
+        Path destination = Files.createTempDirectory("snapshot-road-cancel");
+        try
+        {
+            Path file = destination.resolve("infobase.dt"); //$NON-NLS-1$
+            SnapshotProbe probe = new SnapshotProbe("road_snapshot_cancel_" + System.nanoTime(), //$NON-NLS-1$
+                file, true);
+            publish(probe);
+            waitFor(probe.name);
+
+            ToolRoadOutcome pending = road.call(probe.name, Map.of(), "snapshot-cancel-test"); //$NON-NLS-1$
+            assertFalse(pending.finished());
+            assertNotNull(pending.runKey());
+
+            assertTrue(road.cancel(pending.runKey()));
+            assertTrue("the cancellation reached the dump", //$NON-NLS-1$
+                cancellationSeen.await(20, TimeUnit.SECONDS));
+
+            ToolRoadOutcome gone = road.resume(pending.runKey(), 50L);
+            assertTrue("a cancelled run is no longer tracked", gone.refused()); //$NON-NLS-1$
+        }
+        finally
+        {
+            deleteTree(destination);
+        }
+    }
+
+    /**
+     * The infobase facade answers the snapshot operations rather than reading them as unknown: a
+     * dump for a project that is not there comes back under the operation's own name, with the
+     * failure kind that says the project was not found.
+     */
+    @Test
+    public void aGuardedSnapshotExportAnswersFailedForAProjectThatIsNotThere()
+    {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("operation", "export_database_snapshot"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("path", "whatever-" + System.nanoTime() + ".dt"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        String answer = new InfobaseAdminFacadeTool().execute(params);
+
+        JsonObject failed = JsonParser.parseString(answer).getAsJsonObject();
+        assertFalse(answer, failed.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(answer, "export_database_snapshot", //$NON-NLS-1$ //$NON-NLS-2$
+            failed.get("operation").getAsString()); //$NON-NLS-1$
+        assertTrue(answer, failed.get("projectNotFound").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the facade polls a snapshot run under its own name", //$NON-NLS-1$
+            InfobaseAdminFacadeTool.NAME,
+            new InfobaseAdminFacadeTool().resumes(PendingWorkRegistry.SNAPSHOT.domain(),
+                "restore_database_snapshot")); //$NON-NLS-1$
     }
 
     private void publish(IMcpTool probe)
@@ -408,6 +500,113 @@ public class TheBundlesWordForAnExportTest
             {
                 // best effort
             }
+        }
+    }
+
+    /**
+     * A tool whose whole body is the snapshot dispatch, the way a bundle calls it through the road.
+     * The dump either places its file after a wait, or watches the caller's cancellation and answers
+     * its own abandonment when it rises.
+     */
+    private final class SnapshotProbe implements IMcpTool
+    {
+        final String name;
+
+        final Path file;
+
+        final boolean watchCancellation;
+
+        SnapshotProbe(String name, Path file, boolean watchCancellation)
+        {
+            this.name = name;
+            this.file = file;
+            this.watchCancellation = watchCancellation;
+        }
+
+        @Override
+        public String getName()
+        {
+            return name;
+        }
+
+        @Override
+        public String getDescription()
+        {
+            return "snapshot probe"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String getInputSchema()
+        {
+            return "{\"type\":\"object\"}"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String execute(Map<String, String> params)
+        {
+            Map<String, String> call = new LinkedHashMap<>();
+            call.put("timeoutSeconds", "5"); //$NON-NLS-1$ //$NON-NLS-2$
+            return DtSnapshotRunner.dispatchExport(call, "Проект", null, file.toString(), null, //$NON-NLS-1$
+                false, ioFactory(), name);
+        }
+
+        private DtSnapshotRunner.IoFactory ioFactory()
+        {
+            return (projectName, applicationId, operation, runKey, live, cancelled) ->
+                DtSnapshotRunner.IoResolution.of(new SnapshotProbeIo(watchCancellation), //$NON-NLS-1$
+                    "probe-infobase"); //$NON-NLS-1$
+        }
+    }
+
+    /** The environment the snapshot probe runs against: one dump, no infobase behind it. */
+    private final class SnapshotProbeIo implements DtSnapshotRunner.SnapshotIo
+    {
+        private final boolean watchCancellation;
+
+        SnapshotProbeIo(boolean watchCancellation)
+        {
+            this.watchCancellation = watchCancellation;
+        }
+
+        @Override
+        public String infobaseIdentity()
+        {
+            return "file:///probe-infobase"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String takeLock()
+        {
+            return null;
+        }
+
+        @Override
+        public void releaseLock()
+        {
+            // nothing held
+        }
+
+        @Override
+        public void exportTo(Path target, BooleanSupplier cancelled) throws Exception
+        {
+            if (watchCancellation)
+            {
+                while (cancelled == null || !cancelled.getAsBoolean())
+                {
+                    sleep(20L);
+                }
+                cancellationSeen.countDown();
+                throw new Abandoned("the infobase dump was cancelled while it was still running", //$NON-NLS-1$
+                    false, null);
+            }
+            Thread.sleep(6_000L);
+            Files.write(target, "a whole infobase".getBytes(java.nio.charset.StandardCharsets.UTF_8)); //$NON-NLS-1$
+        }
+
+        @Override
+        public void importFrom(Path source, BooleanSupplier cancelled)
+        {
+            throw new UnsupportedOperationException("this probe only dumps"); //$NON-NLS-1$
         }
     }
 

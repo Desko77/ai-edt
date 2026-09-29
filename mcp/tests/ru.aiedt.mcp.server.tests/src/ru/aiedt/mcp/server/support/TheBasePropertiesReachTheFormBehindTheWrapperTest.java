@@ -14,44 +14,42 @@ import java.util.List;
 import org.junit.Test;
 
 /**
- * Where the 11 base properties land when a metadata wrapper is handed in.
+ * Where the base properties land when a metadata wrapper is handed in.
  * <p>
  * The properties belong to the {@code form.model.Form}, and a configuration holds that form under
- * an {@code mdclass} wrapper. Handing the wrapper to {@link FormBaseSetup#applyDefaults} used to set
- * nothing - the wrapper exposes none of the setters - and the count came back zero while the form
- * stayed without a command bar or a children align. Measured on a live project: an empty managed
- * form was created, the answer carried no {@code formScaffolded}, and the editor's form had none of
- * the eleven. The wrapper is now followed to the form behind it.
+ * an {@code mdclass} wrapper that exposes none of the setters. {@link FormBaseSetup#applyDefaults}
+ * follows the wrapper to the form behind it and sets the properties there, and the count it answers
+ * is the number set on that form.
  * </p>
  */
 public class TheBasePropertiesReachTheFormBehindTheWrapperTest
 {
-    /** The form as the reflection sees it: four of the base properties. */
+    /** The form as the reflection sees it: scalar base properties, no containers. */
     public static final class FormDouble
     {
-        private String childrenAlign;
-        private String itemsGroup;
-        private boolean enableContentChange;
-        private Boolean autoCommandBar;
+        private boolean enabled;
+        private String group;
+        private boolean showTitle;
+        private boolean showCloseButton;
 
-        public void setChildrenAlign(String value)
+        public void setEnabled(boolean value)
         {
-            childrenAlign = value;
+            enabled = value;
         }
 
-        public void setItemsGroup(String value)
+        public void setGroup(String value)
         {
-            itemsGroup = value;
+            group = value;
         }
 
-        public void setEnableContentChange(boolean value)
+        public void setShowTitle(boolean value)
         {
-            enableContentChange = value;
+            showTitle = value;
         }
 
-        public void setAutoCommandBar(Boolean value)
+        public void setShowCloseButton(boolean value)
         {
-            autoCommandBar = value;
+            showCloseButton = value;
         }
     }
 
@@ -74,7 +72,7 @@ public class TheBasePropertiesReachTheFormBehindTheWrapperTest
     {
         private final Object other = new Object();
 
-        private String childrenAlign;
+        private boolean enabled;
 
         public Object getFormAttachedForm()
         {
@@ -86,9 +84,9 @@ public class TheBasePropertiesReachTheFormBehindTheWrapperTest
             return List.of();
         }
 
-        public void setChildrenAlign(String value)
+        public void setEnabled(boolean value)
         {
-            childrenAlign = value;
+            enabled = value;
         }
     }
 
@@ -111,10 +109,10 @@ public class TheBasePropertiesReachTheFormBehindTheWrapperTest
 
         assertEquals("all four setters of the form behind the wrapper have to be used", //$NON-NLS-1$
             4, FormBaseSetup.applyDefaults(wrapper));
-        assertEquals("ItemsCenter", wrapper.form.childrenAlign); //$NON-NLS-1$
-        assertEquals("Vertical", wrapper.form.itemsGroup); //$NON-NLS-1$
-        assertTrue(wrapper.form.enableContentChange);
-        assertEquals(Boolean.TRUE, wrapper.form.autoCommandBar);
+        assertTrue(wrapper.form.enabled);
+        assertEquals("VERTICAL", wrapper.form.group); //$NON-NLS-1$
+        assertTrue(wrapper.form.showTitle);
+        assertTrue(wrapper.form.showCloseButton);
     }
 
     /** A form root is left alone rather than followed through its own accessors. */
@@ -124,7 +122,7 @@ public class TheBasePropertiesReachTheFormBehindTheWrapperTest
         FormRootDouble form = new FormRootDouble();
 
         assertEquals(1, FormBaseSetup.applyDefaults(form));
-        assertEquals("ItemsCenter", form.childrenAlign); //$NON-NLS-1$
+        assertTrue(form.enabled);
     }
 
     /** A wrapper whose form is not reachable still answers zero instead of failing. */

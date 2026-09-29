@@ -546,6 +546,29 @@ public class TheExportRunsItsStepsInOrderTest
     }
 
     /**
+     * An abandonment that took the launch boundary first says no Designer run was started, rather
+     * than that a run did not finish and may still be running.
+     */
+    @Test
+    public void anAbandonmentThatPreventedTheLaunchSaysNoRunStarted()
+    {
+        StandIn io = new StandIn();
+        io.designer = (dir, listFile) -> {
+            throw new Abandoned("the Designer export was cancelled before the Designer run it was " //$NON-NLS-1$
+                + "waiting for started; that run was not launched", false, true, null); //$NON-NLS-1$
+        };
+
+        Outcome outcome = run(io);
+
+        assertFalse(outcome.ok);
+        assertTrue(outcome.error, outcome.error.startsWith("No Designer run was started")); //$NON-NLS-1$
+        assertFalse(outcome.error, outcome.error.contains("did not finish")); //$NON-NLS-1$
+        assertFalse(outcome.error, outcome.error.contains("finishes on its own")); //$NON-NLS-1$
+        assertNull(outcome.leftBehind);
+        assertFalse(Files.exists(outputPath));
+    }
+
+    /**
      * An abandoned run whose process is still writing keeps the service directory and the claim,
      * names the directory as left behind, and defers the cleanup until the call returns.
      */

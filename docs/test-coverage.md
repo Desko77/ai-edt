@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 136 | a test class named after it |
-| exercised | 207 | reached by some other test |
+| direct | 138 | a test class named after it |
+| exercised | 211 | reached by some other test |
 | tool-sweep | 46 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 41 | needs a display or an extension point |
-| workspace-bound | 23 | drives a live EDT project or debug session |
+| workspace-bound | 22 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **453** | across 553 test classes |
+| **total** | **458** | across 562 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (23)
+## workspace-bound (22)
 
 **folders**
 - IClusterManager
@@ -45,7 +45,6 @@ _none_
 - BslSignatureReader
 - BuildTaskHelper
 - ExternalProjectResolver
-- InfobaseIdentity
 - ProjectReadinessGate
 
 **toolkit/mdreport**
@@ -169,7 +168,7 @@ _none_
 - UninstallExtensionTool
 - XdtoWorkshopTool
 
-## exercised (207)
+## exercised (211)
 
 **(root)**
 - Activator
@@ -230,7 +229,6 @@ _none_
 - BmExternalObjectDumpHelper
 - BmExternalObjectProjectHelper
 - BmFormCleanupHelper
-- BmFormGeneratorHelper
 - BmFormHelper
 - BmFormResourceHelper
 - BmHelpHelper
@@ -248,6 +246,7 @@ _none_
 - ConfigurationListProperties
 - ContainerScope
 - DataLossPlan
+- DatabaseChangesResolver
 - DcsExtensionExportHelper
 - DcsSchemaRestorer
 - DebugSessionBook
@@ -267,7 +266,9 @@ _none_
 - GitRepositoryAccess
 - HistoryFullText
 - InfobaseAddress
+- InfobaseIdentity
 - InfobaseObjectsExporter
+- InfobaseOutsideChange
 - JUnitRunOutcome
 - LaunchConfigAccess
 - MetadataDiffEngine
@@ -283,12 +284,14 @@ _none_
 - ProjectScopeResolver
 - ProjectStateGuard
 - QlValidator
+- RemovedObjectFiles
 - RoleRightsAnalyzer
 - RunReceipts
 - SubsystemMembership
 - SupportSnapshotStore
 - SyncBaseline
 - TemplatePrintWidth
+- ThickClientLaunch
 - ToolRoad
 - UnreadArguments
 - WatchForCancel
@@ -416,7 +419,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (136)
+## direct (138)
 
 **(root)**
 - BrowserOrigin
@@ -446,6 +449,7 @@ _none_
 - AttributionRule
 - BmBinaryImportHelper
 - BmDefinedTypeHelper
+- BmFormGeneratorHelper
 - BmInfobaseCredentialsHelper
 - BmInfobaseRegistrationHelper
 - BranchInfobaseBook
@@ -457,6 +461,7 @@ _none_
 - DcsSettingsImpact
 - DeliveryIdentity
 - DependencyGraphBuilder
+- DtSnapshotRunner
 - DynamicListSettingsReader
 - EventLogFormat
 - EventLogReader
@@ -595,12 +600,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 13 |
 | 5-8 | 43 |
-| 9-16 | 56 |
+| 9-16 | 58 |
 | 17+ | 22 |
 
-4436 test methods across 553 test classes; 136 classes have a test of their own, median 10 methods each.
+4531 test methods across 562 test classes; 138 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 136 of 453 classes have one: 46 are covered by the registry-wide contract sweep and 23 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 138 of 458 classes have one: 46 are covered by the registry-wide contract sweep and 22 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

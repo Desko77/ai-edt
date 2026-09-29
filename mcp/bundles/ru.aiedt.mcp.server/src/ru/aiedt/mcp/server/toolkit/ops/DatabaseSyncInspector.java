@@ -24,6 +24,7 @@ import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.DataLossPlan;
+import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
@@ -133,7 +134,8 @@ public final class DatabaseSyncInspector
             modelProjects);
 
         return inspect(appManager, DatabaseUpdater.platformPromptAccess(), pending, application,
-            projectName, resolvedId, viaParent, infobaseProject.getName());
+            projectName, resolvedId, viaParent, infobaseProject.getName(),
+            DatabaseUpdater.dumpInfoOf(application));
     }
 
     /**
@@ -175,6 +177,24 @@ public final class DatabaseSyncInspector
     static String inspect(IApplicationManager appManager,
         DatabaseUpdater.PromptAccess preferences, DataLossPlan.Plan pending, IApplication application,
         String projectName, String applicationId, boolean viaParent, String infobaseOwnerName)
+    {
+        return inspect(appManager, preferences, pending, application, projectName, applicationId,
+            viaParent, infobaseOwnerName, null);
+    }
+
+    /**
+     * As {@link #inspect(IApplicationManager, DatabaseUpdater.PromptAccess, DataLossPlan.Plan, IApplication, String, String, boolean, String)},
+     * with the stored-copy reading an update would decide against. The inspection names it and
+     * stops nothing: a load recorded on the copy is the same sentence {@code update_database}
+     * dryRun carries.
+     *
+     * @param dumpInfo the stored dump-info reading, or {@code null} when there is nothing to compare
+     * @return the JSON answer
+     */
+    static String inspect(IApplicationManager appManager,
+        DatabaseUpdater.PromptAccess preferences, DataLossPlan.Plan pending, IApplication application,
+        String projectName, String applicationId, boolean viaParent, String infobaseOwnerName,
+        DumpInfoProbe.Reading dumpInfo)
     {
         ApplicationUpdateState state;
         try
@@ -241,6 +261,15 @@ public final class DatabaseSyncInspector
                 + "through, or restore the missing entities in the configuration"); //$NON-NLS-1$
         }
         answer.put("dataLossProtection", protection); //$NON-NLS-1$
+
+        // The same sentence an update's dry run carries: a load recorded on the stored copy, or
+        // which base that copy belongs to. Named here and stopping nothing, which is the whole of
+        // what an inspection was asked for.
+        String infobaseChangeCheck = DatabaseUpdater.describeInfobaseChangeCheck(dumpInfo);
+        if (infobaseChangeCheck != null)
+        {
+            answer.put("infobaseChangeCheck", infobaseChangeCheck); //$NON-NLS-1$
+        }
 
         // An update this server is still tracking, whose receiver has not collected it yet - the
         // window in which the base is claimed by a run of ours rather than free.

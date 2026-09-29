@@ -29,6 +29,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.support.DataLossPlan;
+import ru.aiedt.mcp.server.support.DumpInfoProbe;
+import ru.aiedt.mcp.server.support.InfobaseOutsideChange;
 
 /**
  * An inspection answers what an update started now would delete, and it answers without starting
@@ -228,6 +230,31 @@ public class AnInspectionNamesTheDataAnUpdateWouldLoseTest
             .startsWith("not compared: this infobase has no synchronization baseline")); //$NON-NLS-1$
         assertFalse("nothing is promised about a comparison that was not made", //$NON-NLS-1$
             protection.has("nextStep")); //$NON-NLS-1$
+        assertEquals(List.of("getUpdateState"), manager.calls); //$NON-NLS-1$
+    }
+
+    /**
+     * A load recorded on the stored copy is named in infobaseChangeCheck, and the inspection still
+     * asks the environment for nothing beyond the update state.
+     */
+    @Test
+    public void anInspectionNamesALoadThatReplacedTheInfobaseAndStartsNothing()
+    {
+        RecordingManager manager = new RecordingManager();
+        DumpInfoProbe.Reading marked = DumpInfoProbe.reading("copy.xml", "2.7", "2.7", "8.3.27", null, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            InfobaseOutsideChange.of("file:e:/bases/demo", "same", 10), //$NON-NLS-1$ //$NON-NLS-2$
+            InfobaseOutsideChange.of("file:e:/bases/demo", "same", 10) //$NON-NLS-1$ //$NON-NLS-2$
+                .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject body = JsonParser.parseString(DatabaseSyncInspector.inspect(manager.asManager(),
+            infobaseId -> Boolean.FALSE, found(), applicationWithInfobase("app-1", "Demo"), //$NON-NLS-1$ //$NON-NLS-2$
+            "Demo", "app-1", false, "Demo", marked)).getAsJsonObject(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue(body.get("success").getAsBoolean()); //$NON-NLS-1$
+        String line = body.get("infobaseChangeCheck").getAsString(); //$NON-NLS-1$
+        assertTrue(line.contains("E:/snaps/before.dt")); //$NON-NLS-1$
+        assertTrue(line.contains("fullUpdate=true")); //$NON-NLS-1$
+        assertTrue(body.get("nothingStarted").getAsBoolean()); //$NON-NLS-1$
         assertEquals(List.of("getUpdateState"), manager.calls); //$NON-NLS-1$
     }
 

@@ -53,6 +53,8 @@ public class HeavyToolsTest
             HeavyTools.isHeavy("create_infobase")); //$NON-NLS-1$
         assertTrue("rebuild_dump_info releases the infobase to a Designer", //$NON-NLS-1$
             HeavyTools.isHeavy("rebuild_dump_info")); //$NON-NLS-1$
+        assertTrue("retrieve_database_changes can reload the configuration into the model", //$NON-NLS-1$
+            HeavyTools.isHeavy("retrieve_database_changes")); //$NON-NLS-1$
         assertTrue("the platform verdict loads a staging infobase through a Designer", //$NON-NLS-1$
             HeavyTools.isHeavy("check_platform_verdict")); //$NON-NLS-1$
     }

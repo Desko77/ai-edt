@@ -109,6 +109,31 @@ public final class PendingWorkRegistry
     private static final long VANESSA_ABANDONED_TTL_MS = 70 * 60 * 1000L;
 
     /**
+     * How long a snapshot run nobody came back for is kept.
+     * <p>
+     * A launcher call is given ten minutes before it is abandoned, and a run answered as Pending
+     * lives on past that while the client is away. The default thirty minutes would evict a run that
+     * is still executing - and for a load that means an infobase being replaced with its entry and
+     * result gone, so the poll would report a missing run over a live one.
+     * </p>
+     */
+    private static final long SNAPSHOT_ABANDONED_TTL_MS = 70L * 60L * 1000L;
+
+    /**
+     * Async backend for {@code export_database_snapshot} and {@code restore_database_snapshot}.
+     * <p>
+     * Not {@link #EXPORT_INFOBASE}: that one belongs to the object export. This domain carries two
+     * operations, and a load replaces what the infobase holds, so its runKeys are unique per call -
+     * two identical calls are two runs, never one coalesced future and never a replayed cached
+     * answer. {@code maxPool} is 1, and that ceiling covers the whole domain: snapshots of all
+     * infobases, dump and load alike, go in turn in one executor rather than one per infobase, so a
+     * snapshot against one base waits for a snapshot already running against another.
+     * </p>
+     */
+    public static final PendingWorkRegistry SNAPSHOT = new PendingWorkRegistry(
+        "database_snapshot", "dt-snapshot-async", 1, SNAPSHOT_ABANDONED_TTL_MS); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * Scenario runs.
      * <p>
      * Not {@link #GENERIC}: that one is reserved for reads that can be replayed, and a run drives a
@@ -150,7 +175,20 @@ public final class PendingWorkRegistry
         new PendingWorkRegistry("generic_tool", "generic-tool-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
-     * What a cancel reaches in each of the five domains that have no process or client of their
+     * Async backend for {@code retrieve_database_changes}.
+     * <p>
+     * Not {@link #GENERIC}: a pull writes the project from the infobase. Not {@link #UPDATE}: that
+     * pool is shared with database updates, and a pull waiting on a monopoly the platform will not
+     * grant does not return - it must not occupy an update worker. Two identical calls coalesce;
+     * a finished result is not replayed. The pool is two threads because each one can be held for
+     * as long as the platform call runs.
+     * </p>
+     */
+    public static final PendingWorkRegistry RETRIEVE = new PendingWorkRegistry(
+        "retrieve_database_changes", "retrieve-changes-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * What a cancel reaches in each of the domains that have no process or client of their
      * own to destroy.
      * <p>
      * A cancel through the task interface leaves {@link #cancel} and {@link #cancelAndStop}, and
@@ -174,6 +212,9 @@ public final class PendingWorkRegistry
         UPDATE.stopsWith(UPDATE::stopAtTheLaunchBoundary);
         EXPORT.stopsWith(EXPORT::stopAtTheLaunchBoundary);
         IMPORT_BINARY.stopsWith(IMPORT_BINARY::stopAtTheLaunchBoundary);
+        // The platform pull cannot be pulled back once it has started. Before that boundary the
+        // raised flag keeps it from starting.
+        RETRIEVE.stopsWith(RETRIEVE::stopAtTheLaunchBoundary);
     }
 
     /** TTL for completed entries that were never retrieved. 5 minutes. */
@@ -523,8 +564,8 @@ public final class PendingWorkRegistry
     public static List<PendingWorkRegistry> domains()
     {
         return Collections.unmodifiableList(
-            Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, REFERENCES, IMPORT_BINARY, VANESSA,
-                NAPARNIK, GENERIC));
+            Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, SNAPSHOT, REFERENCES, IMPORT_BINARY,
+                VANESSA, NAPARNIK, GENERIC, RETRIEVE));
     }
 
     /**
