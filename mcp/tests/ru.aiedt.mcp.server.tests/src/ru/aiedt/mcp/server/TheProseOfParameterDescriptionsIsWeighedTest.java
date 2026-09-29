@@ -275,7 +275,8 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // a process that exists is not an opened processor that answers, and the wait is the only
         // way to tell them apart.
         PROSE.put("launch_debugger", Integer.valueOf(4186));
-        PROSE.put("mxl_workshop", Integer.valueOf(2164));
+        // Each argument is one sentence naming the unit the call takes. Measured 4039 bytes.
+        PROSE.put("mxl_workshop", Integer.valueOf(4039));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
         PROSE.put("project_admin", Integer.valueOf(1767));
@@ -501,5 +502,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * edit_metadata: 93862.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 93862;
+    private static final int DOCUMENT_PROSE = 95737;
 }

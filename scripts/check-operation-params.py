@@ -75,16 +75,15 @@ EXTRACT = re.compile(READERS + r'\(\s*params\s*,\s*(?://[^\n]*\n\s*)*"([A-Za-z0-
 # stringArray comes before string: the alternation is ordered, and "string" would match the
 # first six letters of stringArrayProperty and then fail on "Property". Measured: 12
 # declarations naming objectFqns, objects, sections and tags were invisible, and
-# revalidate_objects came out of the map knowing only projectName. numberProperty is gone -
-# SchemaComposer has no such method, so the alternative matched nothing.
+# revalidate_objects came out of the map knowing only projectName.
 SCHEMA_PROP = re.compile(
-    r'\.(?:stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+    r'\.(?:stringArray|string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 # The same call sites read for their kind as well. The builder's name IS the kind, which is why this
 # is read rather than inferred from how the parameter is used.
 SCHEMA_KIND = re.compile(
-    r'\.(stringArray|string|boolean|integer|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
+    r'\.(stringArray|string|boolean|integer|number|array|object)Property\(\s*"([A-Za-z0-9_]+)"')
 KIND_OF_BUILDER = {"stringArray": "string[]", "string": "string", "boolean": "boolean",
-                   "integer": "integer", "array": "array", "object": "object"}
+                   "integer": "integer", "number": "number", "array": "array", "object": "object"}
 # What stands in the map for a parameter nobody declares. Not a guess, and not an empty column: the
 # 85 parameters read without being advertised have no declared kind anywhere, and writing a
 # plausible one would put an invention where a client looks for a fact.

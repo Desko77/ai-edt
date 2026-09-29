@@ -48,6 +48,8 @@ public class SchemaComposer
 
     private static final String TYPE_INTEGER = "integer"; //$NON-NLS-1$
 
+    private static final String TYPE_NUMBER = "number"; //$NON-NLS-1$
+
     private static final String TYPE_BOOLEAN = "boolean"; //$NON-NLS-1$
 
     private static final String TYPE_ARRAY = "array"; //$NON-NLS-1$
@@ -121,6 +123,18 @@ public class SchemaComposer
     public SchemaComposer integerProperty(String name, String description, boolean required)
     {
         return scalarProperty(name, TYPE_INTEGER, description, required);
+    }
+
+    /**
+     * Declares an optional number parameter - one the caller may spell with a fraction.
+     *
+     * @param name the parameter name
+     * @param description what the parameter means, as the client will show it
+     * @return this builder
+     */
+    public SchemaComposer numberProperty(String name, String description)
+    {
+        return scalarProperty(name, TYPE_NUMBER, description, false);
     }
 
     /**

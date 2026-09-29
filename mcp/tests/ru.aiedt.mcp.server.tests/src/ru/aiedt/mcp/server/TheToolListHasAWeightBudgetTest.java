@@ -75,7 +75,7 @@ public class TheToolListHasAWeightBudgetTest
      * and add_schema_parameter write them into the schema parameter.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 170444;
+    private static final int DOCUMENT_BUDGET = 173621;
 
     private LiveServer server;
 
@@ -241,7 +241,9 @@ public class TheToolListHasAWeightBudgetTest
         // Raised by 1073 for runMode and clientType on launch, the same two arguments start_client
         // takes, so a debug launch of a configuration on ordinary forms opens the same client.
         BUDGETS.put("launch_debugger", Integer.valueOf(7158)); //$NON-NLS-1$
-        BUDGETS.put("mxl_workshop", Integer.valueOf(4636)); //$NON-NLS-1$
+        // The entry names the operations and the model; what each argument takes is the schema's
+        // to say. Measured 7813 bytes.
+        BUDGETS.put("mxl_workshop", Integer.valueOf(7813)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
