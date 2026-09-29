@@ -78,8 +78,16 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 169962 to 170245 for itemNames, field and index on edit_metadata:
      * add_form_appearance_rule, list_form_appearance_rules and remove_form_appearance_rule.
      * </p>
+     * <p>
+     * Raised from 170444 to 170459 for format on security_audit: markdown applies to
+     * audit_role_rights in mode=rights only.
+     * </p>
+     * <p>
+     * Raised from 170459 to 170725 for the security_audit orphan mode contract and its boolean
+     * apply argument.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 173904;
+    private static final int DOCUMENT_BUDGET = 174185;
 
     private LiveServer server;
 
@@ -262,7 +270,8 @@ public class TheToolListHasAWeightBudgetTest
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains
         // after that move (the four sentences are 235 bytes; the rest is the properties themselves).
-        BUDGETS.put("security_audit", Integer.valueOf(3008)); //$NON-NLS-1$
+        // Raised from 3008 to 3274 for the complete orphan mode contract and apply property.
+        BUDGETS.put("security_audit", Integer.valueOf(3274)); //$NON-NLS-1$
         BUDGETS.put("code_review", Integer.valueOf(2209)); //$NON-NLS-1$
         BUDGETS.put("find_dead_code", Integer.valueOf(1867)); //$NON-NLS-1$
         BUDGETS.put("diff_module", Integer.valueOf(1816)); //$NON-NLS-1$

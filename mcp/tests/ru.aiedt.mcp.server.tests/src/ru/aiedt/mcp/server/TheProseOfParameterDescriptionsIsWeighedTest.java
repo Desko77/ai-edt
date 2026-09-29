@@ -288,7 +288,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 1170 by 235: find_rls_violations and sensitive_data_scan advertise scope,
         // moduleFqn, methodName and subsystemName, one sentence each. The sentences that say
         // which combination is a walk and which is a refusal moved to operation help.
-        PROSE.put("security_audit", Integer.valueOf(1405));
+        // Raised from 1405 to 1792 for the complete orphan mode contract: role, apply behavior,
+        // and every object type accepted by the standalone audit.
+        PROSE.put("security_audit", Integer.valueOf(1792));
         PROSE.put("xdto_workshop", Integer.valueOf(1155));
         PROSE.put("get_form_screenshot", Integer.valueOf(1154));
         PROSE.put("code_review", Integer.valueOf(1129));
@@ -506,6 +508,14 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * remove_form_appearance_rule name the styled form items, the field of the condition and the
      * rule to remove: 93805.
      * </p>
+     * <p>
+     * And one by 15 for format on security_audit: markdown applies to audit_role_rights in
+     * mode=rights only: 93877.
+     * </p>
+     * <p>
+     * Raised from 93877 to 94099 for security_audit orphan cleanup: the facade now exposes its
+     * role, apply behavior and full object-type contract.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 95933;
+    private static final int DOCUMENT_PROSE = 96170;
 }

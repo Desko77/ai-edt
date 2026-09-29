@@ -1120,6 +1120,9 @@ public final class BmRightsHelper
         /** FQNs whose object is certainly not in the configuration. */
         public final java.util.List<String> orphaned = new java.util.ArrayList<>();
 
+        /** FQNs whose object blocks were successfully removed from the file. */
+        public final java.util.List<String> removed = new java.util.ArrayList<>();
+
         /** FQNs this could not decide about, with the reason - never removed. */
         public final java.util.Map<String, String> undecided = new java.util.LinkedHashMap<>();
 
@@ -1252,6 +1255,7 @@ public final class BmRightsHelper
                 sweep.error = writeErr;
                 return sweep;
             }
+            sweep.removed.addAll(sweep.orphaned);
             sweep.changed = true;
             return sweep;
         }

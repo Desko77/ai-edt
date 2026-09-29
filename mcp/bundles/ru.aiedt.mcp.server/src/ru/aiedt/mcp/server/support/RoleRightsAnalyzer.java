@@ -15,6 +15,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import javax.xml.XMLConstants;
@@ -352,7 +353,87 @@ public final class RoleRightsAnalyzer
     }
 
     /**
+     * Whether an object kind passes the {@code objectType} filter of the audit. {@code null}, blank
+     * and {@code all} select every kind; {@code Register} (English or Russian, singular or plural)
+     * selects every register kind; any other value is read through
+     * {@link MetadataTypeCatalog#toEnglishSingular(String)}, so the case, the language and the
+     * number of the value do not matter.
+     *
+     * @param objectKind the English singular kind of the object, as the FQN spells it
+     *            ({@code InformationRegister})
+     * @param objectType the filter the caller passed
+     * @return whether the object is selected
+     */
+    public static boolean kindSelected(String objectKind, String objectType)
+    {
+        if (objectType == null || objectType.isBlank() || "all".equalsIgnoreCase(objectType.trim())) //$NON-NLS-1$
+        {
+            return true;
+        }
+        if (objectKind == null)
+        {
+            return false;
+        }
+        if (namesEveryRegister(objectType))
+        {
+            return objectKind.toLowerCase(Locale.ROOT).endsWith("register"); //$NON-NLS-1$
+        }
+        String canonical = MetadataTypeCatalog.toEnglishSingular(objectType.trim());
+        return canonical != null && canonical.equalsIgnoreCase(objectKind);
+    }
+
+    /**
+     * Whether {@code objectType} is a value {@link #kindSelected(String, String)} understands.
+     *
+     * @param objectType the filter the caller passed
+     * @return {@code true} for {@code null}, blank, {@code all}, {@code Register} and any metadata
+     *         type name
+     */
+    public static boolean isKnownObjectType(String objectType)
+    {
+        if (objectType == null || objectType.isBlank() || "all".equalsIgnoreCase(objectType.trim())) //$NON-NLS-1$
+        {
+            return true;
+        }
+        return namesEveryRegister(objectType) || MetadataTypeCatalog.toEnglishSingular(objectType.trim()) != null;
+    }
+
+    /**
+     * The refusal text for an {@code objectType} filter that names no metadata type.
+     *
+     * @param objectType the filter the caller passed
+     * @return the text naming the accepted values, or {@code null} when
+     *         {@link #isKnownObjectType(String)} accepts the value
+     */
+    public static String unknownObjectTypeMessage(String objectType)
+    {
+        if (isKnownObjectType(objectType))
+        {
+            return null;
+        }
+        return "objectType '" + objectType + "' names no metadata type. Use all, Register or one of: " //$NON-NLS-1$ //$NON-NLS-2$
+            + String.join(", ", MetadataTypeCatalog.getAllEnglishSingularNames()); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether the filter names registers as a family rather than one register kind.
+     *
+     * @param objectType the filter, not {@code null}
+     * @return whether it is Register or Регистр, singular or plural, in any case
+     */
+    private static boolean namesEveryRegister(String objectType)
+    {
+        String value = objectType.trim().toLowerCase(Locale.ROOT);
+        return "register".equals(value) || "registers".equals(value) //$NON-NLS-1$ //$NON-NLS-2$
+            || "регистр".equals(value) || "регистры".equals(value); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Computes objects where the role lacks any Allow right (under-privileged).
+     *
+     * @param table the role's rights
+     * @param objectTypeFilter the kind filter, by the rule of {@link #kindSelected(String, String)}
+     * @return the addresses of the objects on which the role allows nothing
      */
     public static List<String> missingObjects(RightsTable table, String objectTypeFilter)
     {
@@ -360,8 +441,8 @@ public final class RoleRightsAnalyzer
         for (Map.Entry<String, Map<String, Verdict>> entry : table.rights.entrySet())
         {
             String fqn = entry.getKey();
-            if (objectTypeFilter != null && !objectTypeFilter.isEmpty()
-                && !fqn.startsWith(objectTypeFilter + ".")) //$NON-NLS-1$
+            int dot = fqn.indexOf('.');
+            if (!kindSelected(dot < 0 ? fqn : fqn.substring(0, dot), objectTypeFilter))
             {
                 continue;
             }
