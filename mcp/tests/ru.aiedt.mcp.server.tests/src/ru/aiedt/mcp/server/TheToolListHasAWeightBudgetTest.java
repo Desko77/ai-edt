@@ -79,8 +79,14 @@ public class TheToolListHasAWeightBudgetTest
      * acceptDataLoss in its own schema and the facade's - and the inspect_database_sync
      * operation of infobase_admin.
      * </p>
+     * <p>
+     * And from 173735 to 173958 for the reworked data-loss protection: the descriptions of
+     * protectData and acceptDataLoss now say the comparison is made before the update starts and
+     * answers dataLossTables, and the help names acceptDataLoss beside protectData (measured
+     * 29.09).
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 173735;
+    private static final int DOCUMENT_BUDGET = 173958;
 
     private LiveServer server;
 
@@ -231,7 +237,11 @@ public class TheToolListHasAWeightBudgetTest
         // and bound to the project in one call, and the facade's schema is where a client learns
         // the operation and its two new arguments exist. And by 407 for the dump-info work: the
         // syncOperation value rebuild_dump_info, the rebuild's wait budget, the format override.
-        BUDGETS.put("infobase_admin", Integer.valueOf(9056)); //$NON-NLS-1$
+        // Raised to the measured 9864 for the data-loss protection of update_database and
+        // inspect_database_sync: protectData now says the comparison is made before the update
+        // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
+        // facade's help names acceptDataLoss beside protectData (measured 29.09).
+        BUDGETS.put("infobase_admin", Integer.valueOf(9864)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the

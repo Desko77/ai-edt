@@ -23,8 +23,7 @@ import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
-import ru.aiedt.mcp.server.support.InfobaseIdentity;
-import ru.aiedt.mcp.server.support.InfobaseUpdateQuestionGuard;
+import ru.aiedt.mcp.server.support.DataLossPlan;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
@@ -36,16 +35,16 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * <p>
  * The {@code infobase_admin} {@code inspect_database_sync} operation: the update state the
  * environment holds for the application, the infobase's own ask-confirmation-on-restructure
- * preference, and the data-loss question a guarded {@code update_database} parked - the list of
- * addresses the platform said it would delete, readable after the call that was stopped by it,
- * including while its update is still being tracked.
+ * preference, and the data an update started now would delete - the same comparison
+ * {@code update_database} refuses on, made here without updating anything, so the addresses are
+ * readable before the call that would be stopped by them rather than after it.
  * </p>
  * <p>
- * Read-only by construction: the two reads it performs are the update state and the preference,
- * nothing is claimed, nothing is started, no preference is written, and the answer says so. The
- * object-by-object composition of an update is not among the facts this can read - the
- * application API reports the state, not the objects an update would carry - and the answer names
- * that honestly rather than leaving the caller to infer it.
+ * Read-only by construction: what it reads is the update state, the preference and the infobase's
+ * synchronization baseline; nothing is claimed, nothing is started, no preference is written, and
+ * the answer says so. The object-by-object composition of an update is not among the facts this
+ * can read - the application API reports the state, not the objects an update would carry - and the
+ * answer names that honestly rather than leaving the caller to infer it.
  * </p>
  */
 public final class DatabaseSyncInspector
@@ -120,9 +119,21 @@ public final class DatabaseSyncInspector
         String resolvedId = applicationId == null || applicationId.isEmpty() ? application.getId()
             : applicationId;
 
-        return inspect(appManager, DatabaseUpdater.platformPromptAccess(),
-            InfobaseUpdateQuestionGuard.get(), application, projectName, resolvedId, viaParent,
-            infobaseProject.getName());
+        // The comparison an update would refuse on, made here for the answer alone: same projects,
+        // same reader, nothing claimed and nothing started. Its own reading of the model and the
+        // baseline is what a plan reports on, so an inspection that could not compare says that
+        // rather than answering with an empty list.
+        List<IProject> modelProjects = new ArrayList<>();
+        modelProjects.add(project);
+        if (!project.equals(infobaseProject))
+        {
+            modelProjects.add(infobaseProject);
+        }
+        DataLossPlan.Plan pending = DataLossPlan.fromStore.read(infobaseProject, application,
+            modelProjects);
+
+        return inspect(appManager, DatabaseUpdater.platformPromptAccess(), pending, application,
+            projectName, resolvedId, viaParent, infobaseProject.getName());
     }
 
     /**
@@ -147,11 +158,13 @@ public final class DatabaseSyncInspector
 
     /**
      * The inspection itself, over services handed in rather than tracked - which is what lets a
-     * test prove the read-only part by reading what the stand-ins were asked.
+     * test prove the read-only part by reading what the stand-ins were asked, and hand in a
+     * comparison without a project, a baseline and a model behind it.
      *
      * @param appManager the application manager
      * @param preferences the infobase preference access
-     * @param guard the guard whose parked questions are being read
+     * @param pending the comparison an update started now would refuse on, or {@code null} when
+     *            none could be made
      * @param application the application the call resolved to
      * @param projectName the project the call named
      * @param applicationId the application id, as the answer names it
@@ -160,9 +173,8 @@ public final class DatabaseSyncInspector
      * @return the JSON answer
      */
     static String inspect(IApplicationManager appManager,
-        DatabaseUpdater.RestructurePromptGuard.Access preferences,
-        InfobaseUpdateQuestionGuard guard, IApplication application, String projectName,
-        String applicationId, boolean viaParent, String infobaseOwnerName)
+        DatabaseUpdater.PromptAccess preferences, DataLossPlan.Plan pending, IApplication application,
+        String projectName, String applicationId, boolean viaParent, String infobaseOwnerName)
     {
         ApplicationUpdateState state;
         try
@@ -190,9 +202,10 @@ public final class DatabaseSyncInspector
             answer.put("infobaseOwner", infobaseOwnerName); //$NON-NLS-1$
         }
 
-        // The preference is read, never written here: it names how the NEXT update of this base
-        // will meet a restructure - asked about, or silently restructured - and unknown is a state
-        // of the environment rather than a guess.
+        // The preference is read, never written here: it decides whether the PLATFORM opens its own
+        // restructure window during an update of this base, and unknown is a state of the
+        // environment rather than a guess. Whether an update deletes data is answered by the
+        // comparison below, not by this.
         InfobaseReference infobase =
             application instanceof IInfobaseApplication ? ((IInfobaseApplication)application).getInfobase()
                 : null;
@@ -202,26 +215,35 @@ public final class DatabaseSyncInspector
         answer.put("restructureConfirmationPrompt", //$NON-NLS-1$
             asking == null ? "unknown" : asking.booleanValue() ? "on" : "off"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        // The parked question of a stopped update: the addresses the platform said it would
-        // delete, readable here for as long as the guard keeps the record.
-        Map<String, Object> parked = null;
-        Optional<InfobaseUpdateQuestionGuard.ParkedQuestion> record =
-            guard.parkedOf(InfobaseIdentity.of(application));
-        if (record.isPresent())
-        {
-            parked = record.get().toJson();
-        }
+        // The data an update started now would delete, worked out the way the update works it out:
+        // the same baseline, the same model, the same comparison, read here without claiming
+        // anything. An update that has NOT been stopped is exactly when a caller can still decide
+        // whether to accept the loss, which is why this is read before the call rather than after.
         Map<String, Object> protection = new LinkedHashMap<>();
         protection.put("nextUpdateProtectsData", Boolean.TRUE); //$NON-NLS-1$
         protection.put("acceptDataLossDefault", Boolean.FALSE); //$NON-NLS-1$
-        if (parked != null)
+        boolean compared = pending != null && pending.compared;
+        List<String> pendingDataLoss = compared ? pending.dataLoss : List.of();
+        protection.put("dataLossCompared", Boolean.valueOf(compared)); //$NON-NLS-1$
+        protection.put("pendingDataLoss", pendingDataLoss); //$NON-NLS-1$
+        protection.put("pendingDataLossCount", Integer.valueOf(pendingDataLoss.size())); //$NON-NLS-1$
+        if (pending != null && pending.file != null)
         {
-            protection.put("parkedQuestion", parked); //$NON-NLS-1$
+            protection.put("baseline", pending.file); //$NON-NLS-1$
+        }
+        protection.put("dataLossCheck", pending == null //$NON-NLS-1$
+            ? "not compared: no comparison was made for this project" //$NON-NLS-1$
+            : pending.check());
+        if (!pendingDataLoss.isEmpty())
+        {
+            protection.put("nextStep", "an update_database call on this project would be refused " //$NON-NLS-1$ //$NON-NLS-2$
+                + "with these addresses; resend it with acceptDataLoss=true to carry the deletion "
+                + "through, or restore the missing entities in the configuration"); //$NON-NLS-1$
         }
         answer.put("dataLossProtection", protection); //$NON-NLS-1$
 
         // An update this server is still tracking, whose receiver has not collected it yet - the
-        // state in which the preference of the base is still the run's to restore.
+        // window in which the base is claimed by a run of ours rather than free.
         List<Map<String, Object>> tracked = trackedUpdatesOf(projectName);
         if (!tracked.isEmpty())
         {
@@ -230,12 +252,13 @@ public final class DatabaseSyncInspector
 
         return answer
             .put("composition", "not available without running an update - the application API " //$NON-NLS-1$ //$NON-NLS-2$
-                + "reports the state, not the objects an update would carry. The parked question " //$NON-NLS-1$
-                + "names the addresses a stopped update was about to delete.") //$NON-NLS-1$
+                + "reports the state, not the objects an update would carry. pendingDataLoss names " //$NON-NLS-1$
+                + "the entities that hold data, are in the infobase and are not in the model - the " //$NON-NLS-1$
+                + "ones a restructure would drop.") //$NON-NLS-1$
             .put("nothingStarted", true) //$NON-NLS-1$
             .put("note", "This inspection reads the update state, the infobase's " //$NON-NLS-1$
-                + "restructure-confirmation preference and any data-loss question an update " //$NON-NLS-1$
-                + "parked. It starts no update, claims no infobase and writes no preference.") //$NON-NLS-1$
+                + "restructure-confirmation preference and its synchronization baseline. It " //$NON-NLS-1$
+                + "starts no update, claims no infobase and writes no preference.") //$NON-NLS-1$
             .toJson();
     }
 

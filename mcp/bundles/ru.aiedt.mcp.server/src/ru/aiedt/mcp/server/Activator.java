@@ -37,7 +37,6 @@ import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobasePreferencesManager;
-import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchonizationQuestionHandler;
 import com._1c.g5.v8.dt.platform.services.core.operations.IInfobaseCreationOperation;
 import com._1c.g5.v8.dt.platform.services.core.operations.ISectionDeleteOperation;
 import com._1c.g5.v8.dt.platform.services.core.runtimes.environments.IResolvableRuntimeInstallationManager;
@@ -634,32 +633,6 @@ public class Activator
     public IInfobasePreferencesManager getInfobasePreferencesManager()
     {
         return service(infobasePreferencesManagerTracker);
-    }
-
-    /**
-     * Registers a handler for the infobase synchronization questions the environment asks during
-     * an update, for the duration of one guarded run. The ranking outranks the environment's own
-     * handler so the questions of a guarded run reach the guard first; unregistering returns the
-     * environment to its own handler.
-     *
-     * @param handler the handler to register
-     * @return what unregisters it, or <code>null</code> when the bundle context is not available
-     */
-    public AutoCloseable registerInfobaseQuestionHandler(IInfobaseSynchonizationQuestionHandler handler)
-    {
-        org.osgi.framework.Bundle bundle = getBundle();
-        BundleContext context = bundle == null ? null : bundle.getBundleContext();
-        if (context == null)
-        {
-            return null;
-        }
-        java.util.Hashtable<String, Object> properties = new java.util.Hashtable<>();
-        properties.put(org.osgi.framework.Constants.SERVICE_RANKING,
-            Integer.valueOf(Integer.MAX_VALUE));
-        ServiceRegistration<IInfobaseSynchonizationQuestionHandler> registration =
-            context.registerService(IInfobaseSynchonizationQuestionHandler.class, handler,
-                properties);
-        return registration::unregister;
     }
 
     /**

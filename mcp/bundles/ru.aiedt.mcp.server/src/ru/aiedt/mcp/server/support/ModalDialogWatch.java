@@ -126,16 +126,6 @@ public final class ModalDialogWatch
     }
 
     /**
-     * The modal dialogs showing right now, as the reading sees them.
-     *
-     * @return each with its title, message and buttons; empty when none is up
-     */
-    public static List<Map<String, Object>> modalDialogsOf()
-    {
-        return current().getDialogs();
-    }
-
-    /**
      * Looks at the workbench's shells.
      *
      * @return what it found; an empty, responding reading when there is no display at all
