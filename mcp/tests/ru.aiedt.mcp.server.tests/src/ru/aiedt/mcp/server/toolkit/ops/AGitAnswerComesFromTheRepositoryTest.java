@@ -903,6 +903,95 @@ public class AGitAnswerComesFromTheRepositoryTest
     }
 
     /**
+     * A file deleted from the work tree comes back in the line endings the repository rule names
+     * for it, read from the commit's tree: one file under {@code eol=lf}, one under
+     * {@code eol=crlf}, so the platform's own line separator cannot pass for the rule.
+     */
+    @Test
+    public void revertFileOfADeletedFileFollowsTheRepositoryRule() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        String directory = PROJECT + "/src/gone"; //$NON-NLS-1$
+        String attributes = directory + "/.gitattributes"; //$NON-NLS-1$
+        String lf = directory + "/Lf.bsl"; //$NON-NLS-1$
+        String crlf = directory + "/Crlf.txt"; //$NON-NLS-1$
+        try
+        {
+            Files.createDirectories(work(directory));
+            Files.writeString(work(attributes), "*.bsl text eol=lf\n*.txt text eol=crlf\n", //$NON-NLS-1$
+                StandardCharsets.UTF_8);
+            Files.writeString(work(lf), "line\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            Files.writeString(work(crlf), "line\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            RevCommit committed;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                committed = commitPaths(git, "Two files under eol rules", attributes, lf, crlf); //$NON-NLS-1$
+            }
+            Files.delete(work(lf));
+            Files.delete(work(crlf));
+            project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+
+            JsonObject restoredLf = call("revert_file", "filePath", lf, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(restoredLf.toString(), restoredLf.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals("LF", restoredLf.get("lineEndings").getAsString()); //$NON-NLS-1$
+            assertArrayEquals("line\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(work(lf))); //$NON-NLS-1$
+
+            JsonObject restoredCrlf = call("revert_file", "filePath", crlf, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(restoredCrlf.toString(), restoredCrlf.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals("CRLF", restoredCrlf.get("lineEndings").getAsString()); //$NON-NLS-1$
+            assertArrayEquals("line\r\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(work(crlf))); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head, directory);
+        }
+    }
+
+    /**
+     * A file the attributes mark {@code -text} comes back byte for byte, as a checkout writes it,
+     * whatever line endings the work-tree file had.
+     */
+    @Test
+    public void revertFileOfAFileMarkedNotTextWritesTheStoredBytes() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        String directory = PROJECT + "/src/raw"; //$NON-NLS-1$
+        String attributes = directory + "/.gitattributes"; //$NON-NLS-1$
+        String module = directory + "/Mixed.bsl"; //$NON-NLS-1$
+        byte[] stored = "first\r\nsecond\nthird\r\n".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        try
+        {
+            Files.createDirectories(work(directory));
+            Files.writeString(work(attributes), "*.bsl -text\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            Files.write(work(module), stored);
+            RevCommit committed;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                committed = commitPaths(git, "Module marked not text", attributes, module); //$NON-NLS-1$
+            }
+            project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+            Files.writeString(work(module), "changed\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+
+            JsonObject restored = call("revert_file", "filePath", module, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals("as stored", restored.get("lineEndings").getAsString()); //$NON-NLS-1$
+            assertArrayEquals(stored, Files.readAllBytes(work(module)));
+        }
+        finally
+        {
+            backTo(head, directory);
+        }
+    }
+
+    /**
      * A preview is answered while an editor holds the file with unsaved changes, and only the write
      * is refused then. The buffer is not something a headless run can dirty, so the decision the
      * operation takes is what is checked here.

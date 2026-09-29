@@ -415,8 +415,8 @@ public enum ToolProfile
      * missing: {@code extension_lifecycle} borrows an object into an extension and appends a handler
      * stub, yet it sits in the agent-composites group that Read-only, Debug &amp; Test and Code Review
      * all leave on, and none of the three named it. All three therefore let a write through.
-     * {@code PresetWriteBlockingTest} now asserts every preset that claims to block writing contains
-     * this whole set.
+     * {@code PresetWriteBlockingTest} asserts that every preset that claims to block writing
+     * disables each writer of its own list, written out there by hand rather than read from here.
      * </p>
      * <p>
      * The repository is as much a write target as the sources, and the three git doors live in the

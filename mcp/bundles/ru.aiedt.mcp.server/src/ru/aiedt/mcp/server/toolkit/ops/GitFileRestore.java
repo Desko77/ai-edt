@@ -18,12 +18,16 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
+import org.eclipse.jgit.attributes.Attributes;
 import org.eclipse.jgit.diff.RawText;
 import org.eclipse.jgit.lib.CoreConfig;
+import org.eclipse.jgit.lib.CoreConfig.AutoCRLF;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.revwalk.RevWalk;
 import org.eclipse.jgit.treewalk.FileTreeIterator;
 import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.WorkingTreeOptions;
 import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.eclipse.jgit.util.io.EolStreamTypeUtil;
 
@@ -135,7 +139,8 @@ public class GitFileRestore
         }
         ObjectId resolved = repository.resolve(fromRef);
         String restoredFrom = resolved == null ? fromRef : resolved.getName();
-        Restored restored = restored(repository, repoPath, revision.bytes(), LineDelimiters.of(file));
+        Restored restored = restored(repository, repoPath, revision.bytes(), LineDelimiters.of(file),
+            resolved);
         if (dryRun)
         {
             GitFileDiff.Answer preview = GitFileDiff.between(repository, fromRef, GitFileDiff.WORK_TREE,
@@ -252,28 +257,44 @@ public class GitFileRestore
      *
      * <p>One case that call does not answer is a repository that states no rule at all: then the
      * ending the work-tree file already has is kept, as every other write site here does - a
-     * workspace is not the place to introduce a form nobody asked for. A binary has no line ending
-     * to convert and is written as the commit stores it.</p>
+     * workspace is not the place to introduce a form nobody asked for. A binary, and a file the
+     * attributes mark {@code -text}, have no line ending to convert and are written as the commit
+     * stores them.</p>
      *
      * @param repository the repository
      * @param repoPath the file, work-tree-relative
      * @param blob the bytes the commit holds
      * @param kept the line endings the work-tree file has now
+     * @param from the commit the file is put back from; {@code null} reads the rule off the work
+     *            tree alone
      * @return the bytes to write and what they carry
      * @throws IOException when the attributes or the conversion cannot be read
      */
-    static Restored restored(Repository repository, String repoPath, byte[] blob, String kept)
-        throws IOException
+    static Restored restored(Repository repository, String repoPath, byte[] blob, String kept,
+        ObjectId from) throws IOException
     {
         if (RawText.isBinary(blob))
         {
             return new Restored(blob, "as stored"); //$NON-NLS-1$
         }
-        CoreConfig.EolStreamType type = checkoutStreamType(repository, repoPath);
-        if (type == null || type == CoreConfig.EolStreamType.DIRECT)
+        CheckoutRule rule = checkoutRule(repository, repoPath, from);
+        if (rule != null && rule.textUnset())
+        {
+            return new Restored(blob, "as stored"); //$NON-NLS-1$
+        }
+        CoreConfig.EolStreamType type;
+        if (rule == null || !rule.stated())
         {
             type = LineDelimiters.LF.equals(kept) ? CoreConfig.EolStreamType.TEXT_LF
                 : CoreConfig.EolStreamType.TEXT_CRLF;
+        }
+        else if (rule.type() == null || rule.type() == CoreConfig.EolStreamType.DIRECT)
+        {
+            return new Restored(blob, endingsOf(blob));
+        }
+        else
+        {
+            type = rule.type();
         }
         boolean crlf = type == CoreConfig.EolStreamType.TEXT_CRLF
             || type == CoreConfig.EolStreamType.AUTO_CRLF;
@@ -286,25 +307,82 @@ public class GitFileRestore
     }
 
     /**
+     * What a checkout of one path decides about its line endings.
+     *
+     * @param type the stream type the checkout converts through
+     * @param textUnset whether the attributes mark the path {@code -text}, so a checkout writes it
+     *            byte for byte
+     * @param stated whether the repository states a rule for the path at all: a {@code text} or
+     *            {@code eol} attribute, or {@code core.autocrlf} other than {@code false}. A rule
+     *            that converts nothing on checkout ({@code eol=lf}, {@code core.autocrlf=input})
+     *            gives the same stream type as no rule, and this is what tells the two apart.
+     */
+    private record CheckoutRule(CoreConfig.EolStreamType type, boolean textUnset, boolean stated)
+    {
+    }
+
+    /**
+     * The line endings a byte sequence carries, named the way the answer names them.
+     *
+     * @param bytes the file content
+     * @return {@code CRLF} or {@code LF} when every line break is of that kind, {@code as stored}
+     *         when the content mixes them or has none
+     */
+    static String endingsOf(byte[] bytes)
+    {
+        int crlf = 0;
+        int lf = 0;
+        for (int i = 0; i < bytes.length; i++)
+        {
+            if (bytes[i] == '\n')
+            {
+                if (i > 0 && bytes[i - 1] == '\r')
+                {
+                    crlf++;
+                }
+                else
+                {
+                    lf++;
+                }
+            }
+        }
+        if (crlf > 0 && lf == 0)
+        {
+            return "CRLF"; //$NON-NLS-1$
+        }
+        if (lf > 0 && crlf == 0)
+        {
+            return "LF"; //$NON-NLS-1$
+        }
+        return "as stored"; //$NON-NLS-1$
+    }
+
+    /**
      * The line-ending rule the repository states for one path on checkout.
      *
      * <p>The walk is what reads {@code .gitattributes}: JGit applies the rules of the file's own
      * directory and of every directory above it there, and the working-tree options of the
      * repository - {@code core.autocrlf}, {@code core.eol} - come from the same place. The call is
      * the one a checkout makes, so the answer is the checkout's answer rather than a reading of the
-     * attributes by this class.</p>
+     * attributes by this class. The tree of the commit the file comes from is walked beside the work
+     * tree, so a file deleted from the work tree still finds its path and the rules above it.</p>
      *
      * @param repository the repository
      * @param repoPath the file, work-tree-relative
-     * @return the stream type, or {@code null} when the work tree does not hold that path
-     * @throws IOException when the attributes cannot be read
+     * @param from the commit the file comes from, or {@code null}
+     * @return the rule, or {@code null} when neither tree holds that path
+     * @throws IOException when the commit or the attributes cannot be read
      */
-    private static CoreConfig.EolStreamType checkoutStreamType(Repository repository, String repoPath)
+    private static CheckoutRule checkoutRule(Repository repository, String repoPath, ObjectId from)
         throws IOException
     {
-        try (TreeWalk walk = new TreeWalk(repository))
+        try (TreeWalk walk = new TreeWalk(repository); RevWalk revWalk = new RevWalk(repository))
         {
             walk.addTree(new FileTreeIterator(repository));
+            if (from != null)
+            {
+                walk.addTree(revWalk.parseTree(from));
+            }
             walk.setRecursive(true);
             walk.setFilter(PathFilter.create(repoPath));
             walk.setAttributesNodeProvider(repository.createAttributesNodeProvider());
@@ -312,7 +390,12 @@ public class GitFileRestore
             {
                 return null;
             }
-            return walk.getEolStreamType(TreeWalk.OperationType.CHECKOUT_OP);
+            Attributes attributes = walk.getAttributes();
+            boolean stated = !attributes.isUnspecified("text") //$NON-NLS-1$
+                || !attributes.isUnspecified("eol") //$NON-NLS-1$
+                || repository.getConfig().get(WorkingTreeOptions.KEY).getAutoCRLF() != AutoCRLF.FALSE;
+            return new CheckoutRule(walk.getEolStreamType(TreeWalk.OperationType.CHECKOUT_OP),
+                attributes.isUnset("text"), stated); //$NON-NLS-1$
         }
     }
 

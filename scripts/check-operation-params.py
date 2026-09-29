@@ -264,7 +264,7 @@ def method_body(source: str, name: str) -> str:
     had fallen through to the facade-wide set instead of what each operation reads.
     """
     signature = re.search(
-        r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w., ]+)?\s*\{", source)
+        r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w.,\s]+)?\s*\{", source)
     if not signature:
         return ""
     start = source.find("{", signature.end() - 1)
