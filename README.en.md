@@ -57,7 +57,7 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🧱 **Build complex artifacts** | Work with DCS, MXL, XDTO, extensions, external objects and external data sources through dedicated workshops. |
 | 🧪 **Test and inspect data** | Run or debug YAxUnit tests, execute Vanessa Automation scenarios and inspect runtime state through a suspended debug session. |
 | 🛡️ **Review security boundaries** | Audit roles and RLS, scan source and metadata for potentially sensitive data, and disable write-capable tools with presets. |
-| 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. |
+| 📦 **Take delivery as one file** | Import a configuration or an extension from `.cf` and `.cfe` straight into a project - the last errand that used to mean opening Configurator. An extension is imported against the named project of its base configuration (`baseProjectName`). |
 | 🔀 **Update a configuration on support** | Compare the project with a new delivery and their common ancestor, decide per object or per method, and apply the update keeping local changes. Read the vendor support registry and record object modes to a file before merging. |
 | 🧯 **Check an extension before an update** | Get the extension objects that stop applying after a new delivery, with the reason for each: a changed signature on an intercepted method, a target that is gone, a borrowed object that no longer matches. |
 | 👀 **See what the agent did** | Open the call history from the status bar: what ran, with which arguments, and what came back. |
@@ -72,6 +72,12 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🤝 **Ask 1C:Naparnik** | Put a question to Naparnik from the agent (`naparnik operation=ask`) with the bridge on; by default Naparnik gets read-only tools, including search over the platform documentation and ITS in the service's knowledge base. |
 | 📜 **See what happened in the base** | Read a file infobase's event log - logins, postings, configuration updates, platform errors - filtered by time, event, user and severity. |
 | 🧭 **Tell running EDTs apart** | The server names the workspace it runs in, and `self_status` lists the live instances on the machine with their ports and open projects. |
+| 🛑 **Keep data through an update** | Learn before an infobase update which tables would lose data to a removed object or part of one: `update_database` refuses with a `dataLossTables` list and does not take the infobase until the loss is accepted explicitly (`acceptDataLoss=true`). |
+| ↩️ **Put a file or the project back after a merge** | See a file's changes against a commit, method by method for a module (`git operation=show_file_changes`), write a file back from a commit with the line endings `git checkout` would give it (`revert_file`), and put the project files back to the point recorded before a merge with a delivery (`restore_merge_point`). |
+| 📥 **Export the configuration from the infobase** | Export the infobase configuration or an extension to `.cf` and `.cfe` (`config_io operation=export_database_configuration`, `export_database_extension`); an occupied path and an infobase that differs from the project are refused without explicit leave. |
+| 🗂️ **See EDT's infobase list** | Get the infobases from EDT's list with their groups, the connection string with passwords masked, the platform version and the bound projects: `infobase_admin operation=list_registered_infobases`. |
+| 🎨 **Set a form's conditional appearance** | Add, read and remove the conditional appearance rules of a managed form: `edit_metadata` `add_form_appearance_rule`, `list_form_appearance_rules`, `remove_form_appearance_rule`. |
+| ⏸️ **Pause a debug thread** | Suspend one thread or the whole session (`launch_debugger action=pause_thread`), disable a breakpoint without removing it (`set_breakpoint_state`) and replace a module's breakpoint set in one call (`add_breakpoint` with `replaceModuleSet`). |
 
 The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
 
@@ -444,7 +450,7 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `config_io` | Configuration and single-artifact import and export. |
 | `docs_lookup` | Platform documentation and built-in 1C object help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks and tasks. |
-| `git` | The project's repository inside EDT: status, branches, history, a commit of named files and a switch of branch - through the JGit the IDE ships. The writes are switched off by presets under the names `git_commit` and `git_checkout`. |
+| `git` | The project's repository inside EDT: status, branches, history, a commit of named files, a switch of branch, a file's changes and its restore from a commit, a point before a merge - through the JGit the IDE ships. The writes are switched off by presets under the names `git_commit`, `git_checkout` and `git_revert_file`. |
 | `dcs_workshop` / `mxl_workshop` / `xdto_workshop` / `external_data_source_workshop` | Programmatic builders for complex 1C artifacts. |
 | `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations; `import_external_object` converts an `.epf` / `.erf` through the Designer of the named infobase (`applicationId`) and hands the infobase back to EDT. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |
@@ -463,6 +469,8 @@ A call that does not finish within the wait returns `status=Pending` and a `runK
 An `edit_metadata batch` answer also carries `progress`: how many operations are done, applied and rejected, and which one is running. A batch commits each operation separately, so the ones it reports as applied are already written.
 
 A client that declares protocol revision 2026-07-28 receives the same run as a task - `tasks/get`, `tasks/update`, `tasks/cancel`.
+
+`tasks/cancel` and `cancel=true` with a `runKey` answer with the outcome of the stop: `STOPPED` - the work stopped, `STILL_RUNNING` - the platform call is still going, `NOTHING_TO_STOP` - there was nothing to stop. Until the stopped work ends, calling the same work again answers `stillStopping: true` and no second copy starts.
 
 Heavy calls - an infobase update, including one before a client starts, configuration export and import, a Designer run, infobase creation, project-wide scans - run at most three at a time, and once more than 92 % of EDT's heap survives a collection a new heavy call is refused before any work starts. An external client gets `503` with `Retry-After`. A `Pending` answer holds its permit until the background work ends; polling a `runKey` takes no permit.
 
