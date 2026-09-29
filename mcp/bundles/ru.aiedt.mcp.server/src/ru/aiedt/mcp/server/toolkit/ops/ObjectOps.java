@@ -22,6 +22,8 @@ import com._1c.g5.v8.bm.integration.IBmTask;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
+import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -409,6 +411,11 @@ final class ObjectOps
             }
         }
 
+        // The project-aware creation route needs the V8 project, and the task body below is an
+        // anonymous class - so the project is resolved once, here, and captured by it.
+        IV8ProjectManager v8ProjectManager = Activator.getDefault().getV8ProjectManager();
+        IV8Project v8Project = v8ProjectManager != null ? v8ProjectManager.getProject(project) : null;
+
         // Create+add inside a write task
         IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
         IBmModel bmModel = bmModelManager != null ? bmModelManager.getModel(project) : null;
@@ -420,6 +427,9 @@ final class ObjectOps
         // 3.8.4: track inner-form creation for CommonForm
         AtomicReference<String> innerFormFqn = new AtomicReference<>(null);
         AtomicReference<String> innerFormCreateError = new AtomicReference<>(null);
+        // Set when the object had to come from the raw factory because the initialized route
+        // could not run: the answer says so rather than presenting the object as a full one.
+        AtomicReference<String> defaultsWarning = new AtomicReference<>(null);
         // Expose synonym outcome to the agent (no silent skip on best-effort failure).
         AtomicReference<EditMetadataTool.SynonymResult> synonymRef = new AtomicReference<>(EditMetadataTool.SynonymResult.skipped());
 
@@ -439,13 +449,29 @@ final class ObjectOps
                 @Override
                 public Void execute(IBmTransaction tx, IProgressMonitor pm)
                 {
-                    MdObject created = BmObjectHelper.createGenericObject(englishType);
+                    // Through the project-aware factory, so the new object carries the defaults
+                    // the EDT wizard would have written into the .mdo. The raw factory below
+                    // stays as the fallback for a runtime where that service is unavailable.
+                    BmObjectHelper.CreationOutcome creation =
+                        BmObjectHelper.createInitializedObjectWithReason(englishType, v8Project);
+                    MdObject created = creation.getObject();
+                    if (created == null)
+                    {
+                        created = BmObjectHelper.createGenericObject(englishType);
+                        // The fallback builds a usable object, but without the per-type defaults.
+                        // An unreachable or failing factory is a degraded object the client has
+                        // to be told about; a name that does not resolve keeps its old refusal.
+                        if (created != null && creation.isFactoryFailure())
+                        {
+                            defaultsWarning.set(creation.getDefaultsWarning());
+                        }
+                    }
                     if (created == null)
                     {
                         finalErr.append("Cannot create '" + englishType //$NON-NLS-1$
-                            + "' - neither MdClassFactory.create" + englishType //$NON-NLS-1$
-                            + "() nor MdClassPackage.eINSTANCE.get" + englishType //$NON-NLS-1$
-                            + "() resolves on this EDT runtime."); //$NON-NLS-1$
+                            + "' - MdObjectFactory.create, MdClassFactory.create" + englishType //$NON-NLS-1$
+                            + "() and MdClassPackage.eINSTANCE.get" + englishType //$NON-NLS-1$
+                            + "() all fail on this EDT runtime."); //$NON-NLS-1$
                         return null;
                     }
                     created.setName(name);
@@ -580,6 +606,13 @@ final class ObjectOps
             Map<String, Object> reason = new LinkedHashMap<>();
             reason.put("reason", sr.error); //$NON-NLS-1$
             ok.put("synonymNotSet", reason); //$NON-NLS-1$
+        }
+        // A successful call is not proof of a fully initialized object: when the raw factory
+        // had to stand in, the per-type defaults are absent and the client has to know before
+        // it goes on to fill the object in by hand.
+        if (defaultsWarning.get() != null)
+        {
+            ok.put("warning", defaultsWarning.get()); //$NON-NLS-1$
         }
         // Audit B2/G10: surface a failed CommonForm inner-form creation (was only
         // logged). Without the inner Form the new .mdo opens as a blank form, so
