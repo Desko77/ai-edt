@@ -13,21 +13,26 @@ import java.util.Map;
 import ru.aiedt.mcp.server.Activator;
 
 /**
- * <b>Defensive layer 3.8.3</b>: applies the 11 base properties that the EDT
- * "New Form" wizard sets on a generic+empty form, so the form opens in the
- * editor and tables don't collapse to zero height at runtime. <p>
+ * <b>Defensive layer 3.8.3</b>: gives a form created without the EDT form
+ * generator the base root properties the generator itself writes, so a form
+ * built by {@code create_form layout=empty} carries the same root as a
+ * generated one. <p>
  *
- * Root cause: a generic form (no main attribute, layout=empty) goes
- * through the EDT form generator with an empty field description. The
- * generator does not auto-populate the 11 baseline properties (group layout,
- * command bar, command interface, item placement, etc.), so the editor
- * refuses to open the form and a table dropped on it collapses. The visual
- * "New Form" wizard does the right thing; the headless path does not. <p>
+ * The generator puts nine scalar attributes on the form root
+ * ({@code saveWindowSettings}, {@code autoTitle}, {@code autoUrl},
+ * {@code group=Vertical}, {@code autoFillCheck}, {@code allowFormCustomize},
+ * {@code enabled}, {@code showTitle}, {@code showCloseButton} - all
+ * {@code true}/{@code Vertical}) plus two containers: an
+ * {@code autoCommandBar} with {@code horizontalAlign=Left} and
+ * {@code autoFill=true}, and an empty {@code commandInterface} holding a
+ * {@code navigationPanel} and a {@code commandBar}. A form without them keeps
+ * the model defaults of those features - {@code false} for the booleans - so
+ * the client sees a disabled form with no title and no close button. <p>
  *
- * 1.40 fix: this helper sets all 11 properties via reflection-based EMF
- * setters. The list is hard-coded (matches upstream defaults). When a property is
- * not exposed on the current EDT build (older API), it is silently skipped -
- * the form still gets the "best effort" 9-10 properties.
+ * Every property is applied by reflective EMF setters, because the plugin
+ * never compiles against the form model. A property that has no matching
+ * setter on the current EDT build is silently skipped - the form still gets
+ * the rest, and a create never fails over a renamed feature.
  *
  * <p>Also exposes {@link #buildEmptyForm(Object)} - a stub that creates an
  * empty {@code Form} root suitable for attaching to a CommonForm wrapper
@@ -36,13 +41,27 @@ import ru.aiedt.mcp.server.Activator;
 public final class FormBaseSetup
 {
     /**
-     * The 11 base properties applied to a generic+empty form.
-     * Names are EMF feature names (capital first letter form: {@code Foo} for
-     * the {@code setFoo}/{@code getFoo} pair).
-     * Values are constants - {@code "Auto"}, {@code "Vertical"}, {@code "Horizontal"},
-     * {@code "true"}, etc. - the helper coerces to the setter type.
+     * The scalar base properties of a form root, as the EDT form generator
+     * writes them. Names are EMF feature names (capital first letter form:
+     * {@code Foo} for the {@code setFoo}/{@code getFoo} pair); values are the
+     * enum constant names and boolean literals the helper coerces to the
+     * setter type. Beside these, every form root receives the two container
+     * properties an empty form is born without: an {@code autoCommandBar}
+     * ({@code horizontalAlign=Left}, {@code autoFill=true}) and a
+     * {@code commandInterface} with empty navigation and command bar panels.
      */
     private static final Map<String, String> BASE_PROPERTIES = buildBaseProperties();
+
+    /** The container properties applied beside {@link #BASE_PROPERTIES}: autoCommandBar, commandInterface. */
+    private static final int CONTAINER_PROPERTIES = 2;
+
+    /**
+     * Candidate class names of the form model factory, tried in this order.
+     */
+    private static final String[] FORM_FACTORY_CLASSES = {
+        "com._1c.g5.v8.dt.form.model.FormFactory", //$NON-NLS-1$
+        "com._1c.g5.v8.dt.form.FormFactory" //$NON-NLS-1$
+    };
 
     /**
      * Accessors a metadata form wrapper uses for the {@code form.model.Form} it holds, in the order
@@ -60,25 +79,25 @@ public final class FormBaseSetup
 
     private static Map<String, String> buildBaseProperties()
     {
-        // Hard-coded upstream defaults (see RELEASE-3.8.0.md and tools.html § Forms).
+        // The EDT form generator's root attribute set (form.model.Form features).
         Map<String, String> m = new LinkedHashMap<>();
-        m.put("ChildrenAlign", "ItemsCenter");
-        m.put("VerticalAlign", "Top");
-        m.put("HorizontalAlign", "Left");
-        m.put("ItemsGroup", "Vertical");
-        m.put("ChildrenWidth", "MaximalWidth");
-        m.put("EnableContentChange", "true");
-        m.put("AutoCommandBar", "true");
-        m.put("CommandBarLocation", "Top");
-        m.put("ScalingMode", "Normal");
-        m.put("AutoFillCheck", "true");
-        m.put("Use75Percent", "false");
+        m.put("SaveWindowSettings", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("AutoTitle", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("AutoUrl", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("Group", "VERTICAL"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("AutoFillCheck", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("AllowFormCustomize", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("Enabled", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("ShowTitle", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("ShowCloseButton", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         return m;
     }
 
     /**
-     * Applies the 11 base properties to the given form root. Properties that
-     * have no matching setter on the form class are silently skipped.
+     * Applies the base properties to the given form root - the nine scalar
+     * attributes the EDT form generator writes, the {@code autoCommandBar}
+     * container and the empty {@code commandInterface}. Properties that have
+     * no matching setter on the form class are silently skipped.
      * <p>
      * The properties live on the {@code form.model.Form}, not on the
      * {@code mdclass} wrapper the configuration holds it under, so a wrapper
@@ -106,8 +125,14 @@ public final class FormBaseSetup
             }
         }
         Activator.logInfo("FormBaseSetup applied " + applied + "/" //$NON-NLS-1$ //$NON-NLS-2$
-            + BASE_PROPERTIES.size() + " base properties to " + target.getClass().getSimpleName());
+            + totalCount() + " base properties to " + target.getClass().getSimpleName());
         return applied;
+    }
+
+    /** The full property count the helper tries to apply: scalar plus container properties. */
+    private static int totalCount()
+    {
+        return BASE_PROPERTIES.size() + CONTAINER_PROPERTIES;
     }
 
     /**
@@ -126,7 +151,100 @@ public final class FormBaseSetup
                 applied++;
             }
         }
+        if (configureAutoCommandBar(formRoot))
+        {
+            applied++;
+        }
+        if (ensureCommandInterface(formRoot))
+        {
+            applied++;
+        }
         return applied;
+    }
+
+    /**
+     * Gives the form its {@code autoCommandBar}: the container the form already holds is
+     * configured, and a form without one receives a new container from the model factory. Either
+     * way the container ends up with {@code horizontalAlign=Left} and {@code autoFill=true},
+     * matching the generator's bar.
+     *
+     * @param form the form root
+     * @return true when the form holds a command bar carrying both settings
+     */
+    private static boolean configureAutoCommandBar(Object form)
+    {
+        Object bar = invokeNoArgGetter(form, "getAutoCommandBar"); //$NON-NLS-1$
+        if (bar == null)
+        {
+            Object factory = formFactory();
+            if (factory == null || !hasOneArgMethod(form, "setAutoCommandBar")) //$NON-NLS-1$
+            {
+                return false;
+            }
+            bar = createViaFactory(factory, "createAutoCommandBar"); //$NON-NLS-1$
+            if (bar == null || !invokeObjectSetter(form, "setAutoCommandBar", bar)) //$NON-NLS-1$
+            {
+                return false;
+            }
+        }
+        boolean aligned = applyOne(bar, "HorizontalAlign", "LEFT"); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean filled = applyOne(bar, "AutoFill", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        return aligned && filled;
+    }
+
+    /**
+     * Gives the form its {@code commandInterface}: the interface the form already holds is kept,
+     * and a form without one receives a new interface from the model factory. Either way the
+     * interface carries its two empty panels - {@code navigationPanel} and {@code commandBar} -
+     * the way the generator's empty interface does.
+     *
+     * @param form the form root
+     * @return true when the form holds a command interface with both panels
+     */
+    private static boolean ensureCommandInterface(Object form)
+    {
+        Object commandInterface = invokeNoArgGetter(form, "getCommandInterface"); //$NON-NLS-1$
+        if (commandInterface == null)
+        {
+            Object factory = formFactory();
+            if (factory == null || !hasOneArgMethod(form, "setCommandInterface")) //$NON-NLS-1$
+            {
+                return false;
+            }
+            commandInterface = createViaFactory(factory, "createFormCommandInterface"); //$NON-NLS-1$
+            if (commandInterface == null
+                || !invokeObjectSetter(form, "setCommandInterface", commandInterface)) //$NON-NLS-1$
+            {
+                return false;
+            }
+        }
+        boolean navigation = ensureCommandInterfacePanel(commandInterface,
+            "NavigationPanel"); //$NON-NLS-1$
+        boolean commands = ensureCommandInterfacePanel(commandInterface, "CommandBar"); //$NON-NLS-1$
+        return navigation && commands;
+    }
+
+    /**
+     * Ensures one panel of a command interface exists, creating it from the model factory when the
+     * interface was born without it.
+     *
+     * @param commandInterface the form's command interface
+     * @param panelName the panel's EMF feature name ({@code NavigationPanel} or {@code CommandBar})
+     * @return true when the interface holds that panel
+     */
+    private static boolean ensureCommandInterfacePanel(Object commandInterface, String panelName)
+    {
+        if (invokeNoArgGetter(commandInterface, "get" + panelName) != null) //$NON-NLS-1$
+        {
+            return true;
+        }
+        Object factory = formFactory();
+        if (factory == null || !hasOneArgMethod(commandInterface, "set" + panelName)) //$NON-NLS-1$
+        {
+            return false;
+        }
+        Object panel = createViaFactory(factory, "createFormCommandInterfaceItems"); //$NON-NLS-1$
+        return panel != null && invokeObjectSetter(commandInterface, "set" + panelName, panel); //$NON-NLS-1$
     }
 
     /**
@@ -180,6 +298,125 @@ public final class FormBaseSetup
             }
         }
         return false;
+    }
+
+    /** True when the object exposes a one-argument method of that name. */
+    private static boolean hasOneArgMethod(Object obj, String name)
+    {
+        for (Method m : obj.getClass().getMethods())
+        {
+            if (name.equals(m.getName()) && m.getParameterCount() == 1)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The value of a no-argument getter, or {@code null} when the object exposes no such method or
+     * the call refuses.
+     *
+     * @param obj the object to read
+     * @param name the getter name
+     * @return the getter's value, or {@code null}
+     */
+    private static Object invokeNoArgGetter(Object obj, String name)
+    {
+        if (obj == null || !hasNoArgMethod(obj, name))
+        {
+            return null;
+        }
+        try
+        {
+            return obj.getClass().getMethod(name).invoke(obj);
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * Invokes the single-argument setter of that name whose parameter accepts the value.
+     *
+     * @param obj the object to set the value on
+     * @param name the setter name
+     * @param value the value to set
+     * @return true when a setter was invoked
+     */
+    private static boolean invokeObjectSetter(Object obj, String name, Object value)
+    {
+        for (Method m : obj.getClass().getMethods())
+        {
+            if (name.equals(m.getName()) && m.getParameterCount() == 1
+                && m.getParameterTypes()[0].isInstance(value))
+            {
+                try
+                {
+                    m.invoke(obj, value);
+                    return true;
+                }
+                catch (Exception e)
+                {
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The form model factory singleton, or {@code null} when no candidate factory class resolves
+     * on this runtime.
+     *
+     * @return the {@code FormFactory} singleton, or {@code null}
+     */
+    private static Object formFactory()
+    {
+        for (String factoryClass : FORM_FACTORY_CLASSES)
+        {
+            try
+            {
+                Class<?> clazz = Class.forName(factoryClass);
+                Object factory = clazz.getField("eINSTANCE").get(null); //$NON-NLS-1$
+                if (factory != null)
+                {
+                    return factory;
+                }
+            }
+            catch (ClassNotFoundException ignored)
+            {
+                // try next factory class
+            }
+            catch (Exception e)
+            {
+                Activator.logWarning("FormBaseSetup factory " + factoryClass //$NON-NLS-1$
+                    + " failed: " + e.getMessage()); //$NON-NLS-1$
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Creates a model object by calling a no-argument create method of the factory.
+     *
+     * @param factory the form model factory
+     * @param createMethod the factory method name
+     * @return the created object, or {@code null} when the call refuses
+     */
+    private static Object createViaFactory(Object factory, String createMethod)
+    {
+        try
+        {
+            return factory.getClass().getMethod(createMethod).invoke(factory);
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("FormBaseSetup " + createMethod //$NON-NLS-1$
+                + " failed: " + e.getMessage()); //$NON-NLS-1$
+            return null;
+        }
     }
 
     private static boolean applyOne(Object obj, String propertyName, String value)
@@ -288,39 +525,26 @@ public final class FormBaseSetup
 
     /**
      * Builds an empty {@code Form} root suitable for attaching to a CommonForm
-     * wrapper. Uses the EDT form-factory via reflection (probe several
-     * candidate package names). Returns null when the factory is missing.
+     * wrapper: the form the model factory creates, with the base properties of
+     * a generated form applied. Returns null when the factory is missing.
+     *
+     * @param owningContext the object the form will be attached to (unused -
+     *                      the factory needs no context)
+     * @return the empty form root, or {@code null} when no form factory resolves
      */
     public static Object buildEmptyForm(Object owningContext)
     {
-        for (String factoryClass : new String[] {
-            "com._1c.g5.v8.dt.form.model.FormFactory",
-            "com._1c.g5.v8.dt.form.FormFactory"
-        })
+        Object factory = formFactory();
+        if (factory == null)
         {
-            try
-            {
-                Class<?> clazz = Class.forName(factoryClass);
-                java.lang.reflect.Field eInstance = clazz.getField("eINSTANCE"); //$NON-NLS-1$
-                Object factory = eInstance.get(null);
-                Method create = factory.getClass().getMethod("createForm"); //$NON-NLS-1$
-                Object form = create.invoke(factory);
-                if (form != null)
-                {
-                    applyDefaults(form);
-                    return form;
-                }
-            }
-            catch (ClassNotFoundException ignored)
-            {
-                // try next factory class
-            }
-            catch (Exception e)
-            {
-                Activator.logWarning("buildEmptyForm " + factoryClass //$NON-NLS-1$
-                    + " failed: " + e.getMessage()); //$NON-NLS-1$
-            }
+            return null;
         }
-        return null;
+        Object form = createViaFactory(factory, "createForm"); //$NON-NLS-1$
+        if (form == null)
+        {
+            return null;
+        }
+        applyDefaults(form);
+        return form;
     }
 }

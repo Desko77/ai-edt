@@ -549,10 +549,12 @@ final class FormCreateOps
                 Object innerFormForContent = innerFormModelRef.get();
                 if (innerFormForContent != null && isManagedEmpty)
                 {
-                    // 3.8.3 defensive layer: the 11 base properties an empty managed form is born
-                    // with (children align, command bar, command interface, ...). Without them the
-                    // editor refuses to open the form and tables collapse at runtime. They live on
-                    // the inner form.model.Form, so they can only be applied once that object
+                    // 3.8.3 defensive layer: the base root properties of a generated form
+                    // (enabled, titles, window settings, autoCommandBar, commandInterface).
+                    // A form born without them keeps the model defaults of those features -
+                    // the booleans default to false, so the client would see a disabled
+                    // form with no title and no close button. They live on the inner
+                    // form.model.Form, so they can only be applied once that object
                     // exists - applying them to the metadata wrapper reached no setter at all and
                     // reported zero (audit W06 F1).
                     scaffoldedProps.set(FormBaseSetup.applyDefaults(innerFormForContent));
