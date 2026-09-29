@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -21,16 +22,21 @@ import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.api.ResetCommand;
+import org.eclipse.jgit.revwalk.RevCommit;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -67,6 +73,11 @@ public class AGitAnswerComesFromTheRepositoryTest
         Files.writeString(projectDir.resolve("src/Module.bsl"), "// probe\n", StandardCharsets.UTF_8); //$NON-NLS-1$ //$NON-NLS-2$
         try (Git git = Git.init().setDirectory(repoRoot.toFile()).call())
         {
+            // A host-wide autocrlf would rewrite the blob on the way back to the work tree, and a
+            // restore that promises the committed bytes could not be told apart from one that
+            // normalized them.
+            git.getRepository().getConfig().setString("core", null, "autocrlf", "false"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            git.getRepository().getConfig().save();
             git.add().addFilepattern(PROJECT + "/src/Module.bsl").call(); //$NON-NLS-1$
             git.commit().setAuthor("Probe", "probe@example.invalid") //$NON-NLS-1$ //$NON-NLS-2$
                 .setMessage("Probe sources").call(); //$NON-NLS-1$
@@ -102,6 +113,7 @@ public class AGitAnswerComesFromTheRepositoryTest
         catalog.register(new GitTool());
         catalog.register(new GitCommitTool());
         catalog.register(new GitCheckoutTool());
+        catalog.register(new GitFileRestore());
     }
 
     @After
@@ -123,14 +135,15 @@ public class AGitAnswerComesFromTheRepositoryTest
     }
 
     /**
-     * A call without an operation is refused with the five the tool knows.
+     * A call without an operation is refused with every operation the tool knows.
      */
     @Test
     public void aCallWithoutAnOperationIsRefused()
     {
         String answer = new GitTool().execute(Map.of());
         assertTrue(answer, answer.contains("operation is required")); //$NON-NLS-1$
-        for (String known : new String[] { "status", "branches", "log", "commit", "checkout" }) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        for (String known : new String[] { "status", "branches", "log", "commit", "checkout", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "show_file_changes", "revert_file" }) //$NON-NLS-1$ //$NON-NLS-2$
         {
             assertTrue(answer, answer.contains(known));
         }
@@ -483,5 +496,280 @@ public class AGitAnswerComesFromTheRepositoryTest
         assertFalse(commit, commit.contains("\"sha\"")); //$NON-NLS-1$
         JsonObject status = call("status"); //$NON-NLS-1$
         assertTrue(status.toString(), status.get("success").getAsBoolean()); //$NON-NLS-1$
+    }
+
+    private static final String FORM = PROJECT + "/src/Catalogs/Items/Forms/ItemForm/Form.form"; //$NON-NLS-1$
+
+    private static final String MDO = PROJECT + "/src/Catalogs/Items/Items.mdo"; //$NON-NLS-1$
+
+    private static final String MODULE = PROJECT + "/src/TwoMethods.bsl"; //$NON-NLS-1$
+
+    /**
+     * A path inside the temporary repository, one segment at a time, so a forward slash is a
+     * separator on every host.
+     *
+     * @param repoRelative the path relative to the repository root
+     * @return the file
+     */
+    private static Path work(String repoRelative)
+    {
+        Path path = repoRoot;
+        for (String segment : repoRelative.split("/")) //$NON-NLS-1$
+        {
+            path = path.resolve(segment);
+        }
+        return path;
+    }
+
+    /**
+     * Stages the named paths and commits them. A blanket add would take the project's own
+     * {@code .project}, and returning to the earlier commit would then delete it.
+     *
+     * @param git the repository
+     * @param message the commit message
+     * @param paths the work-tree paths to stage
+     * @return the commit
+     * @throws Exception when the repository cannot be written
+     */
+    private static RevCommit commitPaths(Git git, String message, String... paths) throws Exception
+    {
+        for (String path : paths)
+        {
+            git.add().addFilepattern(path).call();
+        }
+        return git.commit().setAuthor("Probe", "probe@example.invalid").setMessage(message).call(); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Puts the repository back to a commit. Only the files these tests added are removed; a clean
+     * of the whole work tree would delete the project's {@code .project}.
+     *
+     * @param head the commit to return to
+     * @throws Exception when the repository cannot be written
+     */
+    private static void backTo(String head) throws Exception
+    {
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            git.reset().setMode(ResetCommand.ResetType.HARD).setRef(head).call();
+        }
+        deleteTree(work(PROJECT + "/src/Catalogs")); //$NON-NLS-1$
+        Files.deleteIfExists(work(MODULE));
+        project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+    }
+
+    /**
+     * Deletes a file or a directory tree the test created.
+     *
+     * @param path the file or directory
+     * @throws Exception when a file cannot be deleted
+     */
+    private static void deleteTree(Path path) throws Exception
+    {
+        if (!Files.exists(path))
+        {
+            return;
+        }
+        try (var walk = Files.walk(path))
+        {
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(each -> {
+                try
+                {
+                    Files.deleteIfExists(each);
+                }
+                catch (java.io.IOException e)
+                {
+                    throw new java.io.UncheckedIOException(e);
+                }
+            });
+        }
+    }
+
+    /**
+     * A line diff between two commits names the form and the metadata file, and the form's hunks
+     * carry the line that changed.
+     */
+    @Test
+    public void aLineDiffBetweenCommitsNamesHunksOfAFormAndMetadata() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        try
+        {
+            Files.createDirectories(work(FORM).getParent());
+            Files.createDirectories(work(MDO).getParent());
+            Files.writeString(work(FORM), "<form><title>Before</title></form>\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            Files.writeString(work(MDO), "<mdclass><name>Items</name></mdclass>\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            RevCommit first;
+            RevCommit second;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                first = commitPaths(git, "Add form and metadata", FORM, MDO); //$NON-NLS-1$
+                Files.writeString(work(FORM), "<form><title>After</title></form>\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+                Files.writeString(work(MDO), "<mdclass><name>Goods</name></mdclass>\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+                second = commitPaths(git, "Rename the title and the object", FORM, MDO); //$NON-NLS-1$
+            }
+            JsonObject listed = call("show_file_changes", "fromRef", first.getName(), "toRef", second.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(listed.toString(), listed.get("success").getAsBoolean()); //$NON-NLS-1$
+            JsonArray files = listed.getAsJsonArray("files"); //$NON-NLS-1$
+            assertEquals(listed.toString(), 2, files.size());
+            for (JsonElement element : files)
+            {
+                JsonObject file = element.getAsJsonObject();
+                assertTrue(file.toString(), file.get("linesAdded").getAsInt() >= 1); //$NON-NLS-1$
+                assertTrue(file.toString(), file.get("linesRemoved").getAsInt() >= 1); //$NON-NLS-1$
+            }
+            JsonObject one = call("show_file_changes", "filePath", FORM, "fromRef", first.getName(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                "toRef", second.getName()); //$NON-NLS-1$
+            assertTrue(one.toString(), one.get("success").getAsBoolean()); //$NON-NLS-1$
+            JsonArray hunks = one.getAsJsonArray("files").get(0).getAsJsonObject().getAsJsonArray("hunks"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(one.toString(), hunks.size() >= 1);
+            assertTrue(one.toString(), hunks.toString().contains("After")); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head);
+        }
+    }
+
+    /**
+     * Method granularity on a module names each procedure whose body changed, and the same
+     * granularity on a form is refused.
+     */
+    @Test
+    public void methodGranularityNamesTheTwoChangedProcedures() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        try
+        {
+            String before = "Procedure First()\n\tA = 1;\nEndProcedure\n\n" //$NON-NLS-1$
+                + "Procedure Second()\n\tB = 2;\nEndProcedure\n"; //$NON-NLS-1$
+            String after = "Procedure First()\n\tA = 10;\nEndProcedure\n\n" //$NON-NLS-1$
+                + "Procedure Second()\n\tB = 20;\nEndProcedure\n"; //$NON-NLS-1$
+            Files.createDirectories(work(MODULE).getParent());
+            Files.writeString(work(MODULE), before, StandardCharsets.UTF_8);
+            RevCommit first;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                first = commitPaths(git, "Two procedures", MODULE); //$NON-NLS-1$
+            }
+            Files.writeString(work(MODULE), after, StandardCharsets.UTF_8);
+            JsonObject diff = call("show_file_changes", "filePath", MODULE, "fromRef", first.getName(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                "granularity", "method"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(diff.toString(), diff.get("success").getAsBoolean()); //$NON-NLS-1$
+            JsonArray hunks = diff.getAsJsonArray("files").get(0).getAsJsonObject().getAsJsonArray("hunks"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(diff.toString(), 2, hunks.size());
+            String names = hunks.toString();
+            assertTrue(names, names.contains("First")); //$NON-NLS-1$
+            assertTrue(names, names.contains("Second")); //$NON-NLS-1$
+
+            JsonObject refused = call("show_file_changes", "filePath", FORM, "granularity", "method"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            assertFalse(refused.toString(), refused.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(refused.toString(), refused.get("error").getAsString().toLowerCase(java.util.Locale.ROOT).contains("bsl")); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head);
+        }
+    }
+
+    /**
+     * Putting a file back from the commit that holds it restores those bytes, including the line
+     * endings, and the work tree is clean again. A preview writes nothing.
+     */
+    @Test
+    public void revertFileRestoresTheCommittedBytesAndAPreviewWritesNothing() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        byte[] original = "line\r\n".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        Path form = work(FORM);
+        try
+        {
+            Files.createDirectories(form.getParent());
+            Files.write(form, original);
+            RevCommit committed;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                committed = commitPaths(git, "Form with CRLF", FORM); //$NON-NLS-1$
+            }
+            project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+            Files.writeString(form, "changed\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+
+            JsonObject preview = call("revert_file", "filePath", FORM, "fromRef", committed.getName(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                "dryRun", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(preview.toString(), preview.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(preview.get("dryRun").getAsBoolean()); //$NON-NLS-1$
+            assertEquals(0, preview.get("bytesWritten").getAsInt()); //$NON-NLS-1$
+            assertEquals("changed\n", Files.readString(form, StandardCharsets.UTF_8)); //$NON-NLS-1$
+            assertTrue(preview.toString(), preview.getAsJsonArray("files").get(0).getAsJsonObject() //$NON-NLS-1$
+                .getAsJsonArray("hunks").size() >= 1); //$NON-NLS-1$
+
+            JsonObject restored = call("revert_file", "filePath", FORM, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals(committed.getName(), restored.get("restoredFrom").getAsString()); //$NON-NLS-1$
+            assertEquals(original.length, restored.get("bytesWritten").getAsInt()); //$NON-NLS-1$
+            assertEquals("clean", restored.get("fileStatus").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertArrayEquals(original, Files.readAllBytes(form));
+            JsonObject status = call("status"); //$NON-NLS-1$
+            assertFalse(status.toString(), status.get("modified").toString().contains("Form.form")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(restored.toString(), restored.get("advice").getAsString().contains("revalidate_objects")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            backTo(head);
+        }
+    }
+
+    /**
+     * A path the commit does not hold is refused, and nothing is written.
+     */
+    @Test
+    public void revertFileRefusesAPathTheCommitDoesNotHold() throws Exception
+    {
+        JsonObject refused = call("revert_file", "filePath", PROJECT + "/src/missing.bsl"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(refused.toString(), refused.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(refused.toString(), refused.get("error").getAsString().contains("missing.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(Files.exists(work(PROJECT + "/src/missing.bsl"))); //$NON-NLS-1$
+    }
+
+    /**
+     * With the write door unregistered, putting a file back is refused before the file is touched.
+     */
+    @Test
+    public void anUnregisteredRevertDoorIsRefused() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        Path module = work(PROJECT + "/src/Module.bsl"); //$NON-NLS-1$
+        byte[] before = Files.readAllBytes(module);
+        try
+        {
+            Files.writeString(module, "// touched\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            McpToolCatalog.getInstance().clear();
+            String answer = new GitTool().execute(Map.of("operation", "revert_file", "projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                "filePath", PROJECT + "/src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(answer, answer.contains("git_revert_file")); //$NON-NLS-1$
+            assertTrue(answer, answer.contains("is disabled and was not executed")); //$NON-NLS-1$
+            assertArrayEquals("// touched\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module)); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head);
+            assertArrayEquals(before, Files.readAllBytes(module));
+        }
     }
 }

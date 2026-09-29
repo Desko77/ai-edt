@@ -95,25 +95,48 @@ public final class GitDiffUtils
      */
     public static PreviousRevision headRevision(Repository repository, String repoRelativePath)
     {
+        return revisionAt(repository, repoRelativePath, Constants.HEAD);
+    }
+
+    /**
+     * Reads a path out of a named commit. The bytes are the blob as that commit stores them.
+     *
+     * @param repository the repository to read
+     * @param repoRelativePath the path inside the work tree, with forward slashes
+     * @param commit a commit-ish (a SHA, a branch or {@code HEAD}); {@code null} or blank reads HEAD
+     * @return the blob as that revision holds it, or the outcome that left nothing to read
+     */
+    public static PreviousRevision revisionAt(Repository repository, String repoRelativePath, String commit)
+    {
+        String rev = commit == null || commit.isBlank() ? Constants.HEAD : commit.trim();
+        boolean head = Constants.HEAD.equals(rev);
+        String where = head ? "HEAD" : rev; //$NON-NLS-1$
         try (RevWalk walk = new RevWalk(repository))
         {
-            ObjectId head = repository.resolve(Constants.HEAD);
-            if (head == null)
+            ObjectId id = repository.resolve(rev);
+            if (id == null)
             {
-                return PreviousRevision.missing(PreviousRevision.Outcome.NO_HEAD,
-                    "HEAD resolves to nothing"); //$NON-NLS-1$
+                return head
+                    ? PreviousRevision.missing(PreviousRevision.Outcome.NO_HEAD, "HEAD resolves to nothing") //$NON-NLS-1$
+                    : PreviousRevision.missing(PreviousRevision.Outcome.READ_ERROR,
+                        "commit '" + rev + "' resolves to nothing"); //$NON-NLS-1$ //$NON-NLS-2$
             }
-            RevTree tree = walk.parseCommit(head).getTree();
+            RevTree tree = walk.parseCommit(id).getTree();
             try (TreeWalk treeWalk = TreeWalk.forPath(repository, repoRelativePath, tree))
             {
                 if (treeWalk == null)
                 {
                     return PreviousRevision.missing(PreviousRevision.Outcome.NOT_IN_HEAD,
-                        repoRelativePath + " is not in HEAD"); //$NON-NLS-1$
+                        repoRelativePath + " is not in " + where); //$NON-NLS-1$
+                }
+                if (treeWalk.getFileMode(0).getObjectType() != Constants.OBJ_BLOB)
+                {
+                    return PreviousRevision.missing(PreviousRevision.Outcome.NOT_IN_HEAD,
+                        repoRelativePath + " is not a file in " + where); //$NON-NLS-1$
                 }
                 byte[] bytes = repository.open(treeWalk.getObjectId(0)).getBytes();
                 return PreviousRevision.found(bytes, PreviousRevision.Origin.GIT_HEAD,
-                    repoRelativePath + " at HEAD"); //$NON-NLS-1$
+                    repoRelativePath + " at " + where); //$NON-NLS-1$
             }
         }
         catch (IOException | RuntimeException e)

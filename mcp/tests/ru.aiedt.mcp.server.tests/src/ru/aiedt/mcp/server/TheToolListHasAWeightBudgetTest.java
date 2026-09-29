@@ -113,8 +113,13 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 174835 to 175155 for breakpointEnabled on set_breakpoint_state and replaceModuleSet
      * on add_breakpoint, and for the two operation names the launch_debugger description carries.
      * </p>
+     * <p>
+     * Raised from 176567 to 178350 for show_file_changes and revert_file on git: the file path,
+     * the two revisions, the granularity and the dry-run flag. The git entry grew from 1330 to
+     * 3113 bytes and nothing else in the list changed.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 176567;
+    private static final int DOCUMENT_BUDGET = 178350;
 
     private LiveServer server;
 
@@ -254,7 +259,9 @@ public class TheToolListHasAWeightBudgetTest
         // Grown to 1330 for the commit operation: staging by name and a refusal for a blanket
         // add is the whole point of having git inside the IDE, and the schema is where a client
         // learns that.
-        BUDGETS.put("git", Integer.valueOf(1330)); //$NON-NLS-1$
+        // Grown to 3113 for show_file_changes and revert_file: the file path, the two revisions,
+        // the line-or-method granularity and the dry-run flag (measured 29.09: 3113).
+        BUDGETS.put("git", Integer.valueOf(3113)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a

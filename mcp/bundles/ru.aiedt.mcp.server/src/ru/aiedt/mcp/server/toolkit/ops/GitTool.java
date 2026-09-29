@@ -23,6 +23,7 @@ import org.eclipse.jgit.lib.Repository;
 import org.eclipse.jgit.revwalk.RevCommit;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.support.GitFileDiff;
 import ru.aiedt.mcp.server.support.GitRepositoryAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ToolGate;
@@ -33,7 +34,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
  * {@code git} - the repository the project lives in, worked inside the IDE: status, branches,
- * log, commit.
+ * log, commit, checkout, a file diff and putting one file back.
  *
  * <p>Development happens in EDT, and the questions git answers - what changed, what branch is
  * this, what is behind - belong to the same window. JGit ships with both supported EDT releases,
@@ -55,10 +56,17 @@ public class GitTool
     @Override
     public String getDescription()
     {
-        return "Git for the project inside EDT: status, branches, log, commit. " //$NON-NLS-1$
+        return "Git for the project inside EDT: status, branches, log, commit, checkout, " //$NON-NLS-1$
+            + "show_file_changes and revert_file. " //$NON-NLS-1$
+            + "show_file_changes reads a line diff, or (granularity=method, one .bsl file) the " //$NON-NLS-1$
+            + "changed procedures and functions by name. " //$NON-NLS-1$
+            + "revert_file writes one file's bytes back from a commit; dryRun previews and writes " //$NON-NLS-1$
+            + "nothing. The index is not touched: afterwards the file matches HEAD, or it is listed " //$NON-NLS-1$
+            + "as modified. An external edit of .form, .mdo or .dcs needs revalidate_objects. " //$NON-NLS-1$
             + "Operations: status (work tree and index vs HEAD, ahead/behind the tracking branch), " //$NON-NLS-1$
             + "branches (local branches, current first), log (recent commits), " //$NON-NLS-1$
-            + "commit (stage named paths and commit them - paths by name only, there is no add-all)."; //$NON-NLS-1$
+            + "commit (stage named paths and commit them - paths by name only, there is no add-all), " //$NON-NLS-1$
+            + "checkout (switch branch, or create it), show_file_changes, revert_file."; //$NON-NLS-1$
     }
 
     @Override
@@ -70,14 +78,15 @@ public class GitTool
     @Override
     public List<String> getGatedWriteNames()
     {
-        return List.of("git_commit", "git_checkout"); //$NON-NLS-1$ //$NON-NLS-2$
+        return List.of("git_commit", "git_checkout", GitFileRestore.DOOR); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("operation", "status | branches | log | commit (required)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("operation", //$NON-NLS-1$
+                "status | branches | log | commit | checkout | show_file_changes | revert_file (required)") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
                 "Name of the EDT project; its repository is the one the operation reads.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
@@ -100,6 +109,22 @@ public class GitTool
             .booleanProperty("createBranch", //$NON-NLS-1$
                 "checkout: create the branch from the current HEAD instead of switching to an " //$NON-NLS-1$
                     + "existing one (default false).") //$NON-NLS-1$
+            .stringProperty("filePath", //$NON-NLS-1$
+                "show_file_changes: one file, relative to the work tree (a project-relative path " //$NON-NLS-1$
+                    + "is accepted). Omit it to list every changed file with line counts and no hunks. " //$NON-NLS-1$
+                    + "revert_file: the one file to put back (required).") //$NON-NLS-1$
+            .stringProperty("fromRef", //$NON-NLS-1$
+                "show_file_changes and revert_file: the commit to read (SHA, branch or HEAD). " //$NON-NLS-1$
+                    + "Default HEAD.") //$NON-NLS-1$
+            .stringProperty("toRef", //$NON-NLS-1$
+                "show_file_changes: the commit to compare against. Omit it to compare with the " //$NON-NLS-1$
+                    + "work tree.") //$NON-NLS-1$
+            .stringProperty("granularity", //$NON-NLS-1$
+                "show_file_changes: line (default) or method. method names each changed procedure " //$NON-NLS-1$
+                    + "and function and applies only to one .bsl filePath; any other file is refused.") //$NON-NLS-1$
+            .booleanProperty("dryRun", //$NON-NLS-1$
+                "revert_file: true previews the diff against fromRef and writes nothing " //$NON-NLS-1$
+                    + "(default false).") //$NON-NLS-1$
             .build();
     }
 
@@ -109,14 +134,14 @@ public class GitTool
         String operation = JsonUtils.extractStringArgument(params, "operation"); //$NON-NLS-1$
         if (operation == null || operation.trim().isEmpty())
         {
-            return ToolResult.error("operation is required: status | branches | log | commit | checkout").toJson(); //$NON-NLS-1$
+            return ToolResult.error("operation is required: status | branches | log | commit | checkout | show_file_changes | revert_file").toJson(); //$NON-NLS-1$
         }
         String op = operation.trim().toLowerCase(java.util.Locale.ROOT);
         if (!op.equals("status") && !op.equals("branches") && !op.equals("log") && !op.equals("commit") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            && !op.equals("checkout")) //$NON-NLS-1$
+            && !op.equals("checkout") && !op.equals("show_file_changes") && !op.equals("revert_file")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         {
             return ToolResult.error("Unknown operation: " + operation //$NON-NLS-1$
-                + ". Known: status, branches, log, commit, checkout.").toJson(); //$NON-NLS-1$
+                + ". Known: status, branches, log, commit, checkout, show_file_changes, revert_file.").toJson(); //$NON-NLS-1$
         }
         if (op.equals("commit")) //$NON-NLS-1$
         {
@@ -132,6 +157,16 @@ public class GitTool
         {
             // A checkout rewrites the work tree - gated the same way, before anything is read.
             String gate = ToolGate.gateOrNull("git_checkout"); //$NON-NLS-1$
+            if (gate != null)
+            {
+                return ToolResult.error(gate).toJson();
+            }
+        }
+        if (op.equals("revert_file")) //$NON-NLS-1$
+        {
+            // Putting a file back writes it. The door is a registered tool, so a read-only preset
+            // refuses the call before the file is read. A preview is the same operation.
+            String gate = ToolGate.gateOrNull(GitFileRestore.DOOR);
             if (gate != null)
             {
                 return ToolResult.error(gate).toJson();
@@ -168,6 +203,10 @@ public class GitTool
                 return doCommit(project, session.git, params);
             case "checkout": //$NON-NLS-1$
                 return doCheckout(project, session.git, params);
+            case "show_file_changes": //$NON-NLS-1$
+                return doShowFileChanges(project, session.git, params);
+            case "revert_file": //$NON-NLS-1$
+                return doRevertFile(project, session.git, params);
             default:
                 return ToolResult.error("Unknown operation: " + operation).toJson(); //$NON-NLS-1$
             }
@@ -177,6 +216,105 @@ public class GitTool
             Activator.logError("git operation " + op + " failed", e); //$NON-NLS-1$ //$NON-NLS-2$
             return ToolResult.error("The git operation failed: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The line diff between two revisions, or the changed files when no file is named.
+     *
+     * <p>{@code method} granularity names each changed procedure and function. It applies only to
+     * one {@code .bsl} file; any other file is refused rather than answered with a line diff the
+     * caller did not ask for.</p>
+     *
+     * @param project the project whose repository is read
+     * @param git the repository
+     * @param params the call's arguments
+     * @return the answer JSON
+     * @throws Exception when the repository cannot be read
+     */
+    private String doShowFileChanges(IProject project, Git git, Map<String, String> params)
+        throws Exception
+    {
+        String filePath = JsonUtils.extractStringArgument(params, "filePath"); //$NON-NLS-1$
+        String fromRef = JsonUtils.extractStringArgument(params, "fromRef"); //$NON-NLS-1$
+        String toRef = JsonUtils.extractStringArgument(params, "toRef"); //$NON-NLS-1$
+        String granularity = JsonUtils.extractStringArgument(params, "granularity"); //$NON-NLS-1$
+        if (fromRef == null || fromRef.trim().isEmpty())
+        {
+            fromRef = "HEAD"; //$NON-NLS-1$
+        }
+        else
+        {
+            fromRef = fromRef.trim();
+        }
+        if (toRef == null || toRef.trim().isEmpty())
+        {
+            toRef = GitFileDiff.WORK_TREE;
+        }
+        else
+        {
+            toRef = toRef.trim();
+        }
+        if (granularity == null || granularity.trim().isEmpty())
+        {
+            granularity = GitFileDiff.LINE;
+        }
+        else
+        {
+            granularity = granularity.trim().toLowerCase(java.util.Locale.ROOT);
+        }
+        if (!GitFileDiff.LINE.equals(granularity) && !GitFileDiff.METHOD.equals(granularity))
+        {
+            return ToolResult.error("granularity must be line or method.").toJson(); //$NON-NLS-1$
+        }
+        String repoPath = null;
+        if (filePath != null && !filePath.trim().isEmpty())
+        {
+            String normalized = normalizePath(filePath);
+            String refusal = pathRefusal(normalized);
+            if (refusal != null)
+            {
+                return ToolResult.error(refusal).toJson();
+            }
+            repoPath = GitFileRestore.toRepoPath(project, git.getRepository(), normalized);
+        }
+        if (GitFileDiff.METHOD.equals(granularity)
+            && (repoPath == null || !repoPath.toLowerCase(java.util.Locale.ROOT).endsWith(".bsl"))) //$NON-NLS-1$
+        {
+            return ToolResult.error("granularity=method applies only to one .bsl file named in " //$NON-NLS-1$
+                + "filePath. Other files are refused; use granularity=line.").toJson(); //$NON-NLS-1$
+        }
+        GitFileDiff.Answer diff = GitFileDiff.between(git.getRepository(), fromRef, toRef, repoPath,
+            granularity);
+        if (diff.error != null)
+        {
+            return ToolResult.error(diff.error).toJson();
+        }
+        return ToolResult.success()
+            .put("operation", "show_file_changes") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("projectName", project.getName()) //$NON-NLS-1$
+            .put("fromRef", fromRef) //$NON-NLS-1$
+            .put("toRef", toRef) //$NON-NLS-1$
+            .put("granularity", granularity) //$NON-NLS-1$
+            .put("fileCount", Integer.valueOf(diff.files.size())) //$NON-NLS-1$
+            .put("files", diff.files) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Puts one file back to the bytes a commit holds. The write itself is {@link GitFileRestore}.
+     *
+     * @param project the project whose repository is written
+     * @param git the repository
+     * @param params the call's arguments
+     * @return the answer JSON
+     * @throws Exception when the repository cannot be read
+     */
+    private String doRevertFile(IProject project, Git git, Map<String, String> params) throws Exception
+    {
+        String filePath = JsonUtils.extractStringArgument(params, "filePath"); //$NON-NLS-1$
+        String fromRef = JsonUtils.extractStringArgument(params, "fromRef"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        return GitFileRestore.apply(project, git, filePath, fromRef, dryRun);
     }
 
     /**
