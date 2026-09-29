@@ -201,9 +201,15 @@ final class FormCreateOps
         // Form-generator path (renderable form, identical to EDT "New Form"
         // wizard) outcome holders. formGenerated / formPurpose carry success;
         // formGeneratorNotFound / formGeneratorFailed carry graceful-degradation
-        // hints so a fallback to the empty path is visible to the agent.
+        // hints so a fallback to the empty path is visible to the agent. The
+        // full generator Result is kept too: it names the layout the generator
+        // actually produced (item count, fields-overload arity, field-tree
+        // size, argument type mismatches), which is what tells an impoverished
+        // tree from a wizard-grade one without opening the form.
         AtomicReference<String> formGeneratedRef = new AtomicReference<>(null);
         AtomicReference<String> formGeneratorMiss = new AtomicReference<>(null);
+        AtomicReference<BmFormGeneratorHelper.Result> generatorOutcomeRef =
+            new AtomicReference<>(null);
         // Deterministic-content holders. Whatever path produces the inner Form
         // (generator or empty fallback), an OBJECT/RECORD purpose form still
         // needs a main attribute (so it has a data context and renders) plus an
@@ -354,6 +360,7 @@ final class FormCreateOps
                 {
                     BmFormGeneratorHelper.Result genResult = BmFormGeneratorHelper.generate(
                         owner, form, purposeConstant, formGenConfig, formGenProject);
+                    generatorOutcomeRef.set(genResult);
                     if (genResult.ok && genResult.generatedForm != null)
                     {
                         // Attach the generated Form root to the BasicForm
@@ -655,10 +662,36 @@ final class FormCreateOps
         // form (main attribute + default layout) was produced - the agent can
         // open it immediately. The miss tags signal a graceful fallback to the
         // empty path: the form is created but may need manual layout.
+        BmFormGeneratorHelper.Result generatorOutcome = generatorOutcomeRef.get();
+        if (generatorOutcome != null)
+        {
+            // What the generator was actually given and built, success or miss:
+            // the getFormGeneratorFields overload that answered and the size of
+            // its field tree, the item count of the produced layout, and every
+            // generateForm argument whose value failed its parameter type.
+            r.tags.put("formFieldsOverloadArgs", Integer.valueOf(generatorOutcome.fieldsOverloadArgs)); //$NON-NLS-1$
+            if (generatorOutcome.fieldTreeSize >= 0)
+            {
+                r.tags.put("formFieldTreeSize", Integer.valueOf(generatorOutcome.fieldTreeSize)); //$NON-NLS-1$
+            }
+            if (generatorOutcome.itemCount >= 0)
+            {
+                r.tags.put("formItemCount", Integer.valueOf(generatorOutcome.itemCount)); //$NON-NLS-1$
+            }
+            if (!generatorOutcome.coercionMismatches.isEmpty())
+            {
+                r.tags.put("formCoercionMismatches", //$NON-NLS-1$
+                    String.join("; ", generatorOutcome.coercionMismatches)); //$NON-NLS-1$
+            }
+        }
         if (formGeneratedRef.get() != null)
         {
             r.tags.put("formGenerated", Boolean.TRUE); //$NON-NLS-1$
             r.tags.put("formPurpose", formGeneratedRef.get()); //$NON-NLS-1$
+            // The generated layout is the generator's automatic one (the same
+            // engine the New Form wizard drives), named the way a caller
+            // comparing layouts expects.
+            r.tags.put("formLayout", "auto"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         else if (formGeneratorMiss.get() != null)
         {
