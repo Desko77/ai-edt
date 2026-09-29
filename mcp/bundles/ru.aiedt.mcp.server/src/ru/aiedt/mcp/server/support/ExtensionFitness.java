@@ -476,7 +476,8 @@ public final class ExtensionFitness
          * </p>
          *
          * @param field the field.
-         * @return the type names, sorted so the same type always renders the same way
+         * @return the type names, sorted so the same type always renders the same way, or
+         *         {@code null} when the field does not answer with a type
          */
         static String typeOf(EObject field)
         {

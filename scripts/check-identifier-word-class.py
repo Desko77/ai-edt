@@ -17,6 +17,13 @@ The rule this enforces: a pattern whose text carries Cyrillic must declare the m
 relies on. Patterns that read ASCII by nature (an XML namespace prefix, a language code) are listed
 in ALLOWED with the reason, because a blanket flag there would widen what they accept.
 
+A pattern does not have to be built by Pattern.compile to be wrong: String.replaceAll, replaceFirst,
+matches and split compile their first argument the same way, and there is no flags argument to pass -
+the only place to declare the semantics is an inline group inside the pattern text itself, `(?U)` for
+the word classes and `(?u)` for case. So those calls are weighed too, and the inline group counts as
+the declaration. What follows the first argument is the replacement or the limit, never a pattern, and
+is not read as one.
+
 Usage:
     python scripts/check-identifier-word-class.py            # report, exit 1 on a violation
     python scripts/check-identifier-word-class.py --list     # print every pattern it weighs
@@ -30,9 +37,17 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent / "mcp/bundles/ru.aiedt.mcp.server/src"
 
-CALL = re.compile(r"Pattern\s*\.\s*compile\s*\(")
+# Every call whose first argument Java compiles as a regular expression. The flag says whether a
+# second argument states the semantics, which only Pattern.compile has.
+CALLS = (
+    (re.compile(r"Pattern\s*\.\s*compile\s*\("), True),
+    (re.compile(r"Pattern\s*\.\s*matches\s*\("), False),
+    (re.compile(r"\.\s*(?:replaceAll|replaceFirst|matches|split)\s*\("), False),
+)
 LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 CYRILLIC = re.compile("[Ѐ-ӿ]")
+INLINE_FLAGS = re.compile(r"\(\?([a-zA-Z]+)[:)]")
+WORD_CLASS = ("\\w", "\\W", "\\b", "\\B")
 
 # A pattern that reads an ASCII-only input by nature. The reason is part of the entry: an
 # unexplained exception is how a gate stops meaning anything.
@@ -62,18 +77,39 @@ def argument_list(text: str, open_paren: int) -> str:
     return ""
 
 
+def first_argument(args: str) -> tuple[str, str]:
+    """The call's first argument, and what follows it, cut at the top-level comma."""
+    depth = 0
+    index = 0
+    while index < len(args):
+        char = args[index]
+        if char == '"':
+            index += 1
+            while index < len(args) and (args[index] != '"' or args[index - 1] == "\\"):
+                index += 1
+        elif char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            return args[:index], args[index + 1 :]
+        index += 1
+    return args, ""
+
+
 def weigh(path: pathlib.Path):
-    """Every Pattern.compile in one file, as (line, regex, flags)."""
+    """Every call whose first argument is a pattern, as (line, regex, flags)."""
     text = path.read_text(encoding="utf-8")
-    for match in CALL.finditer(text):
-        args = argument_list(text, match.end() - 1)
-        if not args:
-            continue
-        cleaned = args.replace("//$NON-NLS-1$", " ").replace("//$NON-NLS-2$", " ")
-        parts = LITERAL.findall(cleaned)
-        regex = "".join(parts)
-        flags = re.sub(r'"(?:[^"\\]|\\.)*"', "", cleaned)
-        yield text[: match.start()].count("\n") + 1, regex, flags
+    for call, flags_follow in CALLS:
+        for match in call.finditer(text):
+            args = argument_list(text, match.end() - 1)
+            if not args:
+                continue
+            pattern, rest = first_argument(args)
+            cleaned = pattern.replace("//$NON-NLS-1$", " ").replace("//$NON-NLS-2$", " ")
+            regex = "".join(LITERAL.findall(cleaned))
+            flags = rest if flags_follow else ""
+            yield text[: match.start()].count("\n") + 1, regex, flags
 
 
 def excused(path: pathlib.Path, regex: str) -> str | None:
@@ -83,30 +119,42 @@ def excused(path: pathlib.Path, regex: str) -> str | None:
     return None
 
 
+def weighed_in(path: pathlib.Path):
+    """Every pattern in one file whose text carries Cyrillic, as (line, regex, flags)."""
+    for line, regex, flags in weigh(path):
+        if CYRILLIC.search(regex):
+            yield line, regex, flags
+
+
+def violations_in(path: pathlib.Path):
+    """The patterns in one file that read BSL as if it were ASCII, as (line, regex, why)."""
+    found = []
+    for line, regex, flags in weighed_in(path):
+        if excused(path, regex):
+            continue
+        inline = "".join(INLINE_FLAGS.findall(regex))
+        needs_class = any(token in regex for token in WORD_CLASS)
+        has_class = "UNICODE_CHARACTER_CLASS" in flags or "U" in inline
+        has_case = "UNICODE_CASE" in flags or has_class or "u" in inline
+        if needs_class and not has_class:
+            found.append((line, regex,
+                          "reads a word class or a word boundary next to Cyrillic "
+                          "without UNICODE_CHARACTER_CLASS"))
+        elif "CASE_INSENSITIVE" in flags and not has_case:
+            found.append((line, regex, "folds case over Cyrillic without UNICODE_CASE"))
+    return found
+
+
 def main() -> int:
     listing = "--list" in sys.argv
     weighed = 0
     violations = []
     for path in sorted(ROOT.rglob("*.java")):
-        for line, regex, flags in weigh(path):
-            if not CYRILLIC.search(regex):
-                continue
+        for line, regex, _flags in weighed_in(path):
             weighed += 1
-            reason = excused(path, regex)
             if listing:
                 print(f"{path.name}:{line}  {regex[:70]}")
-            if reason:
-                continue
-            needs_class = any(token in regex for token in ("\\\\w", "\\\\W", "\\\\b", "\\\\B"))
-            has_class = "UNICODE_CHARACTER_CLASS" in flags
-            has_case = "UNICODE_CASE" in flags or has_class
-            if needs_class and not has_class:
-                violations.append((path, line, regex,
-                                   "reads a word class or a word boundary next to Cyrillic "
-                                   "without UNICODE_CHARACTER_CLASS"))
-            elif "CASE_INSENSITIVE" in flags and not has_case:
-                violations.append((path, line, regex,
-                                   "folds case over Cyrillic without UNICODE_CASE"))
+        violations.extend((path, *found) for found in violations_in(path))
 
     print(f"patterns carrying Cyrillic: {weighed}")
     print(f"excused by name and reason: {len(ALLOWED)}")

@@ -625,6 +625,8 @@ public final class BmFormCleanupHelper
         }
         catch (Exception e)
         {
+            // Best-effort read: an item that will not answer leaves the caller with null,
+            // the same answer a missing member gives.
             return null;
         }
     }

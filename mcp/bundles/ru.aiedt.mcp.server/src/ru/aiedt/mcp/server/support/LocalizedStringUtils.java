@@ -177,6 +177,13 @@ public final class LocalizedStringUtils
         return s;
     }
 
+    /**
+     * Invokes a no-argument method by name.
+     *
+     * @param target the receiver, which may be {@code null}
+     * @param method the method to call
+     * @return the result, or {@code null} when the receiver or the member is not there
+     */
     private static Object invokeNoArg(Object target, String method)
     {
         if (target == null)

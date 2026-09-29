@@ -2810,6 +2810,15 @@ public final class BmDefinedTypeHelper
         }
     }
 
+    /**
+     * Invokes a static method by name, with the parameter types the caller names.
+     *
+     * @param className the class to load
+     * @param methodName the method to call
+     * @param paramTypes the parameter types that method declares
+     * @param args the arguments to pass
+     * @return the result, or {@code null} when the class, the method or the call fails
+     */
     private static Object invokeStatic(String className, String methodName,
         Class<?>[] paramTypes, Object... args)
     {
@@ -2906,6 +2915,12 @@ public final class BmDefinedTypeHelper
         return null;
     }
 
+    /**
+     * Loads a class by name.
+     *
+     * @param className the class to load
+     * @return the class, or {@code null} when it is not on this classpath
+     */
     private static Class<?> forNameOrNull(String className)
     {
         try
