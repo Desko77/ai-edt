@@ -563,6 +563,7 @@ public final class DtSnapshotRunner
                     return out;
                 }
                 out.backupSizeBytes = sizeOf(backup);
+                out.backupWritten = true;
             }
 
             if (restore)
@@ -861,6 +862,11 @@ public final class DtSnapshotRunner
             {
                 failed.put("lockHeldForProcess", Boolean.TRUE); //$NON-NLS-1$
             }
+            if (out.backupWritten && out.backupPath != null)
+            {
+                failed.put("backup", out.backupPath.toString()) //$NON-NLS-1$
+                    .put("backupSizeBytes", out.backupSizeBytes); //$NON-NLS-1$
+            }
             return failed.toJson();
         }
         ToolResult ok = ToolResult.success()
@@ -991,6 +997,9 @@ public final class DtSnapshotRunner
 
         /** The backup's size in bytes. */
         long backupSizeBytes;
+
+        /** Whether a load's backup was written completely. */
+        boolean backupWritten;
 
         /** The product's size in bytes. */
         long sizeBytes;

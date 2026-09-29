@@ -519,4 +519,38 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
             return reference;
         }
     }
+
+    /** A load refused after its backup was written names that backup and its size. */
+    @Test
+    public void aLoadStoppedAfterItsBackupNamesTheBackup()
+    {
+        DtSnapshotRunner.SnapshotOutcome out = new DtSnapshotRunner.SnapshotOutcome();
+        out.path = work.resolve("in.dt"); //$NON-NLS-1$
+        out.backupPath = work.resolve("in-backup.dt"); //$NON-NLS-1$
+        out.backupSizeBytes = 42L;
+        out.backupWritten = true;
+        out.error = "the restore_database_snapshot was cancelled before the Designer run it was " //$NON-NLS-1$
+            + "waiting for started; that run was not launched"; //$NON-NLS-1$
+
+        JsonObject failed = parsed(DtSnapshotRunner.render(out, DtSnapshotRunner.RESTORE_OPERATION));
+
+        assertFalse(failed.toString(), failed.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(failed.toString(), out.backupPath.toString(), failed.get("backup").getAsString()); //$NON-NLS-1$
+        assertEquals(42L, failed.get("backupSizeBytes").getAsLong()); //$NON-NLS-1$
+    }
+
+    /** A load refused before its backup was complete names no backup. */
+    @Test
+    public void aLoadStoppedBeforeItsBackupNamesNone()
+    {
+        DtSnapshotRunner.SnapshotOutcome out = new DtSnapshotRunner.SnapshotOutcome();
+        out.path = work.resolve("in.dt"); //$NON-NLS-1$
+        out.backupPath = work.resolve("in-backup.dt"); //$NON-NLS-1$
+        out.error = "The restore was not started: the backup of the infobase's current contents " //$NON-NLS-1$
+            + "did not complete."; //$NON-NLS-1$
+
+        JsonObject failed = parsed(DtSnapshotRunner.render(out, DtSnapshotRunner.RESTORE_OPERATION));
+
+        assertFalse(failed.toString(), failed.has("backup")); //$NON-NLS-1$
+    }
 }
