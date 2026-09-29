@@ -122,4 +122,38 @@ public class ARouteMapHandlerGetsItsProcedureTest
         assertEquals(Arrays.asList("ЗавершениеПриЗавершении"), plan.names); //$NON-NLS-1$
         assertTrue(plan.alreadyPresent.isEmpty());
     }
+
+    /**
+     * A procedure added to a module that already has text starts after a blank line.
+     */
+    @Test
+    public void aProcedureAddedToAModuleStartsAfterABlankLine()
+    {
+        List<Map<String, String>> handlers = new ArrayList<>();
+        handlers.add(handler("Завершение", "OnComplete", "ЗавершениеПриЗавершении")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        RouteMapOps.HandlerStubs plan = RouteMapOps.planHandlerStubs(handlers,
+            "Процедура Другая()\r\nКонецПроцедуры"); //$NON-NLS-1$
+
+        assertTrue(plan.text.toString(), plan.text.toString().startsWith("\nПроцедура ЗавершениеПриЗавершении(")); //$NON-NLS-1$
+        assertTrue("an empty module needs no line before the first procedure", //$NON-NLS-1$
+            RouteMapOps.planHandlerStubs(handlers, null).text.toString().startsWith("Процедура")); //$NON-NLS-1$
+    }
+
+    /**
+     * A module that declares every handler gets nothing written.
+     */
+    @Test
+    public void aModuleDeclaringEveryHandlerGetsNothing()
+    {
+        List<Map<String, String>> handlers = new ArrayList<>();
+        handlers.add(handler("Завершение", "OnComplete", "ЗавершениеПриЗавершении")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        RouteMapOps.HandlerStubs plan = RouteMapOps.planHandlerStubs(handlers,
+            "Процедура ЗавершениеПриЗавершении(ТочкаМаршрутаБизнесПроцесса)\r\nКонецПроцедуры\r\n"); //$NON-NLS-1$
+
+        assertTrue(plan.names.isEmpty());
+        assertEquals(0, plan.text.length());
+        assertEquals(Arrays.asList("ЗавершениеПриЗавершении"), plan.alreadyPresent); //$NON-NLS-1$
+    }
 }

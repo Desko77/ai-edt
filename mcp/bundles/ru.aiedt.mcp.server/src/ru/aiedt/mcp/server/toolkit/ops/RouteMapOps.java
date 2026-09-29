@@ -196,6 +196,12 @@ final class RouteMapOps
             {
                 continue;
             }
+            if (plan.names.isEmpty() && moduleText != null && !moduleText.trim().isEmpty())
+            {
+                // Measured: the writer appends by lines and drops the module's trailing blank line,
+                // so without this the first procedure follows the last one with no line between.
+                plan.text.append("\n"); //$NON-NLS-1$
+            }
             plan.names.add(handler);
             plan.text.append(stub).append("\n\n"); //$NON-NLS-1$
         }
@@ -240,10 +246,7 @@ final class RouteMapOps
     {
         try
         {
-            BslModuleAccess.ModulePathResolution resolved =
-                BslModuleAccess.resolveModulePath(project, modulePath);
-            return resolved.isResolved()
-                ? BslModuleAccess.readFileText(project.getFile(resolved.getPath())) : null;
+            return BslModuleAccess.readModuleIfPresent(project, modulePath);
         }
         catch (Exception cannotRead)
         {
