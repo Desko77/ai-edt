@@ -169,9 +169,9 @@ appears only when the module scan finished or a test module was actually found.
 A withdrawal comes from the client as `notifications/cancelled` naming the call's `requestId`, or
 from the person at the status bar. Either way the tool is not interrupted mid-unit.
 
-A cancel answers one of three names: `STOPPED` when the work stopped, `STILL_RUNNING` ("may still be
-running") when the stop flag was raised for a domain that has not stopped yet, and `NOTHING_TO_STOP`
-when no such work was tracked. The run key is held until the body of the call finishes, so the same
+A cancelled task turns `cancelled`, and its `statusMessage` says what stopping came to: the work
+stopped; it was told to stop and had not ("It may still be running and still writing"); or only the
+waiting stopped, because a Designer-mode process cannot be interrupted once started. The run key is held until the body of the call finishes, so the same
 work asked for again inside that window answers `stillStopping: true` instead of starting a second
 run - that is the cancel being allowed to finish, not a failure to act on. `get_tasks` names the
 closed projects it did not read.
