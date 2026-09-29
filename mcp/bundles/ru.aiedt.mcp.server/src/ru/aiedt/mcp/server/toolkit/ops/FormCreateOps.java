@@ -47,12 +47,13 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
  * generated-form attach, owner-type mapping). Extracted verbatim from
  * {@link EditMetadataTool} (Inc4 god-class split); the handler is package-visible
  * and dispatched through the single-source op-registry. Shared stateless helpers
- * live on {@link EditMetadataTool} (qualified calls); the 17 cluster-local creation
+ * live on {@link EditMetadataTool} (qualified calls); the 19 cluster-local creation
  * helpers (normalizeFormType, extractCommonFormName, isCommonFormType,
- * purposeToken, formPurposeFor, defaultFormSetterFor, deriveFormPurpose, equalsAny, nameContains,
- * isObjectOwningType, isRegisterType, mainTypeFqnForOwner, ensureObjectFormContent,
- * resolveFormFactory, applyAdjustableCommon, createAdjustableBooleanCommon,
- * invokeNoArg, isBoxedMatch, attachGeneratedForm) are private here. The CommonForm
+ * generatorRunsFor, generatorRefusalText, purposeToken, formPurposeFor, defaultFormSetterFor,
+ * deriveFormPurpose, equalsAny, nameContains, isObjectOwningType, isRegisterType,
+ * mainTypeFqnForOwner, ensureObjectFormContent, resolveFormFactory, applyAdjustableCommon,
+ * createAdjustableBooleanCommon, invokeNoArg, isBoxedMatch, attachGeneratedForm) are private
+ * here. The CommonForm
  * redirect delegates to {@link ObjectOps#opCreateObject} via a local ObjectOps ref.
  */
 final class FormCreateOps
@@ -103,10 +104,27 @@ final class FormCreateOps
     /**
      * Creates a new form on a metadata owner (Catalog / Document / Report / etc.).
      * <p>
-     * Implementation: generates a {@code Form} metadata stub via
-     * {@code MdClassFactory.createForm()} (or the type-specific variant),
-     * sets name + form type, and attaches it to {@code owner.getForms()}.
-     * The Form.form file content is created lazily by EDT on first edit.
+     * A managed form without an explicit {@code layout=empty} is built by EDT's own
+     * {@code IFormGenerator} - the engine the New Form wizard drives - inside the same BM
+     * read-write transaction that creates the wrapper: main attribute, default field layout,
+     * command interface. {@code formType=ORDINARY} and an explicit {@code layout=empty} skip
+     * the generator; the form is then created by the empty path (inner form, base properties,
+     * deterministic main attribute).
+     * <p>
+     * When the generator was asked for and did not deliver a form - no generator on this
+     * runtime, no field tree, an exception, a form that would not attach - the whole operation
+     * is refused: throwing from inside the BM task rolls the transaction back (the same abort
+     * {@code dryRun} and the guards use), so no wrapper, no owner .mdo entry and no Form.form
+     * are left behind, and the response names the reason. The response then carries
+     * {@code formGeneratorNotFound} or {@code formGeneratorFailed} plus the generator facts
+     * ({@code formFieldsOverloadArgs}, {@code formFieldTreeSize}, {@code formCoercionMismatches},
+     * {@code formFieldsError}) and the {@code layout=empty} retry that creates a form without
+     * the generator. A successful generation answers {@code formGenerated=true} with
+     * {@code formLayout=auto}; an explicit {@code layout=empty} answers
+     * {@code formLayout=empty}.
+     * <p>
+     * The Form.form file is force-exported after the transaction commits, so the form is on
+     * disk and discoverable by FQN, not only in the in-session BM.
      */
     String opCreateForm(Map<String, String> params)
     {
@@ -200,12 +218,14 @@ final class FormCreateOps
         AtomicReference<String> innerFormAttach = new AtomicReference<>(null);
         // Form-generator path (renderable form, identical to EDT "New Form"
         // wizard) outcome holders. formGenerated / formPurpose carry success;
-        // formGeneratorNotFound / formGeneratorFailed carry graceful-degradation
-        // hints so a fallback to the empty path is visible to the agent. The
-        // full generator Result is kept too: it names the layout the generator
-        // actually produced (item count, fields-overload arity, field-tree
-        // size, argument type mismatches), which is what tells an impoverished
-        // tree from a wizard-grade one without opening the form.
+        // formGeneratorNotFound / formGeneratorFailed carry the refusal the
+        // operation answers with when the generator did not deliver (no form
+        // is created then - the transaction rolls back). The full generator
+        // Result is kept too: it names the layout the generator actually
+        // produced (item count, fields-overload arity, field-tree size,
+        // argument type mismatches, the exception the field computation threw),
+        // which is what tells an impoverished tree from a wizard-grade one
+        // without opening the form.
         AtomicReference<String> formGeneratedRef = new AtomicReference<>(null);
         AtomicReference<String> formGeneratorMiss = new AtomicReference<>(null);
         AtomicReference<BmFormGeneratorHelper.Result> generatorOutcomeRef =
@@ -353,10 +373,10 @@ final class FormCreateOps
                 // empty path below only builds a bare Form root, so a form
                 // created that way opens "empty". The generator runs inside
                 // this same BM read-write transaction (the EMF objects it
-                // builds belong to the model graph). On any miss/failure we
-                // fall back to the empty path unchanged.
+                // builds belong to the model graph). An ORDINARY form and an
+                // explicit layout=empty never reach it.
                 boolean generatedAttached = false;
-                if (!"ORDINARY".equalsIgnoreCase(formType))
+                if (generatorRunsFor(formType, layout))
                 {
                     BmFormGeneratorHelper.Result genResult = BmFormGeneratorHelper.generate(
                         owner, form, purposeConstant, formGenConfig, formGenProject);
@@ -393,13 +413,23 @@ final class FormCreateOps
                                     + attachEx.getMessage());
                                 innerFormAttach.set("generated-form attach failed (" //$NON-NLS-1$
                                     + formFqn + "): " + attachEx.getMessage()); //$NON-NLS-1$
+                                formGeneratorMiss.set("generated-form top-object attach failed: " //$NON-NLS-1$
+                                    + attachEx.getMessage()); //$NON-NLS-1$
                             }
                         }
                         else if (!attachedToWrapper)
                         {
                             Activator.logWarning("createForm: generated form could not " //$NON-NLS-1$
-                                + "be attached to wrapper - falling back to empty path"); //$NON-NLS-1$
+                                + "be attached to wrapper"); //$NON-NLS-1$
                             formGeneratorMiss.set("generated form not attachable to wrapper"); //$NON-NLS-1$
+                        }
+                        else
+                        {
+                            // Attached to the wrapper but not an IBmObject: it cannot be
+                            // registered as a BM top-object, so no follow-up operation would
+                            // resolve the form by FQN - a refusal, not an undiscoverable form.
+                            formGeneratorMiss.set("generated form is not a BM object: " //$NON-NLS-1$
+                                + genResult.generatedForm.getClass().getName()); //$NON-NLS-1$
                         }
                     }
                     else if (genResult.generatorNotFound)
@@ -413,11 +443,23 @@ final class FormCreateOps
                         formGeneratorMiss.set("failed: " + genResult.error); //$NON-NLS-1$
                     }
                 }
+                // A form that asked for the generated layout and did not get one is not
+                // created: throwing here aborts the BM task (the same abort dryRun and the
+                // guards use), the transaction rolls back and nothing reaches disk - the
+                // caller is told why and offered the layout=empty retry, which creates the
+                // form without asking the generator. ORDINARY and layout=empty never reach
+                // this: they skip the generator by design, so they cannot be refused over
+                // its miss.
+                if (generatorRunsFor(formType, layout) && !generatedAttached)
+                {
+                    throw new RuntimeException(generatorRefusalText(formGeneratorMiss.get()));
+                }
 
-                // FALLBACK PATH (generator unavailable / failed, or ORDINARY
-                // form): attach the inner Form as a BM top-object so
-                // subsequent edit_form / get_form_structure / add_field
-                // operations can resolve the form by FQN
+                // EMPTY PATH (an ORDINARY form or an explicit layout=empty; a
+                // generator miss was already refused above): attach the inner
+                // Form as a BM top-object so subsequent edit_form /
+                // get_form_structure / add_field operations can resolve the
+                // form by FQN
                 // <ownerFqn>.Form.<formName>.Form. Without this the form
                 // exists in the wrapper's containment list but is not
                 // discoverable via tx.getTopObjectByFqn(...) - every
@@ -660,15 +702,17 @@ final class FormCreateOps
         }
         // Form-generator outcome tags. formGenerated=true means a renderable
         // form (main attribute + default layout) was produced - the agent can
-        // open it immediately. The miss tags signal a graceful fallback to the
-        // empty path: the form is created but may need manual layout.
+        // open it immediately. The miss tags carry the refusal the operation
+        // answered with: no form exists, and layout=empty is the retry that
+        // creates one without the generator.
         BmFormGeneratorHelper.Result generatorOutcome = generatorOutcomeRef.get();
         if (generatorOutcome != null)
         {
             // What the generator was actually given and built, success or miss:
             // the getFormGeneratorFields overload that answered and the size of
-            // its field tree, the item count of the produced layout, and every
-            // generateForm argument whose value failed its parameter type.
+            // its field tree, the item count of the produced layout, every
+            // generateForm argument whose value failed its parameter type, and
+            // the exception the field computation threw, if it threw one.
             r.tags.put("formFieldsOverloadArgs", Integer.valueOf(generatorOutcome.fieldsOverloadArgs)); //$NON-NLS-1$
             if (generatorOutcome.fieldTreeSize >= 0)
             {
@@ -682,6 +726,10 @@ final class FormCreateOps
             {
                 r.tags.put("formCoercionMismatches", //$NON-NLS-1$
                     String.join("; ", generatorOutcome.coercionMismatches)); //$NON-NLS-1$
+            }
+            if (generatorOutcome.fieldsError != null)
+            {
+                r.tags.put("formFieldsError", generatorOutcome.fieldsError); //$NON-NLS-1$
             }
         }
         if (formGeneratedRef.get() != null)
@@ -699,16 +747,22 @@ final class FormCreateOps
             if ("not-found".equals(miss)) //$NON-NLS-1$
             {
                 r.tags.put("formGeneratorNotFound", Boolean.TRUE); //$NON-NLS-1$
-                r.tags.put("hint", "EDT form generator unavailable on this runtime - " //$NON-NLS-1$
-                    + "the form was created empty and may need manual layout " //$NON-NLS-1$
-                    + "(add_field / add_group / edit_form)."); //$NON-NLS-1$
+                r.tags.put("hint", "EDT form generator unavailable on this runtime - no " //$NON-NLS-1$
+                    + "form was created; retry with layout=empty to create the form " //$NON-NLS-1$
+                    + "without the generator."); //$NON-NLS-1$
             }
             else
             {
                 r.tags.put("formGeneratorFailed", miss); //$NON-NLS-1$
-                r.tags.put("hint", "Form generator did not complete - the form was " //$NON-NLS-1$
-                    + "created empty and may need manual layout."); //$NON-NLS-1$
+                r.tags.put("hint", "Form generator did not complete - no form was created; " //$NON-NLS-1$
+                    + "retry with layout=empty to create the form without the generator."); //$NON-NLS-1$
             }
+        }
+        if (isManagedEmpty)
+        {
+            // The caller asked for the empty layout by name and got it: the
+            // generator was never asked.
+            r.tags.put("formLayout", "empty"); //$NON-NLS-1$ //$NON-NLS-2$
         }
         EditMetadataTool.applyTags(result, r.tags);
         return result.toJson();
@@ -846,6 +900,42 @@ final class FormCreateOps
         int dot = ownerFqn.indexOf('.');
         String typePart = dot > 0 ? ownerFqn.substring(0, dot) : ownerFqn;
         return "CommonForm".equals(MetadataTypeCatalog.toEnglishSingular(typePart.trim())); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether {@code create_form} asks EDT's form generator to build this form's layout: a
+     * managed form without an explicit empty-layout request. An ORDINARY form carries its own
+     * layout, and {@code layout=empty} names the empty path - neither reaches the generator, so
+     * neither can be refused over a generator miss.
+     *
+     * @param formType the normalized form-type literal ({@code MANAGED} / {@code ORDINARY});
+     *            comparison is case-insensitive
+     * @param layout  the caller's {@code layout} argument; may be null/empty
+     * @return true when the generator runs for this call
+     */
+    static boolean generatorRunsFor(String formType, String layout)
+    {
+        return !"ORDINARY".equalsIgnoreCase(formType) //$NON-NLS-1$
+            && !"empty".equalsIgnoreCase(layout); //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal {@code create_form} answers when the generator was asked for and did not
+     * deliver a form: the miss reason, the fact that nothing was created, and the empty-layout
+     * retry that creates a form without the generator.
+     *
+     * @param missReason the recorded generator miss ("not-found" or the failure text); may be
+     *            null when no reason was captured
+     * @return the refusal message, never null
+     */
+    static String generatorRefusalText(String missReason)
+    {
+        String reason = "not-found".equals(missReason) //$NON-NLS-1$
+            ? "the form generator is not available on this runtime" //$NON-NLS-1$
+            : missReason != null ? missReason : "the generator produced no form"; //$NON-NLS-1$
+        return "create_form refused: the form generator did not deliver a layout (" + reason //$NON-NLS-1$
+            + "). No form was created - the transaction was rolled back. Retry with " //$NON-NLS-1$
+            + "layout=empty to create the form without the generator."; //$NON-NLS-1$
     }
 
     /**
