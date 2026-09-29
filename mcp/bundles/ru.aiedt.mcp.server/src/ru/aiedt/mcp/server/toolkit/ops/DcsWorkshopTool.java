@@ -6,8 +6,10 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -18,14 +20,18 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.Platform;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
+import org.osgi.framework.Bundle;
 
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.platform.version.IRuntimeVersionSupport;
+import com._1c.g5.v8.dt.platform.version.Version;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -809,6 +815,7 @@ public class DcsWorkshopTool implements IMcpTool
         if (r.ok)
         {
             attachSettingsWarnings(r.tags, written.warnings);
+            attachOutputParameterNameCheck(r.tags, written.outputParameterNameNote);
         }
         return formatResult(r, op);
     }
@@ -868,7 +875,8 @@ public class DcsWorkshopTool implements IMcpTool
         {
             endSettingsScope(written);
         }
-        return dynamicListAnswer(op, formFqn, attributeName, outcome, dryRun, written.warnings);
+        return dynamicListAnswer(op, formFqn, attributeName, outcome, dryRun, written.warnings,
+            written.outputParameterNameNote);
     }
 
     /**
@@ -886,10 +894,12 @@ public class DcsWorkshopTool implements IMcpTool
      * @param outcome what the settings write reported, {@code Error: ...} when it refused.
      * @param dryRun whether the caller asked for a preview.
      * @param warnings what the completeness check found, carried only by a write that landed.
+     * @param outputParameterNameNote why an output parameter name went in unchecked, or null when
+     *        the name was checked against the platform's set.
      * @return the JSON answer
      */
     static String dynamicListAnswer(String op, String formFqn, String attributeName, String outcome,
-        boolean dryRun, List<Map<String, Object>> warnings)
+        boolean dryRun, List<Map<String, Object>> warnings, String outputParameterNameNote)
     {
         if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
         {
@@ -914,7 +924,8 @@ public class DcsWorkshopTool implements IMcpTool
             // form hold what they held before the call.
             result.put("dryRun", Boolean.TRUE); //$NON-NLS-1$
         }
-        return withSettingsWarnings(result, warnings).toJson();
+        return withOutputParameterNameCheck(withSettingsWarnings(result, warnings),
+            outputParameterNameNote).toJson();
     }
 
     /**
@@ -1261,6 +1272,12 @@ public class DcsWorkshopTool implements IMcpTool
     /** The response field a call carries what the check found in. */
     private static final String SETTINGS_WARNINGS_TAG = "settingsWarnings"; //$NON-NLS-1$
 
+    /** The response field saying an output parameter name went in unchecked. */
+    private static final String OUTPUT_NAME_CHECKED_TAG = "outputParameterNameChecked"; //$NON-NLS-1$
+
+    /** The response field carrying why the output parameter name could not be checked. */
+    private static final String OUTPUT_NAME_CHECK_NOTE_TAG = "outputParameterNameCheckNote"; //$NON-NLS-1$
+
     /**
      * The settings objects the current call has written into.
      * <p>
@@ -1290,6 +1307,9 @@ public class DcsWorkshopTool implements IMcpTool
 
         /** What the check found, replaced on each pass over the settings in hand. */
         private final List<Map<String, Object>> warnings = new ArrayList<>();
+
+        /** Why an output parameter name went in unchecked, or null when the check answered. */
+        private String outputParameterNameNote;
 
         /**
          * Records a settings object the call is about to change.
@@ -1375,6 +1395,57 @@ public class DcsWorkshopTool implements IMcpTool
         {
             tags.put(SETTINGS_WARNINGS_TAG, warnings);
         }
+    }
+
+    /**
+     * Records that an output parameter name is being written with no platform set to check it
+     * against, when a call is collecting what it writes.
+     *
+     * @param note why the set could not be read.
+     */
+    private static void noteOutputParameterUnchecked(String note)
+    {
+        SettingsWritten open = WRITTEN_HERE.get();
+        if (open != null)
+        {
+            open.outputParameterNameNote = note;
+        }
+    }
+
+    /**
+     * Adds the outcome of the output parameter name check to the tags of a schema-route answer.
+     * <p>
+     * Carried only when the name went in unchecked: a checked name says nothing, the way complete
+     * settings carry no {@code settingsWarnings}.
+     * </p>
+     *
+     * @param tags the result tags the answer is built from.
+     * @param note why the set could not be read, or null when the name was checked.
+     */
+    static void attachOutputParameterNameCheck(Map<String, Object> tags, String note)
+    {
+        if (tags != null && note != null)
+        {
+            tags.put(OUTPUT_NAME_CHECKED_TAG, Boolean.FALSE);
+            tags.put(OUTPUT_NAME_CHECK_NOTE_TAG, note);
+        }
+    }
+
+    /**
+     * Adds the outcome of the output parameter name check to a list-route answer.
+     *
+     * @param result the answer being built.
+     * @param note why the set could not be read, or null when the name was checked.
+     * @return the same answer, so the caller can finish building it
+     */
+    static ToolResult withOutputParameterNameCheck(ToolResult result, String note)
+    {
+        if (note != null)
+        {
+            result.put(OUTPUT_NAME_CHECKED_TAG, Boolean.FALSE);
+            result.put(OUTPUT_NAME_CHECK_NOTE_TAG, note);
+        }
+        return result;
     }
 
     /**
@@ -1988,7 +2059,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException(failed);
         }
-        throw new RuntimeException(failed + " Allowed: " + allowed); //$NON-NLS-1$
+        throw new RuntimeException(failed + ". Allowed: " + allowed); //$NON-NLS-1$
     }
 
     /**
@@ -5136,18 +5207,49 @@ public class DcsWorkshopTool implements IMcpTool
      * holds is left as it is: clearing the list before noticing that there was nothing to write
      * reported a set that had erased the value.
      * </p>
+     * <p>
+     * {@code name} has to be one the platform offers, in either spelling; anything else is refused
+     * with the closest name and the full list. The check runs before the container is reached, so a
+     * refused call writes nothing at all. The entry is keyed by the platform's own spelling of the
+     * matched name, and an entry already stored under either spelling is found and updated: both
+     * spellings address one parameter, so looking up only the spelling the caller passed would
+     * write the parameter twice. A set of names that could not be read at all is a warning, never
+     * a refusal: the write goes through unchecked and the answer carries
+     * {@code outputParameterNameChecked: false} with the reason, because refusing every name for
+     * want of the list would leave the operation unable to set a parameter at all.
+     * </p>
      *
      * @param params the call; {@code name} selects the parameter and {@code value} is what it holds
      * @param schema the schema, or a settings container in the case of a dynamic list
+     * @param project the project the call works in, or null when it has none
      * @return a short report naming the parameter that was set
      */
-    private Object doSetOutputParameter(Map<String, String> params, EObject schema)
+    private Object doSetOutputParameter(Map<String, String> params, EObject schema, IProject project)
     {
         String name = required(params, "name"); //$NON-NLS-1$
         String value = JsonUtils.extractStringArgument(params, "value"); //$NON-NLS-1$
         if (value == null)
         {
             throw new RuntimeException("nothing to set on '" + name + "': pass value"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // Before anything is created: the platform's set of output parameters is what decides
+        // whether the name addresses one. An entry is made for whatever name arrives, so a name
+        // that is not in the set would be written and read back by nothing.
+        OutputParameterSet offered = outputParameterNames(project);
+        String[] pair = mustBeKnownOutputParameter(name, offered);
+        String writeKey = name;
+        List<String> spellings = null;
+        if (pair == null)
+        {
+            noteOutputParameterUnchecked(offered.unavailableNote);
+        }
+        else
+        {
+            // The platform's own spelling of the matched name is what the entry is keyed by: the
+            // model's parameter lookup is case-sensitive, so the caller's casing would write a
+            // key the model does not find.
+            writeKey = pair[0].equalsIgnoreCase(name) ? pair[0] : pair[1];
+            spellings = Arrays.asList(pair[0], pair[1]);
         }
         Object settings = ensureDefaultSettings(schema);
         if (settings == null)
@@ -5170,7 +5272,7 @@ public class DcsWorkshopTool implements IMcpTool
         {
             Object p = invokeGetter(it, "getParameter"); //$NON-NLS-1$
             String key = p != null ? String.valueOf(invokeGetter(p, "getValue")) : null; //$NON-NLS-1$
-            if (key != null && key.equalsIgnoreCase(name))
+            if (key != null && namesSameParameter(key, name, spellings))
             {
                 found = it;
                 break;
@@ -5178,7 +5280,7 @@ public class DcsWorkshopTool implements IMcpTool
         }
         if (found == null)
         {
-            found = namedEntry(name);
+            found = namedEntry(writeKey);
             items.add(found);
         }
         EList<EObject> vals = BmDcsHelper.getEObjectList(found, "getValues"); //$NON-NLS-1$
@@ -5194,6 +5296,360 @@ public class DcsWorkshopTool implements IMcpTool
         }
         BmDcsHelper.setProperty(found, "use", "true"); //$NON-NLS-1$ //$NON-NLS-2$
         return "output parameter '" + name + "' set"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Whether a stored entry's key addresses the parameter a call names.
+     * <p>
+     * The platform carries every output parameter under two spellings, one per language, and both
+     * address the same parameter: a call naming one spelling has to find an entry stored under the
+     * other, or the parameter ends up in the settings twice.
+     * </p>
+     *
+     * @param key the key a stored entry carries
+     * @param name the name the caller passed
+     * @param spellings both spellings of the parameter the name was matched to, or null when the
+     *        platform's set could not be read and only the passed name can be matched
+     * @return true when the entry is the one the call means
+     */
+    private static boolean namesSameParameter(String key, String name, List<String> spellings)
+    {
+        if (key.equalsIgnoreCase(name))
+        {
+            return true;
+        }
+        if (spellings != null)
+        {
+            for (String spelling : spellings)
+            {
+                if (key.equalsIgnoreCase(spelling))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The platform's data-composition output parameters, the container a call reads the names from.
+     */
+    private static final String DCS_OUTPUT_PARAMETERS_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.output.DcsOutputParameters"; //$NON-NLS-1$
+
+    /** The class the output parameter names are read out of. */
+    private static final String DCS_AVAILABLE_PARAMETERS_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameters"; //$NON-NLS-1$
+
+    /** The class holding them, in the platform's own order. */
+    private static final String DCS_AVAILABLE_COLLECTION_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameterCollection"; //$NON-NLS-1$
+
+    /** The class carrying one parameter, one name per language. */
+    private static final String DCS_AVAILABLE_PARAMETER_CLASS =
+        "com._1c.g5.v8.dt.dcs.parameters.DcsAvailableParameter"; //$NON-NLS-1$
+
+    /**
+     * The bundle the parameter classes are reached through. It carries them and exports both
+     * packages, but this plugin imports neither, so its own loader cannot see them: the bundle's
+     * loader is the one that reads them.
+     */
+    private static final String DCS_BUNDLE = "com._1c.g5.v8.dt.dcs"; //$NON-NLS-1$
+
+    /** How many allowed names a refusal lists before it says how many it left out. */
+    private static final int ALLOWED_NAMES_SHOWN = 40;
+
+    /**
+     * The names {@link #outputParameterNames(IProject)} answers with, each parameter as the pair
+     * of spellings the platform carries for it. {@code null} asks the platform. Tests point this
+     * at a fixed set and clear it afterwards: the platform's set is built by the platform-version
+     * bundles of the EDT installation, and a runtime asked for a version whose bundle it does not
+     * carry answers with nothing.
+     */
+    static volatile List<String[]> outputParameterNamesForTests;
+
+    /**
+     * What reading the platform's output parameter set answered.
+     * <p>
+     * A set that could not be read is not an empty set: the first downgrades the name check to a
+     * warning and the second would refuse every name, so the two are carried apart.
+     * </p>
+     */
+    static final class OutputParameterSet
+    {
+        /** Both spellings of each parameter, in the platform's order; null when the set is unread. */
+        final List<String[]> spellings;
+
+        /** Why the set could not be read, for the warning the write then carries; null when read. */
+        final String unavailableNote;
+
+        private OutputParameterSet(List<String[]> spellings, String unavailableNote)
+        {
+            this.spellings = spellings;
+            this.unavailableNote = unavailableNote;
+        }
+
+        /**
+         * A set that was read.
+         *
+         * @param spellings both spellings of each parameter
+         * @return the answer
+         */
+        static OutputParameterSet known(List<String[]> spellings)
+        {
+            return new OutputParameterSet(spellings, null);
+        }
+
+        /**
+         * A set that could not be read.
+         *
+         * @param note why, as the warning carries it
+         * @return the answer
+         */
+        static OutputParameterSet unavailable(String note)
+        {
+            return new OutputParameterSet(null, note);
+        }
+    }
+
+    /**
+     * The output parameter names the platform offers, both spellings of each.
+     * <p>
+     * Read from the platform rather than kept in this file: the set depends on the platform version
+     * the project runs on, and the platform adds names from one version onwards, so a list written
+     * here answers for the release it was copied from and refuses nothing afterwards.
+     * </p>
+     *
+     * @param project the project the call works in, or null when it has none
+     * @return the names for the project's platform version, or why they cannot be read here
+     */
+    static OutputParameterSet outputParameterNames(IProject project)
+    {
+        List<String[]> pinned = outputParameterNamesForTests;
+        if (pinned != null)
+        {
+            return pinned.isEmpty()
+                ? OutputParameterSet.unavailable("the set of names pinned for the test is empty") //$NON-NLS-1$
+                : OutputParameterSet.known(pinned);
+        }
+        return outputParameterNames(outputParameterVersion(project));
+    }
+
+    /**
+     * The output parameter names the platform offers for one platform version, both spellings of
+     * each.
+     * <p>
+     * The classes are reached by name - the composition packages holding them are not on this
+     * plugin's import list - so the compiler sees none of this and the reflection registry beside
+     * {@code scripts/check-edt-api.py} carries the pairing instead.
+     * </p>
+     *
+     * @param version the platform version to read the names for
+     * @return the names in the platform's order, or why they cannot be read here
+     */
+    static OutputParameterSet outputParameterNames(Version version)
+    {
+        try
+        {
+            Bundle bundle = Platform.getBundle(DCS_BUNDLE);
+            if (bundle == null)
+            {
+                // A runtime without the composition bundles at all: nothing to read names from.
+                return OutputParameterSet.unavailable("the bundle " + DCS_BUNDLE //$NON-NLS-1$
+                    + " is not in this runtime"); //$NON-NLS-1$
+            }
+            Class<?> parametersClass = bundle.loadClass(DCS_AVAILABLE_PARAMETERS_CLASS);
+            Class<?> collectionClass = bundle.loadClass(DCS_AVAILABLE_COLLECTION_CLASS);
+            Class<?> parameterClass = bundle.loadClass(DCS_AVAILABLE_PARAMETER_CLASS);
+            Class<?> creatorClass = bundle.loadClass(DCS_OUTPUT_PARAMETERS_CLASS);
+            // The second constructor argument is the language, and the platform does not read it:
+            // measured on com._1c.g5.v8.dt.dcs 22.0.2, where createAvailableParameters never loads
+            // that argument and every name carries both spellings regardless.
+            Object values = creatorClass.getConstructor(Version.class, String.class)
+                .newInstance(version, ""); //$NON-NLS-1$
+            // The creator keeps what it built in DcsParameterValuesBase.getAvailableParameters().
+            Object available = creatorClass.getMethod("getAvailableParameters").invoke(values); //$NON-NLS-1$
+            if (available == null)
+            {
+                return OutputParameterSet.unavailable("the platform built no parameter set"); //$NON-NLS-1$
+            }
+            Object collection = parametersClass.getMethod("getParameters").invoke(available); //$NON-NLS-1$
+            if (collection == null)
+            {
+                return OutputParameterSet.unavailable("the parameter set carries no collection"); //$NON-NLS-1$
+            }
+            Method count = collectionClass.getMethod("itemsCount"); //$NON-NLS-1$
+            Method itemAt = collectionClass.getMethod("getItemAt", int.class); //$NON-NLS-1$
+            // key(int) is the name of one parameter for one language, 0 first and 1 second.
+            Method key = parameterClass.getMethod("key", int.class); //$NON-NLS-1$
+            int size = ((Integer)count.invoke(collection)).intValue();
+            List<String[]> names = new ArrayList<>();
+            for (int i = 0; i < size; i++)
+            {
+                Object item = itemAt.invoke(collection, Integer.valueOf(i));
+                if (item == null)
+                {
+                    continue;
+                }
+                String first = spellingOf(key.invoke(item, Integer.valueOf(0)));
+                String second = spellingOf(key.invoke(item, Integer.valueOf(1)));
+                if (first != null)
+                {
+                    names.add(new String[] { first, second != null ? second : first });
+                }
+            }
+            return names.isEmpty()
+                ? OutputParameterSet.unavailable("the platform answered with no output parameters") //$NON-NLS-1$
+                : OutputParameterSet.known(names);
+        }
+        catch (Exception e)
+        {
+            // Asking for a version whose platform bundle this EDT does not carry stops on
+            // IllegalArgumentException "Can't create proxy for unknown name
+            // 'DataCompositionAppearanceTemplate'" - the descriptions carry platform types, and the
+            // per-version bundles com._1c.g5.v8.dt.platform_v8.3.NN supply them. That is NOT the
+            // same answer as an empty set: the caller writes the name unchecked and says so in the
+            // answer, rather than refusing every name for want of the list.
+            Activator.logWarning("outputParameterNames failed: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
+            return OutputParameterSet.unavailable(
+                e.getClass().getSimpleName() + ": " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * One spelling of one parameter, as the platform's {@code key(int)} answers it.
+     *
+     * @param name what {@code key(int)} returned, possibly null
+     * @return the text, or null when the parameter carries no name in that slot
+     */
+    private static String spellingOf(Object name)
+    {
+        String text = name == null ? null : String.valueOf(name);
+        return text == null || text.isEmpty() ? null : text;
+    }
+
+    /**
+     * The platform version whose output parameter set applies to a call.
+     * <p>
+     * The set is version-dependent: the platform's builder adds names only from a given version
+     * onwards. The project's own version is read when there is a project.
+     * </p>
+     *
+     * @param project the project the call works in, or null when it has none
+     * @return the version to read the names for
+     */
+    private static Version outputParameterVersion(IProject project)
+    {
+        if (project != null)
+        {
+            try
+            {
+                Activator activator = Activator.getDefault();
+                IRuntimeVersionSupport support =
+                    activator == null ? null : activator.getRuntimeVersionSupport();
+                if (support != null)
+                {
+                    Version version = support.getRuntimeVersion(project);
+                    if (version != null)
+                    {
+                        return version;
+                    }
+                }
+            }
+            catch (Throwable t)
+            {
+                // A version that cannot be read is not a reason to refuse the call.
+                Activator.logWarning("outputParameterVersion failed: " //$NON-NLS-1$
+                    + TextSuggest.safeMessage(t));
+            }
+        }
+        return Version.LATEST;
+    }
+
+    /**
+     * Matches an output parameter name against the set the platform offers.
+     * <p>
+     * The name is matched ignoring case, against both spellings of every parameter, so a caller
+     * may name one in either language. The answer is the matched pair of spellings, so the write
+     * is keyed by the platform's own spelling and an entry stored under the other spelling is
+     * found. A name nothing matches is refused with the closest name and the ones that are
+     * allowed, so the call is corrected rather than guessed at.
+     * </p>
+     * <p>
+     * A set that could not be read refuses nothing: the answer is null and the caller writes the
+     * name unchecked, with a warning - a check that cannot answer must not leave the operation
+     * unable to set a parameter at all.
+     * </p>
+     *
+     * @param name the name the caller passed
+     * @param offered what reading the platform's set answered
+     * @return both spellings of the matched parameter, or null when the set could not be read
+     * @throws RuntimeException when the name matches nothing in the set that was read
+     */
+    static String[] mustBeKnownOutputParameter(String name, OutputParameterSet offered)
+    {
+        if (offered == null || offered.spellings == null || offered.spellings.isEmpty())
+        {
+            return null;
+        }
+        for (String[] pair : offered.spellings)
+        {
+            if (pair[0].equalsIgnoreCase(name) || pair[1].equalsIgnoreCase(name))
+            {
+                return pair;
+            }
+        }
+        List<String> known = allSpellings(offered.spellings);
+        StringBuilder refused = new StringBuilder();
+        refused.append("Unknown output parameter '").append(name).append("'."); //$NON-NLS-1$ //$NON-NLS-2$
+        String suggestion = TextSuggest.closest(name, known);
+        if (suggestion != null)
+        {
+            refused.append(" Did you mean '").append(suggestion).append("'?"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        refused.append(" Available: ").append(shownNames(known)); //$NON-NLS-1$
+        throw new RuntimeException(refused.toString());
+    }
+
+    /**
+     * Every spelling of every parameter, flattened, for the refusal's list and suggestion.
+     *
+     * @param spellings both spellings of each parameter
+     * @return each spelling once, in the platform's order
+     */
+    private static List<String> allSpellings(List<String[]> spellings)
+    {
+        List<String> all = new ArrayList<>();
+        for (String[] pair : spellings)
+        {
+            if (!all.contains(pair[0]))
+            {
+                all.add(pair[0]);
+            }
+            if (!all.contains(pair[1]))
+            {
+                all.add(pair[1]);
+            }
+        }
+        return all;
+    }
+
+    /**
+     * The allowed names as a refusal lists them, comma-separated and capped the way
+     * {@link TextSuggest} caps the lists it formats.
+     *
+     * @param known the names the platform offers
+     * @return the text for the refusal
+     */
+    private static String shownNames(Collection<String> known)
+    {
+        List<String> names = new ArrayList<>(known);
+        if (names.size() <= ALLOWED_NAMES_SHOWN)
+        {
+            return String.join(", ", names); //$NON-NLS-1$
+        }
+        return String.join(", ", names.subList(0, ALLOWED_NAMES_SHOWN)) //$NON-NLS-1$
+            + ", ... (+" + (names.size() - ALLOWED_NAMES_SHOWN) + " more)"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -7283,6 +7739,10 @@ public class DcsWorkshopTool implements IMcpTool
             + "    (`emptyFilterValue` / `emptyPeriod`), `name` (the filter field or the parameter) and,\n" //$NON-NLS-1$
             + "    for a filter item, `comparisonType`. The check reads the whole variant written into.\n" //$NON-NLS-1$
             + "    Absent when the settings are complete.\n" //$NON-NLS-1$
+            + "- `outputParameterNameChecked` false + `outputParameterNameCheckNote` (success\n" //$NON-NLS-1$
+            + "    flags) - set_output_parameter wrote the name without the platform's parameter\n" //$NON-NLS-1$
+            + "    list to check it against; the note says why the list could not be read. Absent\n" //$NON-NLS-1$
+            + "    when the name was checked.\n" //$NON-NLS-1$
             + "- `supportLock` - schema parent is on vendor support; use an extension.\n\n" //$NON-NLS-1$
             + "Pass `validate_query=false` or `validate_expression=false` to bypass\n" //$NON-NLS-1$
             + "pre-flight validation (use only for trusted templating).\n"; //$NON-NLS-1$
@@ -7471,6 +7931,35 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
+     * Runs one schema operation and answers why its output parameter name went in unchecked.
+     * <p>
+     * The write path is the public one, with the settings collection the public route opens around
+     * it; what this adds is the reading of the name-check outcome. The answer the route builds from
+     * it needs a workspace, so a test reads the record itself.
+     * </p>
+     *
+     * @param op the operation name.
+     * @param params its arguments.
+     * @param schema the schema to write into.
+     * @return why the platform's set could not be read, or null when the name was checked
+     * @throws Exception if the operation refuses
+     */
+    String outputParameterNameNoteForTest(String op, Map<String, String> params, EObject schema)
+        throws Exception
+    {
+        SettingsWritten written = beginSettingsScope();
+        try
+        {
+            applyToSchemaForTest(op, params, schema);
+            return written.outputParameterNameNote;
+        }
+        finally
+        {
+            endSettingsScope(written);
+        }
+    }
+
+    /**
      * Builds the schema-mutation registry: op name -> handler applied on the DCS
      * schema inside the BM write transaction. Each handler is the exact call the
      * former applySchemaMutation switch made. Alias pairs (add_chart /
@@ -7530,8 +8019,8 @@ public class DcsWorkshopTool implements IMcpTool
         reg(m, "remove_conditional_appearance", (p, s, pr) -> doRemoveConditionalAppearance(p, s));
         reg(m, "set_field_appearance", (p, s, pr) -> doSetDataSetFieldAppearance(p, s));
         reg(m, "set_data_set_field_appearance", (p, s, pr) -> doSetDataSetFieldAppearance(p, s));
-        reg(m, "set_output_param", (p, s, pr) -> doSetOutputParameter(p, s));
-        reg(m, "set_output_parameter", (p, s, pr) -> doSetOutputParameter(p, s));
+        reg(m, "set_output_param", (p, s, pr) -> doSetOutputParameter(p, s, pr));
+        reg(m, "set_output_parameter", (p, s, pr) -> doSetOutputParameter(p, s, pr));
         reg(m, "add_filter_group", (p, s, pr) -> doAddSettingsFilterGroup(p, s));
         reg(m, "add_settings_filter_group", (p, s, pr) -> doAddSettingsFilterGroup(p, s));
         reg(m, "add_dataset_link", (p, s, pr) -> doAddDataSetLink(p, s));

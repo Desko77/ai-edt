@@ -12,11 +12,14 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
+import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -61,6 +64,21 @@ public class AnOutputParameterIsSetWhereTheContainerWasAbsentTest
             built instanceof EObject);
         schema = (EObject)built;
         tool = new DcsWorkshopTool();
+        // The operation checks the name against the platform's output parameters. The platform's
+        // set is built by the platform-version bundles of the EDT installation, which answer only
+        // for the versions they carry, so the set the check reads is pinned here to the spellings
+        // these tests write.
+        DcsWorkshopTool.outputParameterNamesForTests =
+            Collections.unmodifiableList(Arrays.<String[]>asList(new String[] { PARAMETER, "Title" })); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts the output parameter names back the way the production path reads them.
+     */
+    @After
+    public void clearThePinnedNames()
+    {
+        DcsWorkshopTool.outputParameterNamesForTests = null;
     }
 
     /**
@@ -192,6 +210,46 @@ public class AnOutputParameterIsSetWhereTheContainerWasAbsentTest
             1, items.size());
         assertSame("the write finds the entry that was already there", present, items.get(0)); //$NON-NLS-1$
         assertEquals("reading it back returns what was written", WRITTEN, valueOf(present)); //$NON-NLS-1$
+    }
+
+    /**
+     * A name passed in another case is written in the platform's own spelling: the model's
+     * parameter lookup is case-sensitive, so the caller's casing would key an entry the model
+     * does not find.
+     *
+     * @throws Exception if the operation refuses
+     */
+    @Test
+    public void aNameInAnotherCaseIsWrittenInThePlatformSpelling() throws Exception
+    {
+        run("set_output_parameter", "name", "заголовок", "value", WRITTEN); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        EList<EObject> items = entries();
+        assertEquals("the parameter belongs in the settings once", 1, items.size()); //$NON-NLS-1$
+        assertEquals("and the entry is keyed the way the platform spells the parameter", //$NON-NLS-1$
+            PARAMETER, keyOf(items.get(0)));
+    }
+
+    /**
+     * Both spellings address one parameter: a call naming the English spelling finds the entry a
+     * call naming the Russian spelling wrote, rather than adding a second one.
+     *
+     * @throws Exception if the operation refuses
+     */
+    @Test
+    public void theOtherSpellingFindsTheEntryTheFirstSpellingWrote() throws Exception
+    {
+        run("set_output_parameter", "name", PARAMETER, "value", WRITTEN); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        EObject created = entries().get(0);
+
+        run("set_output_parameter", "name", "Title", "value", "Другой"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+
+        EList<EObject> items = entries();
+        assertEquals("both spellings address one parameter, so there is still one entry", //$NON-NLS-1$
+            1, items.size());
+        assertSame("and it is the entry the first call wrote", created, items.get(0)); //$NON-NLS-1$
+        assertEquals("the key keeps the spelling the first call wrote", PARAMETER, keyOf(created)); //$NON-NLS-1$
+        assertEquals("the value is the one the second call wrote", "Другой", valueOf(created)); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
