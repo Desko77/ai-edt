@@ -76,7 +76,7 @@ public class InfobaseOutsideChangesTest
         assertEquals("infobaseChanged", refusal.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(RECORDED_BASE, refusal.get("recordedInfobase").getAsString()); //$NON-NLS-1$
         assertEquals(CURRENT_BASE, refusal.get("currentInfobase").getAsString()); //$NON-NLS-1$
-        assertEquals("sync_control syncOperation=rebuild_dump_info confirm=true", //$NON-NLS-1$
+        assertEquals("infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true", //$NON-NLS-1$
             refusal.get("nextStep").getAsString()); //$NON-NLS-1$
         assertTrue("the refusal says which base the file was written for", //$NON-NLS-1$
             refusal.get("error").getAsString().contains(RECORDED_BASE)); //$NON-NLS-1$

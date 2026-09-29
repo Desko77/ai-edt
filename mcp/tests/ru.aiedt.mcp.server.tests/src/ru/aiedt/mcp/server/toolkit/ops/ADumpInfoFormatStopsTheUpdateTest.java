@@ -104,7 +104,7 @@ public class ADumpInfoFormatStopsTheUpdateTest
         assertEquals("2.7", refusal.get("expectedDumpInfoFormat").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("8.3.27.2214", refusal.get("platformVersion").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("dumpInfoFormat", refusal.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("sync_control syncOperation=rebuild_dump_info confirm=true", //$NON-NLS-1$
+        assertEquals("infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true", //$NON-NLS-1$
             refusal.get("nextStep").getAsString()); //$NON-NLS-1$
         assertTrue(refusal.get("dumpInfoFile").getAsString().endsWith("ConfigDumpInfo.xml")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("the refusal says what the update would silently become", //$NON-NLS-1$

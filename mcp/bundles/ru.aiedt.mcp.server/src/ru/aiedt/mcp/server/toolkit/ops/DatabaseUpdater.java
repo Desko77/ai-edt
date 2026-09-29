@@ -126,7 +126,7 @@ public class DatabaseUpdater implements IMcpTool
 
     /** The step an answer names when the stored copy has to be rewritten from the infobase. */
     static final String REBUILD_COPY_STEP =
-        "sync_control syncOperation=rebuild_dump_info confirm=true"; //$NON-NLS-1$
+        "infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true"; //$NON-NLS-1$
 
     @Override
     public String getName()
@@ -1066,7 +1066,7 @@ public class DatabaseUpdater implements IMcpTool
             .put("expectedDumpInfoFormat", dumpInfo.expectedFormat) //$NON-NLS-1$
             .put("platformVersion", dumpInfo.platformVersion) //$NON-NLS-1$
             .put("tag", ErrorTags.DUMP_INFO_FORMAT.wire()) //$NON-NLS-1$
-            .put("nextStep", "sync_control syncOperation=rebuild_dump_info confirm=true") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("nextStep", "infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true") //$NON-NLS-1$ //$NON-NLS-2$
             .toJson();
     }
 

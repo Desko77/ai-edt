@@ -67,7 +67,7 @@ public final class DtSnapshotRunner
 
     /** The step a successful load names, the same one an incremental update is sent to. */
     static final String REBUILD_COPY_STEP =
-        "sync_control syncOperation=rebuild_dump_info confirm=true"; //$NON-NLS-1$
+        "infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true"; //$NON-NLS-1$
 
     /** The soft wait's clamp range, the same one update_database and export_object use. */
     private static final int MIN_TIMEOUT_SECONDS = 5;
