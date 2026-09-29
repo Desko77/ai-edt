@@ -8,7 +8,6 @@ package ru.aiedt.mcp.server.support;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.emf.common.util.EList;
 
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
@@ -128,6 +127,15 @@ public final class PictureValidator
         return false;
     }
 
+    /**
+     * Whether the configuration of a project has a common picture of a name.
+     *
+     * @param projectName the project
+     * @param name the common picture's name, in any case
+     * @return <code>true</code> when the picture is there, and when reading the configuration
+     *         throws - the write resolves the name itself then; <code>false</code> for a project or
+     *         configuration that is not there
+     */
     private static boolean isValidCommonPicture(String projectName, String name)
     {
         try
@@ -139,21 +147,7 @@ public final class PictureValidator
             }
             Configuration config = Activator.getDefault().getConfigurationProvider()
                 .getConfiguration(project);
-            if (config == null)
-            {
-                return false;
-            }
-            EList<?> pictures = (EList<?>) config.getClass()
-                .getMethod("getCommonPictures").invoke(config); //$NON-NLS-1$
-            for (Object pic : pictures)
-            {
-                if (pic instanceof MdObject
-                    && name.equals(((MdObject) pic).getName()))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return config != null && carriesCommonPicture(config, name);
         }
         catch (Exception e)
         {
@@ -162,5 +156,25 @@ public final class PictureValidator
             // Conservative default - avoid blocking the operation when probe fails.
             return true;
         }
+    }
+
+    /**
+     * Whether a configuration carries a common picture of a name. Metadata names do not tell case
+     * apart, so neither does this.
+     *
+     * @param config the configuration
+     * @param name the common picture's name, in any case
+     * @return <code>true</code> when a common picture answers to the name
+     */
+    static boolean carriesCommonPicture(Configuration config, String name)
+    {
+        for (Object pic : config.getCommonPictures())
+        {
+            if (pic instanceof MdObject && name.equalsIgnoreCase(((MdObject) pic).getName()))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }

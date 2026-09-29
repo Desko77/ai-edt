@@ -54,6 +54,21 @@ public class APictureIsWrittenAsANamedReferenceTest
     }
 
     /**
+     * The validator finds a common picture whatever the case of the name, as the write does.
+     */
+    @Test
+    public void theValidatorFindsACommonPictureInAnyCase()
+    {
+        Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
+        CommonPicture logo = MdClassFactory.eINSTANCE.createCommonPicture();
+        logo.setName("Логотип"); //$NON-NLS-1$
+        configuration.getCommonPictures().add(logo);
+
+        assertTrue(PictureValidator.carriesCommonPicture(configuration, "логотип")); //$NON-NLS-1$
+        assertTrue(!PictureValidator.carriesCommonPicture(configuration, "Другая")); //$NON-NLS-1$
+    }
+
+    /**
      * A decoration whose picture cannot be built gets a refusal, not a decoration without a
      * picture.
      *
