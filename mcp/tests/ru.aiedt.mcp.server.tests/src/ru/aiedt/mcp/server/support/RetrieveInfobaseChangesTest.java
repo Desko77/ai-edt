@@ -17,8 +17,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
@@ -39,6 +41,8 @@ import com._1c.g5.v8.dt.platform.services.core.infobases.sync.InfobaseConflictRe
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.ObjectChange;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.ObjectChangeType;
 import com._1c.g5.v8.dt.platform.services.model.ModelFactory;
+
+import ru.aiedt.mcp.server.toolkit.ops.SyncControlTool;
 
 /**
  * The two answers a pull from the infobase can get from this project, and what the pull leaves on
@@ -169,40 +173,195 @@ public class RetrieveInfobaseChangesTest
 
     /**
      * The sources of the object the infobase no longer has go, whole directory and all, and the
-     * neighbouring objects and the configuration keep theirs.
+     * neighbouring objects and the configuration keep theirs. This project is this test's own.
      */
     @Test
-    public void theSourcesOfADeletedObjectGoAndNothingElseDoes()
+    public void theSourcesOfADeletedObjectGoAndNothingElseDoes() throws Exception
     {
-        RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(project, List.of("Catalog.Goods")); //$NON-NLS-1$
+        try (Probe probe = probe("AiEdtDelCatalog", //$NON-NLS-1$
+            CONFIGURATION,
+            GOODS + "/Catalog.mdo", //$NON-NLS-1$
+            GOODS + "/ObjectModule.bsl", //$NON-NLS-1$
+            GOODS + "/Forms/ItemForm/Form.form", //$NON-NLS-1$
+            OTHER + "/Catalog.mdo")) //$NON-NLS-1$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Catalog.Goods")); //$NON-NLS-1$
 
-        assertEquals(List.of(GOODS), outcome.removed);
-        assertTrue(outcome.failures.isEmpty());
-        assertFalse("the object's own directory is gone", project.getFolder(GOODS).exists()); //$NON-NLS-1$
-        assertFalse("the module beside it is gone with it", //$NON-NLS-1$
-            project.getFile(GOODS + "/ObjectModule.bsl").exists()); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue("the configuration keeps its file", project.getFile(CONFIGURATION).exists()); //$NON-NLS-1$
-        assertTrue("the other catalog keeps its file", //$NON-NLS-1$
-            project.getFile(OTHER + "/Catalog.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(List.of(GOODS), outcome.removed);
+            assertTrue(outcome.failures.isEmpty());
+            assertTrue(outcome.filesKept.isEmpty());
+            assertFalse("the object's own directory is gone", probe.project.getFolder(GOODS).exists()); //$NON-NLS-1$
+            assertFalse("the module beside it is gone with it", //$NON-NLS-1$
+                probe.project.getFile(GOODS + "/ObjectModule.bsl").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the configuration keeps its file", probe.project.getFile(CONFIGURATION).exists()); //$NON-NLS-1$
+            assertTrue("the other catalog keeps its file", //$NON-NLS-1$
+                probe.project.getFile(OTHER + "/Catalog.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
     }
 
     /**
      * Names that do not place one whole object are left alone: a nested object belongs to its owner,
-     * an unknown type is not addressed by path, and the configuration is not an object of the
-     * configuration.
+     * an unknown type is not addressed by path, the configuration is not an object of the
+     * configuration, and a subsystem name that does not spell the nested path is not guessed.
+     * This project is this test's own.
      */
     @Test
-    public void aNameThatIsNotAWholeObjectIsLeftAlone()
+    public void aNameThatIsNotAWholeObjectIsLeftAlone() throws Exception
     {
-        RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(project,
-            List.of("Catalog.Other.Forms.ItemForm", "NotAType.Thing", "Configuration.Configuration", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                "../Catalog.Other")); //$NON-NLS-1$
+        try (Probe probe = probe("AiEdtDelSkipped", //$NON-NLS-1$
+            CONFIGURATION,
+            OTHER + "/Catalog.mdo", //$NON-NLS-1$
+            "src/Subsystems/A/Subsystem.mdo", //$NON-NLS-1$
+            "src/Subsystems/A/Subsystems/B/Subsystem.mdo")) //$NON-NLS-1$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Catalog.Other.Forms.ItemForm", "NotAType.Thing", "Configuration.Configuration", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    "../Catalog.Other", "Subsystem.A.B")); //$NON-NLS-1$ //$NON-NLS-2$
 
-        assertTrue("nothing may be removed for these names", outcome.removed.isEmpty()); //$NON-NLS-1$
-        assertEquals(4, outcome.skipped.size());
-        assertTrue(outcome.failures.isEmpty());
-        assertTrue("the other catalog is still there", //$NON-NLS-1$
-            project.getFile(OTHER + "/Catalog.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("nothing may be removed for these names", outcome.removed.isEmpty()); //$NON-NLS-1$
+            assertEquals(5, outcome.skipped.size());
+            assertTrue(outcome.filesKept.isEmpty());
+            assertTrue(outcome.failures.isEmpty());
+            assertTrue("the other catalog is still there", //$NON-NLS-1$
+                probe.project.getFile(OTHER + "/Catalog.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("a name that does not spell the nested path leaves both subsystems", //$NON-NLS-1$
+                probe.project.getFolder("src/Subsystems/A/Subsystems/B").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * A type the module catalog refuses to address by directory still loses its sources. The
+     * catalog's own directory stays empty; the removal reads a table that exists only for deletion.
+     */
+    @Test
+    public void aTypeTheCatalogDoesNotAddressByDirectoryLosesItsSources() throws Exception
+    {
+        assertNull("the catalog must stay without a directory for a role", //$NON-NLS-1$
+            MetadataTypeCatalog.getDirectoryName("Role")); //$NON-NLS-1$
+        assertNull("the catalog must stay without a directory for a common picture", //$NON-NLS-1$
+            MetadataTypeCatalog.getDirectoryName("CommonPicture")); //$NON-NLS-1$
+        try (Probe probe = probe("AiEdtDelRole", //$NON-NLS-1$
+            "src/Roles/Accountant/Role.mdo", //$NON-NLS-1$
+            "src/Roles/Neighbor/Role.mdo", //$NON-NLS-1$
+            "src/CommonPictures/Logo/Picture.mdo")) //$NON-NLS-1$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Role.Accountant", "CommonPicture.Logo")); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertTrue(outcome.removed.contains("src/Roles/Accountant")); //$NON-NLS-1$
+            assertTrue(outcome.removed.contains("src/CommonPictures/Logo")); //$NON-NLS-1$
+            assertTrue(outcome.skipped.isEmpty());
+            assertTrue(outcome.filesKept.isEmpty());
+            assertFalse(probe.project.getFolder("src/Roles/Accountant").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(probe.project.getFolder("src/CommonPictures/Logo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the neighbouring role stays", //$NON-NLS-1$
+                probe.project.getFile("src/Roles/Neighbor/Role.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * {@code Subsystem.A.Subsystem.B} is one path. A second subsystem of the same leaf, under
+     * another parent, stays.
+     */
+    @Test
+    public void anEncodedNestedSubsystemIsRemovedAndTheOtherLeafStays() throws Exception
+    {
+        try (Probe probe = probe("AiEdtDelEncoded", //$NON-NLS-1$
+            "src/Subsystems/A/Subsystems/B/Subsystem.mdo", //$NON-NLS-1$
+            "src/Subsystems/Other/Subsystems/B/Subsystem.mdo")) //$NON-NLS-1$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Subsystem.A.Subsystem.B")); //$NON-NLS-1$
+
+            assertEquals(List.of("src/Subsystems/A/Subsystems/B"), outcome.removed); //$NON-NLS-1$
+            assertTrue(outcome.filesKept.isEmpty());
+            assertFalse(probe.project.getFolder("src/Subsystems/A/Subsystems/B").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the other B is a different object", //$NON-NLS-1$
+                probe.project.getFile("src/Subsystems/Other/Subsystems/B/Subsystem.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * {@code Subsystem.Child} with two directories of that leaf removes neither, and names both
+     * paths that remained.
+     */
+    @Test
+    public void aSubsystemLeafThatMatchesMoreThanOneDirectoryIsKept() throws Exception
+    {
+        try (Probe probe = probe("AiEdtDelAmbiguous", //$NON-NLS-1$
+            "src/Subsystems/Child/Subsystem.mdo", //$NON-NLS-1$
+            "src/Subsystems/Parent/Subsystems/Child/Subsystem.mdo")) //$NON-NLS-1$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Subsystem.Child")); //$NON-NLS-1$
+
+            assertTrue(outcome.removed.isEmpty());
+            assertTrue(outcome.skipped.isEmpty());
+            assertEquals(2, outcome.filesKept.size());
+            assertEquals("Subsystem.Child", outcome.filesKept.get(0).name); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(pathsOf(outcome).contains("src/Subsystems/Child")); //$NON-NLS-1$
+            assertTrue(pathsOf(outcome).contains("src/Subsystems/Parent/Subsystems/Child")); //$NON-NLS-1$
+            assertTrue(probe.project.getFolder("src/Subsystems/Child").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(probe.project.getFolder("src/Subsystems/Parent/Subsystems/Child").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * A leaf that sits in exactly one place is that place, including when the only directory is
+     * nested.
+     */
+    @Test
+    public void aSubsystemLeafThatMatchesOneDirectoryIsRemoved() throws Exception
+    {
+        try (Probe probe = probe("AiEdtDelUnique", //$NON-NLS-1$
+            "src/Subsystems/Parent/Subsystem.mdo", //$NON-NLS-1$
+            "src/Subsystems/Parent/Subsystems/Only/Subsystem.mdo")) //$NON-NLS-1$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Subsystem.Only")); //$NON-NLS-1$
+
+            assertEquals(List.of("src/Subsystems/Parent/Subsystems/Only"), outcome.removed); //$NON-NLS-1$
+            assertTrue(outcome.filesKept.isEmpty());
+            assertFalse(probe.project.getFolder("src/Subsystems/Parent/Subsystems/Only").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the parent subsystem stays", //$NON-NLS-1$
+                probe.project.getFile("src/Subsystems/Parent/Subsystem.mdo").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * A leaf that matches nothing is already gone: it is not skipped and nothing else is removed.
+     */
+    @Test
+    public void aSubsystemLeafThatMatchesNothingIsAlreadyGone() throws Exception
+    {
+        try (Probe probe = probe("AiEdtDelGone", "src/Subsystems/Keep/Subsystem.mdo")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            RemovedObjectFiles.Outcome outcome = RemovedObjectFiles.deleteFor(probe.project,
+                List.of("Subsystem.Missing")); //$NON-NLS-1$
+
+            assertTrue(outcome.removed.isEmpty());
+            assertTrue(outcome.skipped.isEmpty());
+            assertTrue(outcome.filesKept.isEmpty());
+            assertTrue(probe.project.getFolder("src/Subsystems/Keep").exists()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * A runKey this server does not have is a missing pull. Before the dispatcher read runKey, the
+     * same call failed because the synchronization manager is absent from this runtime.
+     */
+    @Test
+    public void anUnknownRunKeyIsAMissingPullNotAMissingManager()
+    {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("operation", "retrieve_database_changes"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", PROJECT); //$NON-NLS-1$
+        params.put("runKey", "0123456789abcdef0123456789abcdef"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new SyncControlTool().execute(params);
+
+        assertTrue(result, result.contains("not found")); //$NON-NLS-1$
+        assertFalse(result, result.contains("IInfobaseSynchronizationManager")); //$NON-NLS-1$
     }
 
     /**
@@ -306,5 +465,85 @@ public class RetrieveInfobaseChangesTest
         Path file = projectDir.resolve(relative);
         Files.createDirectories(file.getParent());
         Files.write(file, text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * The paths a kept-object answer names.
+     *
+     * @param outcome the removal
+     * @return the paths that remained
+     */
+    private static List<String> pathsOf(RemovedObjectFiles.Outcome outcome)
+    {
+        List<String> paths = new java.util.ArrayList<>();
+        for (RemovedObjectFiles.Kept kept : outcome.filesKept)
+        {
+            paths.add(kept.path);
+        }
+        return paths;
+    }
+
+    /**
+     * A project created for one deletion test and deleted with it.
+     */
+    private static final class Probe implements AutoCloseable
+    {
+        /** The project the test removes from. */
+        final IProject project;
+
+        private final Path root;
+
+        private Probe(IProject project, Path root)
+        {
+            this.project = project;
+            this.root = root;
+        }
+
+        @Override
+        public void close() throws Exception
+        {
+            if (project != null && project.exists())
+            {
+                project.delete(true, true, new NullProgressMonitor());
+            }
+            if (root != null)
+            {
+                try (var walk = Files.walk(root))
+                {
+                    walk.sorted(java.util.Comparator.<Path>reverseOrder()).map(Path::toFile)
+                        .forEach(java.io.File::delete);
+                }
+            }
+        }
+    }
+
+    /**
+     * Opens a project holding the named files, each with a one-line body.
+     *
+     * @param name the project name
+     * @param relatives the project-relative files to lay down
+     * @return the project, closed by the caller
+     * @throws Exception when the workspace refuses the project
+     */
+    private static Probe probe(String name, String... relatives) throws Exception
+    {
+        Path probeRoot = Files.createTempDirectory("aiedt-retrieve-" + name); //$NON-NLS-1$
+        Path projectDir = probeRoot.resolve(name);
+        for (String relative : relatives)
+        {
+            write(projectDir, relative, "probe\n"); //$NON-NLS-1$
+        }
+        IWorkspace workspace = ResourcesPlugin.getWorkspace();
+        IProject opened = workspace.getRoot().getProject(name);
+        if (opened.exists())
+        {
+            opened.delete(true, true, new NullProgressMonitor());
+        }
+        IProjectDescription description = workspace.newProjectDescription(name);
+        description.setLocation(new org.eclipse.core.runtime.Path(projectDir.toString()));
+        opened.create(description, new NullProgressMonitor());
+        opened.open(new NullProgressMonitor());
+        opened.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+        return new Probe(opened, probeRoot);
     }
 }

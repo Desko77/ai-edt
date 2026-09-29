@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IProject;
@@ -41,6 +42,8 @@ import com._1c.g5.wiring.ServiceAccess;
 import com.e1c.g5.dt.applications.IApplication;
 import com.e1c.g5.dt.applications.IApplicationManager;
 import com.e1c.g5.dt.applications.infobases.IInfobaseApplication;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.Activator;
@@ -52,6 +55,12 @@ import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BuildTaskHelper;
 import ru.aiedt.mcp.server.support.DatabaseChangesResolver;
 import ru.aiedt.mcp.server.support.DumpInfoRebuilder;
+import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.InfobaseHolders;
+import ru.aiedt.mcp.server.support.InfobaseIdentity;
+import ru.aiedt.mcp.server.support.MonopolyLock;
+import ru.aiedt.mcp.server.support.PendingEnvelope;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
 import ru.aiedt.mcp.server.support.RemovedObjectFiles;
@@ -141,10 +150,14 @@ public class SyncControlTool implements IMcpTool
             + "change made in Designer visible in the project. A project that carries changes of its own is " //$NON-NLS-1$
             + "REFUSED and left exactly as it was; replaceLocal=true takes the infobase's version of those " //$NON-NLS-1$
             + "objects and discards the project's changes to them. Sources of the objects the infobase no " //$NON-NLS-1$
-            + "longer has are removed from the project afterwards, and the project is refreshed and its " //$NON-NLS-1$
-            + "build waited for. markSynchronized=true then runs the same baseline rewrite as " //$NON-NLS-1$
-            + "operation=mark_synchronized for the same infobase. The call BLOCKS until EDT finishes the " //$NON-NLS-1$
-            + "pull and ignores cancel signals while it runs. " //$NON-NLS-1$
+            + "longer has are removed from the project afterwards, and the project is refreshed. " //$NON-NLS-1$
+            + "markSynchronized=true then runs the same baseline rewrite as " //$NON-NLS-1$
+            + "operation=mark_synchronized for the same infobase; a failed rewrite is " //$NON-NLS-1$
+            + "baselineMarked=false with the reason on the answer. A thick client this EDT launched " //$NON-NLS-1$
+            + "against the infobase is refused before the pull, by that launch's name. A call that " //$NON-NLS-1$
+            + "outlasts timeoutSeconds answers Pending with a runKey; call again with that runKey to " //$NON-NLS-1$
+            + "keep waiting. cancel=true with the runKey stops tracking and says when the platform " //$NON-NLS-1$
+            + "call is still running - that call is not pulled back. " //$NON-NLS-1$
             + "reseed_baseline, mark_synchronized, recover_stuck_merge and rebuild_dump_info are DANGEROUS - only on explicit user request " //$NON-NLS-1$
             + "and only when you are CERTAIN of the state (project KNOWN to match the infobase / no update really " //$NON-NLS-1$
             + "running); otherwise EDT silently drops real changes or a genuine merge is aborted. NEVER call autonomously."; //$NON-NLS-1$
@@ -180,14 +193,23 @@ public class SyncControlTool implements IMcpTool
                 + "project's changes to them.") //$NON-NLS-1$
             .booleanProperty("markSynchronized", "For operation=retrieve_database_changes: true runs " //$NON-NLS-1$ //$NON-NLS-2$
                 + "the same baseline rewrite as operation=mark_synchronized for the infobase just " //$NON-NLS-1$
-                + "pulled, once the pull succeeded. Default false leaves the baseline to the pull " //$NON-NLS-1$
-                + "itself.") //$NON-NLS-1$
+                + "pulled, once the pull succeeded. A failed rewrite is baselineMarked=false with " //$NON-NLS-1$
+                + "the reason on the answer. Default false.") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", "For operation=rebuild_dump_info: how long each " //$NON-NLS-1$ //$NON-NLS-2$
                 + "Designer run is waited for, 60-3600 (default 600). Past it the run is abandoned, " //$NON-NLS-1$
                 + "the stored file is not touched and the infobase is reconnected. For " //$NON-NLS-1$
-                + "operation=retrieve_database_changes: how long the project is waited for to become " //$NON-NLS-1$
-                + "readable afterwards, 30-3600 (default 300). The pull itself is not bounded by it - " //$NON-NLS-1$
-                + "the platform call has no budget.") //$NON-NLS-1$
+                + "operation=retrieve_database_changes: how long this call waits before answering " //$NON-NLS-1$
+                + "Pending with a runKey, 30-3600 (default 300). The same budget is what " //$NON-NLS-1$
+                + "BuildTaskHelper.waitForBuildAndDerivedData uses for the derived-data wait after " //$NON-NLS-1$
+                + "a pull; the build-job wait is not bounded, and running out of the derived-data " //$NON-NLS-1$
+                + "budget ends quietly without an error. The platform pull is not cancelled when " //$NON-NLS-1$
+                + "the budget runs out - call again with the runKey.") //$NON-NLS-1$
+            .stringProperty("runKey", "For operation=retrieve_database_changes: resumes a Pending " //$NON-NLS-1$ //$NON-NLS-2$
+                + "pull. How long this call waits before answering Pending again is timeoutSeconds. " //$NON-NLS-1$
+                + "A fresh call without runKey starts again and is not served a previous result.") //$NON-NLS-1$
+            .booleanProperty("cancel", "For operation=retrieve_database_changes: with runKey, stop " //$NON-NLS-1$ //$NON-NLS-2$
+                + "tracking that pull. The platform call, once it has started, is still running, and " //$NON-NLS-1$
+                + "the answer says so.") //$NON-NLS-1$
             .booleanProperty("confirm", "For operation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$ //$NON-NLS-2$
                 + "recover_stuck_merge / rebuild_dump_info: " //$NON-NLS-1$
                 + "must be true to proceed. Confirms you are CERTAIN of the state (project matches the infobase, or " //$NON-NLS-1$
@@ -268,21 +290,49 @@ public class SyncControlTool implements IMcpTool
     }
 
     /**
-     * Names the Designer run behind {@code rebuild_dump_info} so the road weighs the call by it.
+     * Names the heavy action behind this call so the road weighs it.
      * <p>
-     * Every other operation here reads files and the model in-process, so only this one answers:
-     * a name returned for the rest would throttle cheap reads. The action is matched exactly, as
-     * the dispatch below accepts it - a camelCase selector is refused before any work runs.
+     * {@code rebuild_dump_info} releases the infobase to a Designer. {@code retrieve_database_changes}
+     * pulls the infobase into the project and can reload the configuration. Every other operation
+     * here reads files and the model in-process, so a name returned for the rest would throttle
+     * cheap reads. The action is matched exactly, as the dispatch below accepts it - a camelCase
+     * selector is refused before any work runs.
      * </p>
      *
      * @param arguments the call arguments, as the client sent them; may be <code>null</code>
-     * @return {@code rebuild_dump_info} for that action, <code>null</code> otherwise
+     * @return {@code rebuild_dump_info} or {@code retrieve_database_changes} for those actions,
+     *         <code>null</code> otherwise
      */
     @Override
     public String routesTo(Map<String, String> arguments)
     {
         String operation = JsonUtils.extractStringArgument(arguments, "operation"); //$NON-NLS-1$
-        return "rebuild_dump_info".equals(operation) ? "rebuild_dump_info" : null; //$NON-NLS-1$ //$NON-NLS-2$
+        if ("rebuild_dump_info".equals(operation)) //$NON-NLS-1$
+        {
+            return "rebuild_dump_info"; //$NON-NLS-1$
+        }
+        if ("retrieve_database_changes".equals(operation)) //$NON-NLS-1$
+        {
+            return "retrieve_database_changes"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Polls a pull this tool started.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; may be {@code null}
+     * @return {@code retrieve_database_changes} when this call polls one, or {@code null}
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.RETRIEVE.domain().equals(domain))
+        {
+            return null;
+        }
+        return "retrieve_database_changes".equals(operation) ? "retrieve_database_changes" : null; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Override
@@ -1457,10 +1507,14 @@ public class SyncControlTool implements IMcpTool
      * through {@link RemovedObjectFiles}, and the project is refreshed and its build waited for so
      * the caller's next call (usually {@code update_database dryRun=true}) sees a settled model.</p>
      *
-     * <p>The platform call blocks and cannot be cancelled from here - a monitor handed to it would
-     * only be able to interrupt the read, not to undo the load - so this one is not advertised as
-     * cancellable. The wait for readiness and for the build afterwards is bounded by
-     * {@code timeoutSeconds}.</p>
+     * <p>The platform call cannot be pulled back once it has started. The call waits
+     * {@code timeoutSeconds} and, still running, answers Pending with a runKey; a later call with
+     * that runKey waits again, and {@code cancel=true} with the runKey stops tracking and says when
+     * the platform call is still going. A thick client this EDT launched is refused before the
+     * platform is asked. {@code timeoutSeconds} is also the budget
+     * {@link BuildTaskHelper#waitForBuildAndDerivedData} uses for the derived-data wait; the
+     * build-job wait itself is not bounded, and running out of the derived-data budget ends
+     * quietly.</p>
      *
      * @param project the project to pull into
      * @param params the call; {@code applicationId} names the binding when the project has several,
@@ -1469,6 +1523,39 @@ public class SyncControlTool implements IMcpTool
      * @return the outcome as a JSON answer
      */
     private String doRetrieveDatabaseChanges(IProject project, Map<String, String> params)
+    {
+        String runKeyParam = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        boolean cancel = JsonUtils.extractBooleanArgument(params, "cancel", false); //$NON-NLS-1$
+        if (runKeyParam != null && !runKeyParam.isEmpty() && cancel)
+        {
+            return cancelRetrieve(runKeyParam);
+        }
+        long timeoutMs = readRetrieveTimeout(params);
+        if (runKeyParam != null && !runKeyParam.isEmpty())
+        {
+            return resumeRetrieve(runKeyParam, timeoutMs);
+        }
+        boolean replaceLocal = JsonUtils.extractBooleanArgument(params, "replaceLocal", false); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean markSynchronized = JsonUtils.extractBooleanArgument(params, "markSynchronized", false); //$NON-NLS-1$ //$NON-NLS-2$
+        String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
+        String runKey = PendingWorkRegistry.computeRunKey(project.getName(),
+            applicationId == null ? "" : applicationId, //$NON-NLS-1$
+            String.valueOf(replaceLocal), String.valueOf(markSynchronized));
+        return trackRetrieve(runKey, project.getName(), timeoutMs,
+            entry -> pullTheInfobase(project, params, entry));
+    }
+
+    /**
+     * The pull itself, run on the retrieve registry's thread.
+     *
+     * @param project the project to pull into
+     * @param params the call
+     * @param entry the run this pull belongs to; its launch is claimed immediately before the
+     *            platform call
+     * @return the outcome as a JSON answer
+     */
+    private String pullTheInfobase(IProject project, Map<String, String> params,
+        PendingWorkRegistry.PendingEntry entry)
     {
         boolean replaceLocal = JsonUtils.extractBooleanArgument(params, "replaceLocal", false); //$NON-NLS-1$ //$NON-NLS-2$
         boolean markSynchronized = JsonUtils.extractBooleanArgument(params, "markSynchronized", false); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1579,6 +1666,40 @@ public class SyncControlTool implements IMcpTool
         }
 
         DatabaseChangesResolver resolver = new DatabaseChangesResolver(replaceLocal);
+        List<String> thickClients = InfobaseHolders.thickClientLaunchNames(application.getId());
+        String clientRefusal = refusalForThickClients(thickClients);
+        if (clientRefusal != null)
+        {
+            ToolResult refused = ToolResult.error(clientRefusal);
+            refused.put("tag", ErrorTags.BUSY.wire()); //$NON-NLS-1$
+            refused.put("heldBy", thickClients); //$NON-NLS-1$
+            return describePull(refused, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+        if (entry != null && !entry.claimTheLaunch())
+        {
+            ToolResult cancelled = ToolResult.error("The pull was cancelled before it reached " //$NON-NLS-1$
+                + "the infobase. Nothing was started; the project is as it was."); //$NON-NLS-1$
+            cancelled.put("tag", ErrorTags.CANCELLED.wire()); //$NON-NLS-1$
+            return describePull(cancelled, project, infobaseProject, application, infobaseUuid,
+                replaceLocal, resolver, viaParent).toJson();
+        }
+        String identity = InfobaseIdentity.of(infobase);
+        MonopolyLock.Claim claim = MonopolyLock.claim(identity, "retrieve_database_changes"); //$NON-NLS-1$
+        if (!claim.granted())
+        {
+            claim.close();
+            ToolResult taken = ToolResult.error(claim.refusal());
+            taken.put("tag", ErrorTags.BUSY.wire()); //$NON-NLS-1$
+            if (MonopolyLock.isHeldByThisInstance(claim.heldBy))
+            {
+                taken.put("heldByThisInstance", Boolean.TRUE); //$NON-NLS-1$
+            }
+            return describePull(taken, project, infobaseProject, application, infobaseUuid, replaceLocal,
+                resolver, viaParent).toJson();
+        }
+        try
+        {
         long started = System.currentTimeMillis();
         InfobaseSyncResolution resolution;
         try
@@ -1674,6 +1795,18 @@ public class SyncControlTool implements IMcpTool
         answer.put("removedSources", removal.removed); //$NON-NLS-1$
         answer.put("skippedObjects", removal.skipped); //$NON-NLS-1$
         answer.put("removalFailures", removal.failures); //$NON-NLS-1$
+        if (!removal.filesKept.isEmpty())
+        {
+            List<Map<String, String>> kept = new ArrayList<>();
+            for (RemovedObjectFiles.Kept one : removal.filesKept)
+            {
+                Map<String, String> row = new LinkedHashMap<>();
+                row.put("name", one.name); //$NON-NLS-1$
+                row.put("path", one.path); //$NON-NLS-1$
+                kept.add(row);
+            }
+            answer.put("filesKept", kept); //$NON-NLS-1$
+        }
         answer.put("refreshed", Boolean.valueOf(refreshed)); //$NON-NLS-1$
         if (resolver.fullReloadRequired())
         {
@@ -1700,9 +1833,14 @@ public class SyncControlTool implements IMcpTool
             Map<String, String> markParams = new LinkedHashMap<>();
             markParams.put("infobaseUuid", infobaseUuid); //$NON-NLS-1$
             markParams.put("confirm", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-            answer.put("baselineMark", JsonParser.parseString(doMarkSynchronized(infobaseProject, markParams))); //$NON-NLS-1$
+            surfaceTheBaselineMark(answer, doMarkSynchronized(infobaseProject, markParams));
         }
         return answer.toJson();
+        }
+        finally
+        {
+            claim.close();
+        }
     }
 
     /**
@@ -1762,6 +1900,208 @@ public class SyncControlTool implements IMcpTool
         }
         long askedMs = askedSeconds.intValue() * 1000L;
         return Math.max(RETRIEVE_MIN_TIMEOUT_MS, Math.min(RETRIEVE_MAX_TIMEOUT_MS, askedMs));
+    }
+
+    /**
+     * Runs a pull on the retrieve registry and waits up to the budget.
+     * <p>
+     * A finished entry for the same key is dropped first, so a fresh call is not served the previous
+     * pull. An in-flight call with the same key joins that run. Past the budget the answer is Pending
+     * and the run stays for a later call with the runKey.
+     * </p>
+     *
+     * @param runKey the key these arguments own
+     * @param projectName the project, named in a Pending body
+     * @param timeoutMs how long to wait before answering Pending
+     * @param work the pull, handed the entry it runs under
+     * @return a JSON result body
+     */
+    static String trackRetrieve(String runKey, String projectName, long timeoutMs,
+        Function<PendingWorkRegistry.PendingEntry, String> work)
+    {
+        PendingWorkRegistry registry = PendingWorkRegistry.RETRIEVE;
+        registry.pruneExpired();
+        PendingWorkRegistry.PendingEntry existing = registry.get(runKey);
+        if (existing != null && existing.isDone())
+        {
+            registry.remove(runKey);
+        }
+        PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey, work);
+        entry.subject = projectName;
+        entry.workKind = "retrieve_database_changes"; //$NON-NLS-1$
+        entry.startedBy = "retrieve_database_changes"; //$NON-NLS-1$
+        String result = entry.await(timeoutMs);
+        if (result != null)
+        {
+            registry.remove(runKey);
+            return result;
+        }
+        return pendingRetrieveJson(runKey, entry, projectName, timeoutMs);
+    }
+
+    /**
+     * Waits again on a pull that already answered Pending.
+     *
+     * @param runKey the key to poll
+     * @param timeoutMs how long to wait before answering Pending again
+     * @return a JSON result body
+     */
+    static String resumeRetrieve(String runKey, long timeoutMs)
+    {
+        PendingWorkRegistry registry = PendingWorkRegistry.RETRIEVE;
+        registry.pruneExpired();
+        PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
+        if (entry == null)
+        {
+            return ToolResult.error("runKey was not found - the pull either already finished and was " //$NON-NLS-1$
+                + "retrieved, or it was abandoned and evicted. Send a fresh request without runKey " //$NON-NLS-1$
+                + "to start again.") //$NON-NLS-1$
+                .put("operation", "retrieve_database_changes") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("runKey", runKey) //$NON-NLS-1$
+                .toJson();
+        }
+        if (entry.workKind != null && !"retrieve_database_changes".equals(entry.workKind)) //$NON-NLS-1$
+        {
+            return ToolResult.error("runKey belongs to " + entry.workKind //$NON-NLS-1$
+                + ", not to retrieve_database_changes.") //$NON-NLS-1$
+                .put("operation", "retrieve_database_changes") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("runKey", runKey) //$NON-NLS-1$
+                .toJson();
+        }
+        String result = entry.await(timeoutMs);
+        if (result != null)
+        {
+            registry.remove(runKey);
+            return result;
+        }
+        return pendingRetrieveJson(runKey, entry, null, timeoutMs);
+    }
+
+    /**
+     * Stops tracking a pull and says whether the platform call is still running.
+     *
+     * @param runKey the key to detach
+     * @return a JSON result body
+     */
+    static String cancelRetrieve(String runKey)
+    {
+        PendingWorkRegistry.StopOutcome outcome = PendingWorkRegistry.RETRIEVE.cancelAndStop(runKey);
+        String note;
+        if (outcome == PendingWorkRegistry.StopOutcome.STILL_RUNNING)
+        {
+            note = "Stopped tracking this pull. The platform call is still running and cannot be " //$NON-NLS-1$
+                + "pulled back."; //$NON-NLS-1$
+        }
+        else if (outcome == PendingWorkRegistry.StopOutcome.STOPPED)
+        {
+            note = "Stopped tracking this pull. It had not reached the platform call."; //$NON-NLS-1$
+        }
+        else
+        {
+            note = "runKey was not found (the pull already finished and was retrieved, or it was " //$NON-NLS-1$
+                + "evicted)."; //$NON-NLS-1$
+        }
+        ToolResult answer = ToolResult.success()
+            .put("operation", "retrieve_database_changes") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("cancelled", Boolean.valueOf(outcome != PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP)) //$NON-NLS-1$
+            .put("note", note); //$NON-NLS-1$
+        if (outcome == PendingWorkRegistry.StopOutcome.STILL_RUNNING)
+        {
+            answer.put("platformCallStillRunning", Boolean.TRUE); //$NON-NLS-1$
+        }
+        return answer.toJson();
+    }
+
+    /**
+     * The Pending body returned when the wait budget runs out before the pull finishes.
+     *
+     * @param runKey the key to resume with
+     * @param entry the in-flight pull
+     * @param projectName the project, or {@code null} to omit
+     * @param timeoutMs how long was waited
+     * @return a JSON Pending body
+     */
+    private static String pendingRetrieveJson(String runKey, PendingWorkRegistry.PendingEntry entry,
+        String projectName, long timeoutMs)
+    {
+        ToolResult body = ToolResult.success()
+            .put("operation", "retrieve_database_changes") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("waitedMs", Long.valueOf(timeoutMs)) //$NON-NLS-1$
+            .put("hint", "Pull still running. Re-invoke with runKey=\"" + runKey //$NON-NLS-1$ //$NON-NLS-2$
+                + "\" to keep waiting. Add cancel=true alongside the runKey to stop tracking it; " //$NON-NLS-1$
+                + "the platform call, once started, keeps running."); //$NON-NLS-1$
+        if (projectName != null)
+        {
+            body.put("projectName", projectName); //$NON-NLS-1$
+        }
+        return PendingEnvelope.mark(body).toJson();
+    }
+
+    /**
+     * The refusal to use when a thick client this EDT launched is holding the infobase, or
+     * {@code null} when none is visible.
+     * <p>
+     * A Designer opened by hand is not named here: this server cannot see one, and the sentence is
+     * not invented for a holder that was not found.
+     * </p>
+     *
+     * @param launchNames the thick-client launch configurations {@link InfobaseHolders} reported;
+     *            may be <code>null</code>
+     * @return the refusal, or <code>null</code> when the pull may proceed
+     */
+    static String refusalForThickClients(List<String> launchNames)
+    {
+        if (launchNames == null || launchNames.isEmpty())
+        {
+            return null;
+        }
+        return "The pull was not started: a thick client this EDT launched is holding the infobase: " //$NON-NLS-1$
+            + String.join(", ", launchNames) + "."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Puts the baseline rewrite on the answer so a failure is visible beside {@code pulled}, not
+     * only inside {@code baselineMark}.
+     *
+     * @param answer the successful pull
+     * @param markJson what {@code mark_synchronized} answered
+     */
+    static void surfaceTheBaselineMark(ToolResult answer, String markJson)
+    {
+        JsonElement parsed;
+        try
+        {
+            parsed = JsonParser.parseString(markJson);
+        }
+        catch (RuntimeException e)
+        {
+            answer.put("baselineMarked", Boolean.FALSE); //$NON-NLS-1$
+            answer.put("baselineMarkError", "The baseline rewrite did not answer JSON: " //$NON-NLS-1$ //$NON-NLS-2$
+                + TextSuggest.safeMessage(e));
+            return;
+        }
+        answer.put("baselineMark", parsed); //$NON-NLS-1$
+        boolean marked = false;
+        String reason = "The baseline was not rewritten."; //$NON-NLS-1$
+        if (parsed != null && parsed.isJsonObject())
+        {
+            JsonObject object = parsed.getAsJsonObject();
+            marked = object.has("success") && object.get("success").isJsonPrimitive() //$NON-NLS-1$ //$NON-NLS-2$
+                && object.get("success").getAsBoolean(); //$NON-NLS-1$
+            if (!marked && object.has("error") && object.get("error").isJsonPrimitive()) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                reason = object.get("error").getAsString(); //$NON-NLS-1$
+            }
+        }
+        answer.put("baselineMarked", Boolean.valueOf(marked)); //$NON-NLS-1$
+        if (!marked)
+        {
+            answer.put("baselineMarkError", reason); //$NON-NLS-1$
+        }
     }
 
     /**

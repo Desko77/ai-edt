@@ -262,7 +262,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // inspect_database_sync: protectData now says the comparison is made before the update
         // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
         // facade's help names acceptDataLoss beside protectData (measured 29.09).
-        PROSE.put("infobase_admin", Integer.valueOf(6234));
+        // Raised to the measured 7295 for retrieve_database_changes: replaceLocal,
+        // markSynchronized, and the sentences timeoutSeconds, runKey and cancel gained for that pull.
+        PROSE.put("infobase_admin", Integer.valueOf(7295));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
         // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
@@ -570,6 +572,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * a comparison made against the base's synchronization baseline before the update starts, in
      * place of the confirmation window that was read while the update ran (measured 29.09).
      * </p>
+     * <p>
+     * Raised from 97986 to 99047 for the retrieve_database_changes sentences on infobase_admin.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 97986;
+    private static final int DOCUMENT_PROSE = 99047;
 }

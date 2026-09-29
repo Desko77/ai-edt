@@ -107,13 +107,22 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         String normalized = JsonUtils.normalizeOperationToken(operation);
         if ("sync_control".equals(normalized)) //$NON-NLS-1$
         {
-            // Its inner action travels as syncOperation and is forwarded verbatim, so the Designer
-            // behind rebuild_dump_info is named from that argument, not from DESCRIBED - which
-            // cannot hold sync_control, whose delegate would need this facade's own remapping.
+            // Its inner action travels as syncOperation and is forwarded verbatim, so the heavy
+            // actions (rebuild_dump_info, retrieve_database_changes) are named from that argument,
+            // not from DESCRIBED - which cannot hold sync_control, whose delegate would need this
+            // facade's own remapping.
             // SyncControlTool answers the same question for a standalone call; both spellings of
             // the action are compared exactly, as its own dispatch does.
-            return "rebuild_dump_info".equals(JsonUtils.extractStringArgument(arguments, //$NON-NLS-1$
-                "syncOperation")) ? "rebuild_dump_info" : null; //$NON-NLS-1$ //$NON-NLS-2$
+            String syncOperation = JsonUtils.extractStringArgument(arguments, "syncOperation"); //$NON-NLS-1$
+            if ("rebuild_dump_info".equals(syncOperation)) //$NON-NLS-1$
+            {
+                return "rebuild_dump_info"; //$NON-NLS-1$
+            }
+            if ("retrieve_database_changes".equals(syncOperation)) //$NON-NLS-1$
+            {
+                return "retrieve_database_changes"; //$NON-NLS-1$
+            }
+            return null;
         }
         if ("start_client".equals(normalized)) //$NON-NLS-1$
         {
@@ -129,25 +138,33 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     }
 
     /**
-     * Polls an update when the operation is {@code update_database}.
+     * Polls an update when the operation is {@code update_database}, and a pull when the operation
+     * is {@code sync_control}.
      * <p>
-     * That operation calls {@link DatabaseUpdater#execute}, which reads {@code runKey}. The other
-     * operations do not, so a live update key must not exempt them.
+     * {@code update_database} calls {@link DatabaseUpdater#execute}, which reads {@code runKey}. A
+     * pull is started under {@code retrieve_database_changes} and polled through this facade as
+     * {@code sync_control}. Any other operation does not poll, so a live key must not exempt it.
      * </p>
      *
      * @param domain the registry domain the key was found in
      * @param operation the operation argument; may be {@code null}
-     * @return {@code update_database} when this call polls one, or {@code null}
+     * @return the starter name this call polls, or {@code null}
      */
     @Override
     public String resumes(String domain, String operation)
     {
-        if (!PendingWorkRegistry.UPDATE.domain().equals(domain))
-        {
-            return null;
-        }
         String normalized = JsonUtils.normalizeOperationToken(operation);
-        return "update_database".equals(normalized) ? DatabaseUpdater.NAME : null; //$NON-NLS-1$
+        if (PendingWorkRegistry.UPDATE.domain().equals(domain)
+            && "update_database".equals(normalized)) //$NON-NLS-1$
+        {
+            return DatabaseUpdater.NAME;
+        }
+        if (PendingWorkRegistry.RETRIEVE.domain().equals(domain)
+            && "sync_control".equals(normalized)) //$NON-NLS-1$
+        {
+            return "retrieve_database_changes"; //$NON-NLS-1$
+        }
+        return null;
     }
 
     private static Map<String, Supplier<IMcpTool>> buildDescribed()
@@ -391,13 +408,22 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "update_database: soft wait limit in seconds (5-120, default 30) before " //$NON-NLS-1$
                     + "replying Pending with a runKey to resume. sync_control " //$NON-NLS-1$
                     + "syncOperation=rebuild_dump_info: how long each Designer run is waited " //$NON-NLS-1$
-                    + "for (60-3600, default 600).") //$NON-NLS-1$
+                    + "for (60-3600, default 600). sync_control " //$NON-NLS-1$
+                    + "syncOperation=retrieve_database_changes: how long this call waits before " //$NON-NLS-1$
+                    + "answering Pending with a runKey (30-3600, default 300). The same budget is " //$NON-NLS-1$
+                    + "the derived-data wait of BuildTaskHelper.waitForBuildAndDerivedData; the " //$NON-NLS-1$
+                    + "build-job wait is not bounded, and running out of that budget ends quietly. " //$NON-NLS-1$
+                    + "The platform pull is not cancelled when the budget runs out.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "update_database: resumes a Pending update issued earlier with this runKey; " //$NON-NLS-1$
-                    + "other params are ignored once runKey is supplied.") //$NON-NLS-1$
+                    + "other params are ignored once runKey is supplied. sync_control " //$NON-NLS-1$
+                    + "syncOperation=retrieve_database_changes: resumes that Pending pull; how long " //$NON-NLS-1$
+                    + "this call waits is timeoutSeconds.") //$NON-NLS-1$
             .booleanProperty("cancel", //$NON-NLS-1$
                 "update_database: combined with runKey, detach and stop tracking that update " //$NON-NLS-1$
-                    + "(best-effort only).") //$NON-NLS-1$
+                    + "(best-effort only). sync_control syncOperation=retrieve_database_changes: " //$NON-NLS-1$
+                    + "with runKey, stop tracking that pull. The platform call, once started, is " //$NON-NLS-1$
+                    + "still running and the answer says so.") //$NON-NLS-1$
             .booleanProperty("statusOnly", //$NON-NLS-1$
                 "update_database: read what updates are being tracked and start nothing - " //$NON-NLS-1$
                     + "runKeys, state, elapsed time. projectName filters by project; any other " //$NON-NLS-1$
@@ -410,8 +436,16 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "sync_control's OWN action - status / diagnose / diagnose_delta / suppress " //$NON-NLS-1$
                     + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
                     + "recover_stuck_merge / list_support_snapshots / release_support_snapshot / " //$NON-NLS-1$
-                    + "rebuild_dump_info " //$NON-NLS-1$
+                    + "rebuild_dump_info / retrieve_database_changes " //$NON-NLS-1$
                     + "(required when operation=sync_control).") //$NON-NLS-1$
+            .booleanProperty("replaceLocal", //$NON-NLS-1$
+                "sync_control syncOperation=retrieve_database_changes: false (default) refuses " //$NON-NLS-1$
+                    + "the pull when the project has changes of its own; true takes the infobase's " //$NON-NLS-1$
+                    + "version of those objects.") //$NON-NLS-1$
+            .booleanProperty("markSynchronized", //$NON-NLS-1$
+                "sync_control syncOperation=retrieve_database_changes: true rewrites the baseline " //$NON-NLS-1$
+                    + "after a successful pull. A failed rewrite is baselineMarked=false with the " //$NON-NLS-1$
+                    + "reason on the answer. Default false.") //$NON-NLS-1$
             .booleanProperty("enabled", //$NON-NLS-1$
                 "sync_control syncOperation=suppress: true = suppress synchronization for " //$NON-NLS-1$
                     + "the project (skip it on update), false = re-enable.") //$NON-NLS-1$
@@ -521,7 +555,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             return ToolResult.error("operation=sync_control requires syncOperation (status / " //$NON-NLS-1$
                 + "diagnose / diagnose_delta / suppress / reseed_baseline / " //$NON-NLS-1$
                 + "mark_synchronized / diagnose_stuck_locks / recover_stuck_merge / " //$NON-NLS-1$
-                + "list_support_snapshots / release_support_snapshot / rebuild_dump_info) - " //$NON-NLS-1$
+                + "list_support_snapshots / release_support_snapshot / rebuild_dump_info / " //$NON-NLS-1$
+                + "retrieve_database_changes) - " //$NON-NLS-1$
                 + "sync_control has its own inner operation, kept separate from this facade's " //$NON-NLS-1$
                 + "routing operation.").toJson(); //$NON-NLS-1$
         }
@@ -589,7 +624,9 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "synchronization. Pass its own action as syncOperation, not operation; " //$NON-NLS-1$
                 + "some syncOperation values (reseed_baseline, mark_synchronized, " //$NON-NLS-1$
                 + "recover_stuck_merge) are DANGEROUS. rebuild_dump_info rewrites the stored " //$NON-NLS-1$
-                + "ConfigDumpInfo.xml with the platform's own Designer dump.\n"); //$NON-NLS-1$
+                + "ConfigDumpInfo.xml with the platform's own Designer dump. " //$NON-NLS-1$
+                + "retrieve_database_changes pulls the infobase's changes into the project " //$NON-NLS-1$
+                + "(replaceLocal, markSynchronized); a slow pull answers Pending with a runKey.\n"); //$NON-NLS-1$
             sb.append("- **start_client** - start a 1C client from a launch configuration, " //$NON-NLS-1$
                 + "without a debugger. Use it instead of building a 1cv8.exe command line.\n"); //$NON-NLS-1$
             sb.append("- **branch_infobase** - bind a git branch to an application, so that " //$NON-NLS-1$

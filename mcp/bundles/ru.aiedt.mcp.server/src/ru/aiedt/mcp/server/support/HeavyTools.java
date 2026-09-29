@@ -64,8 +64,12 @@ public final class HeavyTools
         // create_infobase: the physical creation is a CREATEINFOBASE batch child process.
         "create_infobase", //$NON-NLS-1$
         // sync_control's rebuild_dump_info: the infobase is released to a Designer that dumps
-        // ConfigDumpInfo.xml. The other sync_control operations read files in-process.
+        // ConfigDumpInfo.xml.
         "rebuild_dump_info", //$NON-NLS-1$
+        // sync_control's retrieve_database_changes: pulls the infobase into the project and can
+        // reload the whole configuration into the model. The other sync_control operations read
+        // files in-process.
+        "retrieve_database_changes", //$NON-NLS-1$
         // extension_workshop's check_platform_verdict: the facade runs it itself, and the run
         // creates a staging infobase and puts the delivery and the extension to a Designer
         // there. Named by the operation, as the facade's route answers it.

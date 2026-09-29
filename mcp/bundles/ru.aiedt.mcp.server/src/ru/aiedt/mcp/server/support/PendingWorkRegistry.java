@@ -150,7 +150,20 @@ public final class PendingWorkRegistry
         new PendingWorkRegistry("generic_tool", "generic-tool-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
-     * What a cancel reaches in each of the five domains that have no process or client of their
+     * Async backend for {@code retrieve_database_changes}.
+     * <p>
+     * Not {@link #GENERIC}: a pull writes the project from the infobase. Not {@link #UPDATE}: that
+     * pool is shared with database updates, and a pull waiting on a monopoly the platform will not
+     * grant does not return - it must not occupy an update worker. Two identical calls coalesce;
+     * a finished result is not replayed. The pool is two threads because each one can be held for
+     * as long as the platform call runs.
+     * </p>
+     */
+    public static final PendingWorkRegistry RETRIEVE = new PendingWorkRegistry(
+        "retrieve_database_changes", "retrieve-changes-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * What a cancel reaches in each of the domains that have no process or client of their
      * own to destroy.
      * <p>
      * A cancel through the task interface leaves {@link #cancel} and {@link #cancelAndStop}, and
@@ -174,6 +187,9 @@ public final class PendingWorkRegistry
         UPDATE.stopsWith(UPDATE::stopAtTheLaunchBoundary);
         EXPORT.stopsWith(EXPORT::stopAtTheLaunchBoundary);
         IMPORT_BINARY.stopsWith(IMPORT_BINARY::stopAtTheLaunchBoundary);
+        // The platform pull cannot be pulled back once it has started. Before that boundary the
+        // raised flag keeps it from starting.
+        RETRIEVE.stopsWith(RETRIEVE::stopAtTheLaunchBoundary);
     }
 
     /** TTL for completed entries that were never retrieved. 5 minutes. */
@@ -524,7 +540,7 @@ public final class PendingWorkRegistry
     {
         return Collections.unmodifiableList(
             Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, REFERENCES, IMPORT_BINARY, VANESSA,
-                NAPARNIK, GENERIC));
+                NAPARNIK, GENERIC, RETRIEVE));
     }
 
     /**

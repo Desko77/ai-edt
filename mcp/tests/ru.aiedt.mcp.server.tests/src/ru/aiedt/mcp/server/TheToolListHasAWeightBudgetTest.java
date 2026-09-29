@@ -124,8 +124,12 @@ public class TheToolListHasAWeightBudgetTest
      * answers dataLossTables, and the help names acceptDataLoss beside protectData (measured
      * 29.09).
      * </p>
+     * <p>
+     * Raised from 177494 to 178661 for retrieve_database_changes on the infobase_admin schema.
+     * The hidden sync_control alias is not in tools/list, so the document moves by this facade only.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 177494;
+    private static final int DOCUMENT_BUDGET = 178661;
 
     private LiveServer server;
 
@@ -282,7 +286,9 @@ public class TheToolListHasAWeightBudgetTest
         // inspect_database_sync: protectData now says the comparison is made before the update
         // starts and answers dataLossTables, acceptDataLoss says what it carries through, and the
         // facade's help names acceptDataLoss beside protectData (measured 29.09).
-        BUDGETS.put("infobase_admin", Integer.valueOf(9864)); //$NON-NLS-1$
+        // Raised to the measured 11031 for retrieve_database_changes on sync_control: the
+        // operation, replaceLocal, markSynchronized, and the pending wait the schema describes.
+        BUDGETS.put("infobase_admin", Integer.valueOf(11031)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the

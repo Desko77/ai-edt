@@ -76,7 +76,8 @@ public class NoHeavyCallArrivesUnguardedTest
             "check_platform_verdict"}); //$NON-NLS-1$
         ROUTES_TO_CHECK.put(new EditMetadataTool(), new String[] {"rename_metadata_object"}); //$NON-NLS-1$
         ROUTES_TO_CHECK.put(new ExternalObjectWorkshopTool(), new String[] {"import_external_object"}); //$NON-NLS-1$
-        ROUTES_TO_CHECK.put(new SyncControlTool(), new String[] {"rebuild_dump_info"}); //$NON-NLS-1$
+        ROUTES_TO_CHECK.put(new SyncControlTool(), new String[] {"rebuild_dump_info", //$NON-NLS-1$
+            "retrieve_database_changes"}); //$NON-NLS-1$
     }
 
     /**
@@ -132,8 +133,8 @@ public class NoHeavyCallArrivesUnguardedTest
     /**
      * The action that travels in a second argument is weighed too, and only for the spelling the
      * inner dispatch accepts: {@code infobase_admin} hands {@code syncOperation} to
-     * {@link SyncControlTool} without changing it, and of its operations only
-     * {@code rebuild_dump_info} releases the infobase to a Designer.
+     * {@link SyncControlTool} without changing it. {@code rebuild_dump_info} releases the infobase
+     * to a Designer. {@code retrieve_database_changes} pulls the infobase into the project.
      */
     @Test
     public void aSelectorCarriedInASecondArgumentIsWeighed()
@@ -143,8 +144,13 @@ public class NoHeavyCallArrivesUnguardedTest
         assertEquals("the Designer run behind the forwarded action", //$NON-NLS-1$
             "rebuild_dump_info", routed); //$NON-NLS-1$
         assertTrue("the road weighs what the route answers", HeavyTools.isHeavy(routed)); //$NON-NLS-1$
+        String pull = facade.routesTo(syncControl("retrieve_database_changes")); //$NON-NLS-1$
+        assertEquals("the pull behind the forwarded action", "retrieve_database_changes", pull); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the pull is weighed as heavy", HeavyTools.isHeavy(pull)); //$NON-NLS-1$
         assertEquals("the in-process operations stay unweighed", null, //$NON-NLS-1$
             facade.routesTo(syncControl("status"))); //$NON-NLS-1$
+        assertEquals("a standalone pull is the same heavy name", "retrieve_database_changes", //$NON-NLS-1$ //$NON-NLS-2$
+            new SyncControlTool().routesTo(call("retrieve_database_changes"))); //$NON-NLS-1$
     }
 
     /**
