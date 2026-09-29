@@ -255,8 +255,16 @@ def method_body(source: str, name: str) -> str:
     Braces are matched with strings, character literals and comments skipped: a message ending in
     a brace closed the body early, and everything the method read after that point went missing -
     which for an operation means a guard that refuses the arguments it did not see.
+
+    The declaration is written over more than one line in part of the tree - `throws Exception` on
+    its own line, or on the line of the parameters with the opening brace below it - so the
+    whitespace before the brace is matched rather than the brace having to follow the clause. Read
+    with the brace required on the clause's line, every method of `GitTool` came back empty: the
+    seven operations of that facade were in the map knowing one parameter each, and the derivation
+    had fallen through to the facade-wide set instead of what each operation reads.
     """
-    signature = re.search(r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w., ]+)?\{", source)
+    signature = re.search(
+        r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w., ]+)?\s*\{", source)
     if not signature:
         return ""
     start = source.find("{", signature.end() - 1)

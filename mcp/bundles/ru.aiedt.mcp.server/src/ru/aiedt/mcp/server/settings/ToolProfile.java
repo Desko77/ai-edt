@@ -418,6 +418,13 @@ public enum ToolProfile
      * {@code PresetWriteBlockingTest} now asserts every preset that claims to block writing contains
      * this whole set.
      * </p>
+     * <p>
+     * The repository is as much a write target as the sources, and the three git doors live in the
+     * VCS group, which no write-blocking preset disables wholesale: a commit writes the index and the
+     * history, a checkout rewrites the work tree, and putting a file back overwrites that file. The
+     * reads of the same facade - status, branches, log, show_file_changes - stay on under all three,
+     * because only the doors are named here.
+     * </p>
      *
      * @return the names no write-blocking preset may leave enabled
      */
@@ -427,6 +434,9 @@ public enum ToolProfile
         names.add("write_module_source"); //$NON-NLS-1$
         names.add("generate_event_handlers"); //$NON-NLS-1$
         names.add("extension_lifecycle"); //$NON-NLS-1$
+        names.add("git_commit"); //$NON-NLS-1$
+        names.add("git_checkout"); //$NON-NLS-1$
+        names.add("git_revert_file"); //$NON-NLS-1$
         // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
         // send a question and whatever Naparnik's tools read to that service. A preset that blocks
         // writing switches the whole name off.
@@ -442,13 +452,6 @@ public enum ToolProfile
         Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING,
             ToolCategory.CONSTRUCTORS);
         disabled.addAll(writersOutsideWriteGroups());
-        // The repository is as much a write target as the sources: a commit writes the index and
-        // the history, a checkout rewrites the work tree, and putting a file back overwrites
-        // that file. Reading them (status, branches, log, show_file_changes) stays on - only
-        // the writes are off.
-        disabled.add("git_commit"); //$NON-NLS-1$
-        disabled.add("git_checkout"); //$NON-NLS-1$
-        disabled.add("git_revert_file"); //$NON-NLS-1$
         // Returns a snippet and writes nothing, but a preset this strict is expected to hand back
         // nothing that reads like generated code either.
         disabled.add("code_template"); //$NON-NLS-1$

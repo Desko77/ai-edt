@@ -563,6 +563,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 678 for filePath, fromRef, toRef, granularity and dryRun on git. The git prose grew
      * from 875 to 1553 and nothing else in the list changed. Measured 29.09: 98229.
      * </p>
+     * <p>
+     * And by 301 for the line endings revert_file names, the editor note on dryRun and the file
+     * limit of show_file_changes. The git prose grew from 1553 to 1854 and nothing else in the
+     * list changed. Measured 29.09: 98530.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 98229;
+    private static final int DOCUMENT_PROSE = 98530;
 }

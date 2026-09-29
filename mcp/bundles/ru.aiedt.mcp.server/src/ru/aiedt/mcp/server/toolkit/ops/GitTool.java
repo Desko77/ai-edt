@@ -59,10 +59,12 @@ public class GitTool
         return "Git for the project inside EDT: status, branches, log, commit, checkout, " //$NON-NLS-1$
             + "show_file_changes and revert_file. " //$NON-NLS-1$
             + "show_file_changes reads a line diff, or (granularity=method, one .bsl file) the " //$NON-NLS-1$
-            + "changed procedures and functions by name. " //$NON-NLS-1$
-            + "revert_file writes one file's bytes back from a commit; dryRun previews and writes " //$NON-NLS-1$
-            + "nothing. The index is not touched: afterwards the file matches HEAD, or it is listed " //$NON-NLS-1$
-            + "as modified. An external edit of .form, .mdo or .dcs needs revalidate_objects. " //$NON-NLS-1$
+            + "changed procedures and functions by name; edits outside any method count in the file " //$NON-NLS-1$
+            + "totals and are not a method hunk. " //$NON-NLS-1$
+            + "revert_file writes one file's bytes back from a commit, with the line endings a " //$NON-NLS-1$
+            + "checkout would give it; dryRun previews and writes nothing. The index is not touched: " //$NON-NLS-1$
+            + "afterwards the file matches HEAD, or it is listed as modified. An external edit of " //$NON-NLS-1$
+            + ".form, .mdo or .dcs needs revalidate_objects. " //$NON-NLS-1$
             + "Operations: status (work tree and index vs HEAD, ahead/behind the tracking branch), " //$NON-NLS-1$
             + "branches (local branches, current first), log (recent commits), " //$NON-NLS-1$
             + "commit (stage named paths and commit them - paths by name only, there is no add-all), " //$NON-NLS-1$
@@ -90,7 +92,9 @@ public class GitTool
             .stringProperty("projectName", //$NON-NLS-1$
                 "Name of the EDT project; its repository is the one the operation reads.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
-                "log: how many commits to list (default 10, at most 100).") //$NON-NLS-1$
+                "log: how many commits to list (default 10, at most 100). " //$NON-NLS-1$
+                    + "show_file_changes: how many changed files the answer carries (default 50, at " //$NON-NLS-1$
+                    + "most 200); the answer gives the total in totalFileCount either way.") //$NON-NLS-1$
             .stringProperty("paths", //$NON-NLS-1$
                 "commit: comma-separated paths to stage and commit, relative to the repository's " //$NON-NLS-1$
                     + "work tree (e.g. 'src/CommonModules/MyModule/Module.bsl,CHANGELOG.md'). " //$NON-NLS-1$
@@ -111,7 +115,8 @@ public class GitTool
                     + "existing one (default false).") //$NON-NLS-1$
             .stringProperty("filePath", //$NON-NLS-1$
                 "show_file_changes: one file, relative to the work tree (a project-relative path " //$NON-NLS-1$
-                    + "is accepted). Omit it to list every changed file with line counts and no hunks. " //$NON-NLS-1$
+                    + "is accepted). Omit it to list the changed files with line counts and no hunks, " //$NON-NLS-1$
+                    + "at most limit of them. " //$NON-NLS-1$
                     + "revert_file: the one file to put back (required).") //$NON-NLS-1$
             .stringProperty("fromRef", //$NON-NLS-1$
                 "show_file_changes and revert_file: the commit to read (SHA, branch or HEAD). " //$NON-NLS-1$
@@ -124,7 +129,8 @@ public class GitTool
                     + "and function and applies only to one .bsl filePath; any other file is refused.") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "revert_file: true previews the diff against fromRef and writes nothing " //$NON-NLS-1$
-                    + "(default false).") //$NON-NLS-1$
+                    + "(default false). A preview matches the file on disk and is answered even " //$NON-NLS-1$
+                    + "while an editor holds unsaved changes for it; only the write is refused then.") //$NON-NLS-1$
             .build();
     }
 
@@ -225,6 +231,11 @@ public class GitTool
      * one {@code .bsl} file; any other file is refused rather than answered with a line diff the
      * caller did not ask for.</p>
      *
+     * <p>Without a {@code filePath} the answer carries at most {@code limit} files and reports the
+     * whole count beside it, so a tree that changed in thousands of files answers with the limit
+     * rather than with everything. A file above {@code GitFileDiff.LINE_COUNT_BYTE_LIMIT} is listed
+     * by its size instead of its line counts; naming it in {@code filePath} gives its diff.</p>
+     *
      * @param project the project whose repository is read
      * @param git the repository
      * @param params the call's arguments
@@ -283,8 +294,10 @@ public class GitTool
             return ToolResult.error("granularity=method applies only to one .bsl file named in " //$NON-NLS-1$
                 + "filePath. Other files are refused; use granularity=line.").toJson(); //$NON-NLS-1$
         }
+        int limit = JsonUtils.extractIntArgument(params, "limit", GitFileDiff.DEFAULT_FILE_LIMIT); //$NON-NLS-1$
+        limit = Math.max(1, Math.min(GitFileDiff.MAX_FILE_LIMIT, limit));
         GitFileDiff.Answer diff = GitFileDiff.between(git.getRepository(), fromRef, toRef, repoPath,
-            granularity);
+            granularity, limit);
         if (diff.error != null)
         {
             return ToolResult.error(diff.error).toJson();
@@ -296,6 +309,8 @@ public class GitTool
             .put("toRef", toRef) //$NON-NLS-1$
             .put("granularity", granularity) //$NON-NLS-1$
             .put("fileCount", Integer.valueOf(diff.files.size())) //$NON-NLS-1$
+            .put("totalFileCount", Integer.valueOf(diff.total)) //$NON-NLS-1$
+            .put("truncated", Boolean.valueOf(diff.truncated)) //$NON-NLS-1$
             .put("files", diff.files) //$NON-NLS-1$
             .toJson();
     }

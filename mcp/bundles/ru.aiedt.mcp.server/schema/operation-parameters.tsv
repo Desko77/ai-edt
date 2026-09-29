@@ -314,13 +314,13 @@ ExternalObjectWorkshopTool	import_external_object	applicationId:string,baseProje
 FormCommandInterfaceOps	add	commandFqn:?,group:string,index:integer,panel:?,visible:string	passed in as locals	
 FormCommandInterfaceOps	remove	commandFqn:?,panel:?	passed in as locals	
 FormCommandInterfaceOps	set_property	commandFqn:?,group:string,index:integer,panel:?,propertyName:string,visible:string	passed in as locals	
-GitTool	branches	projectName:string	passed in as locals	
-GitTool	checkout	projectName:string	passed in as locals	
-GitTool	commit	authorName:string,projectName:string	passed in as locals	
-GitTool	log	projectName:string	passed in as locals	
-GitTool	revert_file	operation:string,projectName:string	passed in as locals	
-GitTool	show_file_changes	projectName:string	passed in as locals	
-GitTool	status	projectName:string	passed in as locals	
+GitTool	branches	projectName:string	passed in as locals	authorEmail:string,authorName:string,branch:string,createBranch:boolean,dryRun:boolean,filePath:string,fromRef:string,granularity:string,limit:integer,message:string,paths:string,toRef:string
+GitTool	checkout	branch:string,createBranch:boolean	read in place	authorEmail:string,authorName:string,dryRun:boolean,filePath:string,fromRef:string,granularity:string,limit:integer,message:string,paths:string,projectName:string,toRef:string
+GitTool	commit	message:string,paths:string	read in place	authorEmail:string,authorName:string,branch:string,createBranch:boolean,dryRun:boolean,filePath:string,fromRef:string,granularity:string,limit:integer,projectName:string,toRef:string
+GitTool	log	limit:integer	read in place	authorEmail:string,authorName:string,branch:string,createBranch:boolean,dryRun:boolean,filePath:string,fromRef:string,granularity:string,message:string,paths:string,projectName:string,toRef:string
+GitTool	revert_file	dryRun:boolean,filePath:string,fromRef:string	read in place	authorEmail:string,authorName:string,branch:string,createBranch:boolean,granularity:string,limit:integer,message:string,paths:string,projectName:string,toRef:string
+GitTool	show_file_changes	filePath:string,fromRef:string,granularity:string,limit:integer,toRef:string	read in place	authorEmail:string,authorName:string,branch:string,createBranch:boolean,dryRun:boolean,message:string,paths:string,projectName:string
+GitTool	status	projectName:string	passed in as locals	authorEmail:string,authorName:string,branch:string,createBranch:boolean,dryRun:boolean,filePath:string,fromRef:string,granularity:string,limit:integer,message:string,paths:string,toRef:string
 InfobaseAdminFacadeTool	branch_infobase	action:string,applicationId:string,branch:string,projectName:string	delegate BranchInfobaseTool	syncOperation:string
 InfobaseAdminFacadeTool	create_infobase	name:string,path:string,platform:string,projectName:string,templateCf:string	delegate InfobaseCreator	syncOperation:string
 InfobaseAdminFacadeTool	create_launch_config	infobaseName:string,projectName:string	delegate LaunchConfigCreator	syncOperation:string

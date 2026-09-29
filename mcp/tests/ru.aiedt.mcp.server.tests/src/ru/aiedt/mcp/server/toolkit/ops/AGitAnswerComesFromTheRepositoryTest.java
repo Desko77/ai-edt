@@ -541,13 +541,40 @@ public class AGitAnswerComesFromTheRepositoryTest
     }
 
     /**
+     * The entry for one path in a file list.
+     * <p>
+     * A list read against the work tree also carries the files this class leaves untracked - the
+     * project's own {@code .project} among them - so an entry is found by its path and not by its
+     * place in the list.
+     * </p>
+     *
+     * @param answer the tool answer holding the file list
+     * @param repoPath the repository-relative path to find
+     * @return the entry for that path
+     */
+    private static JsonObject entryFor(JsonObject answer, String repoPath)
+    {
+        for (JsonElement element : answer.getAsJsonArray("files")) //$NON-NLS-1$
+        {
+            JsonObject entry = element.getAsJsonObject();
+            if (repoPath.equals(entry.get("filePath").getAsString())) //$NON-NLS-1$
+            {
+                return entry;
+            }
+        }
+        throw new AssertionError(repoPath + " is not among " + answer); //$NON-NLS-1$
+    }
+
+    /**
      * Puts the repository back to a commit. Only the files these tests added are removed; a clean
      * of the whole work tree would delete the project's {@code .project}.
      *
      * @param head the commit to return to
+     * @param addedPaths further paths this test created, removed as well; a path a later test does
+     *            not know about would otherwise be left in the work tree as untracked
      * @throws Exception when the repository cannot be written
      */
-    private static void backTo(String head) throws Exception
+    private static void backTo(String head, String... addedPaths) throws Exception
     {
         try (Git git = Git.open(repoRoot.toFile()))
         {
@@ -555,6 +582,10 @@ public class AGitAnswerComesFromTheRepositoryTest
         }
         deleteTree(work(PROJECT + "/src/Catalogs")); //$NON-NLS-1$
         Files.deleteIfExists(work(MODULE));
+        for (String path : addedPaths)
+        {
+            deleteTree(work(path));
+        }
         project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
     }
 
@@ -681,8 +712,8 @@ public class AGitAnswerComesFromTheRepositoryTest
     }
 
     /**
-     * Putting a file back from the commit that holds it restores those bytes, including the line
-     * endings, and the work tree is clean again. A preview writes nothing.
+     * Putting a file back from the commit that holds it restores those bytes, in the line endings a
+     * checkout of that path would write, and the work tree is clean again. A preview writes nothing.
      */
     @Test
     public void revertFileRestoresTheCommittedBytesAndAPreviewWritesNothing() throws Exception
@@ -704,14 +735,14 @@ public class AGitAnswerComesFromTheRepositoryTest
                 committed = commitPaths(git, "Form with CRLF", FORM); //$NON-NLS-1$
             }
             project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
-            Files.writeString(form, "changed\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            Files.writeString(form, "changed\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
 
             JsonObject preview = call("revert_file", "filePath", FORM, "fromRef", committed.getName(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 "dryRun", "true"); //$NON-NLS-1$ //$NON-NLS-2$
             assertTrue(preview.toString(), preview.get("success").getAsBoolean()); //$NON-NLS-1$
             assertTrue(preview.get("dryRun").getAsBoolean()); //$NON-NLS-1$
             assertEquals(0, preview.get("bytesWritten").getAsInt()); //$NON-NLS-1$
-            assertEquals("changed\n", Files.readString(form, StandardCharsets.UTF_8)); //$NON-NLS-1$
+            assertEquals("changed\r\n", Files.readString(form, StandardCharsets.UTF_8)); //$NON-NLS-1$
             assertTrue(preview.toString(), preview.getAsJsonArray("files").get(0).getAsJsonObject() //$NON-NLS-1$
                 .getAsJsonArray("hunks").size() >= 1); //$NON-NLS-1$
 
@@ -719,6 +750,7 @@ public class AGitAnswerComesFromTheRepositoryTest
             assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
             assertEquals(committed.getName(), restored.get("restoredFrom").getAsString()); //$NON-NLS-1$
             assertEquals(original.length, restored.get("bytesWritten").getAsInt()); //$NON-NLS-1$
+            assertEquals("CRLF", restored.get("lineEndings").getAsString()); //$NON-NLS-1$
             assertEquals("clean", restored.get("fileStatus").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
             assertArrayEquals(original, Files.readAllBytes(form));
             JsonObject status = call("status"); //$NON-NLS-1$
@@ -728,6 +760,254 @@ public class AGitAnswerComesFromTheRepositoryTest
         finally
         {
             backTo(head);
+        }
+    }
+
+    /**
+     * A {@code .gitattributes} rule decides the line endings the file comes back with: the repository
+     * stores LF, {@code eol=crlf} applies to the path, and the file lands CRLF with a clean status.
+     * <p>
+     * The module is committed in the form the rule keeps in the work tree, which is what the index
+     * records the size of. Committing the LF form instead leaves the index holding five bytes and
+     * the CRLF write six, and both git and JGit then report the path as modified from the size
+     * alone, whatever the content normalizes to - measured 29.09 with the command-line git on the
+     * same shape. A repository under such a rule never has the file in the other form, so the state
+     * tested here is the one the operation meets.
+     * </p>
+     */
+    @Test
+    public void revertFileWritesTheLineEndingsTheRepositoryRuleAsksFor() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        String directory = PROJECT + "/src/eol"; //$NON-NLS-1$
+        String attributes = directory + "/.gitattributes"; //$NON-NLS-1$
+        String module = directory + "/Ruled.bsl"; //$NON-NLS-1$
+        try
+        {
+            Files.createDirectories(work(directory));
+            Files.writeString(work(attributes), "*.bsl text eol=crlf\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            Files.writeString(work(module), "line\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            RevCommit committed;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                committed = commitPaths(git, "Module under an eol rule", attributes, module); //$NON-NLS-1$
+            }
+            project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+            Files.writeString(work(module), "changed\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+
+            JsonObject restored = call("revert_file", "filePath", module, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals("CRLF", restored.get("lineEndings").getAsString()); //$NON-NLS-1$
+            assertArrayEquals("line\r\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(work(module))); //$NON-NLS-1$
+            assertEquals("clean", restored.get("fileStatus").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(restored.toString(), restored.get("bytesWritten").getAsInt() > 0); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head, directory);
+        }
+    }
+
+    /**
+     * {@code core.autocrlf=true} decides the line endings just as an attribute does: the repository
+     * stores LF, and the file comes back CRLF with a clean status.
+     * <p>
+     * The repository keeps {@code autocrlf=false} for the other tests in this class, which is also
+     * what lets them tell the committed bytes apart from normalized ones; it is set back to that
+     * value before the work tree is returned to the commit.
+     * </p>
+     */
+    @Test
+    public void revertFileUnderAutocrlfWritesCrlfAndTheStatusIsClean() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+            git.getRepository().getConfig().setString("core", null, "autocrlf", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            git.getRepository().getConfig().save();
+        }
+        String module = PROJECT + "/src/Auto.bsl"; //$NON-NLS-1$
+        try
+        {
+            Files.writeString(work(module), "line\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            RevCommit committed;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                committed = commitPaths(git, "Module under autocrlf", module); //$NON-NLS-1$
+            }
+            project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+            Files.writeString(work(module), "changed\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+
+            JsonObject restored = call("revert_file", "filePath", module, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertEquals("CRLF", restored.get("lineEndings").getAsString()); //$NON-NLS-1$
+            assertArrayEquals("line\r\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(work(module))); //$NON-NLS-1$
+            assertEquals("clean", restored.get("fileStatus").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                git.getRepository().getConfig().setString("core", null, "autocrlf", "false"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                git.getRepository().getConfig().save();
+            }
+            backTo(head, module);
+        }
+    }
+
+    /**
+     * A repository that states no line-ending rule keeps the file in the form it already has: the
+     * commit holds LF, the work-tree file is CRLF, and CRLF is what comes back.
+     * <p>
+     * The index still holds the committed LF, so the file is listed as modified - which is what git
+     * itself says of a CRLF file in a repository that stores LF and converts nothing. Writing the
+     * commit's own ending instead would put a file nothing asked for into the work tree, and a
+     * workspace full of CRLF modules is not the place to introduce one.
+     * </p>
+     */
+    @Test
+    public void revertFileKeepsTheFileEndingsWhenNoRuleIsStated() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        String module = PROJECT + "/src/Kept.bsl"; //$NON-NLS-1$
+        try
+        {
+            Files.createDirectories(work(module).getParent());
+            Files.writeString(work(module), "line\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            RevCommit committed;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                committed = commitPaths(git, "Module without a rule", module); //$NON-NLS-1$
+            }
+            project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+            Files.writeString(work(module), "changed\r\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+
+            JsonObject restored = call("revert_file", "filePath", module, "fromRef", committed.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals("CRLF", restored.get("lineEndings").getAsString()); //$NON-NLS-1$
+            assertArrayEquals("line\r\n".getBytes(StandardCharsets.UTF_8), Files.readAllBytes(work(module))); //$NON-NLS-1$
+            assertEquals("modified", restored.get("fileStatus").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            backTo(head, module);
+        }
+    }
+
+    /**
+     * A preview is answered while an editor holds the file with unsaved changes, and only the write
+     * is refused then. The buffer is not something a headless run can dirty, so the decision the
+     * operation takes is what is checked here.
+     */
+    @Test
+    public void aPreviewIsAllowedWithAnUnsavedEditorAndTheWriteIsRefused()
+    {
+        String refused = GitFileRestore.writeRefusal(FORM, true, false);
+        assertNotNull(refused);
+        assertTrue(refused, refused.contains("unsaved changes")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("Nothing was written")); //$NON-NLS-1$
+        assertNull(GitFileRestore.writeRefusal(FORM, true, true));
+        assertNull(GitFileRestore.writeRefusal(FORM, false, false));
+        assertTrue(GitFileRestore.previewNote(true).contains("on disk")); //$NON-NLS-1$
+        assertEquals("Nothing was written.", GitFileRestore.previewNote(false)); //$NON-NLS-1$
+    }
+
+    /**
+     * A list answer stops at the limit and reports the whole count beside it, so a change larger
+     * than the limit is still reported in full.
+     */
+    @Test
+    public void aListAnswerStopsAtTheLimitAndReportsTheTotal() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        String[] modules = { PROJECT + "/src/One.bsl", PROJECT + "/src/Two.bsl", //$NON-NLS-1$ //$NON-NLS-2$
+            PROJECT + "/src/Three.bsl" }; //$NON-NLS-1$
+        try
+        {
+            for (String module : modules)
+            {
+                Files.writeString(work(module), "before\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+            }
+            RevCommit first;
+            RevCommit second;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                first = commitPaths(git, "Three modules", modules); //$NON-NLS-1$
+                for (String module : modules)
+                {
+                    Files.writeString(work(module), "after\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+                }
+                second = commitPaths(git, "All three changed", modules); //$NON-NLS-1$
+            }
+            JsonObject listed = call("show_file_changes", "fromRef", first.getName(), "toRef", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                second.getName(), "limit", "2"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertEquals(listed.toString(), 2, listed.get("fileCount").getAsInt()); //$NON-NLS-1$
+            assertEquals(listed.toString(), 3, listed.get("totalFileCount").getAsInt()); //$NON-NLS-1$
+            assertTrue(listed.toString(), listed.get("truncated").getAsBoolean()); //$NON-NLS-1$
+
+            JsonObject whole = call("show_file_changes", "fromRef", first.getName(), "toRef", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                second.getName()); //$NON-NLS-1$
+            assertEquals(whole.toString(), 3, whole.get("fileCount").getAsInt()); //$NON-NLS-1$
+            assertEquals(whole.toString(), 3, whole.get("totalFileCount").getAsInt()); //$NON-NLS-1$
+            assertFalse(whole.toString(), whole.get("truncated").getAsBoolean()); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head, modules);
+        }
+    }
+
+    /**
+     * A changed file above the counting limit is listed by its size and says its lines were not
+     * counted; naming that same file still answers with its line counts.
+     */
+    @Test
+    public void aListGivesALargeFileByItsSizeAndNamingItCountsTheLines() throws Exception
+    {
+        String head;
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            head = git.getRepository().resolve("HEAD").getName(); //$NON-NLS-1$
+        }
+        String module = PROJECT + "/src/Large.bsl"; //$NON-NLS-1$
+        long size = 5L * 1024L * 1024L + 16L;
+        try
+        {
+            Files.createDirectories(work(module).getParent());
+            Files.writeString(work(module), "y".repeat((int) size), StandardCharsets.UTF_8); //$NON-NLS-1$
+            RevCommit first;
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                first = commitPaths(git, "Large module", module); //$NON-NLS-1$
+            }
+            Files.writeString(work(module), "x".repeat((int) size), StandardCharsets.UTF_8); //$NON-NLS-1$
+            JsonObject listed = call("show_file_changes", "fromRef", first.getName()); //$NON-NLS-1$ //$NON-NLS-2$
+            JsonObject entry = entryFor(listed, module);
+            assertTrue(entry.toString(), entry.has("linesNotCounted")); //$NON-NLS-1$
+            assertTrue(entry.toString(), entry.get("linesNotCounted").getAsBoolean()); //$NON-NLS-1$
+            assertFalse(entry.toString(), entry.has("linesAdded")); //$NON-NLS-1$
+            assertEquals(entry.toString(), size, entry.get("sizeInBytes").getAsLong()); //$NON-NLS-1$
+
+            JsonObject named = call("show_file_changes", "filePath", module, "fromRef", first.getName()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            JsonObject counted = entryFor(named, module);
+            assertFalse(counted.toString(), counted.has("linesNotCounted")); //$NON-NLS-1$
+            assertTrue(counted.toString(), counted.get("linesAdded").getAsInt() >= 1); //$NON-NLS-1$
+        }
+        finally
+        {
+            backTo(head, module);
         }
     }
 

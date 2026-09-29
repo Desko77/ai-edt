@@ -118,8 +118,12 @@ public class TheToolListHasAWeightBudgetTest
      * the two revisions, the granularity and the dry-run flag. The git entry grew from 1330 to
      * 3113 bytes and nothing else in the list changed.
      * </p>
+     * <p>
+     * Raised from 178350 to 178385 for the line endings revert_file names, the editor note on
+     * dryRun and the file limit of show_file_changes. Measured 29.09: 178385.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 178350;
+    private static final int DOCUMENT_BUDGET = 178385;
 
     private LiveServer server;
 

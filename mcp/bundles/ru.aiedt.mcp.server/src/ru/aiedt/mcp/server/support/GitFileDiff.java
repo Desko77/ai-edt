@@ -55,6 +55,24 @@ public final class GitFileDiff
     /** One block per changed procedure or function. Only a {@code .bsl} file. */
     public static final String METHOD = "method"; //$NON-NLS-1$
 
+    /** Changed files a list answer carries when the caller named no limit. */
+    public static final int DEFAULT_FILE_LIMIT = 50;
+
+    /** The most changed files one answer carries, whatever the caller asks for. */
+    public static final int MAX_FILE_LIMIT = 200;
+
+    /**
+     * Above this, a file in a list answer is reported by its size instead of its line counts.
+     * <p>
+     * Counting the lines of a file means JGit reading both sides of it into memory and diffing them,
+     * which for a list means every changed file at once. A generated module, a dumped configuration
+     * or a picture sits above the limit, and the answer a caller asked for - what changed - is
+     * already carried by the sizes. Five megabytes, and the limit applies to the list only: a caller
+     * who names one file asked for that file's counts and gets them whatever its size.
+     * </p>
+     */
+    public static final long LINE_COUNT_BYTE_LIMIT = 5L * 1024L * 1024L;
+
     private GitFileDiff()
     {
         // utility
@@ -71,21 +89,30 @@ public final class GitFileDiff
         /** One map per file. Empty when {@link #error} is set. */
         public final List<Map<String, Object>> files;
 
-        private Answer(String error, List<Map<String, Object>> files)
+        /** How many files differed in all, including the ones the limit left out. */
+        public final int total;
+
+        /** Whether {@link #files} carries fewer files than {@link #total}. */
+        public final boolean truncated;
+
+        private Answer(String error, List<Map<String, Object>> files, int total, boolean truncated)
         {
             this.error = error;
             this.files = files;
+            this.total = total;
+            this.truncated = truncated;
         }
 
         /**
          * A diff that was read.
          *
          * @param files the files, possibly empty when nothing differs
+         * @param total how many files differed in all
          * @return the answer
          */
-        public static Answer ok(List<Map<String, Object>> files)
+        public static Answer ok(List<Map<String, Object>> files, int total)
         {
-            return new Answer(null, files);
+            return new Answer(null, files, total, total > files.size());
         }
 
         /**
@@ -96,7 +123,7 @@ public final class GitFileDiff
          */
         public static Answer failure(String error)
         {
-            return new Answer(error, List.of());
+            return new Answer(error, List.of(), 0, false);
         }
     }
 
@@ -117,9 +144,35 @@ public final class GitFileDiff
     public static Answer between(Repository repository, String fromRef, String toRef, String repoPath,
         String granularity)
     {
+        return between(repository, fromRef, toRef, repoPath, granularity, DEFAULT_FILE_LIMIT);
+    }
+
+    /**
+     * The files that differ between two revisions, at most {@code limit} of them.
+     *
+     * <p>Hunks are included only when {@code repoPath} names one file. {@code method} granularity
+     * groups those hunks by procedure and function; the caller has already refused it for any
+     * other file.</p>
+     *
+     * <p>In list mode the answer stops at {@code limit} files and says how many there were in all.
+     * The entries past the limit are counted but not diffed, so a tree that changed in thousands of
+     * files answers with the limit and not with everything: the caller asked which files changed,
+     * and the answer to that does not grow with the size of the change.</p>
+     *
+     * @param repository the repository
+     * @param fromRef the commit to read as the old side (a SHA, a branch or {@code HEAD})
+     * @param toRef the commit to read as the new side, or {@link #WORK_TREE}
+     * @param repoPath one work-tree-relative path, or {@code null} for every changed file
+     * @param granularity {@link #LINE} or {@link #METHOD}
+     * @param limit the most files to carry, at least one; ignored when a path is named
+     * @return the files, or a refusal
+     */
+    public static Answer between(Repository repository, String fromRef, String toRef, String repoPath,
+        String granularity, int limit)
+    {
         try
         {
-            return diff(repository, fromRef, toRef, repoPath, granularity);
+            return diff(repository, fromRef, toRef, repoPath, granularity, limit);
         }
         catch (IOException e)
         {
@@ -137,11 +190,12 @@ public final class GitFileDiff
      * @param toRef the new side
      * @param repoPath one file, or {@code null}
      * @param granularity {@link #LINE} or {@link #METHOD}
+     * @param limit the most files to carry, at least one
      * @return the files, or a refusal when the named file is in neither side
      * @throws IOException when a revision cannot be read
      */
     private static Answer diff(Repository repository, String fromRef, String toRef, String repoPath,
-        String granularity)
+        String granularity, int limit)
         throws IOException
     {
         boolean toWorkTree = WORK_TREE.equals(toRef);
@@ -152,6 +206,8 @@ public final class GitFileDiff
                 iterator(repository, toRef));
             List<Map<String, Object>> files = new ArrayList<>();
             boolean found = false;
+            int total = 0;
+            int carried = Math.max(1, limit);
             for (DiffEntry entry : entries)
             {
                 if (repoPath != null && !samePath(entry, repoPath))
@@ -159,6 +215,11 @@ public final class GitFileDiff
                     continue;
                 }
                 found = true;
+                total++;
+                if (files.size() >= carried)
+                {
+                    continue;
+                }
                 files.add(oneFile(repository, formatter, entry, toWorkTree, repoPath != null, granularity));
             }
             if (repoPath != null && !found)
@@ -168,13 +229,17 @@ public final class GitFileDiff
                     return Answer.failure(repoPath + " is not in either revision."); //$NON-NLS-1$
                 }
                 files.add(unchanged(repoPath));
+                total = 1;
             }
-            return Answer.ok(files);
+            return Answer.ok(files, total);
         }
     }
 
     /**
      * One changed file: line counts always, hunks when a single file was asked for.
+     *
+     * <p>In a list, a file above {@link #LINE_COUNT_BYTE_LIMIT} on either side is answered by its
+     * size instead: counting its lines would read and diff it here and now, once per file.</p>
      *
      * @param repository the repository
      * @param formatter the formatter that produced the entry
@@ -190,6 +255,15 @@ public final class GitFileDiff
         throws IOException
     {
         String path = pathOf(entry);
+        if (!includeHunks)
+        {
+            long oldSize = blobSize(repository, entry.getOldId(), entry.getOldPath(), false);
+            long newSize = blobSize(repository, entry.getNewId(), entry.getNewPath(), toWorkTree);
+            if (oldSize > LINE_COUNT_BYTE_LIMIT || newSize > LINE_COUNT_BYTE_LIMIT)
+            {
+                return largeFile(path, changeOf(entry), oldSize, newSize);
+            }
+        }
         FileHeader header = formatter.toFileHeader(entry);
         boolean binary = header.getPatchType() != FileHeader.PatchType.UNIFIED;
         byte[] oldBytes = blob(repository, entry.getOldId(), entry.getOldPath(), false);
@@ -239,7 +313,36 @@ public final class GitFileDiff
     }
 
     /**
+     * A changed file too large to count the lines of, answered by its size.
+     *
+     * @param path the file
+     * @param change the kind of change
+     * @param oldSize the bytes on the old side
+     * @param newSize the bytes on the new side
+     * @return the file map, without line counts and without hunks
+     */
+    private static Map<String, Object> largeFile(String path, String change, long oldSize, long newSize)
+    {
+        boolean deleted = "deleted".equals(change); //$NON-NLS-1$
+        Map<String, Object> file = new LinkedHashMap<>();
+        file.put("filePath", path); //$NON-NLS-1$
+        file.put("change", change); //$NON-NLS-1$
+        file.put("sizeInBytes", Long.valueOf(deleted ? oldSize : newSize)); //$NON-NLS-1$
+        file.put("linesNotCounted", Boolean.TRUE); //$NON-NLS-1$
+        file.put("note", "Larger than " + (LINE_COUNT_BYTE_LIMIT / (1024L * 1024L)) //$NON-NLS-1$
+            + " MB, so this list gives its size rather than a line count. Name it in filePath to"
+            + " read its diff.");
+        return file;
+    }
+
+    /**
      * The unified hunks of one text file.
+     *
+     * <p>Every header that reaches here carries at least one hunk: {@code DiffFormatter} builds a
+     * text header through {@code FileHeader(byte[], EditList, PatchType)}, which adds one hunk for
+     * the whole edit list whether or not that list is empty, and a header with no hunk comes only
+     * from parsing a patch text, which this class never does. A file with no textual change but a
+     * changed mode therefore comes back as one hunk of no lines rather than as no hunks.</p>
      *
      * @param header the file header JGit parsed
      * @param oldBytes the old side
@@ -253,19 +356,6 @@ public final class GitFileDiff
         List<Map<String, Object>> hunks = new ArrayList<>();
         RawText oldText = new RawText(oldBytes);
         RawText newText = new RawText(newBytes);
-        if (header.getHunks().isEmpty())
-        {
-            EditList edits = header.toEditList();
-            if (!edits.isEmpty())
-            {
-                Map<String, Object> one = new LinkedHashMap<>();
-                one.put("linesAdded", Integer.valueOf(countAdded(edits))); //$NON-NLS-1$
-                one.put("linesRemoved", Integer.valueOf(countRemoved(edits))); //$NON-NLS-1$
-                one.put("text", formatEdits(edits, oldText, newText)); //$NON-NLS-1$
-                hunks.add(one);
-            }
-            return hunks;
-        }
         for (HunkHeader hunk : header.getHunks())
         {
             EditList edits = hunk.toEditList();
@@ -594,6 +684,35 @@ public final class GitFileDiff
             return repository.open(id.toObjectId()).getBytes();
         }
         return new byte[0];
+    }
+
+    /**
+     * The bytes on one side of a change, without reading them.
+     *
+     * @param repository the repository
+     * @param id the blob id, possibly incomplete or absent
+     * @param path the path, or {@code /dev/null}
+     * @param preferWorkTree whether to measure the work tree rather than the stored blob
+     * @return the size, zero when that side has no file
+     * @throws IOException when a stored blob cannot be read
+     */
+    private static long blobSize(Repository repository, AbbreviatedObjectId id, String path,
+        boolean preferWorkTree) throws IOException
+    {
+        if (path == null || DiffEntry.DEV_NULL.equals(path))
+        {
+            return 0L;
+        }
+        if (preferWorkTree)
+        {
+            java.nio.file.Path file = disk(repository, path);
+            return Files.isRegularFile(file) ? Files.size(file) : 0L;
+        }
+        if (id != null && id.isComplete())
+        {
+            return repository.open(id.toObjectId()).getSize();
+        }
+        return 0L;
     }
 
     /**

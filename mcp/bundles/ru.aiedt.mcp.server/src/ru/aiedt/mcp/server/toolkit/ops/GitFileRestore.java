@@ -6,6 +6,9 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.util.Locale;
 import java.util.Map;
@@ -15,12 +18,19 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.Status;
+import org.eclipse.jgit.diff.RawText;
+import org.eclipse.jgit.lib.CoreConfig;
 import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.Repository;
+import org.eclipse.jgit.treewalk.FileTreeIterator;
+import org.eclipse.jgit.treewalk.TreeWalk;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
+import org.eclipse.jgit.util.io.EolStreamTypeUtil;
 
 import ru.aiedt.mcp.server.support.EditorBuffer;
 import ru.aiedt.mcp.server.support.GitDiffUtils;
 import ru.aiedt.mcp.server.support.GitFileDiff;
+import ru.aiedt.mcp.server.support.LineDelimiters;
 import ru.aiedt.mcp.server.support.PreviousRevision;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
@@ -29,9 +39,11 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * operation itself.
  *
  * <p>The door is a registered tool so a preset can switch it off by name. The facade calls
- * {@link #apply} after that gate has passed. The bytes written are the blob's own bytes: nothing
- * is re-encoded and the line endings are the ones the commit stored. The index is left alone, so
- * afterwards the file either matches HEAD or is listed as modified.</p>
+ * {@link #apply} after that gate has passed. Nothing inside the file is re-encoded: the text is
+ * written with the line endings a checkout of that path would give it, which is what keeps the
+ * file in the form the repository expects rather than in the form the commit's bytes happen to
+ * carry. The index is left alone, so afterwards the file either matches HEAD or is listed as
+ * modified.</p>
  */
 public class GitFileRestore
     extends GitTool
@@ -66,7 +78,12 @@ public class GitFileRestore
      *
      * <p>An editor that holds the file with unsaved changes is refused: the buffer is the text the
      * user is looking at, and overwriting the file would drop it. A preview ({@code dryRun})
-     * returns the diff of the work tree against the commit and does not touch the file.</p>
+     * returns the diff of the work tree against the commit and does not touch the file, so a
+     * preview is answered even while such an editor is open - the diff is read from the file on
+     * disk and the answer says which of the two it read.</p>
+     *
+     * <p>The text is written with the line endings a checkout of that path would give it, and the
+     * answer names them. See {@link #restored}.</p>
      *
      * @param project the project the file belongs to
      * @param git the repository
@@ -108,15 +125,17 @@ public class GitFileRestore
                 .toJson();
         }
         IFile file = workspaceFile(project, repository, repoPath);
-        if (EditorBuffer.hasUnsavedChanges(file))
+        boolean unsaved = EditorBuffer.hasUnsavedChanges(file);
+        String editorRefusal = writeRefusal(repoPath, unsaved, dryRun);
+        if (editorRefusal != null)
         {
-            return ToolResult.error("An editor holds unsaved changes for " + repoPath //$NON-NLS-1$
-                + ". The editor's buffer is kept. Nothing was written.") //$NON-NLS-1$
+            return ToolResult.error(editorRefusal)
                 .put("filePath", repoPath) //$NON-NLS-1$
                 .toJson();
         }
         ObjectId resolved = repository.resolve(fromRef);
         String restoredFrom = resolved == null ? fromRef : resolved.getName();
+        Restored restored = restored(repository, repoPath, revision.bytes(), LineDelimiters.of(file));
         if (dryRun)
         {
             GitFileDiff.Answer preview = GitFileDiff.between(repository, fromRef, GitFileDiff.WORK_TREE,
@@ -132,14 +151,14 @@ public class GitFileRestore
                 .put("dryRun", Boolean.TRUE) //$NON-NLS-1$
                 .put("bytesWritten", Integer.valueOf(0)) //$NON-NLS-1$
                 .put("restoredFrom", restoredFrom) //$NON-NLS-1$
+                .put("lineEndings", restored.lineEndings) //$NON-NLS-1$
                 .put("files", preview.files) //$NON-NLS-1$
-                .put("note", "Nothing was written.") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("note", previewNote(unsaved)) //$NON-NLS-1$
                 .toJson();
         }
-        byte[] bytes = revision.bytes();
         java.nio.file.Path disk = disk(repository, repoPath);
         Files.createDirectories(disk.getParent());
-        Files.write(disk, bytes);
+        Files.write(disk, restored.bytes);
         refresh(project, file);
         String note = "The index was not changed. A file that matches HEAD is clean; one that " //$NON-NLS-1$
             + "differs from HEAD is listed as modified."; //$NON-NLS-1$
@@ -148,7 +167,8 @@ public class GitFileRestore
             .put("projectName", project.getName()) //$NON-NLS-1$
             .put("filePath", repoPath) //$NON-NLS-1$
             .put("restoredFrom", restoredFrom) //$NON-NLS-1$
-            .put("bytesWritten", Integer.valueOf(bytes.length)) //$NON-NLS-1$
+            .put("bytesWritten", Integer.valueOf(restored.bytes.length)) //$NON-NLS-1$
+            .put("lineEndings", restored.lineEndings) //$NON-NLS-1$
             .put("fileStatus", fileStatus(git, repoPath)) //$NON-NLS-1$
             .put("indexUntouched", Boolean.TRUE); //$NON-NLS-1$
         if (needsRevalidate(repoPath))
@@ -158,6 +178,142 @@ public class GitFileRestore
                 + "itself; call revalidate_objects."; //$NON-NLS-1$
         }
         return answer.put("note", note).toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * Why this call may not write, or {@code null} when it may.
+     *
+     * <p>A preview writes nothing, so an editor holding the file with unsaved changes does not stop
+     * it: the caller asked what the commit holds, and that answer is read from the file on disk.
+     * Only the write is refused, because the buffer is the text the user is looking at and
+     * overwriting the file would drop it.</p>
+     *
+     * @param repoPath the file
+     * @param unsavedChanges whether an editor holds the file with unsaved changes
+     * @param dryRun whether the call only previews
+     * @return the refusal, or {@code null} when the call may write
+     */
+    static String writeRefusal(String repoPath, boolean unsavedChanges, boolean dryRun)
+    {
+        if (dryRun || !unsavedChanges)
+        {
+            return null;
+        }
+        return "An editor holds unsaved changes for " + repoPath //$NON-NLS-1$
+            + ". The editor's buffer is kept. Nothing was written."; //$NON-NLS-1$
+    }
+
+    /**
+     * What a preview says it read.
+     *
+     * @param unsavedChanges whether an editor holds the file with unsaved changes
+     * @return the note for the preview answer
+     */
+    static String previewNote(boolean unsavedChanges)
+    {
+        if (unsavedChanges)
+        {
+            return "Nothing was written. An editor holds unsaved changes for this file, so the " //$NON-NLS-1$
+                + "diff compares the commit with the file on disk and not with the buffer."; //$NON-NLS-1$
+        }
+        return "Nothing was written."; //$NON-NLS-1$
+    }
+
+    /**
+     * The bytes to write for a file put back, and the line endings they carry.
+     */
+    static final class Restored
+    {
+        /** The bytes a checkout would leave in the work tree. */
+        final byte[] bytes;
+
+        /** What {@link #bytes} carries: {@code CRLF}, {@code LF} or {@code as stored}. */
+        final String lineEndings;
+
+        /**
+         * @param bytes the bytes to write
+         * @param lineEndings the endings they carry
+         */
+        Restored(byte[] bytes, String lineEndings)
+        {
+            this.bytes = bytes;
+            this.lineEndings = lineEndings;
+        }
+    }
+
+    /**
+     * The bytes to write for a file put back, with the line endings a checkout would give them.
+     *
+     * <p>Git rewrites a file on its way out of the repository: the {@code eol} and {@code text}
+     * attributes of {@code .gitattributes} and {@code core.autocrlf} decide which line ending the
+     * work-tree file gets. A file written straight from the blob skips that, and the next status
+     * call then shows a diff on every line of it. The stream type is the one JGit's checkout uses
+     * for this exact path, so the file lands in the form that call would leave it in.</p>
+     *
+     * <p>One case that call does not answer is a repository that states no rule at all: then the
+     * ending the work-tree file already has is kept, as every other write site here does - a
+     * workspace is not the place to introduce a form nobody asked for. A binary has no line ending
+     * to convert and is written as the commit stores it.</p>
+     *
+     * @param repository the repository
+     * @param repoPath the file, work-tree-relative
+     * @param blob the bytes the commit holds
+     * @param kept the line endings the work-tree file has now
+     * @return the bytes to write and what they carry
+     * @throws IOException when the attributes or the conversion cannot be read
+     */
+    static Restored restored(Repository repository, String repoPath, byte[] blob, String kept)
+        throws IOException
+    {
+        if (RawText.isBinary(blob))
+        {
+            return new Restored(blob, "as stored"); //$NON-NLS-1$
+        }
+        CoreConfig.EolStreamType type = checkoutStreamType(repository, repoPath);
+        if (type == null || type == CoreConfig.EolStreamType.DIRECT)
+        {
+            type = LineDelimiters.LF.equals(kept) ? CoreConfig.EolStreamType.TEXT_LF
+                : CoreConfig.EolStreamType.TEXT_CRLF;
+        }
+        boolean crlf = type == CoreConfig.EolStreamType.TEXT_CRLF
+            || type == CoreConfig.EolStreamType.AUTO_CRLF;
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(blob.length + 64);
+        try (OutputStream out = EolStreamTypeUtil.wrapOutputStream(buffer, type))
+        {
+            out.write(blob);
+        }
+        return new Restored(buffer.toByteArray(), crlf ? "CRLF" : "LF"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The line-ending rule the repository states for one path on checkout.
+     *
+     * <p>The walk is what reads {@code .gitattributes}: JGit applies the rules of the file's own
+     * directory and of every directory above it there, and the working-tree options of the
+     * repository - {@code core.autocrlf}, {@code core.eol} - come from the same place. The call is
+     * the one a checkout makes, so the answer is the checkout's answer rather than a reading of the
+     * attributes by this class.</p>
+     *
+     * @param repository the repository
+     * @param repoPath the file, work-tree-relative
+     * @return the stream type, or {@code null} when the work tree does not hold that path
+     * @throws IOException when the attributes cannot be read
+     */
+    private static CoreConfig.EolStreamType checkoutStreamType(Repository repository, String repoPath)
+        throws IOException
+    {
+        try (TreeWalk walk = new TreeWalk(repository))
+        {
+            walk.addTree(new FileTreeIterator(repository));
+            walk.setRecursive(true);
+            walk.setFilter(PathFilter.create(repoPath));
+            walk.setAttributesNodeProvider(repository.createAttributesNodeProvider());
+            if (!walk.next())
+            {
+                return null;
+            }
+            return walk.getEolStreamType(TreeWalk.OperationType.CHECKOUT_OP);
+        }
     }
 
     /**
