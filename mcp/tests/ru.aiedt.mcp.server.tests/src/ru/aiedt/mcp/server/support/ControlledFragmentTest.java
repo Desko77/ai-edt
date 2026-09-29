@@ -120,6 +120,13 @@ public class ControlledFragmentTest
         assertNull(ControlledFragment.describeDrift(null, BASE));
     }
 
+    /**
+     * A literal the delivery re-cased is a drift.
+     * <p>
+     * A literal is data: "Готово" and "готово" are different code, and the platform refuses the
+     * extension over the difference.
+     * </p>
+     */
     @Test
     public void aRecasedStringLiteralIsADriftNotAMatch()
     {
@@ -139,6 +146,13 @@ public class ControlledFragmentTest
             + handler, ControlledFragment.describeDrift(handler, recased));
     }
 
+    /**
+     * A comment the delivery re-cased is a drift.
+     * <p>
+     * A comment is part of the controlled code like any other line, and the platform compares it as
+     * written.
+     * </p>
+     */
     @Test
     public void aRecasedCommentIsADriftNotAMatch()
     {
@@ -155,6 +169,14 @@ public class ControlledFragmentTest
             ControlledFragment.describeDrift(handler, recased));
     }
 
+    /**
+     * Guards that a {@code //} inside a literal does not open a comment.
+     * <p>
+     * A guard rather than a regression test: the answer holds for a comparison that ignores
+     * literals as well. It fails when a change reads a literal's text as code, because then the code
+     * after the closing quote - a re-cased identifier included - comes back as drift.
+     * </p>
+     */
     @Test
     public void aSlashSlashInsideALiteralDoesNotStartAComment()
     {
@@ -172,6 +194,13 @@ public class ControlledFragmentTest
             ControlledFragment.describeDrift(handler, recased));
     }
 
+    /**
+     * A doubled quote inside a literal is an escaped quote, not the end of the literal.
+     * <p>
+     * A comparison that closed the literal at the first quote of the pair would go on lowering the
+     * case of what the literal holds, and a re-cased word there would pass as a match.
+     * </p>
+     */
     @Test
     public void escapedQuotesKeepTheLiteralIntact()
     {
@@ -195,6 +224,13 @@ public class ControlledFragmentTest
             ControlledFragment.describeDrift(handler, recased));
     }
 
+    /**
+     * A clean answer carries what the comparison did not compare.
+     * <p>
+     * A match is a statement about this comparison and not a promise that the platform will accept
+     * the extension, and the note beside the answer is where a caller reads that.
+     * </p>
+     */
     @Test
     public void theCaveatTravelsWithACleanAnswer()
     {
@@ -206,6 +242,13 @@ public class ControlledFragmentTest
         assertTrue(caveat, caveat.contains("promise"));
     }
 
+    /**
+     * A continuation line of a multi-line literal is literal data, and re-casing it is a drift.
+     * <p>
+     * A query text is the commonest multi-line literal in BSL, and the platform compares each of
+     * its lines as written.
+     * </p>
+     */
     @Test
     public void aRecasedContinuationLineOfALiteralIsADriftNotAMatch()
     {
@@ -228,6 +271,14 @@ public class ControlledFragmentTest
             ControlledFragment.describeDrift(handler, recased));
     }
 
+    /**
+     * Guards that code after the closing quote of a continuation line is compared as code.
+     * <p>
+     * A guard rather than a regression test: the answer holds for a comparison that never reads a
+     * continuation line as literal data as well. It fails when a change carries the literal state
+     * past the closing quote, because then the identifiers after it turn case-sensitive.
+     * </p>
+     */
     @Test
     public void codeAfterTheClosingQuoteOfAContinuationLineIsStillCode()
     {
@@ -248,6 +299,13 @@ public class ControlledFragmentTest
             ControlledFragment.describeDrift(handler, recasedCode));
     }
 
+    /**
+     * A doubled quote on a continuation line does not close the literal.
+     * <p>
+     * A comparison that closed the literal there would treat the rest of the line as code, lower
+     * its case, and miss a re-cased word inside the literal.
+     * </p>
+     */
     @Test
     public void anEscapedQuoteOnAContinuationLineDoesNotCloseTheLiteral()
     {

@@ -320,6 +320,16 @@ public final class BmSupportRegistryHelper
          */
         public final List<String> refused = new ArrayList<>();
 
+        /**
+         * How many objects were refused altogether, the ones the list did not reach included.
+         * <p>
+         * {@link #refused} stops at {@link BmSupportRegistryHelper#PAGE_LIMIT}, so the list alone
+         * answers 500 where a whole configuration refused, and a caller reading it as the answer has
+         * no way to reach the rest. The two together are what makes the list readable as a page.
+         * </p>
+         */
+        public int refusedCount;
+
         /** Objects the snapshot names that the configuration no longer has. */
         public int missing;
 
@@ -642,14 +652,13 @@ public final class BmSupportRegistryHelper
     /**
      * Says how a restore can reach the object a recorded entry names.
      * <p>
-     * <b>The route for a subordinate entity was the whole defect.</b> The write used to ask
-     * {@code bmGetFqn()} first, which answers for top objects only and throws for everything under
-     * one - so every attribute, form, template and command came back unreachable and the restore
-     * counted it as absent from a configuration that had it. Classification here is by structure -
-     * what contains the object - because that is answerable without a transaction and is what
-     * decides the route: an object the configuration holds directly is written as itself, a
-     * subordinate through the object that owns it, and an object with no owner to reach it through
-     * is named as a refusal rather than attempted.
+     * <b>Classified by structure, not by address.</b> The registry keeps modes for attributes,
+     * tabular sections, forms, templates and commands as readily as for the objects that own them,
+     * so the route is decided by what contains the object: an object the configuration holds
+     * directly is written as itself, a subordinate through the object that owns it, and an object
+     * with no owner to reach it through is named as a refusal rather than attempted. Containment is
+     * answerable without a transaction, which is what lets the decision be made before the write
+     * begins.
      * </p>
      *
      * @param object the object the index found for a recorded identity; may be <code>null</code>.
@@ -689,18 +698,18 @@ public final class BmSupportRegistryHelper
      * was.
      * </p>
      * <p>
-     * <b>Reached by identity, not by FQN.</b> {@code bmGetFqn()} answers for top objects only and
-     * throws on a subordinate entity, and the FQN route this used to take answered
-     * <code>null</code> for exactly the objects the registry keeps modes for. {@code bmGetId()}
-     * answers for any BM object and {@code getObjectById} returns the transaction's own instance
-     * of it, which is how the rest of this plugin reaches a form or an attribute inside a write.
+     * <b>Reached by identity, not by FQN.</b> {@code getObjectById} takes the identity the object
+     * carries in {@code bmGetId()} and answers for any BM object - including the attributes,
+     * tabular sections, forms, templates and commands the registry keeps modes for, which is how
+     * the rest of this plugin reaches one of them inside a write. The FQN route,
+     * {@code bmGetFqn()} and then {@code getTopObjectByFqn}, answers for top objects only.
      * </p>
      *
      * @param tx the write transaction.
      * @param object the object as it was read outside the transaction.
      * @return the transaction's own instance, or <code>null</code> when there is none to reach
      */
-    private static MdObject attachedCopy(IBmTransaction tx, MdObject object)
+    static MdObject attachedCopy(IBmTransaction tx, MdObject object)
     {
         if (tx == null || object == null)
         {
@@ -724,9 +733,11 @@ public final class BmSupportRegistryHelper
     /**
      * Adds one refusal to the report, bounded by the page limit.
      * <p>
-     * Every branch that names a refused object answers through here. One of them used to check the
-     * bound and the others did not, so a configuration where the write refused wholesale built an
-     * answer the size the object listing is paged to avoid.
+     * Every branch that names a refused object answers through here, and every one of them is
+     * counted. The count is kept apart from the list because the list is paged: a configuration
+     * where the write refused wholesale would otherwise build an answer the size the object listing
+     * is paged to avoid, and one that gave 500 names without a total would read as a complete
+     * account of 500 refusals.
      * </p>
      *
      * @param restore where the refusal is recorded.
@@ -734,6 +745,7 @@ public final class BmSupportRegistryHelper
      */
     static void refuse(Restore restore, String refusal)
     {
+        restore.refusedCount++;
         if (restore.refused.size() < PAGE_LIMIT)
         {
             restore.refused.add(refusal);

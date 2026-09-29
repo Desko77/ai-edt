@@ -285,6 +285,19 @@ public class SupportRegistryTool
         {
             return ToolResult.error(listing.cannotTell).toJson();
         }
+        return listingAnswer(projectName, listing).toJson();
+    }
+
+    /**
+     * Renders the answer of a listing.
+     *
+     * @param projectName the project the listing was read from.
+     * @param listing what the read produced.
+     * @return the answer, ready to render
+     */
+    static ToolResult listingAnswer(String projectName,
+        ru.aiedt.mcp.server.support.BmSupportRegistryHelper.Listing listing)
+    {
         return ToolResult.success()
             .put("projectName", projectName) //$NON-NLS-1$
             .put("parentId", listing.parentId) //$NON-NLS-1$
@@ -300,8 +313,7 @@ public class SupportRegistryTool
             // page full of nameless entries reads as a page of deleted objects on a project
             // whose index never claimed to be whole.
             .put("indexComplete", listing.indexComplete) //$NON-NLS-1$
-            .put("serviceRoute", listing.serviceRoute) //$NON-NLS-1$
-            .toJson();
+            .put("serviceRoute", listing.serviceRoute); //$NON-NLS-1$
     }
 
     /**
@@ -458,12 +470,35 @@ public class SupportRegistryTool
         {
             return ToolResult.error(restore.cannotTell).toJson();
         }
+        return restoreAnswer(projectName, where.trim(), apply, restore).toJson();
+    }
+
+    /**
+     * Renders the answer of a restore.
+     * <p>
+     * The refusals travel as two members: {@code refused} holds one page of names and
+     * {@code refusedCount} the whole number, with {@code refusedTruncated} saying whether the page
+     * is short of it. A list of 500 names over a configuration where the write refused wholesale
+     * would otherwise read as a complete account of 500 refusals.
+     * </p>
+     *
+     * @param projectName the project the restore ran against.
+     * @param snapshotPath the file the recorded modes were read from.
+     * @param apply whether the call asked to write.
+     * @param restore what the restore did.
+     * @return the answer, ready to render
+     */
+    static ToolResult restoreAnswer(String projectName, String snapshotPath, boolean apply,
+        BmSupportRegistryHelper.Restore restore)
+    {
         ToolResult result = ToolResult.success()
             .put("projectName", projectName) //$NON-NLS-1$
-            .put("snapshotPath", where.trim()) //$NON-NLS-1$
+            .put("snapshotPath", snapshotPath) //$NON-NLS-1$
             .put("applied", restore.applied) //$NON-NLS-1$
             .put("restored", restore.restored) //$NON-NLS-1$
             .put("refused", restore.refused) //$NON-NLS-1$
+            .put("refusedCount", restore.refusedCount) //$NON-NLS-1$
+            .put("refusedTruncated", restore.refusedCount > restore.refused.size()) //$NON-NLS-1$
             .put("notInTheConfiguration", restore.missing) //$NON-NLS-1$
             .put("writeRoute", restore.writeRoute) //$NON-NLS-1$
             // A restore is itself a write. This is where the modes it replaced were recorded, so
@@ -487,19 +522,16 @@ public class SupportRegistryTool
                 .put("vendorConfigurationsNew", restore.drift.parentsNew); //$NON-NLS-1$
         }
         // Follows what happened, not what was asked for - see restoreNote.
-        return result.put("note", restoreNote(apply, restore)).toJson(); //$NON-NLS-1$
+        return result.put("note", restoreNote(apply, restore)); //$NON-NLS-1$
     }
 
     /**
      * The closing sentence of a restore answer.
      * <p>
-     * Follows what happened, not what was asked for. It used to key on the apply ARGUMENT, so
-     * apply=true answered "the support model was written" while restored stood at 0 and the undo
-     * file had never been created - the counters said one thing and the sentence beside them said
-     * another. And a restore that was asked to write, found drift, and restored nothing used to
-     * close with "no mode needed putting back" - the all-clear sentence - over a drift it had just
-     * reported in the fields above it, because every object it tried had been refused or was
-     * missing.
+     * Follows what happened rather than what was asked for, so the counters and the sentence beside
+     * them agree. A restore asked to write, finding drift, with nothing put back names what stands
+     * between the caller and a finished restore - the refusals and the objects the configuration no
+     * longer has - where the all-clear sentence belongs to a restore that had nothing to write.
      * </p>
      *
      * @param apply whether the call asked to write.
@@ -520,9 +552,31 @@ public class SupportRegistryTool
         {
             return "nothing was written although " + restore.drift.changed.size() + " object(s) " //$NON-NLS-1$
                 + "lost their recorded mode and none could be put back - see refused and " //$NON-NLS-1$
-                + "notInTheConfiguration for each one"; //$NON-NLS-1$
+                + "notInTheConfiguration for each one." + refusedBeyondThePage(restore); //$NON-NLS-1$
         }
         return "nothing was written - no mode needed putting back"; //$NON-NLS-1$
+    }
+
+    /**
+     * The sentence a note carries when the refusal list is a page of a longer one.
+     * <p>
+     * This sentence exists because the note sends the caller to {@code refused} for each object,
+     * which is advice that cannot be followed over a list that stops at the page limit.
+     * </p>
+     *
+     * @param restore what the restore did.
+     * @return the sentence, or an empty string when the list names every refusal
+     */
+    private static String refusedBeyondThePage(BmSupportRegistryHelper.Restore restore)
+    {
+        int named = restore.refused.size();
+        if (restore.refusedCount <= named)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return " refused names the first " + named + " of the " + restore.refusedCount //$NON-NLS-1$
+            + " refused objects; refusedCount gives the whole number and the rest are not listed" //$NON-NLS-1$
+            + " here."; //$NON-NLS-1$
     }
 
     /** Every help topic, in the order the catalog names them: operations, then named topics. */

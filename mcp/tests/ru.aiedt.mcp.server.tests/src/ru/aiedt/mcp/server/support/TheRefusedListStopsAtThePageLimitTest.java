@@ -21,15 +21,26 @@ import org.junit.Test;
  */
 public class TheRefusedListStopsAtThePageLimitTest
 {
-    /** Refusals past the page limit are dropped, not accumulated without end. */
+    /**
+     * Refusals past the page limit are dropped from the list, not accumulated without end, and
+     * every one of them is counted.
+     * <p>
+     * Both halves are needed. A list that stops at the page limit without a total reads as a
+     * complete account of the refusals it carries, and the objects past it cannot be found from the
+     * answer at all.
+     * </p>
+     */
     @Test
     public void refusalsStopAtThePageLimit()
     {
         BmSupportRegistryHelper.Restore restore = new BmSupportRegistryHelper.Restore();
-        for (int i = 0; i < BmSupportRegistryHelper.PAGE_LIMIT + 250; i++)
+        int refusals = BmSupportRegistryHelper.PAGE_LIMIT + 250;
+        for (int i = 0; i < refusals; i++)
         {
             BmSupportRegistryHelper.refuse(restore, "object " + i); //$NON-NLS-1$
         }
         assertEquals(BmSupportRegistryHelper.PAGE_LIMIT, restore.refused.size());
+        assertEquals("the count is the whole of what was refused, not the length of the page",
+            refusals, restore.refusedCount);
     }
 }

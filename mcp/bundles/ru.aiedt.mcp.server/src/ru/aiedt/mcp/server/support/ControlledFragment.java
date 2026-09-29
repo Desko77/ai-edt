@@ -186,8 +186,9 @@ public final class ControlledFragment
      * <p>
      * <b>The case of identifiers only.</b> A string literal is data - a delivery that re-cases
      * "Готово" to "готово" changes what the code writes, and the platform refuses the extension for
-     * it - so literals are compared as written, and so are comments. The lowercasing used to run
-     * over the whole line, and a re-cased literal or comment read as a match.
+     * it - so literals are compared as written, and so are comments. Lowering the case of the whole
+     * line would read a re-cased literal or comment as a match, which is the one answer this
+     * comparison must not give.
      * </p>
      *
      * @param lines the lines to normalise.
@@ -319,10 +320,10 @@ public final class ControlledFragment
     /**
      * Whether a line ended inside a string literal.
      * <p>
-     * A BSL literal can span lines, each continuation opening with {@code |}, so the state cannot
-     * be local to one line the way it used to be: a continuation line processed as code had its
-     * text lowered and read as a match against a delivery that re-cased it, where the platform
-     * compares the literal as written and refuses the extension.
+     * A BSL literal can span lines, each continuation opening with {@code |}, so this state cannot
+     * be local to one line: a continuation line processed as code would have its text lowered and
+     * read as a match against a delivery that re-cased it, where the platform compares the literal
+     * as written and refuses the extension.
      * </p>
      */
     private static final class LiteralState

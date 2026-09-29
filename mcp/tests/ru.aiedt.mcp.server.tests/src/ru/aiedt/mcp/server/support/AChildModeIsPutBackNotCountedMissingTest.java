@@ -7,14 +7,18 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.Map;
 import java.util.UUID;
 
 import org.junit.Test;
 
+import com._1c.g5.v8.bm.core.IBmObject;
+import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.dt.metadata.mdclass.Catalog;
 import com._1c.g5.v8.dt.metadata.mdclass.CatalogAttribute;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
@@ -42,6 +46,62 @@ public class AChildModeIsPutBackNotCountedMissingTest
             Configuration.class);
         method.setAccessible(true);
         return (Map<UUID, MdObject>)method.invoke(null, configuration);
+    }
+
+    /**
+     * A write transaction that gives its own instance on both routes, and gives different ones.
+     * <p>
+     * Both routes answer, so a comparison that takes the FQN one is caught by which instance comes
+     * back rather than by a <code>null</code> that could as well mean the transaction holds nothing.
+     * </p>
+     *
+     * @param byId the instance the identity route answers with.
+     * @param byFqn the instance the fully qualified name route answers with.
+     * @return the stand-in transaction
+     */
+    private static IBmTransaction transactionAnswering(MdObject byId, MdObject byFqn)
+    {
+        long identity = ((IBmObject)byId).bmGetId();
+        return (IBmTransaction)Proxy.newProxyInstance(IBmTransaction.class.getClassLoader(),
+            new Class<?>[] {IBmTransaction.class},
+            (proxy, method, args) -> {
+                if ("getObjectById".equals(method.getName()) && args != null && args.length == 1 //$NON-NLS-1$
+                    && args[0] instanceof Long && ((Long)args[0]).longValue() == identity)
+                {
+                    return byId;
+                }
+                if ("getTopObjectByFqn".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return byFqn;
+                }
+                // Only the two routes are read; any other call is a write this test does not make.
+                return null;
+            });
+    }
+
+    /**
+     * The transaction's own instance of a subordinate object is reached by identity.
+     * <p>
+     * The transaction hands back its instance of what the object carries in {@code bmGetId()}, which
+     * is the only route that answers for an attribute, a tabular section, a form or a command. The
+     * FQN route answers for top objects only, and this test's transaction answers it with the object
+     * that owns the attribute - so a write that took that route would put the mode on the owner.
+     * </p>
+     */
+    @Test
+    public void aSubordinateObjectIsReachedByIdentityNotByFqn()
+    {
+        Catalog catalog = MdClassFactory.eINSTANCE.createCatalog();
+        catalog.setName("Товары"); //$NON-NLS-1$
+        CatalogAttribute attribute = MdClassFactory.eINSTANCE.createCatalogAttribute();
+        attribute.setName("Автор"); //$NON-NLS-1$
+        catalog.getAttributes().add(attribute);
+
+        IBmTransaction tx = transactionAnswering(attribute, catalog);
+
+        assertSame("the mode has to be written onto the instance the transaction holds of the"
+            + " attribute, not onto the object its fully qualified name would answer",
+            attribute, BmSupportRegistryHelper.attachedCopy(tx, attribute));
     }
 
     /** An attribute is a target reached through its owner, not an object that is not there. */
