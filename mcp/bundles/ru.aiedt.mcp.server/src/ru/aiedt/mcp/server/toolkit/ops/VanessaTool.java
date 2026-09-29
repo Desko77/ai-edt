@@ -27,6 +27,7 @@ import org.eclipse.jface.preference.IPreferenceStore;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.support.AllureResultReader;
+import ru.aiedt.mcp.server.support.ClientDialogReader;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InfobaseAddress;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
@@ -99,6 +100,11 @@ public class VanessaTool implements IMcpTool
         return PendingWorkRegistry.VANESSA.domain().equals(domain) ? NAME : null;
     }
 
+    /**
+     * What an agent reads before it calls the tool, in the catalogue and on the preference page.
+     *
+     * @return the description
+     */
     @Override
     public String getDescription()
     {
@@ -118,7 +124,9 @@ public class VanessaTool implements IMcpTool
             + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
             + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
             + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
-            + "back for the result and also cancels the run. Raise timeoutSeconds for long suites."; //$NON-NLS-1$
+            + "back for the result and also cancels the run. Raise timeoutSeconds for long suites. " //$NON-NLS-1$
+            + "A timeout held by a 1C window returns that window as blockingWindows, with its " //$NON-NLS-1$
+            + "title, texts, buttons and imageFile, and does not ask to raise timeoutSeconds."; //$NON-NLS-1$
     }
 
     @Override
@@ -781,13 +789,7 @@ public class VanessaTool implements IMcpTool
             {
                 if (pr.timedOut)
                 {
-                    return ToolResult.error("Vanessa run timed out after " + timeoutSec + "s" //$NON-NLS-1$ //$NON-NLS-2$
-                        + (keepOpen ? " (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)." //$NON-NLS-1$
-                            : ". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog.") //$NON-NLS-1$
-                        // Named before the deadline is blamed: a client that never got the
-                        // infobase spends the whole deadline and looks exactly like a slow run.
-                        + (heldBack == null ? "" : " " + heldBack + ".") //$NON-NLS-1$ //$NON-NLS-2$
-                        + " " + tail(pr.output))
+                    return timeoutAnswer(timeoutSec, keepOpen, heldBack, pr.output, pr.dialogs)
                         .put("composedScenarioLeftBehind", leftBehind) //$NON-NLS-1$
                         .put("infobaseNotReleased", heldBack).toJson(); //$NON-NLS-1$
                 }
@@ -2816,6 +2818,7 @@ public class VanessaTool implements IMcpTool
         boolean timedOut;
         boolean cancelledBeforeLaunch;
         String output = ""; //$NON-NLS-1$
+        ClientDialogReader.Outcome dialogs = ClientDialogReader.Outcome.none();
     }
 
     /**
@@ -3111,8 +3114,93 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
+     * The answer a run gives when the client is still going at the deadline.
+     * <p>
+     * A window that was holding the client is named by its title and its first line of text, and
+     * the answer does not suggest waiting longer: more time would meet the same window. With no
+     * such window the answer is the one this gave before the windows were read.
+     * </p>
+     *
+     * @param timeoutSec how long the run was waited for
+     * @param keepOpen whether the client was left open on purpose
+     * @param heldBack why the infobase was not released, or {@code null}
+     * @param output what the client printed
+     * @param dialogs the windows read before the client was stopped
+     * @return the error result, including {@code blockingWindows}
+     */
+    static ToolResult timeoutAnswer(int timeoutSec, boolean keepOpen, String heldBack, String output,
+        ClientDialogReader.Outcome dialogs)
+    {
+        ClientDialogReader.Outcome read = dialogs == null ? ClientDialogReader.Outcome.none() : dialogs;
+        ClientDialogReader.Window window = read.windows().isEmpty()
+            ? null : ClientDialogReader.topModal(read.windows());
+        return ToolResult.error(timeoutMessage(timeoutSec, keepOpen, heldBack, output, window))
+            .put(ClientDialogReader.WINDOWS, read.fields())
+            .put(ClientDialogReader.ERROR, read.error());
+    }
+
+    /**
+     * The sentence a timed-out run shows.
+     * <p>
+     * The window's title and its first text are the sentence when a window was holding the run.
+     * {@code timeoutSeconds} is named only when no window was found, which is the case a longer
+     * wait might actually finish.
+     * </p>
+     *
+     * @param timeoutSec how long the run was waited for
+     * @param keepOpen whether the client was left open on purpose
+     * @param heldBack why the infobase was not released, or {@code null}
+     * @param output what the client printed
+     * @param window the top holding window, or {@code null} when none was read
+     * @return the error text
+     */
+    private static String timeoutMessage(int timeoutSec, boolean keepOpen, String heldBack,
+        String output, ClientDialogReader.Window window)
+    {
+        StringBuilder message = new StringBuilder();
+        message.append("Vanessa run timed out after ").append(timeoutSec).append('s'); //$NON-NLS-1$
+        if (keepOpen)
+        {
+            message.append(" (keepOpen=true keeps 1C open, so it never exits - set keepOpen=false)."); //$NON-NLS-1$
+        }
+        else if (window == null)
+        {
+            message.append(". Raise timeoutSeconds, or the run may be stuck on a 1C login/update dialog."); //$NON-NLS-1$
+        }
+        else
+        {
+            message.append('.');
+        }
+        if (window != null)
+        {
+            String title = window.title() == null ? "" : window.title().trim(); //$NON-NLS-1$
+            String text = window.texts().isEmpty() ? "" : window.texts().get(0); //$NON-NLS-1$
+            message.append(" The run is held by a 1C window"); //$NON-NLS-1$
+            if (!title.isEmpty())
+            {
+                message.append(" \"").append(title).append('"'); //$NON-NLS-1$
+            }
+            if (text != null && !text.isEmpty())
+            {
+                message.append(title.isEmpty() ? " " : ": "); //$NON-NLS-1$ //$NON-NLS-2$
+                message.append('"').append(text).append('"'); //$NON-NLS-1$
+            }
+            message.append('.');
+        }
+        // Named before the deadline is blamed: a client that never got the infobase spends the
+        // whole deadline and looks exactly like a slow run.
+        if (heldBack != null)
+        {
+            message.append(' ').append(heldBack).append('.');
+        }
+        message.append(' ').append(tail(output));
+        return message.toString();
+    }
+
+    /**
      * Launches the thick client, draining its merged stdout/stderr as cp1251 on a daemon thread.
-     * On timeout, destroys the process tree (child 1C workers first). Registers the client under
+     * On timeout, reads the 1C windows of the process and its descendants, then destroys the
+     * process tree (child 1C workers first). Registers the client under
      * the run's key while it lives, so a cancel from another call can reach it.
      *
      * @param command the client and its arguments.
@@ -3194,6 +3282,8 @@ public class VanessaTool implements IMcpTool
         {
             if (!proc.waitFor(timeoutSec, TimeUnit.SECONDS))
             {
+                // Read while the client is still up. Destroying it first closes the dialog.
+                pr.dialogs = ClientDialogReader.ofProcess(proc, ClientDialogReader.imagesFor(NAME));
                 proc.descendants().forEach(ProcessHandle::destroyForcibly);
                 proc.destroyForcibly();
                 pr.timedOut = true;

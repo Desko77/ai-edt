@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 133 | a test class named after it |
+| direct | 134 | a test class named after it |
 | exercised | 185 | reached by some other test |
 | tool-sweep | 49 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 43 | needs a display or an extension point |
 | workspace-bound | 28 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **438** | across 508 test classes |
+| **total** | **439** | across 510 test classes |
 
 ## untested (0)
 
@@ -402,7 +402,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (133)
+## direct (134)
 
 **(root)**
 - BrowserOrigin
@@ -436,6 +436,7 @@ _none_
 - BmInfobaseRegistrationHelper
 - BranchInfobaseBook
 - BslCommentParseHelper
+- ClientDialogReader
 - ComparisonSessions
 - ControlledFragment
 - DbViewSurvey
@@ -578,12 +579,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 14 |
 | 5-8 | 42 |
-| 9-16 | 53 |
+| 9-16 | 54 |
 | 17+ | 22 |
 
-4168 test methods across 508 test classes; 133 classes have a test of their own, median 9 methods each.
+4183 test methods across 510 test classes; 134 classes have a test of their own, median 9 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 133 of 438 classes have one: 49 are covered by the registry-wide contract sweep and 28 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 134 of 439 classes have one: 49 are covered by the registry-wide contract sweep and 28 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 
