@@ -16,12 +16,15 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.InternalEObject;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 
 import com._1c.g5.v8.bm.core.BmUriUtil;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
+import com._1c.g5.v8.dt.metadata.mdclass.CommonPicture;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -42,6 +45,9 @@ import ru.aiedt.mcp.server.Activator;
  */
 public class BmFormHelper
 {
+    /** The prefix of a reference to a common picture of the configuration. */
+    private static final String COMMON_PICTURE_PREFIX = "CommonPicture."; //$NON-NLS-1$
+
     /**
      * Behaviour properties a wizard-created table carries, applied by
      * {@link #applyTableRenderDefaults}. Values are text; setScalarProperty
@@ -1151,37 +1157,21 @@ public class BmFormHelper
      */
     public Object createDecoration(String name, String title, String decorationType) throws Exception
     {
-        return createDecoration(name, title, decorationType, null);
+        return createDecoration(name, title, decorationType, false);
     }
 
     /**
-     * 1.42: extended overload that also applies a picture reference to a
-     * Picture-type decoration. The picture string is passed to
-     * {@code PictureDecorationExtInfo.setPicture} (typed setter when the
-     * EDT runtime exposes one). Picture validation against
-     * {@code StandardPictures} / project's {@code CommonPictures} happens
-     * earlier in {@code EditFormTool.executeAddDecoration} via
-     * {@link PictureValidator}; this method only applies the validated
-     * value.
-     *
-     * <p>{@code picture} is ignored for non-Picture decorations.
-     */
-    public Object createDecoration(String name, String title, String decorationType,
-        String picture) throws Exception
-    {
-        return createDecoration(name, title, decorationType, picture, false);
-    }
-
-    /**
-     * Hyperlink-aware overload of {@link #createDecoration(String, String, String, String)}.
+     * Hyperlink-aware overload of {@link #createDecoration(String, String, String)}.
      * When {@code hyperlink} is true and this is a Label decoration, sets
      * {@code LabelDecorationExtInfo.hyperlink = true} so the decoration renders
      * as clickable hyperlink text - the canonical 1C form hyperlink element.
      * Ignored for Picture decorations (their ext-info exposes no hyperlink
      * property); the flag is applied best-effort via {@link #applyHyperlink}.
+     * The picture of a Picture decoration is not set here - see
+     * {@link #setDecorationPicture}.
      */
     public Object createDecoration(String name, String title, String decorationType,
-        String picture, boolean hyperlink) throws Exception
+        boolean hyperlink) throws Exception
     {
         Object decoration = ffClass.getMethod("createDecoration").invoke(formFactory); //$NON-NLS-1$
         setBasicProperties(decoration, name, nextId());
@@ -1201,14 +1191,6 @@ public class BmFormHelper
             }
             Object extInfo = ffClass.getMethod("createPictureDecorationExtInfo").invoke(formFactory); //$NON-NLS-1$
             decorationIface.getMethod("setExtInfo", decoExtInfoClass).invoke(decoration, extInfo); //$NON-NLS-1$
-            // 1.42: apply the picture reference when supplied. Probe a String
-            // setter first (modern EDT) and fall back silently when only an
-            // EMF-typed setter exists - the agent can still set picture later
-            // via setProperty.
-            if (picture != null && !picture.isEmpty())
-            {
-                applyPictureReferenceOnExtInfo(extInfo, picture);
-            }
         }
         else
         {
@@ -1230,39 +1212,92 @@ public class BmFormHelper
     }
 
     /**
-     * 1.42 helper: applies a picture reference to a
-     * {@code PictureDecorationExtInfo} via reflection. Tries
-     * {@code setPicture(String)} first; older EDT may use a typed setter
-     * accepting a {@code Picture} EMF object - in that case the call is
-     * silently skipped (the decoration is still valid, the agent can set
-     * the picture via {@code setProperty} as a follow-up).
+     * Sets the picture of a Picture decoration made by {@link #createDecoration}, before it is
+     * placed on the form.
+     * <p>
+     * Does not check that the name resolves - the caller does that with {@link PictureValidator}
+     * first.
+     * </p>
+     *
+     * @param decoration the decoration
+     * @param projectName the project whose platform version and configuration resolve the name
+     * @param picture {@code StdPicture.X}, {@code StdExtPicture.X} or {@code CommonPicture.X}
+     * @return <code>null</code> when the picture is written, otherwise why it is not
      */
-    private static void applyPictureReferenceOnExtInfo(Object extInfo, String picture)
+    public String setDecorationPicture(Object decoration, String projectName, String picture)
     {
-        for (java.lang.reflect.Method m : extInfo.getClass().getMethods())
+        Object extInfo = tryGetExtInfo(decoration);
+        if (extInfo == null)
         {
-            if (!"setPicture".equals(m.getName()) || m.getParameterCount() != 1) //$NON-NLS-1$
+            return "the decoration has no picture settings to write the picture into"; //$NON-NLS-1$
+        }
+        IProject project = projectName == null || projectName.isEmpty() ? null
+            : org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        return setNamedPicture(extInfo, project != null && project.exists() ? project : null, picture);
+    }
+
+    /**
+     * Writes a named picture into the {@code picture} of a model object: a {@code PictureRef}
+     * pointing at a picture proxy that carries the name. An empty name clears the picture.
+     * <p>
+     * Does not check that the name resolves.
+     * </p>
+     *
+     * @param target an object whose {@code setPicture} takes an mcore {@code Picture}
+     * @param project the project that resolves the name
+     * @param name the picture name
+     * @return <code>null</code> when written, otherwise why it is not
+     */
+    private static String setNamedPicture(Object target, IProject project, String name)
+    {
+        Method setter = pictureSetterOf(target);
+        if (setter == null)
+        {
+            return "Property 'picture' is absent on " + target.getClass().getSimpleName(); //$NON-NLS-1$
+        }
+        try
+        {
+            if (name == null || name.isEmpty())
             {
-                continue;
+                setter.invoke(target, (Object)null);
+                return null;
             }
-            Class<?> p = m.getParameterTypes()[0];
-            if (p == String.class)
+            Object factory = BmDcsHelper.getMcoreFactory();
+            Object pictureProxy = factory == null ? null : buildNamedPictureProxy(project, name);
+            if (pictureProxy == null)
             {
-                try
-                {
-                    m.invoke(extInfo, picture);
-                    return;
-                }
-                catch (Exception ignored)
-                {
-                    // Try next overload.
-                }
+                return "a named picture reference could not be built on this runtime (the mcore " //$NON-NLS-1$
+                    + "factory or the provider that resolves picture names is not here). Nothing " //$NON-NLS-1$
+                    + "was changed."; //$NON-NLS-1$
+            }
+            Object pictureRef = factory.getClass().getMethod("createPictureRef").invoke(factory); //$NON-NLS-1$
+            pictureRef.getClass().getMethod("setPicture", //$NON-NLS-1$
+                com._1c.g5.v8.dt.mcore.Picture.class).invoke(pictureRef, pictureProxy);
+            setter.invoke(target, pictureRef);
+            return null;
+        }
+        catch (ReflectiveOperationException e)
+        {
+            return "Failed to set picture: " + e.getMessage(); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * @param target a model object
+     * @return its {@code setPicture} taking an mcore {@code Picture}, or <code>null</code> when it
+     *         has none
+     */
+    private static Method pictureSetterOf(Object target)
+    {
+        for (Method m : target.getClass().getMethods())
+        {
+            if ("setPicture".equals(m.getName()) && m.getParameterCount() == 1 //$NON-NLS-1$
+                && m.getParameterTypes()[0] == com._1c.g5.v8.dt.mcore.Picture.class)
+            {
+                return m;
             }
         }
-        // No String overload; the typed Picture-EMF path requires
-        // MdClassFactory.eINSTANCE.createPicture() and is not stable across
-        // EDT versions. Leave the decoration created without an icon - the
-        // agent can apply the picture via setProperty.
+        return null;
     }
 
     /**
@@ -2331,6 +2366,16 @@ public class BmFormHelper
             catch (Exception e)
             {
                 return "Failed to set title: " + e.getMessage(); //$NON-NLS-1$
+            }
+        }
+        if ("picture".equalsIgnoreCase(property)) //$NON-NLS-1$
+        {
+            // An item's picture (a button's) or its extInfo's (a Picture decoration's) is a typed
+            // reference, which the scalar path below cannot build from a name.
+            Object pictureOwner = pictureSetterOf(item) != null ? item : tryGetExtInfo(item);
+            if (pictureOwner != null && pictureSetterOf(pictureOwner) != null)
+            {
+                return setNamedPicture(pictureOwner, projectOf(item), value);
             }
         }
         if ("dataPath".equalsIgnoreCase(property)) //$NON-NLS-1$
@@ -3803,7 +3848,7 @@ public class BmFormHelper
                 // itself writes, measured in a dialog-produced .form - <picture
                 // xsi:type="core:PictureRef"><picture>CommonPicture.X</picture></picture>. Built
                 // through the same proxy machinery every reference in this codebase uses.
-                Object pictureProxy = buildNamedPictureProxy(command, propertyValue);
+                Object pictureProxy = buildNamedPictureProxy(projectOf(command), propertyValue);
                 if (pictureProxy == null)
                 {
                     return "Error: a named picture reference could not be built on this runtime " //$NON-NLS-1$
@@ -3842,14 +3887,15 @@ public class BmFormHelper
      * A platform picture (StdPicture / StdExtPicture) is resolved by the same provider that
      * resolves any platform type; a CommonPicture is resolved by the project's configuration.
      * Either way the reference carries the name, and the environment resolves it at render time -
-     * which is why a name that resolves to nothing is refused before this is built.
+     * which is why a name that resolves to nothing is refused before this is built. A stock
+     * picture given by its Russian name is written under its English one, the name EDT writes.
      * </p>
      *
-     * @param command the FormCommand, whose project resolves the name.
+     * @param project the project that resolves the name, or <code>null</code>
      * @param name the picture name as the caller gave it.
      * @return the proxy, or <code>null</code> when no provider on this runtime builds one
      */
-    private static Object buildNamedPictureProxy(Object command, String name)
+    private static Object buildNamedPictureProxy(IProject project, String name)
     {
         try
         {
@@ -3858,8 +3904,13 @@ public class BmFormHelper
             {
                 return null;
             }
+            if (name.startsWith(COMMON_PICTURE_PREFIX))
+            {
+                return project == null ? null
+                    : commonPictureProxy(activator.getConfigurationProvider().getConfiguration(project),
+                        name.substring(COMMON_PICTURE_PREFIX.length()));
+            }
             Object versionSupport = activator.getRuntimeVersionSupport();
-            IProject project = projectOf(command);
             if (versionSupport == null || project == null)
             {
                 return null;
@@ -3885,7 +3936,11 @@ public class BmFormHelper
                 return null;
             }
             Method getProxy = provider.getClass().getMethod("getProxy", String.class); //$NON-NLS-1$
-            return getProxy.invoke(provider, name);
+            String written = version instanceof com._1c.g5.v8.dt.platform.version.Version
+                ? StockPictures.writtenName(
+                    StockPictures.read((com._1c.g5.v8.dt.platform.version.Version)version), name)
+                : name;
+            return getProxy.invoke(provider, written);
         }
         catch (Exception e)
         {
@@ -3895,10 +3950,43 @@ public class BmFormHelper
     }
 
     /**
-     * The project the command lives in, as an IProject rather than a name - the version that
+     * The proxy a reference to a common picture of the configuration points at: an object of the
+     * picture's class carrying the picture's URI, which the model persists by reference and writes
+     * as {@code CommonPicture.<Name>}.
+     *
+     * @param configuration the project's configuration, or <code>null</code>
+     * @param pictureName the common picture's name, in any case
+     * @return the proxy, or <code>null</code> when the configuration has no such picture or the
+     *         picture has no URI
+     */
+    static Object commonPictureProxy(Configuration configuration, String pictureName)
+    {
+        if (configuration == null || pictureName == null || pictureName.isEmpty())
+        {
+            return null;
+        }
+        for (CommonPicture picture : configuration.getCommonPictures())
+        {
+            if (pictureName.equalsIgnoreCase(picture.getName()))
+            {
+                org.eclipse.emf.common.util.URI uri = EcoreUtil.getURI(picture);
+                if (uri == null)
+                {
+                    return null;
+                }
+                EObject proxy = EcoreUtil.create(picture.eClass());
+                ((InternalEObject)proxy).eSetProxyURI(uri);
+                return proxy;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The project a form object lives in, as an IProject rather than a name - the version that
      * resolves a platform picture comes from it.
      *
-     * @param command the FormCommand.
+     * @param command a FormCommand or a form item, placed on its form.
      * @return the project, or <code>null</code>
      */
     private static IProject projectOf(Object command)

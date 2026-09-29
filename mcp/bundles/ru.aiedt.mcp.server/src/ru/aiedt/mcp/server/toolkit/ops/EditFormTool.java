@@ -1273,9 +1273,16 @@ public class EditFormTool implements IMcpTool
             }
         }
 
-        Object decoration = isPictureDecoration
-            ? helper.createDecoration(name, title, decorationType, picture)
-            : helper.createDecoration(name, title, decorationType, null, hyperlink);
+        Object decoration = helper.createDecoration(name, title, decorationType, hyperlink);
+        if (isPictureDecoration && picture != null && !picture.isEmpty())
+        {
+            String pictureProblem = helper.setDecorationPicture(decoration, projectNameForPicture, picture);
+            if (pictureProblem != null)
+            {
+                return buildError("Decoration '" + name + "' was not added: picture '" + picture //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' could not be written - " + pictureProblem); //$NON-NLS-1$
+            }
+        }
 
         Object container = resolveContainer(form, parentName);
         if (beforeName != null && !beforeName.isEmpty())

@@ -24,10 +24,12 @@ import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmFormGeneratorHelper;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
+import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PictureValidator;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.StockPictures;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.TypeApplication;
 
@@ -1607,66 +1609,49 @@ final class FormItemsOps
     }
 
     /**
-     * 1.40: list available stock pictures by name. Probes
-     * {@code com._1c.g5.v8.dt.platform.pictures.StandardPictures} when present
-     * and falls back to the user's CommonPicture library exposed via the
-     * project's configuration.
+     * Lists the pictures a form element or command can take: the stock pictures of the project's
+     * platform version, standard and extended, and the common pictures of the project's
+     * configuration. {@code filter} matches the English or the Russian name of a stock picture.
+     * <p>
+     * A runtime that registers no stock pictures answers with a refusal tagged
+     * {@code serviceUnavailable} carrying the common pictures, not with an empty stock list.
+     * </p>
+     *
+     * @param params projectName (optional; its platform version, the newest without it) and filter
+     * @return the JSON answer
      */
     String opListPictures(Map<String, String> params)
     {
         String filter = JsonUtils.extractStringArgument(params, "filter"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        java.util.List<String> stock = listStockPictures(filter);
+        java.util.List<StockPictures.Entry> all = StockPictures.read(StockPictures.versionOf(projectName));
         java.util.List<String> common = listCommonPictures(projectName, filter);
+        if (all.isEmpty())
+        {
+            return ToolResult.error("This EDT registers no stock pictures for the platform version, " //$NON-NLS-1$
+                + "so StdPicture and StdExtPicture names cannot be listed or checked.") //$NON-NLS-1$
+                .put("operation", "list_pictures") //$NON-NLS-1$ //$NON-NLS-2$
+                .put(ErrorTags.SERVICE_UNAVAILABLE.wire(), "stockPictures") //$NON-NLS-1$
+                .put("commonPictureCount", common.size()) //$NON-NLS-1$
+                .put("commonPictures", common) //$NON-NLS-1$
+                .toJson();
+        }
+        java.util.List<String> stock = StockPictures.names(all, StockPictures.STD, filter);
+        java.util.List<String> extended = StockPictures.names(all, StockPictures.STD_EXT, filter);
         return ToolResult.success()
             .put("operation", "list_pictures") //$NON-NLS-1$ //$NON-NLS-2$
             .put("filter", filter == null ? "" : filter) //$NON-NLS-1$ //$NON-NLS-2$
-            .put("stockPictureCount", stock.size())
-            .put("stockPictures", stock)
-            .put("commonPictureCount", common.size())
-            .put("commonPictures", common)
-            .put("hint", "Stock picture: pass to setProperty as bare name. " //$NON-NLS-1$
-                + "CommonPicture: pass as 'CommonPicture.<Name>'.")
+            .put("stockPictureCount", stock.size()) //$NON-NLS-1$
+            .put("stockPictures", stock) //$NON-NLS-1$
+            .put("stockExtPictureCount", extended.size()) //$NON-NLS-1$
+            .put("stockExtPictures", extended) //$NON-NLS-1$
+            .put("commonPictureCount", common.size()) //$NON-NLS-1$
+            .put("commonPictures", common) //$NON-NLS-1$
+            .put("hint", "Stock picture: pass as StdPicture.<Name> or the bare name. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Extended stock picture: StdExtPicture.<Name>. Common picture: CommonPicture.<Name>.") //$NON-NLS-1$
             .toJson();
     }
 
-    private static java.util.List<String> listStockPictures(String filter)
-    {
-        // Probe several candidate StandardPictures classes - present on most
-        // EDT builds but namespaced differently across versions.
-        for (String cls : new String[] {
-            "com._1c.g5.v8.dt.platform.pictures.StandardPictures",
-            "com._1c.g5.v8.dt.platform.pictures.PlatformPictures",
-            "com._1c.g5.v8.dt.ui.platform.PlatformPictures"
-        })
-        {
-            try
-            {
-                Class<?> clazz = Class.forName(cls);
-                java.util.List<String> names = new java.util.ArrayList<>();
-                for (java.lang.reflect.Field f : clazz.getDeclaredFields())
-                {
-                    if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
-                        && java.lang.reflect.Modifier.isPublic(f.getModifiers()))
-                    {
-                        String n = f.getName();
-                        if (filter == null || filter.isEmpty()
-                            || n.toLowerCase().contains(filter.toLowerCase()))
-                        {
-                            names.add(n);
-                        }
-                    }
-                }
-                java.util.Collections.sort(names);
-                return names;
-            }
-            catch (ClassNotFoundException ignored)
-            {
-                // try next
-            }
-        }
-        return java.util.Collections.emptyList();
-    }
 
     private static java.util.List<String> listCommonPictures(String projectName, String filter)
     {
