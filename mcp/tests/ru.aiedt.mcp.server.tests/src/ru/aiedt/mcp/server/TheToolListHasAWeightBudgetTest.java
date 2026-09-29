@@ -138,7 +138,7 @@ public class TheToolListHasAWeightBudgetTest
      * operations and the sentences on compare_three_way and insights that name it.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 179945;
+    private static final int DOCUMENT_BUDGET = 180542;
 
     private LiveServer server;
 
@@ -278,9 +278,10 @@ public class TheToolListHasAWeightBudgetTest
         // Grown to 1330 for the commit operation: staging by name and a refusal for a blanket
         // add is the whole point of having git inside the IDE, and the schema is where a client
         // learns that.
-        // Grown to 3113 for show_file_changes and revert_file: the file path, the two revisions,
-        // the line-or-method granularity and the dry-run flag (measured 29.09: 3113).
-        BUDGETS.put("git", Integer.valueOf(3113)); //$NON-NLS-1$
+        // Grown to 4040 for show_file_changes and revert_file (the file path, the two revisions,
+        // the line-or-method granularity, the dry-run flag, the file limit, the line endings) and
+        // for create_merge_restore_point and restore_merge_point with pointId (measured 29.09: 4040).
+        BUDGETS.put("git", Integer.valueOf(4040)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a

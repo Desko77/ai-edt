@@ -253,7 +253,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // compare_configurations: mode says that the answer's failed and failedCount name what the
         // comparison could not read, and projectName that mode=files takes the path of the first
         // export; the intent sentence names the merge restore point.
-        PROSE.put("insights", Integer.valueOf(6377));
+        PROSE.put("insights", Integer.valueOf(6079));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
@@ -594,5 +594,5 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * comparison records a point first.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 99489;
+    private static final int DOCUMENT_PROSE = 99634;
 }
