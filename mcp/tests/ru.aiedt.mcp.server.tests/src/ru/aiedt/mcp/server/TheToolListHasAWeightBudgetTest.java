@@ -133,8 +133,12 @@ public class TheToolListHasAWeightBudgetTest
      * Raised from 178350 to 178385 for the line endings revert_file names, the editor note on
      * dryRun and the file limit of show_file_changes. Measured 29.09: 178385.
      * </p>
+     * <p>
+     * Raised from 178350 to 178983 on 2026-09-29 for the merge restore point: the two git
+     * operations and the sentences on compare_three_way and insights that name it.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 179312;
+    private static final int DOCUMENT_BUDGET = 179945;
 
     private LiveServer server;
 

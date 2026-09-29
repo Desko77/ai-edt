@@ -243,15 +243,17 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Grown to 1553 for filePath, fromRef, toRef, granularity and dryRun: a caller names the
         // file, the two revisions, whether the cut is by line or by method, and whether revert
         // only previews (measured 29.09: 1553).
-        PROSE.put("git", Integer.valueOf(1553));
-        PROSE.put("compare_three_way", Integer.valueOf(3558));
+        // 1854 for the line endings revert_file names, the editor note on dryRun and the file limit
+        // of show_file_changes, and 143 more for pointId of restore_merge_point.
+        PROSE.put("git", Integer.valueOf(1997));
+        // Grown to 3747: the intent sentence says a changing run records a restore point first.
+        PROSE.put("compare_three_way", Integer.valueOf(3747));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
-        // Raised to 5949 for compare_configurations: mode now says that the answer's failed and
-        // failedCount name what the comparison could not read, so that a success:true answer
-        // carrying a failure is not read as a clean diff, and projectName says that mode=files
-        // takes the path of the first export rather than a project name. Measured 5949.
-        PROSE.put("insights", Integer.valueOf(5949));
+        // compare_configurations: mode says that the answer's failed and failedCount name what the
+        // comparison could not read, and projectName that mode=files takes the path of the first
+        // export; the intent sentence names the merge restore point.
+        PROSE.put("insights", Integer.valueOf(6377));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
@@ -587,9 +589,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * </p>
      * <p>
      * And by 301 for the line endings revert_file names, the editor note on dryRun and the file
-     * limit of show_file_changes. The git prose grew from 1553 to 1854 and nothing else in the
-     * list changed. Measured 29.09: 98530.
+     * limit of show_file_changes, and by 463 for the merge restore point: pointId of
+     * restore_merge_point, and the sentence of compare_three_way and insights that a changing
+     * comparison records a point first.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 99026;
+    private static final int DOCUMENT_PROSE = 99489;
 }

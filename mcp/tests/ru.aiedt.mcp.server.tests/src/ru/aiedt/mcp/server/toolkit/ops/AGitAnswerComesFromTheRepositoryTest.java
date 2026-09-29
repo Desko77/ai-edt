@@ -143,7 +143,8 @@ public class AGitAnswerComesFromTheRepositoryTest
         String answer = new GitTool().execute(Map.of());
         assertTrue(answer, answer.contains("operation is required")); //$NON-NLS-1$
         for (String known : new String[] { "status", "branches", "log", "commit", "checkout", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-            "show_file_changes", "revert_file" }) //$NON-NLS-1$ //$NON-NLS-2$
+            "show_file_changes", "revert_file", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "restore_merge_point" }) //$NON-NLS-1$
         {
             assertTrue(answer, answer.contains(known));
         }

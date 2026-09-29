@@ -313,13 +313,15 @@
 | `FormCommandInterfaceOps` | `add` | `commandFqn:?`, `group:string`, `index:integer`, `panel:?`, `visible:string` | passed in as locals |
 | `FormCommandInterfaceOps` | `remove` | `commandFqn:?`, `panel:?` | passed in as locals |
 | `FormCommandInterfaceOps` | `set_property` | `commandFqn:?`, `group:string`, `index:integer`, `panel:?`, `propertyName:string`, `visible:string` | passed in as locals |
-| `GitTool` | `branches` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | passed in as locals |
-| `GitTool` | `checkout` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | read in place |
-| `GitTool` | `commit` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | read in place |
-| `GitTool` | `log` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | read in place |
-| `GitTool` | `revert_file` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | read in place |
-| `GitTool` | `show_file_changes` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | read in place |
-| `GitTool` | `status` | `authorEmail:string`, `authorName:string`, `branch:string`, `createBranch:boolean`, `dryRun:boolean`, `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `message:string`, `paths:string`, `projectName:string`, `toRef:string` | passed in as locals |
+| `GitTool` | `branches` | `projectName:string` | passed in as locals |
+| `GitTool` | `checkout` | `branch:string`, `createBranch:boolean`, `projectName:string` | read in place |
+| `GitTool` | `commit` | `message:string`, `paths:string`, `projectName:string` | read in place |
+| `GitTool` | `create_merge_restore_point` | `projectName:string` | passed in as locals |
+| `GitTool` | `log` | `limit:integer`, `projectName:string` | read in place |
+| `GitTool` | `restore_merge_point` | `pointId:string`, `projectName:string` | read in place |
+| `GitTool` | `revert_file` | `dryRun:boolean`, `filePath:string`, `fromRef:string`, `projectName:string` | read in place |
+| `GitTool` | `show_file_changes` | `filePath:string`, `fromRef:string`, `granularity:string`, `limit:integer`, `projectName:string`, `toRef:string` | read in place |
+| `GitTool` | `status` | `projectName:string` | passed in as locals |
 | `InfobaseAdminFacadeTool` | `branch_infobase` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string`, `syncOperation:string` | delegate BranchInfobaseTool |
 | `InfobaseAdminFacadeTool` | `create_infobase` | `name:string`, `path:string`, `platform:string`, `projectName:string`, `syncOperation:string`, `templateCf:string` | delegate InfobaseCreator |
 | `InfobaseAdminFacadeTool` | `create_launch_config` | `infobaseName:string`, `projectName:string`, `syncOperation:string` | delegate LaunchConfigCreator |

@@ -235,8 +235,10 @@ public class InsightsFacadeTool implements IMcpTool
                     + "hand-made object correspondences are applied to this comparison.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "compare_three_way: REPORT (default) reads and changes nothing; MERGE applies the " //$NON-NLS-1$
-                    + "decisions to the project - IRREVERSIBLE; MERGE_IGNORING_PROBLEMS proceeds " //$NON-NLS-1$
-                    + "past a problem the environment called blocking.") //$NON-NLS-1$
+                    + "decisions to the project - IRREVERSIBLE; a restore point of the project files " //$NON-NLS-1$
+                    + "is taken first and git restore_merge_point puts them back without rolling " //$NON-NLS-1$
+                    + "back the infobase. MERGE_IGNORING_PROBLEMS proceeds past a problem the " //$NON-NLS-1$
+                    + "environment called blocking.") //$NON-NLS-1$
             .stringProperty("changedBy", //$NON-NLS-1$
                 "compare_three_way: list only objects with this attribution - OURS, VENDOR, BOTH " //$NON-NLS-1$
                     + "or UNKNOWN. The counts always cover everything; this narrows the listing.") //$NON-NLS-1$

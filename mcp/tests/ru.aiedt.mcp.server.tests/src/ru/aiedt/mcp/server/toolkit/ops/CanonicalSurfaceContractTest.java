@@ -235,7 +235,7 @@ public class CanonicalSurfaceContractTest
         // as commit, checkout and revert_file; their standalone names carry the git_ prefix (see
         // RENAMED_STANDALONES).
         m.put("git", Set.of("status", "branches", "log", "commit", "checkout", "show_file_changes",
-            "revert_file"));
+            "revert_file", "create_merge_restore_point", "restore_merge_point"));
 
         // insights (InsightsFacadeTool.execute + its OPS catalog): nine operations, all
         // literally the standalone names they replace, plus help.
