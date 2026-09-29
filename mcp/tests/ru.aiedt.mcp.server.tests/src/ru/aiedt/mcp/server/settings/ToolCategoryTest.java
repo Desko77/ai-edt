@@ -150,7 +150,10 @@ public class ToolCategoryTest
         // project's applications as create_infobase beside it.
         // On 2026-09-28 list_registered_infobases joined APPLICATIONS (+1 -> 136): it reads the
         // same list of EDT that create_infobase and register_infobase write to.
-        assertEquals(136, ToolCategory.getTotalToolCount());
+        // On 2026-09-29 pause_thread and set_breakpoint_state joined DEBUG (+2 -> 138): both act
+        // on the debug session, one by suspending a running thread, the other by switching a
+        // breakpoint off without removing it.
+        assertEquals(138, ToolCategory.getTotalToolCount());
     }
 
     @Test
@@ -231,15 +234,17 @@ public class ToolCategoryTest
     }
 
     @Test
-    public void debugHoldsTheSeventeenSessionTools()
+    public void debugHoldsTheNineteenSessionTools()
     {
         List<String> debug = ToolCategory.DEBUG.getToolNames();
-        assertEquals(17, debug.size());
+        assertEquals(19, debug.size());
         assertTrue(debug.contains("set_breakpoint")); //$NON-NLS-1$
         assertTrue(debug.contains("get_variables")); //$NON-NLS-1$
         assertTrue(debug.contains("resume")); //$NON-NLS-1$
         assertTrue(debug.contains("set_variable")); //$NON-NLS-1$
         assertTrue(debug.contains("terminate_launch")); //$NON-NLS-1$
+        assertTrue(debug.contains("pause_thread")); //$NON-NLS-1$
+        assertTrue(debug.contains("set_breakpoint_state")); //$NON-NLS-1$
     }
 
     @Test

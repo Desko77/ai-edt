@@ -90,9 +90,10 @@ public class CanonicalSurfaceContractTest
         // evaluate is the one exception, see RENAMED_STANDALONES.
         m.put("launch_debugger", Set.of(
             "launch", "debug_launch", "add_breakpoint", "set_breakpoint",
-            "set_exception_breakpoint", "run_to_line", "remove_breakpoint", "list_breakpoints",
+            "set_exception_breakpoint", "run_to_line", "remove_breakpoint", "set_breakpoint_state",
+            "list_breakpoints",
             "wait_for_break", "get_state", "debug_status", "get_variables", "set_variable",
-            "step_over", "step_into", "step_out", "step", "resume", "terminate",
+            "step_over", "step_into", "step_out", "step", "resume", "pause_thread", "terminate",
             "terminate_launch", "evaluate", "start_profiling", "get_profiling_results", "help"));
 
         // edit_metadata (EditMetadataTool.buildRegistry): a single-source registry map, 160
@@ -340,7 +341,9 @@ public class CanonicalSurfaceContractTest
         // deliberately after confirming the move is intended, not to silence a failure.
         // On 2026-09-23 register_infobase joined the infobase_admin coverage (+1 -> 87).
         // On 2026-09-28 list_registered_infobases joined the infobase_admin coverage (+1 -> 88).
-        assertEquals(88, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-09-29 pause_thread and set_breakpoint_state joined the launch_debugger coverage
+        // (+2 -> 90).
+        assertEquals(90, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

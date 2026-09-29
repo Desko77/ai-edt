@@ -336,6 +336,51 @@ public final class BreakpointAccess
     }
 
     /**
+     * Finds a breakpoint by the id of its marker, whatever kind of breakpoint it is.
+     *
+     * @param markerId the marker id, as reported when the breakpoint was created
+     * @return the breakpoint, or <code>null</code> when no registered breakpoint carries that id
+     * @throws Exception if the platform refuses to be read
+     */
+    public static IBreakpoint findBreakpointById(long markerId) throws Exception
+    {
+        IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
+
+        for (IBreakpoint breakpoint : manager.getBreakpoints())
+        {
+            IMarker marker = breakpoint.getMarker();
+            if (marker != null && marker.getId() == markerId)
+            {
+                return breakpoint;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Turns a breakpoint on or off without removing it.
+     * <p>
+     * A disabled breakpoint keeps its place, its line and its options; the debugger stops honoring it
+     * until it is enabled again. A breakpoint already in the asked state is left alone - the write is
+     * what costs, and the answer says whether anything changed.
+     * </p>
+     *
+     * @param breakpoint the breakpoint to change
+     * @param enabled the state to set
+     * @return whether the state changed, <code>false</code> when it was already the asked one
+     * @throws Exception if the platform refuses the write
+     */
+    public static boolean setBreakpointEnabled(IBreakpoint breakpoint, boolean enabled) throws Exception
+    {
+        if (breakpoint.isEnabled() == enabled)
+        {
+            return false;
+        }
+        breakpoint.setEnabled(enabled);
+        return true;
+    }
+
+    /**
      * Removes the line breakpoint on a given line of a given file.
      * <p>
      * Line breakpoints only. Exception and run-to-line breakpoints are not bound to a line - they are

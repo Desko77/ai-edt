@@ -350,10 +350,12 @@ LaunchDebuggerTool	get_variables	expandPath:string,frameIndex:integer,frameRef:s
 LaunchDebuggerTool	help	find:string,topic:string	read in place	action:string
 LaunchDebuggerTool	launch	applicationId:string,clientType:string,debugServerPort:integer,enableExternalObjectDump:boolean,endpointTimeoutSeconds:integer,externalObjectName:string,externalObjectProject:string,launchConfigurationName:string,projectName:string,runMode:string,startupOption:string,updateBeforeLaunch:boolean,waitForEndpoint:string	delegate DebugSessionStarter	action:string
 LaunchDebuggerTool	list_breakpoints	action:string,find:string,topic:string	read in place	
+LaunchDebuggerTool	pause_thread	applicationId:string,threadId:integer,timeoutSeconds:integer	delegate DebugPauser	action:string
 LaunchDebuggerTool	remove_breakpoint	action:string,find:string,topic:string	read in place	
 LaunchDebuggerTool	resume	applicationId:string,threadId:integer	delegate DebugResumer	action:string
 LaunchDebuggerTool	run_to_line	applicationId:string,lineNumber:integer,module:string,projectName:string,threadId:integer	delegate RunToLineTool	action:string
 LaunchDebuggerTool	set_breakpoint	action:string,find:string,topic:string	read in place	
+LaunchDebuggerTool	set_breakpoint_state	action:string,find:string,topic:string	read in place	
 LaunchDebuggerTool	set_exception_breakpoint	catchAll:boolean,message:string,projectName:string	delegate SetExceptionBreakpointTool	action:string
 LaunchDebuggerTool	set_variable	frameIndex:integer,frameRef:string,path:string,threadId:integer,value:string	delegate DebugVariableWriter	action:string
 LaunchDebuggerTool	start_profiling	applicationId:string	delegate ProfilingStarter	action:string

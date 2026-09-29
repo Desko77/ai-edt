@@ -19,7 +19,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 
 /**
- * 1.42 (RSV 4.2 parity): unified debugger facade with 16 actions.
+ * 1.42 (RSV 4.2 parity): unified debugger facade with 18 actions.
  *
  * <p>RSV 4.2 ships {@code launch_debugger} as a single MCP tool with a
  * dispatch on {@code action}. We had the same functionality split across
@@ -36,6 +36,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *   <tr><td>get_variables</td><td>{@link DebugVariablesReader}</td></tr>
  *   <tr><td>step_over / step_into / step_out / step</td><td>{@link DebugStepper}</td></tr>
  *   <tr><td>resume</td><td>{@link DebugResumer}</td></tr>
+ *   <tr><td>pause_thread</td><td>{@link DebugPauser}</td></tr>
+ *   <tr><td>set_breakpoint_state</td><td>{@link BreakpointStateSetter}</td></tr>
  *   <tr><td>evaluate</td><td>{@link ExpressionEvaluator}</td></tr>
  *   <tr><td>wait_for_break</td><td>{@link SuspendWaiter}</td></tr>
  *   <tr><td>start_profiling</td><td>{@link ProfilingStarter}</td></tr>
@@ -70,12 +72,15 @@ public class LaunchDebuggerTool implements IMcpTool
             + "set_exception_breakpoint (suspend on a raised error), run_to_line " //$NON-NLS-1$
             + "(resume to a line, one-shot), wait_for_break (block until a breakpoint " //$NON-NLS-1$
             + "hits), get_state / debug_status, get_variables, set_variable, " //$NON-NLS-1$
-            + "step_over / step_into / step_out / step, resume, terminate (stop a " //$NON-NLS-1$
+            + "step_over / step_into / step_out / step, resume, pause_thread (suspend a " //$NON-NLS-1$
+            + "running session), set_breakpoint_state (enable or disable a breakpoint " //$NON-NLS-1$
+            + "without removing it), terminate (stop a " //$NON-NLS-1$
             + "running launch by applicationId / all=true / lone active), evaluate " //$NON-NLS-1$
             + "(run a BSL expression in the current stack frame), start_profiling / " //$NON-NLS-1$
             + "get_profiling_results, help. The standalone tools (set_breakpoint, " //$NON-NLS-1$
             + "remove_breakpoint, list_breakpoints, set_exception_breakpoint, run_to_line, " //$NON-NLS-1$
-            + "wait_for_break, get_variables, set_variable, step, resume, terminate_launch, " //$NON-NLS-1$
+            + "wait_for_break, get_variables, set_variable, step, resume, pause_thread, " //$NON-NLS-1$
+            + "set_breakpoint_state, terminate_launch, " //$NON-NLS-1$
             + "evaluate_expression, debug_launch, debug_status, start_profiling, " //$NON-NLS-1$
             + "get_profiling_results) are back-compat aliases of the matching actions; prefer " //$NON-NLS-1$
             + "this facade for new prompts."; //$NON-NLS-1$
@@ -89,7 +94,8 @@ public class LaunchDebuggerTool implements IMcpTool
                 "Action: launch / add_breakpoint / remove_breakpoint / list_breakpoints / " //$NON-NLS-1$
                 + "set_exception_breakpoint / run_to_line / wait_for_break / get_state / " //$NON-NLS-1$
                 + "get_variables / set_variable / step_over / step_into / step_out / step / " //$NON-NLS-1$
-                + "resume / terminate / evaluate / start_profiling / get_profiling_results / " //$NON-NLS-1$
+                + "resume / pause_thread / set_breakpoint_state / terminate / evaluate / " //$NON-NLS-1$
+                + "start_profiling / get_profiling_results / " //$NON-NLS-1$
                 + "debug_status / help (snake_case canonical; camelCase like addBreakpoint " //$NON-NLS-1$
                 + "is also accepted).", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
@@ -145,7 +151,14 @@ public class LaunchDebuggerTool implements IMcpTool
                     + "{modulePath|module, line|lineNumber, ...optional condition / hitCount / " //$NON-NLS-1$
                     + "hitCondition / logExpression}. Sets many breakpoints in one add_breakpoint " //$NON-NLS-1$
                     + "call; projectName is inherited by items that omit it.") //$NON-NLS-1$
-            .stringProperty("breakpointId", "Breakpoint identifier for remove_breakpoint.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("breakpointId", "Breakpoint identifier for remove_breakpoint and " //$NON-NLS-1$
+                + "set_breakpoint_state.") //$NON-NLS-1$
+            .booleanProperty("breakpointEnabled", //$NON-NLS-1$
+                "set_breakpoint_state: true enables the breakpoint, false switches it off " //$NON-NLS-1$
+                    + "without removing it. Required - neither default suits every caller.") //$NON-NLS-1$
+            .booleanProperty("replaceModuleSet", //$NON-NLS-1$
+                "add_breakpoint batch: drop the breakpoints the addressed modules already carry, " //$NON-NLS-1$
+                    + "so the batch is their whole set (default false).") //$NON-NLS-1$
             .stringProperty("message", "set_exception_breakpoint: only break for exceptions whose text " //$NON-NLS-1$
                 + "matches this message. Omit to break on any error.") //$NON-NLS-1$
             .booleanProperty("catchAll", "set_exception_breakpoint: break on any raised error. " //$NON-NLS-1$
@@ -153,7 +166,8 @@ public class LaunchDebuggerTool implements IMcpTool
             .stringProperty("expression", "BSL expression for evaluate.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("frameRef", "Stack frame reference for get_variables / evaluate.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("threadId", "Thread id from wait_for_break - alternative to frameRef for " //$NON-NLS-1$
-                + "get_variables / set_variable, and the resume target for step / resume / run_to_line.") //$NON-NLS-1$
+                + "get_variables / set_variable, and the resume target for step / resume / run_to_line. " //$NON-NLS-1$
+                + "For pause_thread it names the one thread to suspend.") //$NON-NLS-1$
             .integerProperty("frameIndex", "0-based stack-frame index, used with threadId for " //$NON-NLS-1$
                 + "get_variables / set_variable (default 0).") //$NON-NLS-1$
             .stringProperty("expandPath", "get_variables: dot-separated path into a nested variable to " //$NON-NLS-1$
@@ -273,6 +287,12 @@ public class LaunchDebuggerTool implements IMcpTool
             case "resume": //$NON-NLS-1$
                 return new DebugResumer().execute(params);
 
+            case "pause_thread": //$NON-NLS-1$
+                return new DebugPauser().execute(params);
+
+            case "set_breakpoint_state": //$NON-NLS-1$
+                return new BreakpointStateSetter().execute(params);
+
             case "terminate": //$NON-NLS-1$
             case "terminate_launch": //$NON-NLS-1$
                 return new LaunchTerminator().execute(params);
@@ -298,9 +318,10 @@ public class LaunchDebuggerTool implements IMcpTool
                         + FacadeHelpSearch.closestMatches(action, described.keySet(), described)
                         + "\n\nAllowed: launch / add_breakpoint / " //$NON-NLS-1$
                         + "set_exception_breakpoint / run_to_line / remove_breakpoint / " //$NON-NLS-1$
-                        + "list_breakpoints / wait_for_break / get_state / get_variables / " //$NON-NLS-1$
-                        + "set_variable / step_over / step_into / step_out / resume / terminate / " //$NON-NLS-1$
-                        + "evaluate / start_profiling / get_profiling_results / debug_status / help.") //$NON-NLS-1$
+                        + "list_breakpoints / set_breakpoint_state / wait_for_break / get_state / " //$NON-NLS-1$
+                        + "get_variables / set_variable / step_over / step_into / step_out / resume / " //$NON-NLS-1$
+                        + "pause_thread / terminate / evaluate / start_profiling / " //$NON-NLS-1$
+                        + "get_profiling_results / debug_status / help.") //$NON-NLS-1$
                     .toJson();
             }
         }
@@ -415,7 +436,10 @@ public class LaunchDebuggerTool implements IMcpTool
             sb.append("# launch_debugger - actions\n\n"); //$NON-NLS-1$
             sb.append("- **launch** - start an application in debug mode.\n"); //$NON-NLS-1$
             sb.append("- **add_breakpoint / remove_breakpoint / list_breakpoints**. " //$NON-NLS-1$
-                + "add_breakpoint takes condition / hitCount+hitCondition / logExpression.\n"); //$NON-NLS-1$
+                + "add_breakpoint takes condition / hitCount+hitCondition / logExpression, and " //$NON-NLS-1$
+                + "replaceModuleSet=true to make the batch a module's whole set.\n"); //$NON-NLS-1$
+            sb.append("- **set_breakpoint_state** - enable or disable a breakpoint without " //$NON-NLS-1$
+                + "removing it (breakpointId, breakpointEnabled).\n"); //$NON-NLS-1$
             sb.append("- **set_exception_breakpoint** - suspend where an error is raised " //$NON-NLS-1$
                 + "(projectName, optional message, catchAll).\n"); //$NON-NLS-1$
             sb.append("- **run_to_line** - resume a suspended session to module+lineNumber (one-shot).\n"); //$NON-NLS-1$
@@ -425,6 +449,8 @@ public class LaunchDebuggerTool implements IMcpTool
             sb.append("- **set_variable** - set a variable's value (frameRef, path, value).\n"); //$NON-NLS-1$
             sb.append("- **step_over / step_into / step_out** - step.\n"); //$NON-NLS-1$
             sb.append("- **resume** - continue execution.\n"); //$NON-NLS-1$
+            sb.append("- **pause_thread** - ask a running session to suspend (outcome " //$NON-NLS-1$
+                + "paused / request_armed / terminated / error).\n"); //$NON-NLS-1$
             sb.append("- **terminate** - stop a running launch (applicationId / all=true / " //$NON-NLS-1$
                 + "lone active).\n"); //$NON-NLS-1$
             sb.append("- **evaluate** - run a BSL expression in the current frame.\n"); //$NON-NLS-1$

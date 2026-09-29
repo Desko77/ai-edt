@@ -68,6 +68,10 @@ public final class FakeDebugFrames
      * <p>The application id is what ties the thread to a launch: the fakes answer the launch
      * configuration attribute every debug tool addresses a session by, so registering a frame from
      * this session records the application it belongs to.</p>
+     *
+     * <p>A session starts suspended, which is what the tools that read a stopped session want. A test
+     * for the pause path starts it running instead ({@code suspended = false, canSuspend = true}) and
+     * lets {@code suspend()} report the suspend back the way the platform does.</p>
      */
     public static final class Session
     {
@@ -86,6 +90,27 @@ public final class FakeDebugFrames
         /** When set, {@code getModuleVariables} throws this instead of answering. */
         public RuntimeException moduleFailure;
 
+        /** Whether the thread reports itself suspended. A pause test sets this to false first. */
+        public boolean suspended = true;
+
+        /** What {@code canSuspend} answers for a running thread. */
+        public boolean canSuspend;
+
+        /** Whether an accepted {@code suspend()} reports the suspend back through the registry. */
+        public boolean suspendsOnRequest = true;
+
+        /** When set, {@code suspend()} throws it instead of accepting the request. */
+        public Exception suspendRefusal;
+
+        /** How many suspend requests the thread received, so a test can see the ask was placed. */
+        public int suspendRequests;
+
+        /** Run inside {@code suspend()}, for the platform state a test wants to change at that moment. */
+        public Runnable onSuspendRequest;
+
+        /** The target this thread belongs to; it carries the thread in its thread list. */
+        public final Target target;
+
         private final IThread thread;
 
         /**
@@ -94,7 +119,43 @@ public final class FakeDebugFrames
         Session(String applicationId)
         {
             this.applicationId = applicationId;
+            this.target = new Target(applicationId);
             this.thread = asThread();
+            this.target.with(thread);
+        }
+
+        /**
+         * @return the target this session's thread belongs to, as the debug tools meet it
+         */
+        public IDebugTarget debugTarget()
+        {
+            return target.asDebugTarget();
+        }
+
+        /**
+         * What a suspend request does on this thread: refuse if a refusal was set, otherwise accept it
+         * and - unless the test asked for a request that never lands - report the stop back through the
+         * registry, the way the platform does.
+         *
+         * @throws Exception the refusal, when the test set one
+         */
+        private void onSuspendRequested() throws Exception
+        {
+            suspendRequests++;
+            if (suspendRefusal != null)
+            {
+                throw suspendRefusal;
+            }
+            suspended = true;
+            Runnable hook = onSuspendRequest;
+            if (hook != null)
+            {
+                hook.run();
+            }
+            if (suspendsOnRequest)
+            {
+                DebugSessionBook.get().injectSuspend(applicationId, thread);
+            }
         }
 
         /**
@@ -208,17 +269,106 @@ public final class FakeDebugFrames
                     case "getStackFrames": //$NON-NLS-1$
                         return stack;
                     case "getDebugTarget": //$NON-NLS-1$
-                        return target(applicationId);
+                        return target.asDebugTarget();
                     case "getName": //$NON-NLS-1$
                         return "Session thread"; //$NON-NLS-1$
                     case "isSuspended": //$NON-NLS-1$
-                        return Boolean.TRUE;
+                        return Boolean.valueOf(suspended);
+                    case "canSuspend": //$NON-NLS-1$
+                        return Boolean.valueOf(canSuspend);
+                    case "suspend": //$NON-NLS-1$
+                        onSuspendRequested();
+                        return null;
+                    case "isTerminated": //$NON-NLS-1$
+                        return Boolean.valueOf(target.terminated);
                     case "equals": //$NON-NLS-1$
                         return Boolean.valueOf(proxy == args[0]);
                     case "hashCode": //$NON-NLS-1$
                         return Integer.valueOf(System.identityHashCode(proxy));
                     case "toString": //$NON-NLS-1$
                         return "thread of " + applicationId; //$NON-NLS-1$
+                    default:
+                        return defaultValue(method.getReturnType());
+                    }
+                });
+        }
+    }
+
+    /**
+     * The debug target of a launch: the threads the pause path asks, and whether the launch is still
+     * alive.
+     *
+     * <p>By default the target is alive and exposes no thread, which is what every frame's
+     * {@code getDebugTarget} answers - enough for the tools that only walk target to launch to launch
+     * configuration to learn an application id. A pause test builds one, hands it to the tool, and sees
+     * the ask arrive on the thread it put there.</p>
+     */
+    public static final class Target
+    {
+        /** The application the target answers to. */
+        public final String applicationId;
+
+        /** Whether the target reports itself terminated. */
+        public boolean terminated;
+
+        /** The threads the target exposes, in the order {@code getThreads} answers them. */
+        public final List<IThread> threads = new ArrayList<>();
+
+        /** How many suspend requests the target itself received. */
+        public int suspendRequests;
+
+        /** When set, a suspend on the target itself throws it instead of being accepted. */
+        public Exception suspendRefusal;
+
+        /**
+         * @param applicationId the application the target answers to
+         */
+        public Target(String applicationId)
+        {
+            this.applicationId = applicationId;
+        }
+
+        /**
+         * @param thread a thread of this target
+         * @return this target
+         */
+        public Target with(IThread thread)
+        {
+            threads.add(thread);
+            return this;
+        }
+
+        /**
+         * @return the target, as the debug tools meet it
+         */
+        public IDebugTarget asDebugTarget()
+        {
+            ILaunch launch = FakeDebugFrames.launch(applicationId);
+            return (IDebugTarget)Proxy.newProxyInstance(FakeDebugFrames.class.getClassLoader(),
+                new Class<?>[] { IDebugTarget.class }, (proxy, method, args) -> {
+                    switch (method.getName())
+                    {
+                    case "getLaunch": //$NON-NLS-1$
+                        return launch;
+                    case "isTerminated": //$NON-NLS-1$
+                        return Boolean.valueOf(terminated);
+                    case "getThreads": //$NON-NLS-1$
+                        return threads.toArray(new IThread[0]);
+                    case "getName": //$NON-NLS-1$
+                        return "target of " + applicationId; //$NON-NLS-1$
+                    case "suspend": //$NON-NLS-1$
+                        suspendRequests++;
+                        if (suspendRefusal != null)
+                        {
+                            throw suspendRefusal;
+                        }
+                        return null;
+                    case "equals": //$NON-NLS-1$
+                        return Boolean.valueOf(proxy == args[0]);
+                    case "hashCode": //$NON-NLS-1$
+                        return Integer.valueOf(System.identityHashCode(proxy));
+                    case "toString": //$NON-NLS-1$
+                        return "target of " + applicationId; //$NON-NLS-1$
                     default:
                         return defaultValue(method.getReturnType());
                     }
@@ -379,27 +529,11 @@ public final class FakeDebugFrames
      * id - the chain {@code DebugSessionBook} walks to learn which application a frame belongs to.
      *
      * @param applicationId the application id the configuration carries
-     * @return the target
+     * @return the target, alive and exposing no thread
      */
     private static IDebugTarget target(String applicationId)
     {
-        ILaunch launch = launch(applicationId);
-        return (IDebugTarget)Proxy.newProxyInstance(FakeDebugFrames.class.getClassLoader(),
-            new Class<?>[] { IDebugTarget.class }, (proxy, method, args) -> {
-                switch (method.getName())
-                {
-                case "getLaunch": //$NON-NLS-1$
-                    return launch;
-                case "isTerminated": //$NON-NLS-1$
-                    return Boolean.FALSE;
-                case "equals": //$NON-NLS-1$
-                    return Boolean.valueOf(proxy == args[0]);
-                case "hashCode": //$NON-NLS-1$
-                    return Integer.valueOf(System.identityHashCode(proxy));
-                default:
-                    return defaultValue(method.getReturnType());
-                }
-            });
+        return new Target(applicationId).asDebugTarget();
     }
 
     /**

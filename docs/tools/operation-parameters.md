@@ -349,10 +349,12 @@
 | `LaunchDebuggerTool` | `help` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `launch` | `action:string`, `applicationId:string`, `clientType:string`, `debugServerPort:integer`, `enableExternalObjectDump:boolean`, `endpointTimeoutSeconds:integer`, `externalObjectName:string`, `externalObjectProject:string`, `launchConfigurationName:string`, `projectName:string`, `runMode:string`, `startupOption:string`, `updateBeforeLaunch:boolean`, `waitForEndpoint:string` | delegate DebugSessionStarter |
 | `LaunchDebuggerTool` | `list_breakpoints` | `action:string`, `find:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `pause_thread` | `action:string`, `applicationId:string`, `threadId:integer`, `timeoutSeconds:integer` | delegate DebugPauser |
 | `LaunchDebuggerTool` | `remove_breakpoint` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `resume` | `action:string`, `applicationId:string`, `threadId:integer` | delegate DebugResumer |
 | `LaunchDebuggerTool` | `run_to_line` | `action:string`, `applicationId:string`, `lineNumber:integer`, `module:string`, `projectName:string`, `threadId:integer` | delegate RunToLineTool |
 | `LaunchDebuggerTool` | `set_breakpoint` | `action:string`, `find:string`, `topic:string` | read in place |
+| `LaunchDebuggerTool` | `set_breakpoint_state` | `action:string`, `find:string`, `topic:string` | read in place |
 | `LaunchDebuggerTool` | `set_exception_breakpoint` | `action:string`, `catchAll:boolean`, `message:string`, `projectName:string` | delegate SetExceptionBreakpointTool |
 | `LaunchDebuggerTool` | `set_variable` | `action:string`, `frameIndex:integer`, `frameRef:string`, `path:string`, `threadId:integer`, `value:string` | delegate DebugVariableWriter |
 | `LaunchDebuggerTool` | `start_profiling` | `action:string`, `applicationId:string` | delegate ProfilingStarter |

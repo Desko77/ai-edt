@@ -118,6 +118,9 @@ public class ToolRegistrationTest
         // On 2026-09-23 naparnik joined the declaration list (+1 -> 134).
         // On 2026-09-23 register_infobase joined the declaration list (+1 -> 135).
         // On 2026-09-28 list_registered_infobases joined the declaration list (+1 -> 136).
-        assertEquals(136, declared.size());
+        // On 2026-09-29 pause_thread and set_breakpoint_state joined the declaration list
+        // (+2 -> 138): a running session can be suspended and a breakpoint flipped on and off
+        // without being removed.
+        assertEquals(138, declared.size());
     }
 }

@@ -260,6 +260,7 @@ public enum ToolProfile
             "set_exception_breakpoint", //$NON-NLS-1$
             "run_to_line", //$NON-NLS-1$
             "remove_breakpoint", //$NON-NLS-1$
+            "set_breakpoint_state", //$NON-NLS-1$
             "list_breakpoints", //$NON-NLS-1$
             "wait_for_break", //$NON-NLS-1$
             "debug_status", //$NON-NLS-1$
@@ -267,6 +268,7 @@ public enum ToolProfile
             "set_variable", //$NON-NLS-1$
             "step", //$NON-NLS-1$
             "resume", //$NON-NLS-1$
+            "pause_thread", //$NON-NLS-1$
             "terminate_launch", //$NON-NLS-1$
             "evaluate_expression", //$NON-NLS-1$
             "start_profiling", //$NON-NLS-1$
