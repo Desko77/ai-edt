@@ -16,12 +16,15 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.InternalEObject;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 
 import com._1c.g5.v8.bm.core.BmUriUtil;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
+import com._1c.g5.v8.dt.metadata.mdclass.CommonPicture;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -42,6 +45,9 @@ import ru.aiedt.mcp.server.Activator;
  */
 public class BmFormHelper
 {
+    /** The prefix of a reference to a common picture of the configuration. */
+    private static final String COMMON_PICTURE_PREFIX = "CommonPicture."; //$NON-NLS-1$
+
     /**
      * Behaviour properties a wizard-created table carries, applied by
      * {@link #applyTableRenderDefaults}. Values are text; setScalarProperty
@@ -3823,6 +3829,12 @@ public class BmFormHelper
             {
                 return null;
             }
+            if (name.startsWith(COMMON_PICTURE_PREFIX))
+            {
+                return project == null ? null
+                    : commonPictureProxy(activator.getConfigurationProvider().getConfiguration(project),
+                        name.substring(COMMON_PICTURE_PREFIX.length()));
+            }
             Object versionSupport = activator.getRuntimeVersionSupport();
             if (versionSupport == null || project == null)
             {
@@ -3860,6 +3872,39 @@ public class BmFormHelper
             Activator.logWarning("BmFormHelper.buildNamedPictureProxy failed: " + e.getMessage()); //$NON-NLS-1$
             return null;
         }
+    }
+
+    /**
+     * The proxy a reference to a common picture of the configuration points at: an object of the
+     * picture's class carrying the picture's URI, which the model persists by reference and writes
+     * as {@code CommonPicture.<Name>}.
+     *
+     * @param configuration the project's configuration, or <code>null</code>
+     * @param pictureName the common picture's name, in any case
+     * @return the proxy, or <code>null</code> when the configuration has no such picture or the
+     *         picture has no URI
+     */
+    static Object commonPictureProxy(Configuration configuration, String pictureName)
+    {
+        if (configuration == null || pictureName == null || pictureName.isEmpty())
+        {
+            return null;
+        }
+        for (CommonPicture picture : configuration.getCommonPictures())
+        {
+            if (pictureName.equalsIgnoreCase(picture.getName()))
+            {
+                org.eclipse.emf.common.util.URI uri = EcoreUtil.getURI(picture);
+                if (uri == null)
+                {
+                    return null;
+                }
+                EObject proxy = EcoreUtil.create(picture.eClass());
+                ((InternalEObject)proxy).eSetProxyURI(uri);
+                return proxy;
+            }
+        }
+        return null;
     }
 
     /**

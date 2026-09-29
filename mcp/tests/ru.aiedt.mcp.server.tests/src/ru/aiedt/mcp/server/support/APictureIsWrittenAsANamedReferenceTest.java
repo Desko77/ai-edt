@@ -6,10 +6,13 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import org.eclipse.emf.ecore.InternalEObject;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.junit.Test;
 
 import com._1c.g5.v8.dt.form.model.Button;
@@ -18,6 +21,9 @@ import com._1c.g5.v8.dt.form.model.Form;
 import com._1c.g5.v8.dt.form.model.FormFactory;
 import com._1c.g5.v8.dt.form.model.PictureDecorationExtInfo;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
+import com._1c.g5.v8.dt.metadata.mdclass.CommonPicture;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 
 /**
  * The picture of a Picture decoration and of a button is written as a named {@code PictureRef}.
@@ -26,6 +32,27 @@ import com._1c.g5.v8.dt.mcore.McoreFactory;
  */
 public class APictureIsWrittenAsANamedReferenceTest
 {
+    /**
+     * A common picture is referenced by a proxy carrying the URI of the configuration's picture,
+     * whatever the case of the name; a name the configuration does not carry gives no proxy.
+     */
+    @Test
+    public void aCommonPictureIsReferencedFromTheConfiguration()
+    {
+        Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
+        CommonPicture logo = MdClassFactory.eINSTANCE.createCommonPicture();
+        logo.setName("Логотип"); //$NON-NLS-1$
+        configuration.getCommonPictures().add(logo);
+
+        Object proxy = BmFormHelper.commonPictureProxy(configuration, "логотип"); //$NON-NLS-1$
+
+        assertTrue(proxy instanceof CommonPicture);
+        assertTrue(((CommonPicture)proxy).eIsProxy());
+        assertEquals(EcoreUtil.getURI(logo), ((InternalEObject)proxy).eProxyURI());
+        assertNull(BmFormHelper.commonPictureProxy(configuration, "Другая")); //$NON-NLS-1$
+        assertNull(BmFormHelper.commonPictureProxy(null, "Логотип")); //$NON-NLS-1$
+    }
+
     /**
      * A decoration whose picture cannot be built gets a refusal, not a decoration without a
      * picture.

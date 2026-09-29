@@ -157,21 +157,23 @@ public final class StockPictures
 
     /**
      * The name a stock picture is written under: its English one, whichever name the caller gave.
+     * A name without a prefix is a standard picture, as the validator reads it.
      *
      * @param pictures the stock pictures of a version
-     * @param qualified the picture name with its prefix, as the caller gave it
-     * @return {@code <prefix>.<English name>} for a stock picture the list carries; any other name
-     *         as it was given
+     * @param qualified the picture name, with its prefix or without one
+     * @return {@code <prefix>.<English name>} for a stock picture the list carries;
+     *         {@code StdPicture.<name>} for a name without a prefix the list does not carry; any
+     *         other name as it was given
      */
     public static String writtenName(List<Entry> pictures, String qualified)
     {
-        int dot = qualified == null ? -1 : qualified.indexOf('.');
-        if (dot <= 0)
+        if (qualified == null || qualified.isEmpty())
         {
             return qualified;
         }
-        String prefix = qualified.substring(0, dot);
-        String name = qualified.substring(dot + 1);
+        int dot = qualified.indexOf('.');
+        String prefix = dot > 0 ? qualified.substring(0, dot) : STD;
+        String name = dot > 0 ? qualified.substring(dot + 1) : qualified;
         for (Entry picture : pictures)
         {
             if (picture.prefix.equalsIgnoreCase(prefix) && picture.answersTo(name))
@@ -179,7 +181,7 @@ public final class StockPictures
                 return picture.prefix + '.' + picture.name;
             }
         }
-        return qualified;
+        return dot > 0 ? qualified : STD + '.' + qualified;
     }
 
     /**
@@ -231,8 +233,8 @@ public final class StockPictures
      * Latin letters is the English one.
      *
      * @param named each description as its qualified name and the URI of the object it points at
-     * @return the pictures, standard ones first, each group ordered by name; descriptions of other
-     *         prefixes are left out
+     * @return the pictures, standard ones first, each group ordered by name, one entry per written
+     *         name; descriptions of other prefixes are left out
      */
     static List<Entry> fromDescriptions(List<String[]> named)
     {
@@ -259,11 +261,15 @@ public final class StockPictures
                 picture[slot] = name;
             }
         }
-        List<Entry> pictures = new ArrayList<>();
+        // Two objects may carry one written name; the entry that also knows the Russian name stays.
+        Map<String, Entry> byWrittenName = new LinkedHashMap<>();
         for (String[] picture : byObject.values())
         {
-            pictures.add(new Entry(picture[0], picture[1] != null ? picture[1] : picture[2], picture[2]));
+            Entry entry = new Entry(picture[0], picture[1] != null ? picture[1] : picture[2], picture[2]);
+            byWrittenName.merge(entry.prefix + '.' + entry.name.toLowerCase(Locale.ROOT), entry,
+                (kept, other) -> kept.nameRu != null ? kept : other);
         }
+        List<Entry> pictures = new ArrayList<>(byWrittenName.values());
         pictures.sort(Comparator.comparing((Entry entry) -> !STD.equals(entry.prefix))
             .thenComparing(entry -> entry.name, String.CASE_INSENSITIVE_ORDER));
         return pictures;

@@ -102,7 +102,8 @@ public class StockPicturesTest
 
     /**
      * A stock picture is written under its English name whichever name it was given by; a name
-     * the list does not carry, and a common picture, are written as given.
+     * without a prefix is a standard picture; a prefixed name the list does not carry, and a common
+     * picture, are written as given.
      */
     @Test
     public void aStockPictureIsWrittenUnderItsEnglishName()
@@ -116,7 +117,26 @@ public class StockPicturesTest
         assertEquals("StdExtPicture.Печать", //$NON-NLS-1$
             StockPictures.writtenName(pictures, "StdExtPicture.Печать")); //$NON-NLS-1$
         assertEquals("CommonPicture.Logo", StockPictures.writtenName(pictures, "CommonPicture.Logo")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("Print", StockPictures.writtenName(pictures, "Print")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("StdPicture.Print", StockPictures.writtenName(pictures, "Print")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("StdPicture.Print", StockPictures.writtenName(pictures, "печать")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("StdPicture.Unknown", StockPictures.writtenName(pictures, "Unknown")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Two objects registered under one written name give one entry, the one that knows the
+     * Russian name.
+     */
+    @Test
+    public void oneWrittenNameGivesOneEntry()
+    {
+        List<StockPictures.Entry> pictures = StockPictures.fromDescriptions(List.of(
+            new String[] { "StdPicture.Print", "other#//Print" }, //$NON-NLS-1$ //$NON-NLS-2$
+            new String[] { "StdPicture.Print", PRINT_URI }, //$NON-NLS-1$
+            new String[] { "StdPicture.Печать", PRINT_URI })); //$NON-NLS-1$
+
+        assertEquals(1, pictures.size());
+        assertEquals("Print", pictures.get(0).name); //$NON-NLS-1$
+        assertEquals("Печать", pictures.get(0).nameRu); //$NON-NLS-1$
     }
 
     /**
