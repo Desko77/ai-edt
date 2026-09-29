@@ -101,6 +101,25 @@ public class StockPicturesTest
     }
 
     /**
+     * A stock picture is written under its English name whichever name it was given by; a name
+     * the list does not carry, and a common picture, are written as given.
+     */
+    @Test
+    public void aStockPictureIsWrittenUnderItsEnglishName()
+    {
+        List<StockPictures.Entry> pictures = StockPictures.fromDescriptions(List.of(
+            new String[] { "StdPicture.Print", PRINT_URI }, //$NON-NLS-1$
+            new String[] { "StdPicture.Печать", PRINT_URI })); //$NON-NLS-1$
+
+        assertEquals("StdPicture.Print", StockPictures.writtenName(pictures, "StdPicture.Печать")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("StdPicture.Print", StockPictures.writtenName(pictures, "StdPicture.print")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("StdExtPicture.Печать", //$NON-NLS-1$
+            StockPictures.writtenName(pictures, "StdExtPicture.Печать")); //$NON-NLS-1$
+        assertEquals("CommonPicture.Logo", StockPictures.writtenName(pictures, "CommonPicture.Logo")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Print", StockPictures.writtenName(pictures, "Print")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * Where the runtime registers the stock pictures of a version, the list is not empty, carries
      * {@code Print} with its Russian name, and the validator accepts it while refusing a name no
      * picture has.

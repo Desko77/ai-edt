@@ -156,6 +156,33 @@ public final class StockPictures
     }
 
     /**
+     * The name a stock picture is written under: its English one, whichever name the caller gave.
+     *
+     * @param pictures the stock pictures of a version
+     * @param qualified the picture name with its prefix, as the caller gave it
+     * @return {@code <prefix>.<English name>} for a stock picture the list carries; any other name
+     *         as it was given
+     */
+    public static String writtenName(List<Entry> pictures, String qualified)
+    {
+        int dot = qualified == null ? -1 : qualified.indexOf('.');
+        if (dot <= 0)
+        {
+            return qualified;
+        }
+        String prefix = qualified.substring(0, dot);
+        String name = qualified.substring(dot + 1);
+        for (Entry picture : pictures)
+        {
+            if (picture.prefix.equalsIgnoreCase(prefix) && picture.answersTo(name))
+            {
+                return picture.prefix + '.' + picture.name;
+            }
+        }
+        return qualified;
+    }
+
+    /**
      * The platform version a project targets.
      *
      * @param projectName the project, or <code>null</code>

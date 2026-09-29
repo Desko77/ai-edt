@@ -81,7 +81,7 @@ public final class PictureValidator
                 return "Stock picture '" + pictureRef + "' was not found in the platform " //$NON-NLS-1$ //$NON-NLS-2$
                     + "registry. Either a typo or the picture appeared in a later 1C " //$NON-NLS-1$
                     + "platform version. List the available names via " //$NON-NLS-1$
-                    + "edit_metadata operation=listPictures."; //$NON-NLS-1$
+                    + "edit_metadata operation=list_pictures."; //$NON-NLS-1$
             case "CommonPicture": //$NON-NLS-1$
                 if (projectName == null || projectName.isEmpty())
                 {
