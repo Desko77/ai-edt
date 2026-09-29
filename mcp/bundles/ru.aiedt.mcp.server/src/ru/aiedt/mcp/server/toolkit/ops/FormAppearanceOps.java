@@ -1,0 +1,696 @@
+/**
+ * AI-EDT - 1C AI tools for EDT
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server.toolkit.ops;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.ecore.EObject;
+
+import ru.aiedt.mcp.server.support.BmDcsHelper;
+import ru.aiedt.mcp.server.support.BmFormHelper;
+import ru.aiedt.mcp.server.support.MetadataGuards;
+import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.wire.ToolResult;
+
+/**
+ * Conditional appearance of a managed form in {@code edit_metadata}: add a rule, list the rules,
+ * remove a rule.
+ * <p>
+ * A rule is the conditional-appearance item of the composition model: the form items it styles, a
+ * condition over the form's data and the appearance. The rules live in the form's conditional
+ * appearance, which {@link BmFormHelper#conditionalAppearanceFor} resolves. The condition and the
+ * appearance are built by the same builder as {@code dcs_workshop add_appearance}.
+ * </p>
+ */
+final class FormAppearanceOps
+{
+    /**
+     * Adds a conditional-appearance rule to a form.
+     * <p>
+     * {@code itemNames} lists the form items the rule styles, comma-separated; omitted, the rule
+     * styles the whole form. A name that is not an item of the form refuses the call before anything
+     * is written, and so does a condition or an appearance the builder refuses.
+     * </p>
+     *
+     * @param params projectName, formFqn, itemNames, field, conditionType, conditionValue,
+     *            appearance and dryRun
+     * @return the answer: the index of the new rule, what it styles and its condition
+     */
+    String opAddFormAppearanceRule(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
+        String itemNames = JsonUtils.extractStringArgument(params, "itemNames"); //$NON-NLS-1$
+        String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
+        String conditionType = JsonUtils.extractStringArgument(params, "conditionType"); //$NON-NLS-1$
+        String conditionValue = JsonUtils.extractStringArgument(params, "conditionValue"); //$NON-NLS-1$
+        String appearance = JsonUtils.extractStringArgument(params, "appearance"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(formFqn, "formFqn"); //$NON-NLS-1$
+        if (!err.isEmpty())
+        {
+            return ToolResult.error(err.trim()).toJson();
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+        DcsWorkshopTool.AppearanceItem built;
+        try
+        {
+            built = new DcsWorkshopTool().newAppearanceItem(field, conditionType, conditionValue,
+                appearance);
+        }
+        catch (MetadataGuards.BlockedGuardException blocked)
+        {
+            throw blocked;
+        }
+        catch (RuntimeException refused)
+        {
+            return ToolResult.error(refused.getMessage() + " Nothing was written.").toJson(); //$NON-NLS-1$
+        }
+        List<String> names = splitNames(itemNames);
+        int[] index = { -1 };
+        String[] appearanceFqn = { null };
+        String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
+            try
+            {
+                List<String> missing = new ArrayList<>();
+                for (String name : names)
+                {
+                    if (helper.findItemByName(form, name) == null)
+                    {
+                        missing.add(name);
+                    }
+                }
+                if (!missing.isEmpty())
+                {
+                    return "Error: the form has no item " + String.join(", ", missing) //$NON-NLS-1$
+                        + ". Nothing was written."; //$NON-NLS-1$
+                }
+                selectItems(built.item, names);
+                index[0] = addToForm(tx, form, built.item);
+                appearanceFqn[0] = BmFormHelper.conditionalAppearanceFqn(tx, form);
+                return null;
+            }
+            catch (Exception e)
+            {
+                return "Error: the rule was not added - " + e.getMessage(); //$NON-NLS-1$
+            }
+        });
+        if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return ToolResult.error(outcome.substring("Error:".length()).trim()).toJson(); //$NON-NLS-1$
+        }
+        ToolResult answer = ToolResult.success()
+            .put("operation", "add_form_appearance_rule") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("formFqn", formFqn) //$NON-NLS-1$
+            .put("index", index[0]) //$NON-NLS-1$
+            .put("itemNames", names) //$NON-NLS-1$
+            .put("summary", built.describe()); //$NON-NLS-1$
+        if (!built.skipped.isEmpty())
+        {
+            answer.put("styleRefNotSupported", built.skipped); //$NON-NLS-1$
+        }
+        if (dryRun)
+        {
+            answer.put("dryRun", true); //$NON-NLS-1$
+        }
+        else
+        {
+            putPersistWarning(answer, project, appearanceFqn[0]);
+        }
+        return answer.toJson();
+    }
+
+    /**
+     * Lists the conditional-appearance rules of a form.
+     *
+     * @param params projectName and formFqn
+     * @return the answer: the rules in their order, see {@link #describe}
+     */
+    String opListFormAppearanceRules(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(formFqn, "formFqn"); //$NON-NLS-1$
+        if (!err.isEmpty())
+        {
+            return ToolResult.error(err.trim()).toJson();
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+        List<List<Map<String, Object>>> read = new ArrayList<>();
+        String outcome = helper.executeFormOperation(project, formFqn, (tx, form) -> {
+            read.add(describe(tx, form));
+            return null;
+        });
+        if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return ToolResult.error(outcome.substring("Error:".length()).trim()).toJson(); //$NON-NLS-1$
+        }
+        List<Map<String, Object>> rules = read.isEmpty() ? new ArrayList<>() : read.get(0);
+        return ToolResult.success()
+            .put("operation", "list_form_appearance_rules") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("formFqn", formFqn) //$NON-NLS-1$
+            .put("count", rules.size()) //$NON-NLS-1$
+            .put("rules", rules) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Removes conditional-appearance rules from a form: the one at {@code index}, or every rule
+     * whose condition reads {@code field}.
+     *
+     * @param params projectName, formFqn, index or field, and dryRun
+     * @return the answer: the indexes removed
+     */
+    String opRemoveFormAppearanceRule(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
+        Integer index = JsonUtils.extractIntegerArgument(params, "index"); //$NON-NLS-1$
+        String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(formFqn, "formFqn"); //$NON-NLS-1$
+        if ((index == null) == (field == null || field.isEmpty()))
+        {
+            err = err + "Pass either index or field. "; //$NON-NLS-1$
+        }
+        if (!err.isEmpty())
+        {
+            return ToolResult.error(err.trim()).toJson();
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        BmFormHelper helper = new BmFormHelper();
+        if (!helper.init())
+        {
+            return ToolResult.error("EDT form model unavailable in this runtime").toJson(); //$NON-NLS-1$
+        }
+        List<Integer> removed = new ArrayList<>();
+        String[] appearanceFqn = { null };
+        String outcome = helper.executeFormOperation(project, formFqn, dryRun, (tx, form) -> {
+            try
+            {
+                removed.addAll(removeFromForm(tx, form, index, field));
+                appearanceFqn[0] = BmFormHelper.conditionalAppearanceFqn(tx, form);
+                return null;
+            }
+            catch (RuntimeException refused)
+            {
+                return "Error: " + refused.getMessage(); //$NON-NLS-1$
+            }
+        });
+        if (outcome != null && outcome.startsWith("Error:")) //$NON-NLS-1$
+        {
+            return ToolResult.error(outcome.substring("Error:".length()).trim()).toJson(); //$NON-NLS-1$
+        }
+        ToolResult answer = ToolResult.success()
+            .put("operation", "remove_form_appearance_rule") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("formFqn", formFqn) //$NON-NLS-1$
+            .put("removed", removed); //$NON-NLS-1$
+        if (dryRun)
+        {
+            answer.put("dryRun", true); //$NON-NLS-1$
+        }
+        else
+        {
+            putPersistWarning(answer, project, appearanceFqn[0]);
+        }
+        return answer.toJson();
+    }
+
+    /**
+     * Writes the form's conditional appearance to disk, which the export of the form leaves out, and
+     * names the failure in the answer.
+     *
+     * @param answer the answer of the write
+     * @param project the project
+     * @param appearanceFqn the conditional appearance the write changed, or <code>null</code>
+     */
+    private static void putPersistWarning(ToolResult answer, IProject project, String appearanceFqn)
+    {
+        if (appearanceFqn == null)
+        {
+            return;
+        }
+        String notWritten = BmFormHelper.exportTopObject(project, appearanceFqn);
+        if (notWritten != null)
+        {
+            answer.put("persistWarning", appearanceFqn + " is changed in the model and not on disk: " //$NON-NLS-1$ //$NON-NLS-2$
+                + notWritten + ". Write it with project_admin resync_to_disk."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Splits a comma-separated list of item names.
+     *
+     * @param csv the names, or <code>null</code>
+     * @return the trimmed, non-empty names in their order, each once
+     */
+    static List<String> splitNames(String csv)
+    {
+        Set<String> names = new LinkedHashSet<>();
+        if (csv == null)
+        {
+            return new ArrayList<>(names);
+        }
+        for (String part : csv.split(",")) //$NON-NLS-1$
+        {
+            String name = part.trim();
+            if (!name.isEmpty())
+            {
+                names.add(name);
+            }
+        }
+        return new ArrayList<>(names);
+    }
+
+    /**
+     * Makes a rule style the named form items. No names leaves the selection empty: the rule then
+     * styles the whole form.
+     *
+     * @param item the conditional-appearance item
+     * @param names the form item names
+     * @throws IllegalStateException when the composition model cannot build the selection
+     */
+    static void selectItems(Object item, List<String> names)
+    {
+        if (names.isEmpty())
+        {
+            return;
+        }
+        Object selection = invoke(item, "getSelection"); //$NON-NLS-1$
+        if (selection == null)
+        {
+            selection = BmDcsHelper.createElement("createDataCompositionAppearanceFields"); //$NON-NLS-1$
+            if (selection == null || BmDcsHelper.setProperty(item, "selection", selection) != null) //$NON-NLS-1$
+            {
+                throw new IllegalStateException("the rule's field list could not be created"); //$NON-NLS-1$
+            }
+        }
+        EList<EObject> fields = BmDcsHelper.getEObjectList(selection, "getItems"); //$NON-NLS-1$
+        if (fields == null)
+        {
+            throw new IllegalStateException("the rule's field list has no items"); //$NON-NLS-1$
+        }
+        for (String name : names)
+        {
+            Object entry = BmDcsHelper.createElement("createDataCompositionAppearanceField"); //$NON-NLS-1$
+            Object path = BmDcsHelper.createDataCompositionField(name);
+            if (entry == null || path == null || BmDcsHelper.setProperty(entry, "field", path) != null) //$NON-NLS-1$
+            {
+                throw new IllegalStateException("the field '" + name + "' could not be added to the rule"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            BmDcsHelper.setProperty(entry, "use", Boolean.TRUE); //$NON-NLS-1$
+            fields.add((EObject)entry);
+        }
+    }
+
+    /**
+     * Appends a rule to the form's conditional appearance, creating the container when the form has
+     * none.
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @param item the rule
+     * @return the index of the rule in the form's list
+     * @throws IllegalStateException when the container cannot be read or created
+     */
+    static int addToForm(Object transaction, Object form, Object item)
+    {
+        EObject container = BmFormHelper.conditionalAppearanceFor(transaction, form, true);
+        if (container == null)
+        {
+            throw new IllegalStateException("the form's conditional appearance could not be created"); //$NON-NLS-1$
+        }
+        EList<EObject> items = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            throw new IllegalStateException("the form's conditional appearance has no items"); //$NON-NLS-1$
+        }
+        items.add((EObject)item);
+        return items.size() - 1;
+    }
+
+    /**
+     * Removes rules from the form's conditional appearance.
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @param index the rule to remove, or <code>null</code> to remove by field
+     * @param field the data path whose rules are removed, used when {@code index} is <code>null</code>
+     * @return the indexes removed, as they were before the removal
+     * @throws IllegalArgumentException when the index is out of range or no rule reads the field
+     */
+    static List<Integer> removeFromForm(Object transaction, Object form, Integer index, String field)
+    {
+        EObject container = BmFormHelper.conditionalAppearanceFor(transaction, form, false);
+        EList<EObject> items = container == null ? null : BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
+        int size = items == null ? 0 : items.size();
+        List<Integer> removed = new ArrayList<>();
+        if (index != null)
+        {
+            if (index.intValue() < 0 || index.intValue() >= size)
+            {
+                throw new IllegalArgumentException("index " + index + " is out of range: the form has " //$NON-NLS-1$ //$NON-NLS-2$
+                    + size + " rules. Nothing was removed."); //$NON-NLS-1$
+            }
+            items.remove(index.intValue());
+            removed.add(index);
+            return removed;
+        }
+        for (int i = size - 1; i >= 0; i--)
+        {
+            if (conditionFields(items.get(i)).stream().anyMatch(field::equalsIgnoreCase))
+            {
+                items.remove(i);
+                removed.add(0, Integer.valueOf(i));
+            }
+        }
+        if (removed.isEmpty())
+        {
+            throw new IllegalArgumentException("no rule of the form has a condition on " + field //$NON-NLS-1$
+                + ". Nothing was removed."); //$NON-NLS-1$
+        }
+        return removed;
+    }
+
+    /**
+     * Describes the conditional-appearance rules of a form.
+     * <p>
+     * Each rule is {@code index}, {@code use}, {@code itemNames} (the styled items; empty means the
+     * whole form), {@code condition} (each comparison as {@code field}, {@code comparisonType},
+     * {@code value}; each group as {@code groupType} and its {@code items}) and {@code appearance}
+     * (parameter name to value).
+     * </p>
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @return the rules in their order; empty when the form has none
+     */
+    static List<Map<String, Object>> describe(Object transaction, Object form)
+    {
+        List<Map<String, Object>> rules = new ArrayList<>();
+        EObject container = BmFormHelper.conditionalAppearanceFor(transaction, form, false);
+        EList<EObject> items = container == null ? null : BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            return rules;
+        }
+        for (int i = 0; i < items.size(); i++)
+        {
+            EObject item = items.get(i);
+            Map<String, Object> rule = new LinkedHashMap<>();
+            rule.put("index", Integer.valueOf(i)); //$NON-NLS-1$
+            rule.put("use", invoke(item, "isUse")); //$NON-NLS-1$ //$NON-NLS-2$
+            rule.put("itemNames", selectedNames(item)); //$NON-NLS-1$
+            rule.put("condition", conditions(item)); //$NON-NLS-1$
+            rule.put("appearance", appearance(item)); //$NON-NLS-1$
+            rules.add(rule);
+        }
+        return rules;
+    }
+
+    /**
+     * @param item a rule
+     * @return the names of the form items the rule styles
+     */
+    private static List<String> selectedNames(Object item)
+    {
+        List<String> names = new ArrayList<>();
+        Object selection = invoke(item, "getSelection"); //$NON-NLS-1$
+        EList<EObject> fields = selection == null ? null : BmDcsHelper.getEObjectList(selection, "getItems"); //$NON-NLS-1$
+        if (fields != null)
+        {
+            for (EObject entry : fields)
+            {
+                names.add(fieldPath(invoke(entry, "getField"))); //$NON-NLS-1$
+            }
+        }
+        return names;
+    }
+
+    /**
+     * @param item a rule
+     * @return the fields the comparisons of the rule's condition read, groups included
+     */
+    private static List<String> conditionFields(Object item)
+    {
+        List<String> fields = new ArrayList<>();
+        collectFields(conditions(item), fields);
+        return fields;
+    }
+
+    /**
+     * @param entries described conditions: comparisons and groups
+     * @param fields receives the field of every comparison, the ones inside groups included
+     */
+    private static void collectFields(List<Map<String, Object>> entries, List<String> fields)
+    {
+        for (Map<String, Object> entry : entries)
+        {
+            Object field = entry.get("field"); //$NON-NLS-1$
+            if (field != null)
+            {
+                fields.add(field.toString());
+            }
+            Object nested = entry.get("items"); //$NON-NLS-1$
+            if (nested instanceof List)
+            {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> group = (List<Map<String, Object>>)nested;
+                collectFields(group, fields);
+            }
+        }
+    }
+
+    /**
+     * @param item a rule
+     * @return the entries of the rule's condition: a comparison as field, comparisonType and value,
+     *         a group as groupType and its items
+     */
+    private static List<Map<String, Object>> conditions(Object item)
+    {
+        Object filter = invoke(item, "getFilter"); //$NON-NLS-1$
+        return filter == null ? new ArrayList<>() : conditionEntries(filter);
+    }
+
+    /**
+     * @param container a filter or a filter group
+     * @return its entries, groups described with their own entries
+     */
+    private static List<Map<String, Object>> conditionEntries(Object container)
+    {
+        List<Map<String, Object>> out = new ArrayList<>();
+        EList<EObject> comparisons = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
+        if (comparisons == null)
+        {
+            return out;
+        }
+        for (EObject comparison : comparisons)
+        {
+            if (comparison.eClass().getEStructuralFeature("groupType") != null) //$NON-NLS-1$
+            {
+                Map<String, Object> group = new LinkedHashMap<>();
+                Object groupType = invoke(comparison, "getGroupType"); //$NON-NLS-1$
+                group.put("groupType", groupType == null ? null : groupType.toString()); //$NON-NLS-1$
+                group.put("items", conditionEntries(comparison)); //$NON-NLS-1$
+                out.add(group);
+                continue;
+            }
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("field", fieldPath(invoke(comparison, "getLeft"))); //$NON-NLS-1$ //$NON-NLS-2$
+            Object type = invoke(comparison, "getComparisonType"); //$NON-NLS-1$
+            one.put("comparisonType", type == null ? null : type.toString()); //$NON-NLS-1$
+            List<String> values = new ArrayList<>();
+            EList<EObject> right = BmDcsHelper.getEObjectList(comparison, "getRight"); //$NON-NLS-1$
+            if (right != null)
+            {
+                for (EObject value : right)
+                {
+                    values.add(valueText(value));
+                }
+            }
+            one.put("value", values.size() == 1 ? values.get(0) : values); //$NON-NLS-1$
+            out.add(one);
+        }
+        return out;
+    }
+
+    /**
+     * @param item a rule
+     * @return the appearance parameters the rule sets, name to value
+     */
+    private static Map<String, Object> appearance(Object item)
+    {
+        Map<String, Object> out = new LinkedHashMap<>();
+        Object appearance = invoke(item, "getAppearance"); //$NON-NLS-1$
+        EList<EObject> parameters = appearance == null ? null : BmDcsHelper.getEObjectList(appearance, "getItems"); //$NON-NLS-1$
+        if (parameters == null)
+        {
+            return out;
+        }
+        for (EObject parameter : parameters)
+        {
+            if (Boolean.FALSE.equals(invoke(parameter, "isUse"))) //$NON-NLS-1$
+            {
+                continue;
+            }
+            Object key = invoke(invoke(parameter, "getParameter"), "getValue"); //$NON-NLS-1$ //$NON-NLS-2$
+            EList<EObject> values = BmDcsHelper.getEObjectList(parameter, "getValues"); //$NON-NLS-1$
+            String text = values == null || values.isEmpty() ? null : valueText(values.get(0));
+            out.put(String.valueOf(key), text);
+        }
+        return out;
+    }
+
+    /**
+     * @param field a composition field, or <code>null</code>
+     * @return its path, or <code>null</code>
+     */
+    private static String fieldPath(Object field)
+    {
+        if (field == null)
+        {
+            return null;
+        }
+        Object path = invoke(field, "getValue"); //$NON-NLS-1$
+        return path != null ? path.toString() : null;
+    }
+
+    /**
+     * The text of a model value: the value it carries. A color given by its components reads as
+     * {@code #RRGGBB} and a font given by its face as {@code Face,height[,bold][,italic]}, the
+     * spellings {@code appearance} accepts; any other carried object reads as its class name.
+     *
+     * @param value an mcore value
+     * @return the text
+     */
+    static String valueText(Object value)
+    {
+        Object carried = invoke(value, "getValue"); //$NON-NLS-1$
+        if (carried == null)
+        {
+            carried = invoke(value, "isValue"); //$NON-NLS-1$
+        }
+        if (carried instanceof EObject)
+        {
+            String spelled = colorText(carried);
+            if (spelled == null)
+            {
+                spelled = fontText(carried);
+            }
+            return spelled != null ? spelled : ((EObject)carried).eClass().getName();
+        }
+        if (carried != null)
+        {
+            return carried.toString();
+        }
+        return value instanceof EObject ? ((EObject)value).eClass().getName() : String.valueOf(value);
+    }
+
+    /**
+     * @param color a carried model object
+     * @return {@code #RRGGBB} when it is a color given by its components, otherwise <code>null</code>
+     */
+    private static String colorText(Object color)
+    {
+        Object red = invoke(color, "getRed"); //$NON-NLS-1$
+        Object green = invoke(color, "getGreen"); //$NON-NLS-1$
+        Object blue = invoke(color, "getBlue"); //$NON-NLS-1$
+        if (!(red instanceof Integer) || !(green instanceof Integer) || !(blue instanceof Integer)
+            || (Integer)red < 0 || (Integer)green < 0 || (Integer)blue < 0)
+        {
+            return null;
+        }
+        return String.format("#%02X%02X%02X", red, green, blue); //$NON-NLS-1$
+    }
+
+    /**
+     * @param font a carried model object
+     * @return {@code Face,height[,bold][,italic]} when it is a font given by its face, otherwise
+     *         <code>null</code>
+     */
+    private static String fontText(Object font)
+    {
+        Object face = invoke(font, "getFaceName"); //$NON-NLS-1$
+        if (!(face instanceof String) || ((String)face).isEmpty())
+        {
+            return null;
+        }
+        StringBuilder text = new StringBuilder((String)face);
+        Object height = invoke(font, "getHeight"); //$NON-NLS-1$
+        if (height instanceof Number && ((Number)height).floatValue() > 0)
+        {
+            float points = ((Number)height).floatValue();
+            text.append(',').append(points == Math.rint(points) ? String.valueOf((int)points) : String.valueOf(points));
+        }
+        if (Boolean.TRUE.equals(invoke(font, "isBold"))) //$NON-NLS-1$
+        {
+            text.append(",bold"); //$NON-NLS-1$
+        }
+        if (Boolean.TRUE.equals(invoke(font, "isItalic"))) //$NON-NLS-1$
+        {
+            text.append(",italic"); //$NON-NLS-1$
+        }
+        return text.toString();
+    }
+
+    /**
+     * Calls a getter by name.
+     *
+     * @param target the receiver, or <code>null</code>
+     * @param getter the getter name
+     * @return what it returns, or <code>null</code> when the receiver has no such getter or it failed
+     */
+    private static Object invoke(Object target, String getter)
+    {
+        if (target == null)
+        {
+            return null;
+        }
+        try
+        {
+            return target.getClass().getMethod(getter).invoke(target);
+        }
+        catch (ReflectiveOperationException | RuntimeException absent)
+        {
+            // A model object of another shape has no such member; the reader treats that as empty.
+            return null;
+        }
+    }
+}

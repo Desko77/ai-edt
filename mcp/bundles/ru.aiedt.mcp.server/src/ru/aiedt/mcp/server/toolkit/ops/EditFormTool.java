@@ -50,6 +50,16 @@ public class EditFormTool implements IMcpTool
     private static final String OP_REMOVE_ITEM = "remove_item"; //$NON-NLS-1$
     private static final String OP_HELP = "help"; //$NON-NLS-1$
 
+    /**
+     * What every {@code add_group} answer tells the caller: the group is written on its own. One
+     * line, no quote and no backslash - the front-matter writer quotes and escapes such a value
+     * while the reader only strips the quotes, and an escape sequence would reach the caller as it
+     * stands. Package visibility: the tests pin the text and the shape it has to keep.
+     */
+    static final String ADD_GROUP_HAS_NO_CHILDREN_WARNING =
+        "The group is written without child items; add the items that belong in it with " //$NON-NLS-1$
+            + "parentName set to this group."; //$NON-NLS-1$
+
     /** The operations this facade dispatches, named as its help document names them. */
     private static final List<String> EDIT_OPERATIONS = Collections.unmodifiableList(Arrays.asList(
         "addField", "addGroup", "addButton", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -496,7 +506,8 @@ public class EditFormTool implements IMcpTool
             "- Name: " + name + "\n" + //$NON-NLS-1$ //$NON-NLS-2$
             "- Title: " + title + "\n" + //$NON-NLS-1$ //$NON-NLS-2$
             "- Type: " + groupType + "\n" + //$NON-NLS-1$ //$NON-NLS-2$
-            "- Parent: " + (parentName != null ? parentName : "root")); //$NON-NLS-1$ //$NON-NLS-2$
+            "- Parent: " + (parentName != null ? parentName : "root"), //$NON-NLS-1$ //$NON-NLS-2$
+            ADD_GROUP_HAS_NO_CHILDREN_WARNING);
     }
 
     private String executeAddButton(Object form, String name, String title,
@@ -1479,12 +1490,35 @@ public class EditFormTool implements IMcpTool
 
     private String buildSuccess(String tool, String elementName, String operation, String body)
     {
-        return YamlFrontMatter.create()
+        return buildSuccess(tool, elementName, operation, body, null);
+    }
+
+    /**
+     * The answer of an operation that succeeded and still owes the caller a warning. The warning
+     * travels in the front matter under {@code warning}, which the JSON answer of the facade carries
+     * as a {@code warning} field; the writer quotes and escapes such a value, and the reader only
+     * strips the quotes, so the text is one line that carries no quote and no backslash.
+     *
+     * @param tool the tool name the front matter names
+     * @param elementName the element the operation worked on
+     * @param operation the operation name
+     * @param body the human-readable body
+     * @param warning the warning text, or <code>null</code> when the operation owes none
+     * @return the front-matter answer
+     */
+    String buildSuccess(String tool, String elementName, String operation, String body,
+        String warning)
+    {
+        YamlFrontMatter answer = YamlFrontMatter.create()
             .put("tool", NAME) //$NON-NLS-1$
             .put("operation", operation) //$NON-NLS-1$
             .put("element", elementName) //$NON-NLS-1$
-            .put("status", "success") //$NON-NLS-1$ //$NON-NLS-2$
-            .wrapContent(body);
+            .put("status", "success"); //$NON-NLS-1$
+        if (warning != null && !warning.isEmpty())
+        {
+            answer.put("warning", warning); //$NON-NLS-1$
+        }
+        return answer.wrapContent(body);
     }
 
     private String buildSuccess(String projectName, String formFqn, String operation,

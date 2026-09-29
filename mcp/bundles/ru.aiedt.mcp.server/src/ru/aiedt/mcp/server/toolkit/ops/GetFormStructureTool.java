@@ -8,12 +8,15 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.InternalEObject;
 
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -26,6 +29,7 @@ import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 /**
@@ -147,6 +151,7 @@ public class GetFormStructureTool implements IMcpTool
         // M1: dynamic-list data attributes (query + main table) - read from
         // Form.getAttributes(), not the UI items tree.
         final com.google.gson.JsonArray[] dynamicListsRef = new com.google.gson.JsonArray[1];
+        final List<List<Map<String, Object>>> appearanceRef = new ArrayList<>();
         final boolean includeCi = includeCommandInterface;
 
         String operationError = helper.executeFormOperation(project, fqn, (transaction, form) -> {
@@ -169,6 +174,7 @@ public class GetFormStructureTool implements IMcpTool
                     commandInterfaceObj[0] = collectCommandInterface(form);
                 }
                 dynamicListsRef[0] = collectDynamicLists(form);
+                appearanceRef.add(FormAppearanceOps.describe(transaction, form));
             }
             catch (Throwable t)
             {
@@ -214,6 +220,21 @@ public class GetFormStructureTool implements IMcpTool
         if (dynamicListsRef[0] != null && dynamicListsRef[0].size() > 0)
         {
             envelope.add("dynamicLists", dynamicListsRef[0]); //$NON-NLS-1$
+        }
+        if (!appearanceRef.isEmpty() && !appearanceRef.get(0).isEmpty())
+        {
+            envelope.add("conditionalAppearance", new com.google.gson.Gson().toJsonTree(appearanceRef.get(0))); //$NON-NLS-1$
+        }
+        JsonArray emptyGroups = new JsonArray();
+        JsonArray emptyTabs = new JsonArray();
+        collectEmptyGroups(resultRoot[0], emptyGroups, emptyTabs);
+        if (emptyGroups.size() > 0)
+        {
+            envelope.add("emptyGroups", emptyGroups); //$NON-NLS-1$
+        }
+        if (emptyTabs.size() > 0)
+        {
+            envelope.add("emptyTabs", emptyTabs); //$NON-NLS-1$
         }
         return envelope.toString();
     }
@@ -474,8 +495,13 @@ public class GetFormStructureTool implements IMcpTool
     /**
      * Recursively builds a JSON tree node for the given form item.
      * Honors the depth and global element-count limits.
+     *
+     * <p>A container that holds nothing carries {@code "empty": true} in its properties: the group is
+     * in the form file and the platform renders nothing for it, which a reader that only sees the
+     * tree cannot tell from a group that is not there at all. The mark is read from the model rather
+     * than from what the walk emitted, so it does not depend on the depth budget.
      */
-    private JsonObject walk(Object item, int currentDepth, int maxDepth, int maxElements,
+    JsonObject walk(Object item, int currentDepth, int maxDepth, int maxElements,
         AtomicInteger counter)
     {
         if (counter.get() >= maxElements || item == null)
@@ -511,31 +537,41 @@ public class GetFormStructureTool implements IMcpTool
             node.add("properties", properties); //$NON-NLS-1$
         }
 
+        // A container with no children at all states that; the children are read once and
+        // reused for the descent, so the mark costs no second read of the model.
+        boolean container = hasItemsGetter(item);
+        List<Object> children = container ? readChildItems(item) : Collections.emptyList();
+        if (container && children.isEmpty())
+        {
+            if (properties == null)
+            {
+                properties = new JsonObject();
+                node.add("properties", properties); //$NON-NLS-1$
+            }
+            properties.addProperty("empty", true); //$NON-NLS-1$
+        }
+
         // Descend into FormItemContainer.getItems() when within depth budget.
         boolean canDescend = maxDepth == 0 || currentDepth < maxDepth;
-        if (canDescend)
+        if (canDescend && !children.isEmpty())
         {
-            List<Object> children = readChildItems(item);
-            if (!children.isEmpty())
+            JsonArray itemsArr = new JsonArray();
+            for (Object child : children)
             {
-                JsonArray itemsArr = new JsonArray();
-                for (Object child : children)
+                if (counter.get() >= maxElements)
                 {
-                    if (counter.get() >= maxElements)
-                    {
-                        break;
-                    }
-                    JsonObject childNode = walk(child, currentDepth + 1, maxDepth,
-                        maxElements, counter);
-                    if (childNode != null)
-                    {
-                        itemsArr.add(childNode);
-                    }
+                    break;
                 }
-                if (itemsArr.size() > 0)
+                JsonObject childNode = walk(child, currentDepth + 1, maxDepth,
+                    maxElements, counter);
+                if (childNode != null)
                 {
-                    node.add("items", itemsArr); //$NON-NLS-1$
+                    itemsArr.add(childNode);
                 }
+            }
+            if (itemsArr.size() > 0)
+            {
+                node.add("items", itemsArr); //$NON-NLS-1$
             }
         }
 
@@ -543,11 +579,83 @@ public class GetFormStructureTool implements IMcpTool
     }
 
     /**
+     * Names the empty containers a walked tree holds, split by what they are meant to hold: a
+     * pages group holds pages, any other group holds items. The tree itself marks every empty
+     * container; this list is what a reader checks without walking the tree.
+     *
+     * <p>Only what the walk emitted is named, so with {@code subtree} the groups outside the
+     * subtree are absent and with {@code depth} only the containers down to that depth are seen.
+     *
+     * @param node a tree node produced by {@link #walk(Object, int, int, int, AtomicInteger)}
+     * @param groups receives the names of the empty groups
+     * @param tabs receives the names of the empty pages groups
+     */
+    static void collectEmptyGroups(JsonObject node, JsonArray groups, JsonArray tabs)
+    {
+        if (node == null)
+        {
+            return;
+        }
+        String type = node.has("type") ? node.get("type").getAsString() : null; //$NON-NLS-1$
+        JsonObject properties = node.has("properties") ? node.getAsJsonObject("properties") : null; //$NON-NLS-1$
+        if (type != null && type.endsWith("Group") && node.has("name") //$NON-NLS-1$ //$NON-NLS-2$
+            && properties != null && properties.has("empty")) //$NON-NLS-1$
+        {
+            String name = node.get("name").getAsString(); //$NON-NLS-1$
+            String kind = properties.has("kind") ? properties.get("kind").getAsString() : null; //$NON-NLS-1$ //$NON-NLS-2$
+            if ("Pages".equalsIgnoreCase(kind)) //$NON-NLS-1$
+            {
+                tabs.add(name);
+            }
+            else
+            {
+                groups.add(name);
+            }
+        }
+        if (node.has("items")) //$NON-NLS-1$
+        {
+            for (JsonElement child : node.getAsJsonArray("items")) //$NON-NLS-1$
+            {
+                collectEmptyGroups(child.getAsJsonObject(), groups, tabs);
+            }
+        }
+    }
+
+    /**
+     * Whether an element is a container at all - it answers {@code getItems()} - as opposed to a
+     * leaf, which holds nothing by nature. An empty answer from {@link #readChildItems(Object)}
+     * alone cannot tell the two apart.
+     *
+     * @param item a form item
+     * @return <code>true</code> when the item declares {@code getItems()}
+     */
+    private static boolean hasItemsGetter(Object item)
+    {
+        try
+        {
+            item.getClass().getMethod("getItems"); //$NON-NLS-1$
+            return true;
+        }
+        catch (ReflectiveOperationException e)
+        {
+            return false;
+        }
+    }
+
+    /**
      * Collects optional per-element properties via best-effort reflection.
      * Each lookup is wrapped in try/catch so that missing methods on a particular
      * EClass do not abort the walk.
+     *
+     * <p>Reads what the form file writes for the element: visibility and enablement, the data path
+     * and the footer a column shows a total in, the kind of a group, the command a button runs, the
+     * icon, the tab row of a pages group, the height of a group, button or table, the multi-line
+     * mode of an input field and the object a command bar takes standard commands from.
+     *
+     * @param item a form item
+     * @return the properties the item answers, or <code>null</code> when it answers none of them
      */
-    private JsonObject collectProperties(Object item)
+    JsonObject collectProperties(Object item)
     {
         JsonObject props = new JsonObject();
 
@@ -570,8 +678,21 @@ public class GetFormStructureTool implements IMcpTool
             props.addProperty("dataPath", dataPath); //$NON-NLS-1$
         }
 
-        // FormGroup type / kind
+        // The data path a column shows its footer total through.
+        String footer = dataPathText(readNoArg(item, "getFooterDataPath")); //$NON-NLS-1$
+        if (footer != null)
+        {
+            props.addProperty("footer", footer); //$NON-NLS-1$
+        }
+
+        // The kind of a group is what the form file writes as the type of the group
+        // (UsualGroup, Pages, Popup, ButtonGroup, ...); getKind() is read first for the models
+        // that declare one, and getType() answers it for a group, a field and a button alike.
         String kind = invokeStringFromEnumNoArg(item, "getKind"); //$NON-NLS-1$
+        if (kind == null || kind.isEmpty())
+        {
+            kind = invokeStringFromEnumNoArg(item, "getType"); //$NON-NLS-1$
+        }
         if (kind != null && !kind.isEmpty())
         {
             props.addProperty("kind", kind); //$NON-NLS-1$
@@ -597,7 +718,169 @@ public class GetFormStructureTool implements IMcpTool
             props.addProperty("representation", representation); //$NON-NLS-1$
         }
 
+        // The icon of a button, a submenu, a picture decoration or an input field. It sits on the
+        // item itself (a button) or, for every other kind, on the extended information of the item.
+        Object extInfo = readNoArg(item, "getExtInfo"); //$NON-NLS-1$
+        String picture = pictureName(readNoArg(item, "getPicture")); //$NON-NLS-1$
+        if (picture == null)
+        {
+            picture = pictureName(readNoArg(extInfo, "getPicture")); //$NON-NLS-1$
+        }
+        if (picture != null)
+        {
+            props.addProperty("picture", picture); //$NON-NLS-1$
+        }
+
+        // A pages group writes how its tab row is drawn.
+        String tabs = extInfo == null ? null : invokeStringFromEnumNoArg(extInfo, "getPagesRepresentation"); //$NON-NLS-1$
+        if (tabs != null && !tabs.isEmpty())
+        {
+            props.addProperty("tabs", tabs); //$NON-NLS-1$
+        }
+
+        // A submenu is a popup group; the view of a group is what tells the two apart.
+        if ("Popup".equalsIgnoreCase(kind)) //$NON-NLS-1$
+        {
+            props.addProperty("submenu", true); //$NON-NLS-1$
+        }
+
+        // Multi-line is the exception for an input field: the form file writes nothing for the
+        // single-line default, so only the set value is reported.
+        Boolean multiLine = extInfo == null ? null : invokeBooleanNoArg(extInfo, "getMultiLine"); //$NON-NLS-1$
+        if (multiLine != null && multiLine.booleanValue())
+        {
+            props.addProperty("multiLine", true); //$NON-NLS-1$
+        }
+
+        // The object a command bar or a submenu takes its standard commands from.
+        String commandSource = extInfo == null ? null
+            : commandSourceText(readNoArg(extInfo, "getCommandSource")); //$NON-NLS-1$
+        if (commandSource != null)
+        {
+            props.addProperty("commandSource", commandSource); //$NON-NLS-1$
+        }
+
+        // The height of a group, a button or a table; zero means "by content" and is written by
+        // nothing, so only a set height is reported.
+        Integer height = invokeIntNoArg(item, "getHeight"); //$NON-NLS-1$
+        if (height != null && height.intValue() != 0)
+        {
+            props.addProperty("height", height.intValue()); //$NON-NLS-1$
+        }
+
         return props.size() > 0 ? props : null;
+    }
+
+    /**
+     * The dotted text of a data path, as the form file writes it ({@code Объект.Товары.Сумма}).
+     * The model keeps the path as a list of segments and answers {@code toString()} as
+     * {@code /Объект/Товары/Сумма} - segments joined with slashes and a leading slash - which is
+     * not the text a form file carries.
+     *
+     * @param path a data path, a string, or <code>null</code>
+     * @return the dotted path, or <code>null</code> when there is none
+     */
+    static String dataPathText(Object path)
+    {
+        if (path == null)
+        {
+            return null;
+        }
+        if (path instanceof String)
+        {
+            return ((String)path).isEmpty() ? null : (String)path;
+        }
+        Object segments = readNoArg(path, "getSegments"); //$NON-NLS-1$
+        if (!(segments instanceof Iterable))
+        {
+            return null;
+        }
+        StringBuilder text = new StringBuilder();
+        for (Object segment : (Iterable<?>)segments)
+        {
+            if (text.length() > 0)
+            {
+                text.append('.');
+            }
+            text.append(segment);
+        }
+        return text.length() > 0 ? text.toString() : null;
+    }
+
+    /**
+     * The name of a picture. A named picture of the project answers {@code getName()} itself; a
+     * picture the form refers to from outside the project - a platform picture such as
+     * {@code StdPicture.Print} - is kept by the model as an unresolved reference, and the name the
+     * form file writes as the text of the element is the last segment of that reference.
+     *
+     * <p>Only the {@code unresolved} scheme may answer a name: the last segment of another proxy
+     * scheme ({@code platform:/resource/...}, {@code bm:///...}) is a file name or a numeric id, and
+     * reading it as the picture's name would report a label the form never had.
+     *
+     * @param picture a picture, a picture reference, or <code>null</code>
+     * @return the name, or <code>null</code> when the value is no picture or names nothing
+     */
+    static String pictureName(Object picture)
+    {
+        Object target = picture;
+        for (int hop = 0; hop < 3; hop++)
+        {
+            if (target instanceof String)
+            {
+                return ((String)target).isEmpty() ? null : (String)target;
+            }
+            if (!(target instanceof EObject))
+            {
+                return null;
+            }
+            String name = nameOf(target);
+            if (name != null)
+            {
+                return name;
+            }
+            EObject referenced = (EObject)target;
+            if (referenced.eIsProxy() && referenced instanceof InternalEObject)
+            {
+                URI uri = ((InternalEObject)referenced).eProxyURI();
+                if (uri == null || !"unresolved".equals(uri.scheme())) //$NON-NLS-1$
+                {
+                    return null;
+                }
+                String last = uri.lastSegment();
+                return last == null || last.isEmpty() ? null : last;
+            }
+            Object inner = readNoArg(target, "getPicture"); //$NON-NLS-1$
+            if (inner == null || inner == target)
+            {
+                return null;
+            }
+            target = inner;
+        }
+        return null;
+    }
+
+    /**
+     * The object a command bar, a submenu or a button group takes its standard commands from: the
+     * kind of the source and its name when it has one, as {@code Table.Товары}. A source that
+     * carries no name - the form itself, which names its standard commands by the form - is named
+     * by its kind alone.
+     *
+     * @param source a command source, or <code>null</code> when the element has none
+     * @return the kind and the name, or <code>null</code> when there is no source
+     */
+    static String commandSourceText(Object source)
+    {
+        if (!(source instanceof EObject))
+        {
+            return null;
+        }
+        String kind = kindOf(source);
+        if (kind == null)
+        {
+            return null;
+        }
+        String name = nameOf(source);
+        return name == null ? kind : kind + "." + name; //$NON-NLS-1$
     }
 
     private String extractTitle(Object item)
@@ -621,37 +904,23 @@ public class GetFormStructureTool implements IMcpTool
         }
     }
 
+    /**
+     * The element's own data path: what {@code getDataPath()} holds, or the string
+     * {@code getDataPathString()} answers. The paths are read as the form file writes them, see
+     * {@link #dataPathText(Object)}.
+     *
+     * @param item a form item
+     * @return the dotted path, or <code>null</code> when the element carries none
+     */
     private String extractDataPath(Object item)
     {
         String[] candidates = { "getDataPath", "getDataPathString" }; //$NON-NLS-1$ //$NON-NLS-2$
         for (String name : candidates)
         {
-            try
+            String text = dataPathText(readNoArg(item, name));
+            if (text != null)
             {
-                Method m = item.getClass().getMethod(name);
-                Object v = m.invoke(item);
-                if (v == null)
-                {
-                    continue;
-                }
-                if (v instanceof String)
-                {
-                    return (String) v;
-                }
-                String s = invokeStringNoArg(v, "getSegmentsAsString"); //$NON-NLS-1$
-                if (s != null && !s.isEmpty())
-                {
-                    return s;
-                }
-                return v.toString();
-            }
-            catch (NoSuchMethodException nsme)
-            {
-                // try next candidate
-            }
-            catch (Exception ignored)
-            {
-                // ignore - dataPath is best-effort
+                return text;
             }
         }
         return null;
@@ -773,12 +1042,19 @@ public class GetFormStructureTool implements IMcpTool
     /**
      * Calls a public no-argument getter.
      *
-     * @param target the receiver
+     * @param target the receiver, or <code>null</code> when the value it sits on is absent
      * @param getter the getter name
-     * @return what it returned, or <code>null</code> when the receiver has no such getter
+     * @return what it returned, or <code>null</code> when there is no receiver or the receiver has
+     *         no such getter
      */
     private static Object readNoArg(Object target, String getter)
     {
+        if (target == null)
+        {
+            // An optional part of an element (the extended information of a group, the picture a
+            // field carries) is absent rather than empty, and a caller reads null as "absent".
+            return null;
+        }
         try
         {
             return target.getClass().getMethod(getter).invoke(target);

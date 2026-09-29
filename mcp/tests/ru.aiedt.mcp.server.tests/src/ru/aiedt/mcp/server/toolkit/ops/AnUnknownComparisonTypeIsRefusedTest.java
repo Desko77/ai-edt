@@ -149,7 +149,9 @@ public class AnUnknownComparisonTypeIsRefusedTest
         {
             assertRefusalNamesTheLiterals(e, "comparisonType"); //$NON-NLS-1$
         }
-        assertEquals("the appearance gained no item", 0, itemCount("conditionalAppearance")); //$NON-NLS-1$ //$NON-NLS-2$
+        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
+        assertTrue("the appearance gained no item", variants == null || variants.isEmpty() //$NON-NLS-1$
+            || itemCount("conditionalAppearance") == 0); //$NON-NLS-1$
     }
 
     /**

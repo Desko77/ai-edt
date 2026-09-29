@@ -1369,7 +1369,9 @@ final class FormItemsOps
      * A successful answer also carries the {@code adoptedFormAttributes} line when
      * {@link ru.aiedt.mcp.server.support.BmFormHelper#annotateAdopted(String)} wrote one,
      * as a JSON array under the same key: a write that borrowed base-form attributes
-     * names them to the caller.
+     * names them to the caller. A {@code warning} line becomes a JSON field of the same name:
+     * the operation succeeded and still owes the caller something to know before it acts on
+     * the answer.
      *
      * @param markdown the raw EditFormTool response (YamlFrontMatter + body)
      * @param op the unified (snake_case) operation name for the response
@@ -1387,6 +1389,7 @@ final class FormItemsOps
         String status = null;
         List<String> adopted = null;
         List<String> notPerformed = null;
+        String warning = null;
         String body = markdown;
         // Parse a leading YamlFrontMatter block: "---\n" <lines> "---\n" <body>.
         // Strip a leading UTF-8 BOM defensively (YamlFrontMatter.build() never emits
@@ -1427,6 +1430,12 @@ final class FormItemsOps
                         // every check passed.
                         notPerformed = parseScalarList(
                             unquoteYamlScalar(line.substring(colon + 1).trim()));
+                    }
+                    else if ("warning".equals(key)) //$NON-NLS-1$
+                    {
+                        // Dropping the line here would make a write whose result needs a word of
+                        // caution read as a write with nothing left to do.
+                        warning = unquoteYamlScalar(line.substring(colon + 1).trim());
                     }
                 }
             }
@@ -1477,6 +1486,10 @@ final class FormItemsOps
         if (notPerformed != null && !notPerformed.isEmpty())
         {
             ok.put("dataPathChecksNotPerformed", notPerformed); //$NON-NLS-1$
+        }
+        if (warning != null && !warning.isEmpty())
+        {
+            ok.put("warning", warning); //$NON-NLS-1$
         }
         return ok.toJson();
     }

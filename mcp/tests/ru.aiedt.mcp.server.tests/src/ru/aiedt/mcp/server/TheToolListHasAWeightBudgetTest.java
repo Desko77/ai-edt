@@ -74,8 +74,12 @@ public class TheToolListHasAWeightBudgetTest
      * and expression, valueListAllowed and denyIncompleteValues on edit_metadata: add_parameter
      * and add_schema_parameter write them into the schema parameter.
      * </p>
+     * <p>
+     * Raised from 169962 to 170245 for itemNames, field and index on edit_metadata:
+     * add_form_appearance_rule, list_form_appearance_rules and remove_form_appearance_rule.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 173621;
+    private static final int DOCUMENT_BUDGET = 173904;
 
     private LiveServer server;
 

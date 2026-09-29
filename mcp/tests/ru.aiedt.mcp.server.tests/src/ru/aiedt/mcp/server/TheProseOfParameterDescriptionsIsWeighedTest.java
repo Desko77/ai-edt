@@ -501,6 +501,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * parameter on dcs_workshop and expression, valueListAllowed and denyIncompleteValues on
      * edit_metadata: 93862.
      * </p>
+     * <p>
+     * And one by 196 for itemNames, field and index on edit_metadata: add_form_appearance_rule and
+     * remove_form_appearance_rule name the styled form items, the field of the condition and the
+     * rule to remove: 93805.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 95737;
+    private static final int DOCUMENT_PROSE = 95933;
 }

@@ -3749,16 +3749,113 @@ public class DcsWorkshopTool implements IMcpTool
     private Object doAddAppearance(Map<String, String> params, EObject schema)
     {
         String field = JsonUtils.extractStringArgument(params, "field"); //$NON-NLS-1$
+        String conditionType = JsonUtils.extractStringArgument(params, "conditionType"); //$NON-NLS-1$
+        String conditionValue = JsonUtils.extractStringArgument(params, "conditionValue"); //$NON-NLS-1$
+        // Appearance properties are received as a string in 1.37: "Font=Arial,12,bold;TextColor=#FF0000".
+        String appearanceSpec = JsonUtils.extractStringArgument(params, "appearance"); //$NON-NLS-1$
+        AppearanceItem built = newAppearanceItem(field, conditionType, conditionValue, appearanceSpec);
+
+        Object apSettings = ensureDefaultSettings(schema);
+        if (apSettings == null)
+        {
+            throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
+        }
+        Object container = ensureChild(apSettings, "getConditionalAppearance", //$NON-NLS-1$
+            "createDataCompositionConditionalAppearance", "conditionalAppearance"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (container == null)
+        {
+            throw new RuntimeException("Could not create ConditionalAppearance container"); //$NON-NLS-1$
+        }
+        EList<EObject> items = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
+        if (items == null)
+        {
+            throw new RuntimeException("ConditionalAppearance.getItems() not available"); //$NON-NLS-1$
+        }
+        items.add((EObject) built.item);
+        return built.describe();
+    }
+
+    /**
+     * One conditional-appearance item built from a call's arguments and not yet placed anywhere.
+     */
+    static final class AppearanceItem
+    {
+        /** The model item. */
+        final Object item;
+
+        /** The field the condition reads, or <code>null</code> for an item without a condition. */
+        final String field;
+
+        /** The comparison kind of the condition. */
+        final String conditionType;
+
+        /** The value the condition compares against. */
+        final String conditionValue;
+
+        /** The appearance entries the item could not carry, as {@code key=value}. */
+        final List<String> skipped;
+
+        /**
+         * @param item the model item
+         * @param field the condition field, or <code>null</code>
+         * @param conditionType the comparison kind
+         * @param conditionValue the compared value
+         * @param skipped the appearance entries not applied
+         */
+        AppearanceItem(Object item, String field, String conditionType, String conditionValue,
+            List<String> skipped)
+        {
+            this.item = item;
+            this.field = field;
+            this.conditionType = conditionType;
+            this.conditionValue = conditionValue;
+            this.skipped = skipped;
+        }
+
+        /**
+         * @return the answer text of an added item: the condition, and the entries not applied
+         */
+        String describe()
+        {
+            String result = "appearance added" + (field != null //$NON-NLS-1$
+                ? " (filter: " + field + " " + conditionType + " " + conditionValue + ")" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                : " (no condition)"); //$NON-NLS-1$
+            if (!skipped.isEmpty())
+            {
+                result = result + " [styleRefNotSupported: " + skipped + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return result;
+        }
+    }
+
+    /**
+     * Builds one conditional-appearance item: the condition {@code field conditionType
+     * conditionValue}, the appearance {@code Name=Value;Name=Value}, or both.
+     * <p>
+     * The parts are checked before anything is built: half a condition, a condition type without a
+     * field, and a call with neither a condition nor an appearance are refused. An appearance passed
+     * as JSON is refused by the font and color guard. The item is not placed in a container, so the
+     * composition schema and a managed form share this one builder.
+     * </p>
+     *
+     * @param fieldArgument the field the condition reads, or <code>null</code>
+     * @param conditionType the comparison kind, <code>Equal</code> when omitted
+     * @param conditionValue the value compared against, or <code>null</code>
+     * @param appearanceSpec the appearance, or <code>null</code>
+     * @return the built item
+     * @throws RuntimeException naming the missing part, or the comparison literals when the kind is
+     *             unknown
+     */
+    AppearanceItem newAppearanceItem(String fieldArgument, String conditionType, String conditionValue,
+        String appearanceSpec)
+    {
+        String field = fieldArgument;
         if (field != null && field.trim().isEmpty())
         {
             field = null;
         }
-        String conditionType = JsonUtils.extractStringArgument(params, "conditionType"); //$NON-NLS-1$
-        String conditionValue = JsonUtils.extractStringArgument(params, "conditionValue"); //$NON-NLS-1$
-        // Appearance properties are received as a string in 1.37: "Font=Arial,12,bold;TextColor=#FF0000".
         // The font/color guard rejects values that look like JSON objects/arrays
         // (lesson learned: agents often send {"bold": true} which corrupts MXL).
-        String appearanceSpec = JsonUtils.extractStringArgument(params, "appearance"); //$NON-NLS-1$
         String appearanceTrim = appearanceSpec != null ? appearanceSpec.trim() : null;
         if (appearanceTrim != null
             && (appearanceTrim.startsWith("{") || appearanceTrim.startsWith("["))) //$NON-NLS-1$ //$NON-NLS-2$
@@ -3796,19 +3893,12 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("nothing to write: pass field and conditionValue for a " //$NON-NLS-1$
                 + "condition, appearance for the styling, or both."); //$NON-NLS-1$
         }
+        if (hasAppearance)
+        {
+            refuseUnknownAppearanceKeys(appearanceTrim);
+        }
         String effectiveConditionType = orDefault(conditionType, "Equal"); //$NON-NLS-1$
 
-        Object apSettings = ensureDefaultSettings(schema);
-        if (apSettings == null)
-        {
-            throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
-        }
-        Object container = ensureChild(apSettings, "getConditionalAppearance", //$NON-NLS-1$
-            "createDataCompositionConditionalAppearance", "conditionalAppearance"); //$NON-NLS-1$ //$NON-NLS-2$
-        if (container == null)
-        {
-            throw new RuntimeException("Could not create ConditionalAppearance container"); //$NON-NLS-1$
-        }
         Object item = BmDcsHelper.createElement("createDataCompositionConditionalAppearanceItem"); //$NON-NLS-1$
         if (item == null)
         {
@@ -3870,26 +3960,50 @@ public class DcsWorkshopTool implements IMcpTool
         List<String> skippedAppearance = java.util.Collections.emptyList();
         if (appearanceSpec != null && !appearanceSpec.trim().isEmpty())
         {
-            Object itemAppearance = invokeGetter(item, "getAppearance"); //$NON-NLS-1$
-            if (itemAppearance != null)
+            // A fresh item carries no appearance container; without one the spec has nowhere to go.
+            Object itemAppearance = ensureChild(item, "getAppearance", //$NON-NLS-1$
+                "createDataCompositionAppearance", "appearance"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (itemAppearance == null)
             {
-                skippedAppearance = applyAppearanceSpec(itemAppearance, appearanceSpec);
+                throw new RuntimeException("an appearance could not be created on the item - " //$NON-NLS-1$
+                    + "the spec '" + appearanceSpec + "' would be dropped"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            skippedAppearance = applyAppearanceSpec(itemAppearance, appearanceSpec);
+            if (field == null && skippedAppearance.size() == parseAppearanceSpec(appearanceSpec).size())
+            {
+                throw new RuntimeException("none of the appearance entries could be written " //$NON-NLS-1$
+                    + skippedAppearance + " - style and system references and non-hex colors are " //$NON-NLS-1$
+                    + "not written, and an item without a condition or an appearance changes " //$NON-NLS-1$
+                    + "nothing. Nothing was written."); //$NON-NLS-1$
             }
         }
-        EList<EObject> items = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
-        if (items == null)
+        return new AppearanceItem(item, field, effectiveConditionType, conditionValue, skippedAppearance);
+    }
+
+    /**
+     * Refuses an appearance that names a property the item cannot carry, or carries no
+     * {@code Name=Value} pair at all.
+     *
+     * @param appearanceSpec the appearance as the caller wrote it, not empty
+     * @throws RuntimeException naming the unknown property and the ones accepted
+     */
+    private static void refuseUnknownAppearanceKeys(String appearanceSpec)
+    {
+        Map<String, String> entries = parseAppearanceSpec(appearanceSpec);
+        if (entries.isEmpty())
         {
-            throw new RuntimeException("ConditionalAppearance.getItems() not available"); //$NON-NLS-1$
+            throw new RuntimeException("appearance '" + appearanceSpec + "' carries no Name=Value " //$NON-NLS-1$ //$NON-NLS-2$
+                + "pair. Nothing was written."); //$NON-NLS-1$
         }
-        items.add((EObject) item);
-        String result = "appearance added" + (field != null //$NON-NLS-1$
-            ? " (filter: " + field + " " + effectiveConditionType + " " + conditionValue + ")" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            : " (no condition)"); //$NON-NLS-1$
-        if (!skippedAppearance.isEmpty())
+        for (String key : entries.keySet())
         {
-            result = result + " [styleRefNotSupported: " + skippedAppearance + "]"; //$NON-NLS-1$ //$NON-NLS-2$
+            if (mapAppearanceKey(key) == null)
+            {
+                throw new RuntimeException("unknown appearance property '" + key + "' - accepted: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "TextColor, BackColor, BorderColor, Font, Format (or ЦветТекста, ЦветФона, " //$NON-NLS-1$
+                    + "ЦветГраницы, Шрифт, Формат). Nothing was written."); //$NON-NLS-1$
+            }
         }
-        return result;
     }
 
     /**

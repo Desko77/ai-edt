@@ -5110,6 +5110,9 @@ public class BmFormHelper
      */
     private static final String LIST_SETTINGS = "ListSettings"; //$NON-NLS-1$
 
+    /** The last FQN segment of a form's conditional appearance. */
+    private static final String CONDITIONAL_APPEARANCE = "ConditionalAppearance"; //$NON-NLS-1$
+
     /**
      * The composition settings of a dynamic-list form attribute, created if the attribute does
      * not have them yet.
@@ -5180,6 +5183,121 @@ public class BmFormHelper
         // Answer with what the transaction now holds under that FQN rather than with the object
         // just built: if the attach did not take, this returns null and the caller refuses.
         return tx.getTopObjectByFqn(settingsFqn);
+    }
+
+    /**
+     * The conditional appearance of a form.
+     * <p>
+     * The form does not contain its conditional appearance. EDT keeps it as a top object of its own,
+     * registered as {@code <form FQN>.ConditionalAppearance} and stored in
+     * {@code ConditionalAppearance.dcssca} beside {@code Form.form}; the form's
+     * {@code conditionalAppearance} reference is transient, so a container set on it without being
+     * attached is not written by the export of the form. Inside a transaction the container is
+     * looked up by that FQN, and a missing one is built with the top-object URI of the FQN, attached
+     * under it, and only then set on the form. A form that is not a registered top object - one built
+     * in memory - keeps the container on the reference itself.
+     * </p>
+     * <p>
+     * The export of the form does not write this object either: a caller that changed it exports
+     * {@link #conditionalAppearanceFqn} with {@link #exportTopObject}.
+     * </p>
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @param create whether to create the container when the form has none
+     * @return the container, or <code>null</code> when the form has none and {@code create} is
+     *         <code>false</code>, or when the model cannot build or attach one
+     */
+    public static EObject conditionalAppearanceFor(Object transaction, Object form, boolean create)
+    {
+        if (!(form instanceof EObject))
+        {
+            return null;
+        }
+        EObject formObject = (EObject)form;
+        EStructuralFeature feature = formObject.eClass().getEStructuralFeature("conditionalAppearance"); //$NON-NLS-1$
+        if (feature == null)
+        {
+            return null;
+        }
+        String appearanceFqn = conditionalAppearanceFqn(transaction, form);
+        if (appearanceFqn == null)
+        {
+            Object current = formObject.eGet(feature);
+            if (current instanceof EObject || !create)
+            {
+                return current instanceof EObject ? (EObject)current : null;
+            }
+            Object built = BmDcsHelper.createElement("createDataCompositionConditionalAppearance"); //$NON-NLS-1$
+            if (!(built instanceof EObject))
+            {
+                return null;
+            }
+            formObject.eSet(feature, built);
+            return (EObject)built;
+        }
+        IBmTransaction tx = (IBmTransaction)transaction;
+        IBmObject attached = tx.getTopObjectByFqn(appearanceFqn);
+        if (attached == null && create)
+        {
+            Object built = BmDcsHelper.createElement("createDataCompositionConditionalAppearance"); //$NON-NLS-1$
+            if (!(built instanceof IBmObject) || !(built instanceof InternalEObject))
+            {
+                return null;
+            }
+            String engineId = ((IBmObject)form).bmGetEngine().getId();
+            ((InternalEObject)built).eSetProxyURI(BmUriUtil.createTopBmObjectUri(engineId, appearanceFqn));
+            tx.attachTopObject((IBmObject)built, appearanceFqn);
+            tx.toTransactionObject(formObject).eSet(feature, built);
+            attached = tx.getTopObjectByFqn(appearanceFqn);
+        }
+        return attached;
+    }
+
+    /**
+     * The FQN under which a form's conditional appearance is registered.
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @return {@code <form FQN>.ConditionalAppearance}, or <code>null</code> outside a transaction or
+     *         for a form that is not a registered top object
+     */
+    public static String conditionalAppearanceFqn(Object transaction, Object form)
+    {
+        // bmGetFqn refuses a detached object, so a form built in memory is recognised by the
+        // missing transaction before its FQN is asked for.
+        if (!(transaction instanceof IBmTransaction) || !(form instanceof IBmObject))
+        {
+            return null;
+        }
+        String formFqn = ((IBmObject)form).bmGetFqn();
+        return formFqn == null || formFqn.isEmpty() ? null : formFqn + "." + CONDITIONAL_APPEARANCE; //$NON-NLS-1$
+    }
+
+    /**
+     * Writes one top object of a project to disk and waits for the write.
+     *
+     * @param project the project
+     * @param fqn the top object
+     * @return <code>null</code> when the object was written, otherwise why it was not
+     */
+    public static String exportTopObject(IProject project, String fqn)
+    {
+        IBmModelManager manager = Activator.getDefault().getBmModelManager();
+        if (manager == null)
+        {
+            return "object model manager is not published as a service"; //$NON-NLS-1$
+        }
+        BmExportHelper.Result written = BmExportHelper.forceExportAndWait(manager, project, fqn);
+        if (written == null)
+        {
+            return "forceExport returned no result"; //$NON-NLS-1$
+        }
+        if (!written.isOk())
+        {
+            return written.error != null ? written.error : "forceExport returned not-ok"; //$NON-NLS-1$
+        }
+        return written.syncFlushPending ? "the write to disk did not confirm within the wait" : null; //$NON-NLS-1$
     }
 
     /**
