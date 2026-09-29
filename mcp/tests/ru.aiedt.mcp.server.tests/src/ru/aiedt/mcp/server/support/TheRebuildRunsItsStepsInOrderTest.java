@@ -465,6 +465,29 @@ public class TheRebuildRunsItsStepsInOrderTest
         assertTrue(second.error.contains("still going")); //$NON-NLS-1$
     }
 
+    /**
+     * An abandonment that took the launch boundary first says no Designer run was started, rather
+     * than that a run did not finish and may still be running.
+     */
+    @Test
+    public void anAbandonmentThatPreventedTheLaunchSaysNoRunStarted() throws IOException
+    {
+        storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            throw new DumpInfoRebuilder.Abandoned("the Designer dump was cancelled before the Designer " //$NON-NLS-1$
+                + "run it was waiting for started; that run was not launched", false, true, null); //$NON-NLS-1$
+        };
+
+        Outcome outcome = run(io);
+
+        assertFalse(outcome.ok);
+        assertTrue(outcome.error, outcome.error.startsWith("No Designer run was started")); //$NON-NLS-1$
+        assertFalse(outcome.error, outcome.error.contains("did not finish")); //$NON-NLS-1$
+        assertFalse(outcome.error, outcome.error.contains("finishes on its own")); //$NON-NLS-1$
+        assertFalse(outcome.designerStillRunning);
+    }
+
     // ---- fail-closed on an unidentified base ------------------------------------------------
 
     /**

@@ -861,6 +861,13 @@ public final class InfobaseObjectsExporter
      */
     private static void workFailure(Throwable workError, Outcome out)
     {
+        if (workError instanceof Abandoned && ((Abandoned)workError).launchPrevented())
+        {
+            out.error = "No Designer run was started, and the call was abandoned: " //$NON-NLS-1$
+                + workError.getMessage() + ". The destination was not touched."; //$NON-NLS-1$
+            out.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
+            return;
+        }
         if (workError instanceof Abandoned)
         {
             if (out.leftBehind != null)
@@ -998,14 +1005,15 @@ public final class InfobaseObjectsExporter
                     if (cancelled != null && cancelled.getAsBoolean())
                     {
                         throw abandon(what + " was cancelled while it was still running", //$NON-NLS-1$
-                            what + " was cancelled before its Designer run started; no Designer run was launched", //$NON-NLS-1$
+                            what + " was cancelled before the Designer run it was waiting for started; that run was " //$NON-NLS-1$
+                                + "not launched", //$NON-NLS-1$
                             running, started, returned, launchClaim);
                     }
                     if (System.currentTimeMillis() >= deadline)
                     {
                         throw abandon(what + " did not finish within " + (budgetMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
                             what + " did not reach its Designer run within " + (budgetMs / 1000) //$NON-NLS-1$
-                                + "s; no Designer run was launched", //$NON-NLS-1$
+                                + "s; that run was not launched", //$NON-NLS-1$
                             running, started, returned, launchClaim);
                     }
                 }
@@ -1013,7 +1021,8 @@ public final class InfobaseObjectsExporter
                 {
                     Thread.currentThread().interrupt();
                     throw abandon(what + " was interrupted while it was still running", //$NON-NLS-1$
-                        what + " was interrupted before its Designer run started; no Designer run was launched", //$NON-NLS-1$
+                        what + " was interrupted before the Designer run it was waiting for started; that run was " //$NON-NLS-1$
+                            + "not launched", //$NON-NLS-1$
                         running, started, returned, launchClaim);
                 }
                 catch (java.util.concurrent.ExecutionException failed)
@@ -1053,7 +1062,8 @@ public final class InfobaseObjectsExporter
         boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
-        return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, stillRunning ? task -> {
+        return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, launchPrevented,
+            stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
                 {

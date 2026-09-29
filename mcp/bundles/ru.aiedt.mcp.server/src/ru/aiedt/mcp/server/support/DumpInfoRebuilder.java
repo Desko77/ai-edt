@@ -51,6 +51,9 @@ public final class DumpInfoRebuilder
         /** Whether the Designer call was still running when the wait gave up. */
         private final boolean processStillRunning;
 
+        /** Whether the abandonment took the launch boundary first, so no Designer run started. */
+        private final boolean launchPrevented;
+
         /**
          * Schedules cleanup for when that call actually returns. {@code null} when the caller threw
          * this itself (a test) or the call had already finished.
@@ -68,8 +71,21 @@ public final class DumpInfoRebuilder
         Abandoned(String message, boolean processStillRunning,
             java.util.function.Consumer<Runnable> onFinished)
         {
+            this(message, processStillRunning, false, onFinished);
+        }
+
+        /**
+         * @param message what was abandoned and why
+         * @param processStillRunning whether a launch that crossed the boundary is still running
+         * @param launchPrevented whether the abandonment took the boundary first
+         * @param onFinished schedules the cleanup for the call's own return, or {@code null}
+         */
+        Abandoned(String message, boolean processStillRunning, boolean launchPrevented,
+            java.util.function.Consumer<Runnable> onFinished)
+        {
             super(message);
             this.processStillRunning = processStillRunning;
+            this.launchPrevented = launchPrevented;
             this.onFinished = onFinished;
         }
 
@@ -80,6 +96,15 @@ public final class DumpInfoRebuilder
         boolean processStillRunning()
         {
             return processStillRunning;
+        }
+
+        /**
+         * @return whether the abandonment took the launch boundary before the worker, so the
+         *         Designer run it was waiting for never started
+         */
+        boolean launchPrevented()
+        {
+            return launchPrevented;
         }
 
         /**
@@ -508,8 +533,10 @@ public final class DumpInfoRebuilder
         }
         catch (java.util.concurrent.TimeoutException tooSlow)
         {
-            throw abandon(what + " did not finish within " + (timeoutMs / 1000) + "s", running, //$NON-NLS-1$ //$NON-NLS-2$
-                started, returned, launchClaim);
+            throw abandon(what + " did not finish within " + (timeoutMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
+                what + " did not reach its Designer run within " + (timeoutMs / 1000) //$NON-NLS-1$
+                    + "s; that run was not launched", //$NON-NLS-1$
+                running, started, returned, launchClaim);
         }
         catch (InterruptedException interrupted)
         {
@@ -519,8 +546,10 @@ public final class DumpInfoRebuilder
             // the call's own return. The flag goes back up first so the caller's own
             // interruption policy still sees it.
             Thread.currentThread().interrupt();
-            throw abandon(what + " was interrupted while it was still running", running, started, //$NON-NLS-1$
-                returned, launchClaim);
+            throw abandon(what + " was interrupted while it was still running", //$NON-NLS-1$
+                what + " was interrupted before the Designer run it was waiting for started; that run " //$NON-NLS-1$
+                    + "was not launched", //$NON-NLS-1$
+                running, started, returned, launchClaim);
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -562,14 +591,16 @@ public final class DumpInfoRebuilder
      * the caller is told whether that call itself had returned - which is the moment the cleanup
      * may touch the temporary directory and the claim.
      *
-     * @param message what was abandoned and why
+     * @param message what was abandoned and why, for a launcher call that was committed
+     * @param preventedMessage the same for an abandonment that kept the Designer run from starting
      * @param running the Future of the call
      * @param started whether the call began at all
      * @param returned the call's own return signal
      * @param launchClaim the launch boundary of this run, or {@code null} for a stand-in call
      * @return the abandonment to throw
      */
-    private static Abandoned abandon(String message, java.util.concurrent.Future<Path> running,
+    private static Abandoned abandon(String message, String preventedMessage,
+        java.util.concurrent.Future<Path> running,
         java.util.concurrent.atomic.AtomicBoolean started,
         java.util.concurrent.CountDownLatch returned,
         java.util.concurrent.atomic.AtomicBoolean launchClaim)
@@ -582,7 +613,8 @@ public final class DumpInfoRebuilder
         boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
-        return new Abandoned(message, stillRunning, stillRunning ? task -> {
+        return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, launchPrevented,
+            stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
                 {
@@ -983,7 +1015,12 @@ public final class DumpInfoRebuilder
             return;
         }
         out.fileState = "untouched"; //$NON-NLS-1$
-        if (workError instanceof Abandoned)
+        if (workError instanceof Abandoned && ((Abandoned)workError).launchPrevented())
+        {
+            out.error = "No Designer run was started, and the call was abandoned: " //$NON-NLS-1$
+                + workError.getMessage() + ". The stored file was not touched."; //$NON-NLS-1$
+        }
+        else if (workError instanceof Abandoned)
         {
             out.error = "The Designer run did not finish and was abandoned: " //$NON-NLS-1$
                 + workError.getMessage() + ". The stored file was not touched; the platform " //$NON-NLS-1$
