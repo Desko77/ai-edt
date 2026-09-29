@@ -210,4 +210,22 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
             store.save(probe.project, loaded));
         assertFalse(Files.exists(probe.clustersFile()));
     }
+
+    /**
+     * A store that never read the project does not replace a file that is there. Guard of the
+     * behaviour, not a regression test: the refusal itself is not new.
+     *
+     * @throws Exception when the file cannot be written or read back
+     */
+    @Test
+    public void aStoreThatNeverReadTheFileDoesNotReplaceIt() throws Exception
+    {
+        writeBehindTheTree(TWO_CLUSTERS);
+
+        ClusterStore replacement = new ClusterStore();
+        replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(store.save(probe.project, replacement));
+        assertArrayEquals(TWO_CLUSTERS.getBytes(StandardCharsets.UTF_8),
+            Files.readAllBytes(probe.clustersFile()));
+    }
 }

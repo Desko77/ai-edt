@@ -634,6 +634,13 @@ public class YamlClusterStore
         {
             return true;
         }
+        if (read == null)
+        {
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " exists on disk and this store has not read it; the write was refused and the file " //$NON-NLS-1$
+                + "was left as it is"); //$NON-NLS-1$
+            return false;
+        }
         Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
             + " changed on disk after it was read; the write was refused and the file was left as " //$NON-NLS-1$
             + "it is"); //$NON-NLS-1$

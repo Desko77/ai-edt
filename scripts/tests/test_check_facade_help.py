@@ -142,7 +142,8 @@ class AnUnreadableDeclarationFails(unittest.TestCase):
         with self.assertRaises(CHECKER.HelpUnreadable):
             CHECKER.help_text(source)
 
-    def test_a_body_that_is_never_closed(self):        # A truncated file, which is what a body that does not close looks like: the walk reaches
+    def test_a_body_that_is_never_closed(self):
+        # A truncated file, which is what a body that does not close looks like: the walk reaches
         # the end of the source with the brace still open.
         source = ("class SampleTool\n"
                   "{\n"
