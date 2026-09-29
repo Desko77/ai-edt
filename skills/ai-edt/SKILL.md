@@ -57,7 +57,8 @@ than all of them.
   backup of what the infobase holds (`backupTo`, derived beside the file when omitted): the load
   replaces everything the infobase holds and does not start without the backup. A finished load
   marks the stored `ConfigDumpInfo.xml` copy, and an incremental `update_database` is then refused
-  (`infobaseChanged`) until `sync_control syncOperation=rebuild_dump_info` rewrites it;
+  (`infobaseChanged`) until `infobase_admin operation=sync_control syncOperation=rebuild_dump_info`
+  rewrites it;
   `verifyInfobaseContent=true` compares the copy with the infobase itself before an update.
 
 - **Working inside an extension.** Borrowing (`extension_workshop operation=borrow_object` /
