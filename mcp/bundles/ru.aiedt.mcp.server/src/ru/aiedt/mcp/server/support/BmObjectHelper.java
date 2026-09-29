@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -713,7 +714,8 @@ public final class BmObjectHelper
      * Creates a top-level metadata object through the project-aware model object
      * factory - the route the EDT wizard takes - so the object carries the
      * per-type defaults the wizard writes into the {@code .mdo} (level count,
-     * code length, standard commands, produced types, ...).
+     * code length, standard commands, produced types, ...), and answers why
+     * nothing was created when it produced no object.
      *
      * <p>{@link MdClassFactory} instantiates the EClass and stops there, which
      * leaves those features at their Ecore defaults. The factory runs the type's
@@ -724,19 +726,32 @@ public final class BmObjectHelper
      * document initializers set one, but nothing in the factory contract makes
      * every initializer do so.
      *
+     * <p>The outcome carries the difference the caller needs: a name the runtime
+     * has no EClass for is a name to correct, while a factory that is not
+     * registered or that threw means the per-type initializers did not run at
+     * all - and the fallback {@link #createGenericObject(String)} then builds an
+     * object without any of the wizard's defaults. There is deliberately no
+     * object-only entry point: a caller that dropped the reason would have nothing
+     * to tell a degraded object from a fully initialized one.
+     *
      * @param typeName English bare type name, e.g. {@code "Catalog"},
      *     {@code "Document"}.
      * @param v8Project project whose version and configuration the defaults are
-     *     taken from; when {@code null} no initialization is possible and the
-     *     caller has to use {@link #createGenericObject(String)}.
-     * @return the initialized {@link MdObject}, or {@code null} when the type
-     *     does not resolve or the factory is unavailable on this runtime.
+     *     taken from; {@code null} makes the initializers unrunnable and is
+     *     reported as an unreachable factory.
+     * @return the outcome of the attempt; its object is {@code null} unless the
+     *     factory produced one.
      */
-    public static MdObject createInitializedObject(String typeName, IV8Project v8Project)
+    public static CreationOutcome createInitializedObjectWithReason(String typeName, IV8Project v8Project)
     {
-        if (typeName == null || typeName.isEmpty() || v8Project == null)
+        if (typeName == null || typeName.isEmpty())
         {
-            return null;
+            return CreationOutcome.typeUnresolved("No metadata type name was given."); //$NON-NLS-1$
+        }
+        if (v8Project == null)
+        {
+            return CreationOutcome.factoryUnavailable("no V8 project was resolved, so the " //$NON-NLS-1$
+                + "per-type initializers cannot run"); //$NON-NLS-1$
         }
         EClass eClass = resolveMdEClass(typeName);
         // EFactory.create() throws IllegalArgumentException on an abstract or
@@ -745,12 +760,25 @@ public final class BmObjectHelper
         // so an unusable type name is refused before the fallback hides it.
         if (eClass == null || eClass.isAbstract() || eClass.isInterface())
         {
-            return null;
+            return CreationOutcome.typeUnresolved("'" + typeName //$NON-NLS-1$
+                + "' has no usable metadata EClass on this runtime"); //$NON-NLS-1$
         }
-        IModelObjectFactory factory = modelObjectFactory();
+        IModelObjectFactory factory;
+        try
+        {
+            factory = modelObjectFactory();
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("Metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' is not available: " + e.getMessage()); //$NON-NLS-1$
+            return CreationOutcome.factoryUnavailable("the metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' could not be resolved: " + e.getMessage()); //$NON-NLS-1$
+        }
         if (factory == null)
         {
-            return null;
+            return CreationOutcome.factoryUnavailable("the metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' is not registered on this runtime"); //$NON-NLS-1$
         }
         try
         {
@@ -762,15 +790,40 @@ public final class BmObjectHelper
                 {
                     obj.setUuid(UUID.randomUUID());
                 }
-                return obj;
+                return CreationOutcome.created(obj);
             }
+            return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
+                + ") answered " + (created == null ? "no object" //$NON-NLS-1$ //$NON-NLS-2$
+                    : created.getClass().getName()) + " instead of a metadata object"); //$NON-NLS-1$
         }
         catch (RuntimeException e)
         {
             Activator.logWarning("MdObjectFactory.create(" + typeName //$NON-NLS-1$
                 + ") failed: " + e.getMessage()); //$NON-NLS-1$
+            return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
+                + ") failed: " + e.getMessage()); //$NON-NLS-1$
         }
-        return null;
+    }
+
+    /**
+     * Stands in for the factory lookup while a test drives the routes on which the
+     * service is missing or the factory throws. {@code null} outside tests, and the
+     * lookup below asks the service registry then.
+     */
+    private static Supplier<IModelObjectFactory> factorySupplier;
+
+    /**
+     * Sets the factory lookup {@link #modelObjectFactory()} answers with, in place of
+     * the service registry.
+     *
+     * <p>Package-visible on purpose: the test in this package is the only caller, and
+     * a running runtime keeps resolving the published service.
+     *
+     * @param supplier the lookup to use, or {@code null} to go back to the registry.
+     */
+    static void setFactorySupplier(Supplier<IModelObjectFactory> supplier)
+    {
+        factorySupplier = supplier;
     }
 
     /**
@@ -781,21 +834,154 @@ public final class BmObjectHelper
      * core - and an unfiltered {@code ServiceAccess.get} refuses to choose
      * between them. The name is the one {@code MdPlugin} registers itself under.
      *
-     * @return the factory, or {@code null} when it is not registered or the
-     *     registry holds more than one match.
+     * @return the factory, or {@code null} when no such service is registered.
+     * @throws RuntimeException when the registry holds more than one match and
+     *     cannot choose between them.
      */
     private static IModelObjectFactory modelObjectFactory()
     {
-        try
+        Supplier<IModelObjectFactory> supplier = factorySupplier;
+        if (supplier != null)
         {
-            return ServiceAccess.get(IModelObjectFactory.class,
-                ServiceProperties.SERVICE_NAME, MD_OBJECT_FACTORY_SERVICE);
+            return supplier.get();
         }
-        catch (RuntimeException e)
+        return ServiceAccess.get(IModelObjectFactory.class,
+            ServiceProperties.SERVICE_NAME, MD_OBJECT_FACTORY_SERVICE);
+    }
+
+    /**
+     * What a creation through the project-aware factory produced, and why it produced
+     * nothing when it did not.
+     *
+     * <p>The failures are told apart because they mean different things to a caller:
+     * an unresolvable type is a name to correct, while an unreachable or failing
+     * factory is a runtime on which the wizard's initializers did not run - and any
+     * object the caller then builds through the raw factory carries none of the
+     * per-type defaults a wizard-created {@code .mdo} holds.
+     */
+    public static final class CreationOutcome
+    {
+        /**
+         * How the creation ended.
+         */
+        public enum Status
         {
-            Activator.logWarning("Metadata model object factory '" //$NON-NLS-1$
-                + MD_OBJECT_FACTORY_SERVICE + "' is not available: " + e.getMessage()); //$NON-NLS-1$
-            return null;
+            /** The object came from the project-aware factory. */
+            CREATED,
+            /** No usable EClass: the name is unknown, abstract or an interface. */
+            TYPE_UNRESOLVED,
+            /** No metadata model object factory is registered on this runtime. */
+            FACTORY_UNAVAILABLE,
+            /** The factory was reached and threw, or answered with something else. */
+            FACTORY_FAILED
+        }
+
+        private final MdObject object;
+        private final Status status;
+        private final String reason;
+
+        /**
+         * @param object the created object, or {@code null} when nothing was created.
+         * @param status how the creation ended.
+         * @param reason why nothing was created, or {@code null} when the factory produced
+         *     the object.
+         */
+        private CreationOutcome(MdObject object, Status status, String reason)
+        {
+            this.object = object;
+            this.status = status;
+            this.reason = reason;
+        }
+
+        /**
+         * @return the created object, or {@code null} when nothing was created.
+         */
+        public MdObject getObject()
+        {
+            return object;
+        }
+
+        /**
+         * @return how the creation ended.
+         */
+        public Status getStatus()
+        {
+            return status;
+        }
+
+        /**
+         * Whether the initialized route did not run because the factory was unreachable
+         * or failed - the case in which the raw fallback loses the wizard defaults.
+         *
+         * @return {@code true} for an unavailable or failing factory, {@code false} for
+         *     a created object and for a type that does not resolve.
+         */
+        public boolean isFactoryFailure()
+        {
+            return status == Status.FACTORY_UNAVAILABLE || status == Status.FACTORY_FAILED;
+        }
+
+        /**
+         * @return why nothing was created, in the words the caller reports, or
+         *     {@code null} when the factory produced the object.
+         */
+        public String getReason()
+        {
+            return reason;
+        }
+
+        /**
+         * The sentence a creating operation answers with when it had to fall back to the
+         * raw factory: what the object is missing, and why the initialized route did not
+         * run.
+         *
+         * @return the warning, or {@code null} when none is due - the object came from the
+         *     factory, or the type does not resolve and the call is refused instead.
+         */
+        public String getDefaultsWarning()
+        {
+            if (!isFactoryFailure())
+            {
+                return null;
+            }
+            return "Created without the EDT wizard defaults (level count, code length, " //$NON-NLS-1$
+                + "standard commands, produced types): " + reason; //$NON-NLS-1$
+        }
+
+        /**
+         * @param object the object the factory produced.
+         * @return the outcome of a creation that went through the factory.
+         */
+        private static CreationOutcome created(MdObject object)
+        {
+            return new CreationOutcome(object, Status.CREATED, null);
+        }
+
+        /**
+         * @param reason why the name has no usable EClass.
+         * @return the outcome of a name this runtime cannot turn into a metadata type.
+         */
+        private static CreationOutcome typeUnresolved(String reason)
+        {
+            return new CreationOutcome(null, Status.TYPE_UNRESOLVED, reason);
+        }
+
+        /**
+         * @param reason why the factory could not be reached.
+         * @return the outcome of a runtime without a usable metadata model object factory.
+         */
+        private static CreationOutcome factoryUnavailable(String reason)
+        {
+            return new CreationOutcome(null, Status.FACTORY_UNAVAILABLE, reason);
+        }
+
+        /**
+         * @param reason what the factory did instead of answering an object.
+         * @return the outcome of a factory that was reached and failed.
+         */
+        private static CreationOutcome factoryFailed(String reason)
+        {
+            return new CreationOutcome(null, Status.FACTORY_FAILED, reason);
         }
     }
 
