@@ -125,7 +125,9 @@ public final class PendingWorkRegistry
      * Not {@link #EXPORT_INFOBASE}: that one belongs to the object export. This domain carries two
      * operations, and a load replaces what the infobase holds, so its runKeys are unique per call -
      * two identical calls are two runs, never one coalesced future and never a replayed cached
-     * answer. One at a time, because both operations hold the same infobase.
+     * answer. {@code maxPool} is 1, and that ceiling covers the whole domain: snapshots of all
+     * infobases, dump and load alike, go in turn in one executor rather than one per infobase, so a
+     * snapshot against one base waits for a snapshot already running against another.
      * </p>
      */
     public static final PendingWorkRegistry SNAPSHOT = new PendingWorkRegistry(

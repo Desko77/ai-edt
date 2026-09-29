@@ -226,7 +226,18 @@ public final class DtSnapshotRunner
     /** What a live run exposes to its own stopper. */
     static final class LiveRun
     {
-        /** The launch boundary of the current launcher call, or {@code null} before it starts. */
+        /**
+         * The launch boundary of the current launcher call, or {@code null} before it starts.
+         * <p>
+         * Claimed by whoever crosses it first: the worker under the per-infobase lock, right before
+         * it calls the launcher, or this run's abandonment, which claims it before it declares
+         * itself. Nobody else claims it - a stopper that took it would make the abandonment read a
+         * boundary it did not take as a call already committed, and report a platform process for a
+         * worker that never reached the launcher. A launcher call that claimed it is committed and
+         * reported as still running when the wait gives up; one that did not never reaches the
+         * platform.
+         * </p>
+         */
         volatile AtomicBoolean launchClaim;
 
         /** Counted down by the stopper; the run's wait polls it. */
@@ -234,9 +245,17 @@ public final class DtSnapshotRunner
     }
 
     /**
-     * Stops the run a registry cancel names: claims its launch boundary so a worker that has not
-     * crossed it starts no launcher call, and wakes the wait so the abandonment is answered now
+     * Stops the run a registry cancel names: wakes the wait so the abandonment is answered now
      * rather than at the budget's end.
+     * <p>
+     * The launch boundary itself is left to the two sides that can decide it - the worker, under the
+     * per-infobase lock right before the launcher, and the abandonment, before it declares itself.
+     * This stopper must not claim it as a third party: the abandonment reads a boundary it did not
+     * take as a launcher call that is already committed, so a claim made here over a worker that is
+     * still waiting for the lock would be reported as a platform process running when none was ever
+     * started. Waking the wait is enough - the abandonment is the side that claims, and a worker
+     * that has not reached the boundary by then finds it taken and starts nothing.
+     * </p>
      *
      * @param runKey the run's key
      * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live, otherwise
@@ -249,11 +268,6 @@ public final class DtSnapshotRunner
         if (live == null)
         {
             return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
-        }
-        AtomicBoolean claim = live.launchClaim;
-        if (claim != null)
-        {
-            claim.compareAndSet(false, true);
         }
         live.stopped.countDown();
         return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
@@ -485,7 +499,8 @@ public final class DtSnapshotRunner
 
     /**
      * Runs one snapshot against an already-resolved environment: claim the infobase, write a load's
-     * backup, run the launcher call, release.
+     * backup, run the launcher call, release - unless the launcher call is still running, in which
+     * case the claim stays with it.
      *
      * @param io the environment
      * @param restore {@code true} for a load
@@ -519,6 +534,7 @@ public final class DtSnapshotRunner
             out.infobaseBusy = true;
             return out;
         }
+        boolean claimHandedOver = false;
         try
         {
             if (restore)
@@ -529,7 +545,7 @@ public final class DtSnapshotRunner
                 try
                 {
                     WriteFailure backupFailure =
-                        writeFile(io, backup, Instant.now(), cancelled, true);
+                        writeFile(out, io, backup, Instant.now(), cancelled, true);
                     if (backupFailure != null)
                     {
                         out.error = "The restore was not started: " + backupFailure.text; //$NON-NLS-1$
@@ -540,6 +556,7 @@ public final class DtSnapshotRunner
                 catch (Throwable backupFailed)
                 {
                     recordFailure(out, backupFailed);
+                    claimHandedOver = handTheClaimToTheRunningCall(backupFailed, io);
                     out.error = "The restore was not started: the backup of the infobase's " //$NON-NLS-1$
                         + "current contents did not complete. " + out.error; //$NON-NLS-1$
                     return out;
@@ -553,7 +570,8 @@ public final class DtSnapshotRunner
             }
             else
             {
-                WriteFailure exportFailure = writeFile(io, path, Instant.now(), cancelled, false);
+                WriteFailure exportFailure =
+                    writeFile(out, io, path, Instant.now(), cancelled, false);
                 if (exportFailure != null)
                 {
                     out.error = exportFailure.text;
@@ -567,10 +585,15 @@ public final class DtSnapshotRunner
         catch (Throwable failed)
         {
             recordFailure(out, failed);
+            claimHandedOver = handTheClaimToTheRunningCall(failed, io);
         }
         finally
         {
-            io.releaseLock();
+            if (!claimHandedOver)
+            {
+                io.releaseLock();
+            }
+            out.lockHeldForProcess = claimHandedOver;
             out.durationMs = System.currentTimeMillis() - startedAt;
         }
         return out;
@@ -580,6 +603,8 @@ public final class DtSnapshotRunner
      * Writes a dump into a temporary sibling of {@code dest} and moves it over the destination only
      * after it proves to be this run's non-empty product.
      *
+     * @param out the outcome being filled; the temporary file is named there when a launcher call
+     *            that is still running keeps it
      * @param io the environment
      * @param dest the file the caller asked for
      * @param notBefore the moment the run started
@@ -588,8 +613,8 @@ public final class DtSnapshotRunner
      * @return the failure, or {@code null} when the file is in place
      * @throws Throwable whatever the launcher threw; the caller classifies it
      */
-    private static WriteFailure writeFile(SnapshotIo io, Path dest, Instant notBefore,
-        BooleanSupplier cancelled, boolean backup) throws Throwable
+    private static WriteFailure writeFile(SnapshotOutcome out, SnapshotIo io, Path dest,
+        Instant notBefore, BooleanSupplier cancelled, boolean backup) throws Throwable
     {
         Path parent = dest.toAbsolutePath().getParent();
         if (parent != null)
@@ -623,7 +648,17 @@ public final class DtSnapshotRunner
         }
         catch (Throwable failed)
         {
-            BmInfobaseExtensionHelper.deleteQuietly(temp);
+            if (theCallIsStillRunning(failed))
+            {
+                // The platform process is still writing into it. Deleting a file under a live writer
+                // loses whatever it has not written yet and says nothing; the answer names it
+                // instead, and the run that started the process cleans up when it returns.
+                out.leftBehind = temp.toString();
+            }
+            else
+            {
+                BmInfobaseExtensionHelper.deleteQuietly(temp);
+            }
             throw failed;
         }
         String problem = BmInfobaseExtensionHelper.freshExportProblem(temp, notBefore);
@@ -661,7 +696,13 @@ public final class DtSnapshotRunner
 
     /**
      * Records what a run failed with: the abandoned run's own report together with what it left
-     * behind, or the classified text for a launcher failure.
+     * running, or the classified text for a launcher failure.
+     * <p>
+     * A launcher call that claimed the launch boundary is reported as still running. The answer then
+     * says so and names the file the process is writing, because the caller has to learn that this
+     * infobase is not free - an answer reading as an ordinary cancellation would have it start
+     * another dump against a process that is still working.
+     * </p>
      *
      * @param out the outcome being filled
      * @param failed what the run threw
@@ -673,7 +714,13 @@ public final class DtSnapshotRunner
             DumpInfoRebuilder.Abandoned abandoned = (DumpInfoRebuilder.Abandoned)failed;
             out.error = ThickClientLaunch.oneLine(failed.getMessage());
             out.failureKind = ErrorTags.CANCELLED.wire();
-            out.leftBehind = abandoned.processStillRunning() ? out.error : null;
+            if (abandoned.processStillRunning())
+            {
+                out.error = out.error + " The call was under way in the launcher and the platform " //$NON-NLS-1$
+                    + "process is still running: this infobase is not free, and another dump or " //$NON-NLS-1$
+                    + "restore must not be started against it until that process has finished. The " //$NON-NLS-1$
+                    + "infobase claim stays held while it is alive."; //$NON-NLS-1$
+            }
             return;
         }
         ThickClientLaunch.classifyFailure(failed,
@@ -808,6 +855,10 @@ public final class DtSnapshotRunner
             if (out.leftBehind != null)
             {
                 failed.put("leftBehind", out.leftBehind); //$NON-NLS-1$
+            }
+            if (out.lockHeldForProcess)
+            {
+                failed.put("lockHeldForProcess", Boolean.TRUE); //$NON-NLS-1$
             }
             return failed.toJson();
         }
@@ -961,8 +1012,19 @@ public final class DtSnapshotRunner
         /** The {@link ErrorTags} kind of {@link #error}, or {@code null}. */
         String failureKind;
 
-        /** What the abandoned run left running, or {@code null}. */
+        /**
+         * The file a launcher call that is still running is writing, left in place, or
+         * {@code null}. A file held by a live process is not deleted: whatever it has not written
+         * yet would be lost, so the answer names it instead.
+         */
         String leftBehind;
+
+        /**
+         * Whether the infobase claim is held for a launcher call that is still running. Rendered in
+         * the answer, as {@code InfobaseObjectsExporter} renders its own: a caller reads the base is
+         * not free without matching the text of the refusal.
+         */
+        boolean lockHeldForProcess;
     }
 
     /**
@@ -1051,6 +1113,14 @@ public final class DtSnapshotRunner
          * released, the call runs under the per-infobase lock and nothing else, and the infobase is
          * taken back - all of it bounded, and abandoned rather than waited out when the budget ends
          * or the caller cancels.
+         * <p>
+         * The launch boundary is claimed by this worker under that lock and before the launcher -
+         * the same claim {@code InfobaseObjectsExporter} and the dump-info rebuild make on their
+         * own runs. That is what makes the abandonment's answer true: a cancellation or a budget
+         * that claimed the boundary first leaves the worker's claim refused, so the launcher is not
+         * called at all, while a worker that claimed it first is a platform call the wait has to
+         * report as still running.
+         * </p>
          *
          * @param call the launcher call
          * @throws Exception whatever the call threw, or the abandonment
@@ -1067,7 +1137,8 @@ public final class DtSnapshotRunner
                     || (callerCancelled != null && callerCancelled.getAsBoolean());
                 InfobaseObjectsExporter.runUnderBudget("the " + operation, SNAPSHOT_BUDGET_MS, //$NON-NLS-1$
                     () -> {
-                        BmInfobaseExtensionHelper.underThickClientHandshake(ctx, call::run);
+                        BmInfobaseExtensionHelper.underThickClientHandshakeWithLaunchClaim(ctx,
+                            call::run);
                         return "ok"; //$NON-NLS-1$
                     }, launchClaim, watch);
             }
@@ -1076,6 +1147,38 @@ public final class DtSnapshotRunner
                 LIVE.remove(runKey);
             }
         }
+    }
+
+    /**
+     * @param failed what a launcher call threw
+     * @return whether the platform process that threw it is still running, and so still writing
+     *         whatever file it was given; {@code false} for every other failure
+     */
+    private static boolean theCallIsStillRunning(Throwable failed)
+    {
+        return failed instanceof DumpInfoRebuilder.Abandoned
+            && ((DumpInfoRebuilder.Abandoned)failed).processStillRunning();
+    }
+
+    /**
+     * Hands the infobase claim over to a launcher call that is still running, instead of giving it
+     * back while the platform is still working on the base.
+     * <p>
+     * The claim is what keeps a second run off an infobase this one is still working on. Giving it
+     * back at the answer, while the platform process carries on writing, would leave the base
+     * looking free to the next caller - the same reason {@code InfobaseObjectsExporter} holds it
+     * for the process it abandoned.
+     * </p>
+     *
+     * @param failed what the run threw
+     * @param io the environment whose claim is at stake
+     * @return whether the claim was handed over; when it was not - the call is not running, or
+     *         there is nothing to wait for - the caller releases it as usual
+     */
+    private static boolean handTheClaimToTheRunningCall(Throwable failed, SnapshotIo io)
+    {
+        return theCallIsStillRunning(failed)
+            && ((DumpInfoRebuilder.Abandoned)failed).whenFinished(io::releaseLock);
     }
 
     /** One launcher call, as a value the bounded run can call. */

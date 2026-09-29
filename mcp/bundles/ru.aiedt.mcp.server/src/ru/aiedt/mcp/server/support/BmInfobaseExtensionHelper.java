@@ -410,6 +410,91 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
+     * The release/lock/reconnect order of
+     * {@link #underThickClientHandshake(ThickClientLaunch.LauncherContext, Work)}, with the launch
+     * boundary claimed by the worker under the per-infobase lock and before the work runs.
+     * <p>
+     * The boundary is the one state a bounded run and its abandonment cross: whichever claims it
+     * first owns the launch. Claiming it on the worker side is what makes the abandonment's own
+     * answer true - an abandonment that claimed the boundary first then finds the worker did not,
+     * so the work was never handed to the platform, while a worker that claimed it first is a
+     * launcher call the abandonment has to report as still running.
+     * </p>
+     * <p>
+     * The lock wait is interruptible, unlike {@link #handshakeOrder}: the abandonment interrupts a
+     * worker that has not crossed yet, and this one leaves the wait instead of taking the lock when
+     * the caller that held it lets go.
+     * </p>
+     *
+     * @param ctx the resolved launcher context; its {@code launchClaim} is this call's boundary
+     * @param work the launcher call, run under the lock and only once the boundary is this run's
+     * @throws InterruptedException when the boundary was claimed before this worker reached it; the
+     *             launcher is not called then
+     * @throws Exception whatever the call throws, after the infobase has been taken back
+     */
+    static void underThickClientHandshakeWithLaunchClaim(ThickClientLaunch.LauncherContext ctx,
+        Work work) throws Exception
+    {
+        handshakeOrderWithLaunchClaim(ctx.lock, ctx.launchClaim,
+            () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
+    }
+
+    /**
+     * The order itself, as {@link #handshakeOrder} and with the launch boundary claimed between the
+     * lock and the work, with every step handed in so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param launchClaim the launch boundary this call claims before the work runs, or
+     *            <code>null</code> for a call that has no boundary
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and after the boundary was claimed
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @throws InterruptedException when the boundary was already claimed; the lock, when it was
+     *             taken, is given back and the work does not run
+     * @throws Exception whatever the work throws, after the infobase has been taken back
+     */
+    static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
+        java.util.concurrent.atomic.AtomicBoolean launchClaim,
+        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+    {
+        boolean disconnected = release.getAsBoolean();
+        try
+        {
+            if (lock != null)
+            {
+                lock.lockInterruptibly();
+            }
+            if (launchClaim != null && !launchClaim.compareAndSet(false, true))
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+                throw new InterruptedException("the launch was abandoned before the launcher call " //$NON-NLS-1$
+                    + "started");
+            }
+            try
+            {
+                work.run();
+            }
+            finally
+            {
+                if (lock != null)
+                {
+                    lock.unlock();
+                }
+            }
+        }
+        finally
+        {
+            if (disconnected)
+            {
+                reconnect.run();
+            }
+        }
+    }
+
+    /**
      * Runs a Designer step under the handshake, without letting any step hide another.
      * <p>
      * The release goes first; when it throws, nothing else runs. When it released, the reconnection
@@ -1587,11 +1672,21 @@ public final class BmInfobaseExtensionHelper
      * state for a nominally read-only operation. {@code disconnectInfobase} on an already-disconnected
      * infobase is a successful no-op, so it cannot tell the two apart on its own.
      * </p>
+     * <p>
+     * A context carrying no project names no connection to ask about, so the synchronization
+     * service is not requested for it: {@code ServiceAccess.get} answers with a service or throws,
+     * and on a runtime where the platform services are not registered yet it throws, which would
+     * end a call that had nothing to release in the first place.
+     * </p>
      */
     private static boolean disconnectForThickClient(ThickClientLaunch.LauncherContext ctx)
     {
+        if (ctx.project == null)
+        {
+            return false;
+        }
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (mgr == null)
         {
             return false;
         }
