@@ -231,10 +231,11 @@ public class CanonicalSurfaceContractTest
             "export_common_picture", "export_configuration_to_cf", "export_infobase_objects",
             "unpack_external_binary", "import_configuration_from_binary", "help"));
 
-        // git (GitTool.execute): a plain switch on "operation". The two write doors are reached
-        // as commit and checkout; their standalone names carry the git_ prefix (see
+        // git (GitTool.execute): a plain switch on "operation". The write doors are reached
+        // as commit, checkout and revert_file; their standalone names carry the git_ prefix (see
         // RENAMED_STANDALONES).
-        m.put("git", Set.of("status", "branches", "log", "commit", "checkout"));
+        m.put("git", Set.of("status", "branches", "log", "commit", "checkout", "show_file_changes",
+            "revert_file"));
 
         // insights (InsightsFacadeTool.execute + its OPS catalog): nine operations, all
         // literally the standalone names they replace, plus help.
@@ -283,6 +284,7 @@ public class CanonicalSurfaceContractTest
         m.put("debug_yaxunit_tests", "debug"); // YaxunitDebugRunner.NAME == "debug_yaxunit_tests"
         m.put("git_commit", "commit"); // GitCommitTool.getName() == "git_commit"
         m.put("git_checkout", "checkout"); // GitCheckoutTool.getName() == "git_checkout"
+        m.put("git_revert_file", "revert_file"); // GitFileRestore.getName() == "git_revert_file"
         return m;
     }
 
@@ -344,7 +346,8 @@ public class CanonicalSurfaceContractTest
         // On 2026-09-28 list_registered_infobases joined the infobase_admin coverage (+1 -> 88).
         // On 2026-09-29 pause_thread and set_breakpoint_state joined the launch_debugger coverage
         // (+2 -> 90).
-        assertEquals(90, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-09-29 git_revert_file joined the git coverage (+1 -> 91).
+        assertEquals(91, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,

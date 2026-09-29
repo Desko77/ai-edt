@@ -38,13 +38,20 @@ import ru.aiedt.mcp.server.settings.ToolProfile;
 public class PresetWriteBlockingTest
 {
     /**
-     * Tools that change sources, metadata or an infobase and do not sit in a group that a
-     * write-blocking preset switches off wholesale. Every preset that claims to block writing has to
-     * name each of them.
+     * Tools that change sources, metadata, an infobase or the repository and do not sit in a group
+     * that a write-blocking preset switches off wholesale. Every preset that claims to block writing
+     * has to name each of them.
+     * <p>
+     * The three git doors are here on the same terms: they live in the VCS group, which all three
+     * presets keep on because the reads of that facade belong to them - so a commit, a checkout and a
+     * file put back each have to be named by hand, or the preset writes through the one group it left
+     * open.
+     * </p>
      */
     private static final List<String> COMPOSITE_WRITERS =
         Arrays.asList("write_module_source", "generate_event_handlers", "extension_lifecycle",
-            "naparnik", "project_admin", "infobase_admin", "config_io");
+            "naparnik", "project_admin", "infobase_admin", "config_io", "git_commit", "git_checkout",
+            "git_revert_file");
 
     /** Agent composites that only read or only return text, and may stay on under any preset. */
     private static final List<String> NON_WRITING_COMPOSITES =

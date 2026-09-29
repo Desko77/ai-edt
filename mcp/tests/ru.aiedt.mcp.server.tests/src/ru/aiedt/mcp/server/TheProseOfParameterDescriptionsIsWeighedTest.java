@@ -240,7 +240,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // arguments (paths by name - there is no add-all - the message, and the author pair a
         // repository without its own configuration needs) and the checkout's two (the branch,
         // and whether to create it).
-        PROSE.put("git", Integer.valueOf(875));
+        // Grown to 1553 for filePath, fromRef, toRef, granularity and dryRun: a caller names the
+        // file, the two revisions, whether the cut is by line or by method, and whether revert
+        // only previews (measured 29.09: 1553).
+        PROSE.put("git", Integer.valueOf(1553));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
@@ -578,6 +581,15 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * Raised from 96170 to 96231 for the compare_configurations contract on insights: the mode and
      * projectName descriptions say what the operation reads and what failed / failedCount mean.
      * </p>
+     * <p>
+     * And by 678 for filePath, fromRef, toRef, granularity and dryRun on git. The git prose grew
+     * from 875 to 1553 and nothing else in the list changed. Measured 29.09: 98229.
+     * </p>
+     * <p>
+     * And by 301 for the line endings revert_file names, the editor note on dryRun and the file
+     * limit of show_file_changes. The git prose grew from 1553 to 1854 and nothing else in the
+     * list changed. Measured 29.09: 98530.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 98047;
+    private static final int DOCUMENT_PROSE = 99026;
 }

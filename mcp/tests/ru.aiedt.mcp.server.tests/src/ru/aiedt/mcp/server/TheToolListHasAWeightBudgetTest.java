@@ -124,8 +124,17 @@ public class TheToolListHasAWeightBudgetTest
      * answers dataLossTables, and the help names acceptDataLoss beside protectData (measured
      * 29.09).
      * </p>
+     * <p>
+     * Raised from 176567 to 178350 for show_file_changes and revert_file on git: the file path,
+     * the two revisions, the granularity and the dry-run flag. The git entry grew from 1330 to
+     * 3113 bytes and nothing else in the list changed.
+     * </p>
+     * <p>
+     * Raised from 178350 to 178385 for the line endings revert_file names, the editor note on
+     * dryRun and the file limit of show_file_changes. Measured 29.09: 178385.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 177494;
+    private static final int DOCUMENT_BUDGET = 179312;
 
     private LiveServer server;
 
@@ -265,7 +274,9 @@ public class TheToolListHasAWeightBudgetTest
         // Grown to 1330 for the commit operation: staging by name and a refusal for a blanket
         // add is the whole point of having git inside the IDE, and the schema is where a client
         // learns that.
-        BUDGETS.put("git", Integer.valueOf(1330)); //$NON-NLS-1$
+        // Grown to 3113 for show_file_changes and revert_file: the file path, the two revisions,
+        // the line-or-method granularity and the dry-run flag (measured 29.09: 3113).
+        BUDGETS.put("git", Integer.valueOf(3113)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
         BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
         // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a

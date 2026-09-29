@@ -153,7 +153,9 @@ public class ToolCategoryTest
         // On 2026-09-29 pause_thread and set_breakpoint_state joined DEBUG (+2 -> 138): both act
         // on the debug session, one by suspending a running thread, the other by switching a
         // breakpoint off without removing it.
-        assertEquals(138, ToolCategory.getTotalToolCount());
+        // On 2026-09-29 git_revert_file joined VCS (+1 -> 139): putting one file back is a write
+        // a read-only preset switches off by that name.
+        assertEquals(139, ToolCategory.getTotalToolCount());
     }
 
     @Test

@@ -76,5 +76,58 @@ class EveryDeclaredKindIsSeen(unittest.TestCase):
         self.assertEqual([], unseen, "builders the map cannot see: %s" % unseen)
 
 
+class AMethodDeclaredOverSeveralLinesIsStillRead(unittest.TestCase):
+    """The body of a method whose declaration spans more than one line.
+
+    Found on 29.09: the signature regex required the opening brace on the line of the closing
+    parenthesis or of `throws`, and `GitTool` writes the brace on the line below. Every method of
+    that facade came back as an empty body, and the seven operations of it were then derived not
+    from what each one reads but from the set of locals the whole facade binds - so each operation
+    appeared to read every parameter its siblings read, and a narrowed set was never established.
+    """
+
+    SOURCE = (
+        '    private String doCommit(IProject project, Git git, Map<String, String> params)\n'
+        '        throws Exception\n'
+        '    {\n'
+        '        String message = JsonUtils.extractStringArgument(params, "message");\n'
+        '        return message;\n'
+        '    }\n'
+        '\n'
+        '    private String doStatus(Map<String, String> params) {\n'
+        '        return JsonUtils.extractStringArgument(params, "projectName");\n'
+        '    }\n'
+        '\n'
+        '    private String doRevert(Map<String, String> params) throws IOException,\n'
+        '        CoreException\n'
+        '    {\n'
+        '        return JsonUtils.extractStringArgument(params, "fromRef");\n'
+        '    }\n')
+
+    def test_a_brace_on_the_line_below_the_declaration_is_seen(self):
+        body = MODULE.method_body(self.SOURCE, "doCommit")
+        self.assertIn('"message"', body)
+
+    def test_a_throws_list_over_two_lines_is_seen(self):
+        self.assertIn('"fromRef"', MODULE.method_body(self.SOURCE, "doRevert"))
+
+    def test_a_declaration_on_one_line_is_still_seen(self):
+        self.assertIn('"projectName"', MODULE.method_body(self.SOURCE, "doStatus"))
+
+    def test_the_body_given_back_is_the_one_method(self):
+        # The span is balanced, so it ends at this method's closing brace and not at the last
+        # brace in the file.
+        body = MODULE.method_body(self.SOURCE, "doCommit")
+        self.assertNotIn('"projectName"', body)
+
+    def test_every_method_of_the_git_facade_has_a_body(self):
+        """The shape that was missed, checked against the file it was missed in."""
+        source = (MODULE.OPS / "GitTool.java").read_text(encoding="utf-8")
+        empty = [name for name in ("doStatus", "doBranches", "doLog", "doCommit", "doCheckout",
+                                   "doShowFileChanges", "doRevertFile")
+                 if not MODULE.method_body(source, name)]
+        self.assertEqual([], empty, "methods whose body came back empty: %s" % empty)
+
+
 if __name__ == "__main__":
     unittest.main()

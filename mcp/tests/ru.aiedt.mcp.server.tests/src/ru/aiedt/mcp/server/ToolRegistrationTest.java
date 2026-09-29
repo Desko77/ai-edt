@@ -121,6 +121,7 @@ public class ToolRegistrationTest
         // On 2026-09-29 pause_thread and set_breakpoint_state joined the declaration list
         // (+2 -> 138): a running session can be suspended and a breakpoint flipped on and off
         // without being removed.
-        assertEquals(138, declared.size());
+        // On 2026-09-29 git_revert_file joined the declaration list (+1 -> 139).
+        assertEquals(139, declared.size());
     }
 }
