@@ -25,7 +25,8 @@ import java.util.Locale;
  * <b>What this can and cannot promise.</b> A mismatch found here is real: the text the extension
  * controls is not the text the delivery has. A match is not a guarantee, because the comparison
  * here normalises what an author would call unimportant - line endings, trailing blanks, the case
- * of identifiers - and the platform's own comparison is its own business. So a finding is worth
+ * of identifiers - while string literals and comments are compared as written, and the platform's
+ * own comparison is its own business. So a finding is worth
  * acting on and a clean answer is worth nothing more than what it says.
  * </p>
  */
@@ -182,6 +183,13 @@ public final class ControlledFragment
      * touched formatting. What it costs is stated where it matters: a clean answer here is not a
      * promise that the platform will agree.
      * </p>
+     * <p>
+     * <b>The case of identifiers only.</b> A string literal is data - a delivery that re-cases
+     * "Готово" to "готово" changes what the code writes, and the platform refuses the extension for
+     * it - so literals are compared as written, and so are comments. Lowering the case of the whole
+     * line would read a re-cased literal or comment as a match, which is the one answer this
+     * comparison must not give.
+     * </p>
      *
      * @param lines the lines to normalise.
      * @return the lines that carry code, comparable
@@ -189,15 +197,156 @@ public final class ControlledFragment
     private static List<String> normalise(List<String> lines)
     {
         List<String> out = new ArrayList<>();
+        LiteralState literal = new LiteralState();
         for (String line : lines)
         {
-            String trimmed = line == null ? "" : line.trim().toLowerCase(Locale.ROOT); //$NON-NLS-1$
-            if (!trimmed.isEmpty())
+            String text = line == null ? "" : line; //$NON-NLS-1$
+            if (!literal.inString)
             {
-                out.add(trimmed);
+                text = text.stripLeading();
+            }
+            String comparable = lowerIdentifiers(text, literal);
+            if (!literal.inString)
+            {
+                // Trailing blanks are formatting only outside a literal; while a literal is
+                // still open they are data the platform compares character for character.
+                comparable = comparable.stripTrailing();
+            }
+            if (!comparable.isEmpty())
+            {
+                out.add(comparable);
             }
         }
         return out;
+    }
+
+    /**
+     * Lowers the case of identifiers only, leaving literals and comments as written.
+     * <p>
+     * A literal opens at a quote and closes at the next one, with {@code ""} as an escaped quote
+     * inside it; a comment opens at a {@code //} that is not inside a literal and runs to the end
+     * of the line. Everything else is identifiers and punctuation, and BSL does not distinguish
+     * the case of an identifier.
+     * </p>
+     * <p>
+     * <b>A literal does not end with its line.</b> A line whose first non-blank character is
+     * {@code |} continues a literal the previous line left open, and everything on it up to the
+     * closing quote is the literal's own text - the blanks after the {@code |} included, so only
+     * the indent before the {@code |} is formatting. The closing quote on such a line closes the
+     * literal, and what follows it is code again.
+     * </p>
+     *
+     * @param line the line as written, never <code>null</code>.
+     * @param literal the string-literal state, carried over from the previous line and updated
+     *        for the next one.
+     * @return the line with identifiers lower cased and everything else as written
+     */
+    private static String lowerIdentifiers(String line, LiteralState literal)
+    {
+        StringBuilder out = new StringBuilder(line.length());
+        int at = 0;
+        if (literal.inString)
+        {
+            while (at < line.length() && Character.isWhitespace(line.charAt(at)))
+            {
+                at++;
+            }
+            if (at < line.length() && line.charAt(at) == '|')
+            {
+                out.append('|');
+                at++;
+                while (at < line.length())
+                {
+                    char c = line.charAt(at);
+                    if (c == '"' && at + 1 < line.length() && line.charAt(at + 1) == '"')
+                    {
+                        out.append(c).append(line.charAt(at + 1));
+                        at += 2;
+                        continue;
+                    }
+                    out.append(c);
+                    at++;
+                    if (c == '"')
+                    {
+                        literal.inString = false;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                // Without the continuation marker the line is code, whatever the previous line
+                // left open.
+                literal.inString = false;
+            }
+        }
+        for (int i = at; i < line.length(); i++)
+        {
+            char c = line.charAt(i);
+            if (literal.inString)
+            {
+                if (c == '"' && i + 1 < line.length() && line.charAt(i + 1) == '"')
+                {
+                    // A doubled quote is one escaped quote character: it neither closes the
+                    // literal nor opens code, and consuming it a character at a time would make
+                    // the second quote of the pair do one of those.
+                    out.append(c).append(line.charAt(i + 1));
+                    i++;
+                    continue;
+                }
+                out.append(c);
+                if (c == '"')
+                {
+                    literal.inString = false;
+                }
+                continue;
+            }
+            if (c == '"')
+            {
+                literal.inString = true;
+                out.append(c);
+                continue;
+            }
+            if (c == '/' && i + 1 < line.length() && line.charAt(i + 1) == '/')
+            {
+                out.append(line.substring(i));
+                return out.toString();
+            }
+            out.append(Character.toLowerCase(c));
+        }
+        return out.toString();
+    }
+
+    /**
+     * Whether a line ended inside a string literal.
+     * <p>
+     * A BSL literal can span lines, each continuation opening with {@code |}, so this state cannot
+     * be local to one line: a continuation line processed as code would have its text lowered and
+     * read as a match against a delivery that re-cased it, where the platform compares the literal
+     * as written and refuses the extension.
+     * </p>
+     */
+    private static final class LiteralState
+    {
+        /** Set while the lines seen so far end inside a string literal. */
+        boolean inString;
+    }
+
+    /**
+     * The caveat a clean answer carries beside it.
+     * <p>
+     * A match here says the controlled code agrees with the delivery after normalising what an
+     * author would call unimportant. The platform's own comparison is its own business, and a
+     * clean answer handed over bare reads as a promise this check never made.
+     * </p>
+     *
+     * @return the sentence to put beside a clean answer
+     */
+    public static String matchCaveat()
+    {
+        return "matched after normalising line endings, indentation and the case of identifiers; " //$NON-NLS-1$
+            + "string literals and comments were compared as written - a match here is not a " //$NON-NLS-1$
+            + "promise the platform accepts the extension"; //$NON-NLS-1$
     }
 
     /**
