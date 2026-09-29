@@ -3798,6 +3798,10 @@ public class DcsWorkshopTool implements IMcpTool
             throw new RuntimeException("nothing to write: pass field and conditionValue for a " //$NON-NLS-1$
                 + "condition, appearance for the styling, or both."); //$NON-NLS-1$
         }
+        if (hasAppearance)
+        {
+            refuseUnknownAppearanceKeys(appearanceTrim);
+        }
         String effectiveConditionType = orDefault(conditionType, "Equal"); //$NON-NLS-1$
 
         Object item = BmDcsHelper.createElement("createDataCompositionConditionalAppearanceItem"); //$NON-NLS-1$
@@ -3870,8 +3874,41 @@ public class DcsWorkshopTool implements IMcpTool
                     + "the spec '" + appearanceSpec + "' would be dropped"); //$NON-NLS-1$ //$NON-NLS-2$
             }
             skippedAppearance = applyAppearanceSpec(itemAppearance, appearanceSpec);
+            if (field == null && skippedAppearance.size() == parseAppearanceSpec(appearanceSpec).size())
+            {
+                throw new RuntimeException("none of the appearance entries could be written " //$NON-NLS-1$
+                    + skippedAppearance + " - style and system references and non-hex colors are " //$NON-NLS-1$
+                    + "not written, and an item without a condition or an appearance changes " //$NON-NLS-1$
+                    + "nothing. Nothing was written."); //$NON-NLS-1$
+            }
         }
         return new AppearanceItem(item, field, effectiveConditionType, conditionValue, skippedAppearance);
+    }
+
+    /**
+     * Refuses an appearance that names a property the item cannot carry, or carries no
+     * {@code Name=Value} pair at all.
+     *
+     * @param appearanceSpec the appearance as the caller wrote it, not empty
+     * @throws RuntimeException naming the unknown property and the ones accepted
+     */
+    private static void refuseUnknownAppearanceKeys(String appearanceSpec)
+    {
+        Map<String, String> entries = parseAppearanceSpec(appearanceSpec);
+        if (entries.isEmpty())
+        {
+            throw new RuntimeException("appearance '" + appearanceSpec + "' carries no Name=Value " //$NON-NLS-1$ //$NON-NLS-2$
+                + "pair. Nothing was written."); //$NON-NLS-1$
+        }
+        for (String key : entries.keySet())
+        {
+            if (mapAppearanceKey(key) == null)
+            {
+                throw new RuntimeException("unknown appearance property '" + key + "' - accepted: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "TextColor, BackColor, BorderColor, Font, Format (or ЦветТекста, ЦветФона, " //$NON-NLS-1$
+                    + "ЦветГраницы, Шрифт, Формат). Nothing was written."); //$NON-NLS-1$
+            }
+        }
     }
 
     /**
