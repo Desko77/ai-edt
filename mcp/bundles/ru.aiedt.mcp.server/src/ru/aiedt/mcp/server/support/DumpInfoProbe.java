@@ -122,19 +122,40 @@ public final class DumpInfoProbe
          */
         public final String notComparedBecause;
 
+        /**
+         * The stored copy as it is now - which base it is claimed for and what it holds -
+         * established by this same read of the file, or {@code null} when the check that builds
+         * this reading did not read the content.
+         */
+        public final InfobaseOutsideChange copy;
+
+        /**
+         * What this store recorded about the copy when an update last left it, or {@code null} when
+         * nothing has been recorded yet.
+         */
+        public final InfobaseOutsideChange recorded;
+
         Reading(String file, String actualFormat, String expectedFormat, String platformVersion)
         {
-            this(file, actualFormat, expectedFormat, platformVersion, null);
+            this(file, actualFormat, expectedFormat, platformVersion, null, null, null);
         }
 
         Reading(String file, String actualFormat, String expectedFormat, String platformVersion,
             String notComparedBecause)
+        {
+            this(file, actualFormat, expectedFormat, platformVersion, notComparedBecause, null, null);
+        }
+
+        Reading(String file, String actualFormat, String expectedFormat, String platformVersion,
+            String notComparedBecause, InfobaseOutsideChange copy, InfobaseOutsideChange recorded)
         {
             this.file = file;
             this.actualFormat = actualFormat;
             this.expectedFormat = expectedFormat;
             this.platformVersion = platformVersion;
             this.notComparedBecause = notComparedBecause;
+            this.copy = copy;
+            this.recorded = recorded;
         }
 
         /**
@@ -173,6 +194,23 @@ public final class DumpInfoProbe
         String platformVersion, String notComparedBecause)
     {
         return new Reading(file, actualFormat, expectedFormat, platformVersion, notComparedBecause);
+    }
+
+    /**
+     * As {@link #reading(String, String, String, String, String)}, with what the same read of the
+     * file established about the copy itself: which base it is claimed for, what it holds, and what
+     * this store recorded for it earlier.
+     *
+     * @param copy the copy as it is now, or {@code null}
+     * @param recorded the record of the copy left by an earlier update, or {@code null}
+     * @return the reading
+     */
+    public static Reading reading(String file, String actualFormat, String expectedFormat,
+        String platformVersion, String notComparedBecause, InfobaseOutsideChange copy,
+        InfobaseOutsideChange recorded)
+    {
+        return new Reading(file, actualFormat, expectedFormat, platformVersion, notComparedBecause,
+            copy, recorded);
     }
 
     /**
