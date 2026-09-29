@@ -251,6 +251,42 @@ public final class InfobaseOutsideChange
     }
 
     /**
+     * Rewrites the store's record without a load mark, keeping every other key the record already
+     * carried.
+     * <p>
+     * A record that carries no mark is left as it was. A record that cannot be rewritten is left
+     * as it was too, and the reason is the return value: the caller names that failure rather than
+     * treating the mark as gone.
+     * </p>
+     *
+     * @param recordFile the sidecar beside the copy, or {@code null}
+     * @return why the record could not be rewritten, or {@code null} when there was no mark or the
+     *         mark was cleared
+     */
+    public static String clearTheLoad(Path recordFile)
+    {
+        if (recordFile == null)
+        {
+            return null;
+        }
+        InfobaseOutsideChange existing = read(recordFile);
+        if (!existing.replacedByLoad())
+        {
+            return null;
+        }
+        try
+        {
+            new InfobaseOutsideChange(existing.identity, existing.fingerprint, existing.records,
+                null, null).writeRecord(recordFile, true);
+            return null;
+        }
+        catch (IOException failed)
+        {
+            return failed.toString();
+        }
+    }
+
+    /**
      * Writes this reading as the record beside the copy.
      * <p>
      * Through a temporary file in the same directory, then a replacing move: opening the
@@ -270,7 +306,22 @@ public final class InfobaseOutsideChange
      */
     public void writeTo(Path recordFile) throws IOException
     {
-        if (recordFile == null || (fingerprint == null && replacedBy == null))
+        writeRecord(recordFile, false);
+    }
+
+    /**
+     * Writes this reading, optionally replacing a file even when the reading names neither content
+     * nor a load. Clearing a mark that was the record's only key is that case: the file has to be
+     * replaced, or the mark stays.
+     *
+     * @param recordFile where to write, or {@code null} for nowhere
+     * @param replaceWhenEmpty whether a reading that names neither content nor a load still
+     *            replaces the file
+     * @throws IOException when the record cannot be written; the previous file is left as it was
+     */
+    private void writeRecord(Path recordFile, boolean replaceWhenEmpty) throws IOException
+    {
+        if (recordFile == null || (!replaceWhenEmpty && fingerprint == null && replacedBy == null))
         {
             return;
         }

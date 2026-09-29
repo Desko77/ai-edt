@@ -1185,6 +1185,10 @@ public class DatabaseUpdater implements IMcpTool
     /**
      * The refusal an incremental update answers when the infobase's own dump does not match the
      * stored copy, or when that dump could not be read. {@code null} when the two match.
+     * <p>
+     * A failed read carries the read's own failure kind. {@code infobaseChanged} is the tag of a
+     * difference of content and of a stored copy that cannot be read.
+     * </p>
      *
      * @param dumpInfo the stored reading, or {@code null}
      * @param probe what the read of the infobase answered
@@ -1200,7 +1204,7 @@ public class DatabaseUpdater implements IMcpTool
                     : "the infobase's dump carried no records"; //$NON-NLS-1$
             return ToolResult.error("The infobase's ConfigDumpInfo.xml could not be read, so the " //$NON-NLS-1$
                 + "update was not started: " + reason) //$NON-NLS-1$
-                .put("tag", ErrorTags.INFOBASE_CHANGED.wire()) //$NON-NLS-1$
+                .put("tag", tagOfAFailedRead(probe)) //$NON-NLS-1$
                 .toJson();
         }
         if (dumpInfo == null || dumpInfo.copy == null || !dumpInfo.copy.known())
@@ -1231,6 +1235,22 @@ public class DatabaseUpdater implements IMcpTool
             .put("tag", ErrorTags.INFOBASE_CHANGED.wire()) //$NON-NLS-1$
             .put("nextStep", REBUILD_COPY_STEP) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The tag a failed read of the infobase carries. A read that names its own kind keeps it; one
+     * that names none is a Designer failure. A difference of content is not this case.
+     *
+     * @param probe the read, or {@code null} when none was made
+     * @return the tag
+     */
+    private static String tagOfAFailedRead(DumpInfoRebuilder.ContentProbe probe)
+    {
+        if (probe != null && probe.failureKind != null && !probe.failureKind.isEmpty())
+        {
+            return probe.failureKind;
+        }
+        return ErrorTags.THICK_CLIENT_FAILED.wire();
     }
 
     /**
@@ -1371,7 +1391,9 @@ public class DatabaseUpdater implements IMcpTool
      * Read back rather than remembered from the reading taken before the update: the platform
      * rewrites the copy while it works, so what the next update will be decided against is the file
      * as it is now. Called after the update has finished, so a copy written halfway through a
-     * failed run is not recorded as one this server left.
+     * failed run is not recorded as one this server left. An unreadable copy is not a reason to
+     * keep a load mark: the update that just finished loaded the model into the base, so the mark
+     * is cleared and the other keys stay.
      * </p>
      *
      * @param infobaseProject the project that owns the infobase - the parent, for an extension
@@ -1397,10 +1419,10 @@ public class DatabaseUpdater implements IMcpTool
             InfobaseOutsideChange.copyOf(stored, InfobaseIdentity.of(infobase));
         if (!copy.known())
         {
-            // A copy that does not read - absent, empty, without records - is a store this cannot
-            // describe yet, and the check says so in the next answer. Writing nothing keeps the
-            // record of an earlier copy rather than replacing it with a claim about this one.
-            return null;
+            // A copy that does not read cannot be recorded as this update's. A load mark on the
+            // record would still stop the next incremental update, so it is cleared; a record
+            // with no mark is left as it was.
+            return InfobaseOutsideChange.clearTheLoad(InfobaseOutsideChange.recordFileOf(stored));
         }
         try
         {

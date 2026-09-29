@@ -184,6 +184,13 @@ public final class DumpInfoRebuilder
         /** The format pair this rebuild recorded, or the failure to record it. */
         public String pairRemembered;
 
+        /**
+         * Why the stored copy's record could not be rewritten after the swap, or {@code null} when
+         * it was written. A load mark that could not be cleared stays, and the next incremental
+         * update refuses.
+         */
+        public String copyRecord;
+
         /** What dropping EDT's cached holder answered, or {@code null} when it never ran. */
         public String holderRefresh;
 
@@ -216,6 +223,12 @@ public final class DumpInfoRebuilder
 
         /** Why the read failed, or {@code null} when {@link #content} was read. */
         public String error;
+
+        /**
+         * The failure kind of a read that did not produce a fingerprint, the same kind a rebuild
+         * names for that failure, or {@code null} when the read succeeded.
+         */
+        public String failureKind;
 
         /** The infobase's own dump, or {@code null} when it was not read. */
         public InfobaseOutsideChange content;
@@ -342,6 +355,17 @@ public final class DumpInfoRebuilder
             throws IOException;
 
         /**
+         * Why the stored copy's record could not be written by the last {@link #rememberPair}, or
+         * {@code null} when that write succeeded or this environment does not write one.
+         *
+         * @return the failure, or {@code null}
+         */
+        default String copyRecordFailure()
+        {
+            return null;
+        }
+
+        /**
          * Removes the temporary dump directory; runs at every outcome past its creation.
          *
          * @param dir the directory the dump went into
@@ -414,6 +438,7 @@ public final class DumpInfoRebuilder
         {
             ContentProbe refused = new ContentProbe();
             refused.error = ctx.error;
+            refused.failureKind = ctx.failureKind;
             return refused;
         }
         final MonopolyLock.Claim[] heldClaim = new MonopolyLock.Claim[1];
@@ -439,6 +464,7 @@ public final class DumpInfoRebuilder
         String claimOperation, MonopolyLock.Claim[] heldClaim)
     {
         java.util.UUID infobaseUuid = ctx.infobase.getUuid();
+        final String[] recordedCopyFailure = new String[1];
         return new RebuildIo()
         {
             @Override
@@ -521,15 +547,20 @@ public final class DumpInfoRebuilder
             public void rememberPair(String infobaseIdentity, String format, String platform)
                 throws IOException
             {
-                DumpInfoProbe.rememberPair(infobaseIdentity, format, platform,
-                    DumpInfoProbe.stateFile());
                 // The swap has just replaced the stored copy with this base's own dump, so the
                 // record of what the store holds is written from the file the platform produced.
-                // A load marker on the previous record is replaced with this reading: the file
-                // just written is this base's own dump, and the next update compares against it.
+                // A load marker on the previous record is replaced with this reading. The format
+                // pair and the record are separate attempts: a pair that cannot be written does
+                // not skip the record.
                 Path copy = SyncBaseline.dumpInfoFile(ctx.project, infobaseUuid.toString());
-                InfobaseOutsideChange.copyOf(copy, infobaseIdentity)
-                    .writeTo(InfobaseOutsideChange.recordFileOf(copy));
+                rememberPairAndCopy(infobaseIdentity, format, platform, DumpInfoProbe.stateFile(),
+                    copy, recordedCopyFailure);
+            }
+
+            @Override
+            public String copyRecordFailure()
+            {
+                return recordedCopyFailure[0];
             }
 
             @Override
@@ -782,7 +813,8 @@ public final class DumpInfoRebuilder
      * the dump-info-only run, take the infobase back, delete the temporary directory, release the
      * claim. {@link RebuildIo#runFullDump} is not called. A run that fails, or that leaves no
      * readable file, is a failed read: {@link ContentProbe#error} says why, and nothing of the
-     * store was written.
+     * store was written. {@link ContentProbe#failureKind} is the kind a rebuild names for the
+     * same failure.
      * </p>
      *
      * @param io the environment, the same one a rebuild runs against
@@ -804,6 +836,7 @@ public final class DumpInfoRebuilder
         {
             out.error = "The infobase cannot be identified, so its dump was not read and nothing " //$NON-NLS-1$
                 + "was released or claimed."; //$NON-NLS-1$
+            out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.RESOLVE_FAILED.wire();
             return out;
         }
 
@@ -812,6 +845,7 @@ public final class DumpInfoRebuilder
         if (lockRefusal != null)
         {
             out.error = lockRefusal;
+            out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.BUSY.wire();
             return out;
         }
         lockTaken = true;
@@ -828,6 +862,7 @@ public final class DumpInfoRebuilder
             final Path dumpDir = Files.createTempDirectory(storeDirectory, "content-dump-"); //$NON-NLS-1$
             tempDir = dumpDir;
             final Path[] fresh = new Path[1];
+            final boolean[] designerStillRunning = new boolean[1];
             handshake = BmInfobaseExtensionHelper.runUnderHandshake(
                 () -> {
                     out.sequence.add("release"); //$NON-NLS-1$
@@ -835,10 +870,25 @@ public final class DumpInfoRebuilder
                 },
                 () -> {
                     out.sequence.add("work"); //$NON-NLS-1$
-                    out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
-                    fresh[0] = producedFile(io.runDumpInfoOnly(dumpDir), dumpDir);
+                    try
+                    {
+                        out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
+                        fresh[0] = producedFile(io.runDumpInfoOnly(dumpDir), dumpDir);
+                    }
+                    catch (Abandoned abandoned)
+                    {
+                        if (abandoned.processStillRunning())
+                        {
+                            designerStillRunning[0] = true;
+                        }
+                        throw abandoned;
+                    }
                 },
                 () -> {
+                    if (designerStillRunning[0])
+                    {
+                        return;
+                    }
                     out.sequence.add("reconnect"); //$NON-NLS-1$
                     io.reconnectInfobase();
                 });
@@ -849,35 +899,41 @@ public final class DumpInfoRebuilder
                 out.error = "The Designer run did not finish and was abandoned: " //$NON-NLS-1$
                     + handshake.workError.getMessage()
                     + ". The stored copy was not touched; the platform process finishes on its own."; //$NON-NLS-1$
+                out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.THICK_CLIENT_FAILED.wire();
                 return out;
             }
             if (handshake.releaseError != null)
             {
                 out.error = "EDT could not release the infobase, so its dump was not read and the " //$NON-NLS-1$
                     + "stored copy was not touched: " + oneLine(handshake.releaseError); //$NON-NLS-1$
+                out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.INFOBASE_NOT_RELEASED.wire();
                 return out;
             }
             if (handshake.workError != null)
             {
                 out.error = "The infobase's ConfigDumpInfo.xml could not be read: " //$NON-NLS-1$
                     + oneLine(handshake.workError);
+                out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.THICK_CLIENT_FAILED.wire();
                 return out;
             }
             if (handshake.reconnectError != null)
             {
                 out.error = "EDT could not take the infobase back after reading its dump: " //$NON-NLS-1$
                     + oneLine(handshake.reconnectError) + " " + RECONNECT_FAILED_HINT; //$NON-NLS-1$
+                out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.THICK_CLIENT_FAILED.wire();
                 return out;
             }
             if (fresh[0] == null)
             {
                 out.error = "The Designer run left no readable " + DumpInfoProbe.FILE_NAME + "."; //$NON-NLS-1$ //$NON-NLS-2$
+                out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.THICK_CLIENT_FAILED.wire();
                 return out;
             }
             InfobaseOutsideChange content = InfobaseOutsideChange.copyOf(fresh[0], identity);
             if (!content.known())
             {
                 out.error = "The infobase's dump carried no records, so it was not compared."; //$NON-NLS-1$
+                out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.THICK_CLIENT_FAILED.wire();
                 return out;
             }
             out.content = content;
@@ -887,6 +943,7 @@ public final class DumpInfoRebuilder
         catch (Exception failed)
         {
             out.error = "The infobase's dump could not be read: " + oneLine(failed); //$NON-NLS-1$
+            out.failureKind = ru.aiedt.mcp.server.support.ErrorTags.OUTPUT_DIRECTORY_ERROR.wire();
             return out;
         }
         finally
@@ -1222,6 +1279,72 @@ public final class DumpInfoRebuilder
                 + ") - the next update will not compare this infobase until a rebuild records " //$NON-NLS-1$
                 + "the format"; //$NON-NLS-1$
         }
+        String copyFailure = io.copyRecordFailure();
+        if (copyFailure != null)
+        {
+            out.copyRecord = copyRecordNote(copyFailure);
+        }
+    }
+
+    /**
+     * Records the format pair and rewrites the stored copy's sidecar as two attempts. The sidecar
+     * is written even when the pair cannot be recorded, and a sidecar that cannot be written does
+     * not replace the pair's own failure.
+     *
+     * @param infobaseIdentity the base the pair is for
+     * @param format the dump-info format the platform wrote
+     * @param platformVersion the platform version, or {@code null}
+     * @param recordedFormats the file the pair is recorded in, or {@code null} for nowhere
+     * @param copy the stored {@code ConfigDumpInfo.xml} the sidecar describes, or {@code null}
+     * @param copyFailure where the sidecar's failure is written; left unset when the sidecar is
+     *            written, and ignored when {@code null}
+     * @throws IOException when the format pair could not be recorded; the sidecar was still attempted
+     */
+    static void rememberPairAndCopy(String infobaseIdentity, String format, String platformVersion,
+        Path recordedFormats, Path copy, String[] copyFailure) throws IOException
+    {
+        IOException pairFailure = null;
+        try
+        {
+            DumpInfoProbe.rememberPair(infobaseIdentity, format, platformVersion, recordedFormats);
+        }
+        catch (IOException failed)
+        {
+            pairFailure = failed;
+        }
+        try
+        {
+            if (copy != null)
+            {
+                InfobaseOutsideChange.copyOf(copy, infobaseIdentity)
+                    .writeTo(InfobaseOutsideChange.recordFileOf(copy));
+            }
+        }
+        catch (IOException failed)
+        {
+            if (copyFailure != null)
+            {
+                copyFailure[0] = oneLine(failed);
+            }
+        }
+        if (pairFailure != null)
+        {
+            throw pairFailure;
+        }
+    }
+
+    /**
+     * The sentence a rebuild carries when the stored copy's record could not be rewritten after
+     * the swap.
+     *
+     * @param reason why the record could not be written
+     * @return the sentence
+     */
+    private static String copyRecordNote(String reason)
+    {
+        return "the stored copy's record could not be written (" + reason //$NON-NLS-1$
+            + "). A load mark, if the record carried one, remains, and the next incremental " //$NON-NLS-1$
+            + "update refuses."; //$NON-NLS-1$
     }
 
     /**

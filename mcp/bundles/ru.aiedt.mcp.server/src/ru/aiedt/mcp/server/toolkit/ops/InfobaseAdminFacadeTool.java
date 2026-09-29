@@ -225,7 +225,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
             + "register_infobase / delete_infobase / set_infobase_credentials / update_database / " //$NON-NLS-1$
             + "export_database_snapshot / restore_database_snapshot mutate, and a load replaces " //$NON-NLS-1$
-            + "everything the infobase holds and marks the stored copy; inspect_database_sync reads and changes nothing. " //$NON-NLS-1$
+            + "everything the infobase holds, marks the stored copy, and names it when the mark " //$NON-NLS-1$
+            + "could not be written; inspect_database_sync reads and changes nothing. " //$NON-NLS-1$
             + "A real run of update_database / export_database_snapshot / " //$NON-NLS-1$
             + "restore_database_snapshot / sync_control may reply with a Pending status and " //$NON-NLS-1$
             + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$

@@ -151,8 +151,13 @@ public class TheToolListHasAWeightBudgetTest
      * load marks the stored copy. The hidden update_database alias is not in tools/list, so the
      * document moves by this facade only. Measured 29.09: 183171.
      * </p>
+     * <p>
+     * And for the sentence that a load names the stored copy when the mark could not be written.
+     * The hidden update_database alias is not in tools/list, so the document moves by this facade
+     * only. Measured 29.09: 183217.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 183171;
+    private static final int DOCUMENT_BUDGET = 183217;
 
     private LiveServer server;
 
@@ -315,8 +320,9 @@ public class TheToolListHasAWeightBudgetTest
         // operations add backupTo and name themselves for path, timeoutSeconds, runKey and cancel,
         // and retrieve_database_changes adds the operation, replaceLocal, markSynchronized and the
         // pending wait the schema describes. And for verifyInfobaseContent and the sentence that
-        // a load marks the stored copy. Measured 29.09: 12493.
-        BUDGETS.put("infobase_admin", Integer.valueOf(12493)); //$NON-NLS-1$
+        // a load marks the stored copy. Raised for the sentence that a load names the stored copy
+        // when the mark could not be written. Measured 29.09: 12539.
+        BUDGETS.put("infobase_admin", Integer.valueOf(12539)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the

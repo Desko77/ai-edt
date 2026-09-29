@@ -1452,6 +1452,10 @@ public class SyncControlTool implements IMcpTool
         {
             answer.put("formatPair", outcome.pairRemembered); //$NON-NLS-1$
         }
+        if (outcome.copyRecord != null)
+        {
+            answer.put("copyRecord", outcome.copyRecord); //$NON-NLS-1$
+        }
         if (outcome.holderRefresh != null)
         {
             answer.put("holderRefresh", outcome.holderRefresh); //$NON-NLS-1$
