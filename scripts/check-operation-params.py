@@ -10,8 +10,9 @@ handler; which parameters the handler reads is known only to its code.
 
 This derives that map from the sources, so it cannot drift from them:
 
-  * a branch that hands the call to another tool (`new XxxTool().execute(params)`) takes that tool's
-    schema - the delegate's own advertised parameters are exactly what the operation accepts;
+  * a branch that hands the call to another tool (`new XxxTool().execute(params)`, or `.dispatch`
+    when the tool's `execute` wraps that answer before returning) takes that tool's schema - the
+    delegate's own advertised parameters are exactly what the operation accepts;
   * a branch that does the work itself contributes every `extract*Argument(params, "name")` it
     reaches, following one level into private methods of the same class.
 
@@ -46,7 +47,7 @@ BASELINE = ROOT / "scripts/unadvertised-parameters.txt"
 DISPATCH = re.compile(r"switch\s*\((operation|action|op|mode)\)")
 CASE_LABEL = re.compile(r'case\s+"([a-z0-9_]+)"\s*:')
 # The delegate is the tool, whatever wraps params on the way in - some facades rewrite first.
-DELEGATE = re.compile(r"new\s+(\w+)\(\)\.execute\(")
+DELEGATE = re.compile(r"new\s+(\w+)\(\)\.(?:execute|dispatch)\(")
 # Every helper that reads an argument by name, and every helper of the same shape that does not.
 # Both lists are kept because neither side can be guessed: `addTypedCollectionChild(params,
 # "Dimension")` passes a collection and `branchArgument(params, onDisk)` a value, so matching "any

@@ -16,12 +16,15 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.InternalEObject;
+import org.eclipse.emf.ecore.util.EcoreUtil;
 
 import com._1c.g5.v8.bm.core.BmUriUtil;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
+import com._1c.g5.v8.dt.metadata.mdclass.CommonPicture;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -42,6 +45,9 @@ import ru.aiedt.mcp.server.Activator;
  */
 public class BmFormHelper
 {
+    /** The prefix of a reference to a common picture of the configuration. */
+    private static final String COMMON_PICTURE_PREFIX = "CommonPicture."; //$NON-NLS-1$
+
     /**
      * Behaviour properties a wizard-created table carries, applied by
      * {@link #applyTableRenderDefaults}. Values are text; setScalarProperty
@@ -222,31 +228,30 @@ public class BmFormHelper
     }
 
     /**
-     * Executes a form operation inside a BM read-write transaction.
+     * Resolves a form and runs a read against it inside the transaction, with no write question
+     * asked.
      * <p>
-     * Steps:
-     * <ol>
-     * <li>Get {@code IBmModelManager} via {@link Activator}</li>
-     * <li>Get {@code IBmModel} for the project</li>
-     * <li>Create a {@link Proxy} for {@code IBmSingleNamespaceTask}</li>
-     * <li>Inside the proxy: resolve form by FQN via {@code transaction.getTopObjectByFqn()}</li>
-     * <li>Call the action with transaction and form</li>
-     * <li>Execute the task via {@code bmModel.executeReadWriteTask()} found by reflection</li>
-     * </ol>
+     * A structure walk of a form whose owner is closed for vendor-support changes is a read, the
+     * way EDT reads it: the write entries below ask the support registry and refuse such a form,
+     * and this entry does not, so a closed configuration stays readable through
+     * {@code get_form_structure}. The transaction opens and commits the way a write's does - that is
+     * how the form model is reached, and the form is exported to disk at the end of it, the same
+     * {@code forceExport} a write performs. This entry answers without asking the support question;
+     * it does not answer without touching the file.
+     * </p>
      *
      * @param project the workspace project
-     * @param formFqn the BM top-object FQN of the form, including the trailing
-     *            {@code .Form} segment that comes from the {@code Form.form}
-     *            file name (e.g. "Catalog.Products.Form.ItemForm.Form"). Use
-     *            the diagnostic hint returned on "form not found" to discover
-     *            the canonical FQN for borrowed forms in extensions.
-     * @param action the action to execute inside the transaction
+     * @param formFqn the BM top-object FQN of the form, with or without the trailing
+     *            {@code .Form} segment (e.g. "Catalog.Products.Form.ItemForm.Form"); use the
+     *            diagnostic hint returned on "form not found" to discover the canonical FQN for
+     *            borrowed forms in extensions
+     * @param action the read to execute inside the transaction
      * @return result string from the action, or an error message
      */
-    public String executeFormOperation(IProject project, String formFqn, FormTransactionAction action)
+    public String executeFormReadOperation(IProject project, String formFqn,
+        FormTransactionAction action)
     {
-        // Backward-compatible delegate for legacy / read-only callers (dryRun=false).
-        return executeFormOperation(project, formFqn, false, action);
+        return executeFormOperation(project, formFqn, false, action, false);
     }
 
     /**
@@ -329,7 +334,7 @@ public class BmFormHelper
     }
 
     /**
-     * dryRun-aware form operation. When {@code dryRun} is true the action runs
+     * dryRun-aware form write. When {@code dryRun} is true the action runs
      * inside the BM transaction and is then rolled back (DryRunAbort), and the
      * changes are NOT persisted to the Form.form file - so a preview leaves no
      * garbage behind. When false, behaviour is identical to the legacy method
@@ -338,6 +343,39 @@ public class BmFormHelper
     public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
         FormTransactionAction action)
     {
+        return executeFormOperation(project, formFqn, dryRun, action, true);
+    }
+
+    /**
+     * The one body behind the write and the read entries of this helper.
+     *
+     * @param project the workspace project
+     * @param formFqn the BM top-object FQN of the form
+     * @param dryRun whether the transaction commits or rolls back
+     * @param action the action to execute inside the transaction
+     * @param guarded whether the support registry is asked before the transaction opens; a read
+     *        passes <code>false</code> and no question is asked of it
+     * @return result string from the action, or an error message
+     */
+    private String executeFormOperation(IProject project, String formFqn, boolean dryRun,
+        FormTransactionAction action, boolean guarded)
+    {
+        // The support registry is asked before the transaction opens, so a preview is judged by the
+        // same question a real call is. The address names the form itself in its Form.Name segment,
+        // and the form - a BasicForm, a metadata object of its own - is the object the registry is
+        // asked about.
+        if (guarded)
+        {
+            MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, formFqn);
+            if (notEditable.blocked)
+            {
+                String line = ModelEditabilityGuard.supportLockLine(notEditable);
+                return "Error: " + notEditable.error //$NON-NLS-1$
+                    + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
+                        ? "" : " - " + notEditable.hint) //$NON-NLS-1$ //$NON-NLS-2$
+                    + (line == null ? "" : "\n" + line); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
         beginWrite(null);
         try
         {
@@ -456,6 +494,7 @@ public class BmFormHelper
                             // commits nothing, leaving Form.form untouched.
                             throw new BmDcsHelper.DryRunAbort();
                         }
+                        rollBackOnRefusal(actionResult);
                         return actionResult;
                     }
                     return null;
@@ -507,15 +546,21 @@ public class BmFormHelper
                         + "is NOT run in a dry run, so a clean preview does not by itself guarantee the real " //$NON-NLS-1$
                         + "operation validates clean." + note; //$NON-NLS-1$
                 }
+                String refused = refusalRolledBack(invokeEx);
+                if (refused != null)
+                {
+                    abandonWrite();
+                    return refused;
+                }
                 throw invokeEx;
             }
 
-            // Error case: the proxy / action returns a String prefixed with
-            // "Error:" to surface a fatal condition (form not found, etc.).
+            // Error case: the task returns a String prefixed with "Error:" when it
+            // refuses before the action runs (form not found, etc.); an action's
+            // own refusal rolled the transaction back above.
             if (result instanceof String && ((String) result).startsWith("Error:")) //$NON-NLS-1$
             {
-                // The action ran but its result is an error, and the persist
-                // below is skipped: nothing of this write reached the file.
+                // The persist below is skipped: nothing of this write reached the file.
                 abandonWrite();
                 return (String) result;
             }
@@ -570,6 +615,74 @@ public class BmFormHelper
             String rootMsg = root.getMessage() != null ? root.getMessage()
                 : root.getClass().getSimpleName();
             return "Error: BM API error: " + rootMsg; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Rolls the form transaction back when the action refused.
+     * <p>
+     * An action that refuses after it changed the form - created a container, removed the first of
+     * several items - leaves those changes in the transaction. Committed, they stay in the model while
+     * the file is not exported, and a caller repeating the refused call meets them. Thrown out of the
+     * task, the refusal takes them back with the transaction.
+     * </p>
+     *
+     * @param actionResult what the action returned
+     * @throws RefusalRollback when the result is a refusal in either shape {@link #dryRunRefusal}
+     *             reads
+     */
+    static void rollBackOnRefusal(Object actionResult)
+    {
+        if (dryRunRefusal(actionResult) != null)
+        {
+            throw new RefusalRollback((String)actionResult);
+        }
+    }
+
+    /**
+     * The refusal a rolled-back form transaction carries.
+     *
+     * @param failure what the task execution threw, wrapped by reflection or by the model
+     * @return the action's refusal as it returned it, or <code>null</code> when the failure is not a
+     *         refusal
+     */
+    static String refusalRolledBack(Throwable failure)
+    {
+        Throwable t = failure;
+        for (int i = 0; i < 16 && t != null; i++)
+        {
+            if (t instanceof RefusalRollback)
+            {
+                return ((RefusalRollback)t).answer;
+            }
+            Throwable next = t.getCause();
+            if (next == t)
+            {
+                break;
+            }
+            t = next;
+        }
+        return null;
+    }
+
+    /**
+     * Thrown out of a form transaction to roll back an action that refused; carries the refusal to
+     * the caller.
+     */
+    static final class RefusalRollback extends RuntimeException
+    {
+        private static final long serialVersionUID = 1L;
+
+        /** The action's refusal, as it returned it. */
+        final String answer;
+
+        /**
+         * @param answer the action's refusal
+         */
+        RefusalRollback(String answer)
+        {
+            super(null, null, false, false);
+            this.answer = answer;
         }
     }
 
@@ -1076,37 +1189,21 @@ public class BmFormHelper
      */
     public Object createDecoration(String name, String title, String decorationType) throws Exception
     {
-        return createDecoration(name, title, decorationType, null);
+        return createDecoration(name, title, decorationType, false);
     }
 
     /**
-     * 1.42: extended overload that also applies a picture reference to a
-     * Picture-type decoration. The picture string is passed to
-     * {@code PictureDecorationExtInfo.setPicture} (typed setter when the
-     * EDT runtime exposes one). Picture validation against
-     * {@code StandardPictures} / project's {@code CommonPictures} happens
-     * earlier in {@code EditFormTool.executeAddDecoration} via
-     * {@link PictureValidator}; this method only applies the validated
-     * value.
-     *
-     * <p>{@code picture} is ignored for non-Picture decorations.
-     */
-    public Object createDecoration(String name, String title, String decorationType,
-        String picture) throws Exception
-    {
-        return createDecoration(name, title, decorationType, picture, false);
-    }
-
-    /**
-     * Hyperlink-aware overload of {@link #createDecoration(String, String, String, String)}.
+     * Hyperlink-aware overload of {@link #createDecoration(String, String, String)}.
      * When {@code hyperlink} is true and this is a Label decoration, sets
      * {@code LabelDecorationExtInfo.hyperlink = true} so the decoration renders
      * as clickable hyperlink text - the canonical 1C form hyperlink element.
      * Ignored for Picture decorations (their ext-info exposes no hyperlink
      * property); the flag is applied best-effort via {@link #applyHyperlink}.
+     * The picture of a Picture decoration is not set here - see
+     * {@link #setDecorationPicture}.
      */
     public Object createDecoration(String name, String title, String decorationType,
-        String picture, boolean hyperlink) throws Exception
+        boolean hyperlink) throws Exception
     {
         Object decoration = ffClass.getMethod("createDecoration").invoke(formFactory); //$NON-NLS-1$
         setBasicProperties(decoration, name, nextId());
@@ -1126,14 +1223,6 @@ public class BmFormHelper
             }
             Object extInfo = ffClass.getMethod("createPictureDecorationExtInfo").invoke(formFactory); //$NON-NLS-1$
             decorationIface.getMethod("setExtInfo", decoExtInfoClass).invoke(decoration, extInfo); //$NON-NLS-1$
-            // 1.42: apply the picture reference when supplied. Probe a String
-            // setter first (modern EDT) and fall back silently when only an
-            // EMF-typed setter exists - the agent can still set picture later
-            // via setProperty.
-            if (picture != null && !picture.isEmpty())
-            {
-                applyPictureReferenceOnExtInfo(extInfo, picture);
-            }
         }
         else
         {
@@ -1155,39 +1244,92 @@ public class BmFormHelper
     }
 
     /**
-     * 1.42 helper: applies a picture reference to a
-     * {@code PictureDecorationExtInfo} via reflection. Tries
-     * {@code setPicture(String)} first; older EDT may use a typed setter
-     * accepting a {@code Picture} EMF object - in that case the call is
-     * silently skipped (the decoration is still valid, the agent can set
-     * the picture via {@code setProperty} as a follow-up).
+     * Sets the picture of a Picture decoration made by {@link #createDecoration}, before it is
+     * placed on the form.
+     * <p>
+     * Does not check that the name resolves - the caller does that with {@link PictureValidator}
+     * first.
+     * </p>
+     *
+     * @param decoration the decoration
+     * @param projectName the project whose platform version and configuration resolve the name
+     * @param picture {@code StdPicture.X}, {@code StdExtPicture.X} or {@code CommonPicture.X}
+     * @return <code>null</code> when the picture is written, otherwise why it is not
      */
-    private static void applyPictureReferenceOnExtInfo(Object extInfo, String picture)
+    public String setDecorationPicture(Object decoration, String projectName, String picture)
     {
-        for (java.lang.reflect.Method m : extInfo.getClass().getMethods())
+        Object extInfo = tryGetExtInfo(decoration);
+        if (extInfo == null)
         {
-            if (!"setPicture".equals(m.getName()) || m.getParameterCount() != 1) //$NON-NLS-1$
+            return "the decoration has no picture settings to write the picture into"; //$NON-NLS-1$
+        }
+        IProject project = projectName == null || projectName.isEmpty() ? null
+            : org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        return setNamedPicture(extInfo, project != null && project.exists() ? project : null, picture);
+    }
+
+    /**
+     * Writes a named picture into the {@code picture} of a model object: a {@code PictureRef}
+     * pointing at a picture proxy that carries the name. An empty name clears the picture.
+     * <p>
+     * Does not check that the name resolves.
+     * </p>
+     *
+     * @param target an object whose {@code setPicture} takes an mcore {@code Picture}
+     * @param project the project that resolves the name
+     * @param name the picture name
+     * @return <code>null</code> when written, otherwise why it is not
+     */
+    private static String setNamedPicture(Object target, IProject project, String name)
+    {
+        Method setter = pictureSetterOf(target);
+        if (setter == null)
+        {
+            return "Property 'picture' is absent on " + target.getClass().getSimpleName(); //$NON-NLS-1$
+        }
+        try
+        {
+            if (name == null || name.isEmpty())
             {
-                continue;
+                setter.invoke(target, (Object)null);
+                return null;
             }
-            Class<?> p = m.getParameterTypes()[0];
-            if (p == String.class)
+            Object factory = BmDcsHelper.getMcoreFactory();
+            Object pictureProxy = factory == null ? null : buildNamedPictureProxy(project, name);
+            if (pictureProxy == null)
             {
-                try
-                {
-                    m.invoke(extInfo, picture);
-                    return;
-                }
-                catch (Exception ignored)
-                {
-                    // Try next overload.
-                }
+                return "a named picture reference could not be built on this runtime (the mcore " //$NON-NLS-1$
+                    + "factory or the provider that resolves picture names is not here). Nothing " //$NON-NLS-1$
+                    + "was changed."; //$NON-NLS-1$
+            }
+            Object pictureRef = factory.getClass().getMethod("createPictureRef").invoke(factory); //$NON-NLS-1$
+            pictureRef.getClass().getMethod("setPicture", //$NON-NLS-1$
+                com._1c.g5.v8.dt.mcore.Picture.class).invoke(pictureRef, pictureProxy);
+            setter.invoke(target, pictureRef);
+            return null;
+        }
+        catch (ReflectiveOperationException e)
+        {
+            return "Failed to set picture: " + e.getMessage(); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * @param target a model object
+     * @return its {@code setPicture} taking an mcore {@code Picture}, or <code>null</code> when it
+     *         has none
+     */
+    private static Method pictureSetterOf(Object target)
+    {
+        for (Method m : target.getClass().getMethods())
+        {
+            if ("setPicture".equals(m.getName()) && m.getParameterCount() == 1 //$NON-NLS-1$
+                && m.getParameterTypes()[0] == com._1c.g5.v8.dt.mcore.Picture.class)
+            {
+                return m;
             }
         }
-        // No String overload; the typed Picture-EMF path requires
-        // MdClassFactory.eINSTANCE.createPicture() and is not stable across
-        // EDT versions. Leave the decoration created without an icon - the
-        // agent can apply the picture via setProperty.
+        return null;
     }
 
     /**
@@ -2256,6 +2398,16 @@ public class BmFormHelper
             catch (Exception e)
             {
                 return "Failed to set title: " + e.getMessage(); //$NON-NLS-1$
+            }
+        }
+        if ("picture".equalsIgnoreCase(property)) //$NON-NLS-1$
+        {
+            // An item's picture (a button's) or its extInfo's (a Picture decoration's) is a typed
+            // reference, which the scalar path below cannot build from a name.
+            Object pictureOwner = pictureSetterOf(item) != null ? item : tryGetExtInfo(item);
+            if (pictureOwner != null && pictureSetterOf(pictureOwner) != null)
+            {
+                return setNamedPicture(pictureOwner, projectOf(item), value);
             }
         }
         if ("dataPath".equalsIgnoreCase(property)) //$NON-NLS-1$
@@ -3728,7 +3880,7 @@ public class BmFormHelper
                 // itself writes, measured in a dialog-produced .form - <picture
                 // xsi:type="core:PictureRef"><picture>CommonPicture.X</picture></picture>. Built
                 // through the same proxy machinery every reference in this codebase uses.
-                Object pictureProxy = buildNamedPictureProxy(command, propertyValue);
+                Object pictureProxy = buildNamedPictureProxy(projectOf(command), propertyValue);
                 if (pictureProxy == null)
                 {
                     return "Error: a named picture reference could not be built on this runtime " //$NON-NLS-1$
@@ -3767,14 +3919,15 @@ public class BmFormHelper
      * A platform picture (StdPicture / StdExtPicture) is resolved by the same provider that
      * resolves any platform type; a CommonPicture is resolved by the project's configuration.
      * Either way the reference carries the name, and the environment resolves it at render time -
-     * which is why a name that resolves to nothing is refused before this is built.
+     * which is why a name that resolves to nothing is refused before this is built. A stock
+     * picture given by its Russian name is written under its English one, the name EDT writes.
      * </p>
      *
-     * @param command the FormCommand, whose project resolves the name.
+     * @param project the project that resolves the name, or <code>null</code>
      * @param name the picture name as the caller gave it.
      * @return the proxy, or <code>null</code> when no provider on this runtime builds one
      */
-    private static Object buildNamedPictureProxy(Object command, String name)
+    private static Object buildNamedPictureProxy(IProject project, String name)
     {
         try
         {
@@ -3783,8 +3936,13 @@ public class BmFormHelper
             {
                 return null;
             }
+            if (name.startsWith(COMMON_PICTURE_PREFIX))
+            {
+                return project == null ? null
+                    : commonPictureProxy(activator.getConfigurationProvider().getConfiguration(project),
+                        name.substring(COMMON_PICTURE_PREFIX.length()));
+            }
             Object versionSupport = activator.getRuntimeVersionSupport();
-            IProject project = projectOf(command);
             if (versionSupport == null || project == null)
             {
                 return null;
@@ -3810,7 +3968,11 @@ public class BmFormHelper
                 return null;
             }
             Method getProxy = provider.getClass().getMethod("getProxy", String.class); //$NON-NLS-1$
-            return getProxy.invoke(provider, name);
+            String written = version instanceof com._1c.g5.v8.dt.platform.version.Version
+                ? StockPictures.writtenName(
+                    StockPictures.read((com._1c.g5.v8.dt.platform.version.Version)version), name)
+                : name;
+            return getProxy.invoke(provider, written);
         }
         catch (Exception e)
         {
@@ -3820,10 +3982,43 @@ public class BmFormHelper
     }
 
     /**
-     * The project the command lives in, as an IProject rather than a name - the version that
+     * The proxy a reference to a common picture of the configuration points at: an object of the
+     * picture's class carrying the picture's URI, which the model persists by reference and writes
+     * as {@code CommonPicture.<Name>}.
+     *
+     * @param configuration the project's configuration, or <code>null</code>
+     * @param pictureName the common picture's name, in any case
+     * @return the proxy, or <code>null</code> when the configuration has no such picture or the
+     *         picture has no URI
+     */
+    static Object commonPictureProxy(Configuration configuration, String pictureName)
+    {
+        if (configuration == null || pictureName == null || pictureName.isEmpty())
+        {
+            return null;
+        }
+        for (CommonPicture picture : configuration.getCommonPictures())
+        {
+            if (pictureName.equalsIgnoreCase(picture.getName()))
+            {
+                org.eclipse.emf.common.util.URI uri = EcoreUtil.getURI(picture);
+                if (uri == null)
+                {
+                    return null;
+                }
+                EObject proxy = EcoreUtil.create(picture.eClass());
+                ((InternalEObject)proxy).eSetProxyURI(uri);
+                return proxy;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The project a form object lives in, as an IProject rather than a name - the version that
      * resolves a platform picture comes from it.
      *
-     * @param command the FormCommand.
+     * @param command a FormCommand or a form item, placed on its form.
      * @return the project, or <code>null</code>
      */
     private static IProject projectOf(Object command)
@@ -5035,6 +5230,9 @@ public class BmFormHelper
      */
     private static final String LIST_SETTINGS = "ListSettings"; //$NON-NLS-1$
 
+    /** The last FQN segment of a form's conditional appearance. */
+    private static final String CONDITIONAL_APPEARANCE = "ConditionalAppearance"; //$NON-NLS-1$
+
     /**
      * The composition settings of a dynamic-list form attribute, created if the attribute does
      * not have them yet.
@@ -5108,6 +5306,156 @@ public class BmFormHelper
     }
 
     /**
+     * The conditional appearance of a form.
+     * <p>
+     * The form does not contain its conditional appearance. EDT keeps it as a top object of its own,
+     * registered as {@code <form FQN>.ConditionalAppearance} and stored in
+     * {@code ConditionalAppearance.dcssca} beside {@code Form.form}; the form's
+     * {@code conditionalAppearance} reference is transient, so a container set on it without being
+     * attached is not written by the export of the form. Inside a transaction the container is
+     * looked up by that FQN, and a missing one is built with the top-object URI of the FQN, attached
+     * under it, and only then set on the form. A form that is not a registered top object - one built
+     * in memory - keeps the container on the reference itself.
+     * </p>
+     * <p>
+     * The export of the form does not write this object either: a caller that changed it exports
+     * {@link #conditionalAppearanceFqn} with {@link #exportTopObject}.
+     * </p>
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @param create whether to create the container when the form has none
+     * @return the container, or <code>null</code> when the form has none and {@code create} is
+     *         <code>false</code>, or when the model cannot build or attach one
+     */
+    public static EObject conditionalAppearanceFor(Object transaction, Object form, boolean create)
+    {
+        if (!(form instanceof EObject))
+        {
+            return null;
+        }
+        EObject formObject = (EObject)form;
+        EStructuralFeature feature = formObject.eClass().getEStructuralFeature("conditionalAppearance"); //$NON-NLS-1$
+        if (feature == null)
+        {
+            return null;
+        }
+        String appearanceFqn = conditionalAppearanceFqn(transaction, form);
+        if (appearanceFqn == null)
+        {
+            Object current = formObject.eGet(feature);
+            if (current instanceof EObject || !create)
+            {
+                return current instanceof EObject ? (EObject)current : null;
+            }
+            Object built = BmDcsHelper.createElement("createDataCompositionConditionalAppearance"); //$NON-NLS-1$
+            if (!(built instanceof EObject))
+            {
+                return null;
+            }
+            formObject.eSet(feature, built);
+            return (EObject)built;
+        }
+        IBmTransaction tx = (IBmTransaction)transaction;
+        IBmObject attached = tx.getTopObjectByFqn(appearanceFqn);
+        if (attached == null && create)
+        {
+            Object built = BmDcsHelper.createElement("createDataCompositionConditionalAppearance"); //$NON-NLS-1$
+            if (!(built instanceof IBmObject) || !(built instanceof InternalEObject))
+            {
+                return null;
+            }
+            String engineId = ((IBmObject)form).bmGetEngine().getId();
+            ((InternalEObject)built).eSetProxyURI(BmUriUtil.createTopBmObjectUri(engineId, appearanceFqn));
+            tx.attachTopObject((IBmObject)built, appearanceFqn);
+            tx.toTransactionObject(formObject).eSet(feature, built);
+            attached = tx.getTopObjectByFqn(appearanceFqn);
+        }
+        return attached;
+    }
+
+    /**
+     * The FQN under which a form's conditional appearance is registered.
+     *
+     * @param transaction the open BM transaction, or <code>null</code> for a form built in memory
+     * @param form the form
+     * @return {@code <form FQN>.ConditionalAppearance}, or <code>null</code> outside a transaction or
+     *         for a form that is not a registered top object
+     */
+    public static String conditionalAppearanceFqn(Object transaction, Object form)
+    {
+        // bmGetFqn refuses a detached object, so a form built in memory is recognised by the
+        // missing transaction before its FQN is asked for.
+        if (!(transaction instanceof IBmTransaction) || !(form instanceof IBmObject))
+        {
+            return null;
+        }
+        String formFqn = ((IBmObject)form).bmGetFqn();
+        return formFqn == null || formFqn.isEmpty() ? null : formFqn + "." + CONDITIONAL_APPEARANCE; //$NON-NLS-1$
+    }
+
+    /**
+     * Writes one top object of a project to disk and waits for the write.
+     *
+     * @param project the project
+     * @param fqn the top object
+     * @return <code>null</code> when the object was written, otherwise why it was not
+     */
+    public static String exportTopObject(IProject project, String fqn)
+    {
+        IBmModelManager manager = Activator.getDefault().getBmModelManager();
+        if (manager == null)
+        {
+            return "object model manager is not published as a service"; //$NON-NLS-1$
+        }
+        BmExportHelper.Result written = BmExportHelper.forceExportAndWait(manager, project, fqn);
+        if (written == null)
+        {
+            return "forceExport returned no result"; //$NON-NLS-1$
+        }
+        if (!written.isOk())
+        {
+            return written.error != null ? written.error : "forceExport returned not-ok"; //$NON-NLS-1$
+        }
+        return written.syncFlushPending ? "the write to disk did not confirm within the wait" : null; //$NON-NLS-1$
+    }
+
+    /**
+     * The FQN under which the settings of a dynamic-list attribute are registered.
+     *
+     * @param form the form, as a transaction holds it.
+     * @param attributeName the dynamic-list attribute.
+     * @return {@code <form FQN>.Attributes.<name>.ExtInfo.ListSettings}, or <code>null</code> when
+     *         the attribute is absent or the form is not a registered top object
+     * @throws Exception if the attribute name cannot be read
+     */
+    public String listSettingsFqn(Object form, String attributeName) throws Exception
+    {
+        if (!(form instanceof IBmObject))
+        {
+            return null;
+        }
+        return listSettingsFqn(((IBmObject)form).bmGetFqn(), form, attributeName);
+    }
+
+    /**
+     * The FQN under which the settings of a dynamic-list attribute are registered, for a form whose
+     * own FQN is known.
+     *
+     * @param formFqn the form's FQN.
+     * @param form the form.
+     * @param attributeName the dynamic-list attribute, in any case.
+     * @return {@code <formFqn>.Attributes.<name as the model spells it>.ExtInfo.ListSettings}, or
+     *         <code>null</code> when the attribute is absent or the form FQN is empty
+     * @throws Exception if the attribute name cannot be read
+     */
+    String listSettingsFqn(String formFqn, Object form, String attributeName) throws Exception
+    {
+        Object attribute = findFormAttributeByName(form, attributeName);
+        return attribute == null ? null : externalPropertyFqn(formFqn, attribute, LIST_SETTINGS);
+    }
+
+    /**
      * The FQN under which an external property of a form attribute is registered.
      * <p>
      * Composed the way the shipped delegate composes it: the form's own FQN, then
@@ -5128,7 +5476,22 @@ public class BmFormHelper
         {
             return null;
         }
-        String formFqn = ((IBmObject)form).bmGetFqn();
+        return externalPropertyFqn(((IBmObject)form).bmGetFqn(), attribute, propertyName);
+    }
+
+    /**
+     * The FQN under which an external property of a form attribute is registered, for a form whose
+     * own FQN is known.
+     *
+     * @param formFqn the form's FQN.
+     * @param attribute the attribute carrying the property.
+     * @param propertyName the property.
+     * @return the FQN, or <code>null</code> when the form FQN or the attribute name is empty
+     * @throws Exception if the attribute name cannot be read
+     */
+    private String externalPropertyFqn(String formFqn, Object attribute, String propertyName)
+        throws Exception
+    {
         if (formFqn == null || formFqn.isEmpty())
         {
             return null;

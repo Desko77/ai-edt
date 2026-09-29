@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -26,6 +27,7 @@ import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.core.model.IModelObjectFactory;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProject;
@@ -35,6 +37,8 @@ import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.wiring.ServiceAccess;
+import com._1c.g5.wiring.ServiceProperties;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -58,6 +62,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  */
 public final class BmObjectHelper
 {
+    /** Service name of the metadata model factory among the registered {@code IModelObjectFactory} services. */
+    private static final String MD_OBJECT_FACTORY_SERVICE = "MdObjectFactory"; //$NON-NLS-1$
+
     private BmObjectHelper()
     {
         // utility class
@@ -172,10 +179,10 @@ public final class BmObjectHelper
      * by throwing a sentinel exception that {@link IBmModel#execute} treats as
      * normal abort - changes never reach the model.
      * <p>
-     * This overload preserves the legacy contract (no centralized guards). It
-     * delegates to the {@link #executeWriteOnObject(IProject, String, boolean,
-     * MdObjectAction, PreExecuteCheck)} variant with a {@code null} preCheck,
-     * but the supplier-lock guard always runs.
+     * This overload takes no caller-provided check. It delegates to the
+     * {@link #executeWriteOnObject(IProject, String, boolean, MdObjectAction, PreExecuteCheck)}
+     * variant with a {@code null} preCheck; the support-registry and supplier-lock
+     * guards of that variant run for every write.
      */
     public static Result executeWriteOnObject(IProject project, String ownerFqn, boolean dryRun,
         MdObjectAction action)
@@ -264,13 +271,18 @@ public final class BmObjectHelper
     }
 
     /**
-     * Executes the given action inside a BM read-write transaction with two
-     * automatic guards:
+     * Executes the given action inside a BM read-write transaction, behind three guards.
+     * <p>
+     * GUARD 0 runs before the transaction opens: the support registry's own answer for the address,
+     * asked by {@link ModelEditabilityGuard#checkFqn}. A refusal there fills {@link Result#error} and
+     * {@link Result#tags} and returns before a service is reached or any of the model is touched.
+     * Inside the transaction two more guards run:
+     * </p>
      * <ol>
-     *   <li>{@link MetadataGuards#checkSupplierLock} - always.</li>
-     *   <li>{@code preCheck.validate(owner)} - optional, caller-provided.</li>
+     *   <li>GUARD 1 - {@link MetadataGuards#checkSupplierLock} - always.</li>
+     *   <li>GUARD 2 - {@code preCheck.validate(owner)} - optional, caller-provided.</li>
      * </ol>
-     * Both guards may throw {@link MetadataGuards.BlockedGuardException} with
+     * Both of those may throw {@link MetadataGuards.BlockedGuardException} with
      * a structured {@link MetadataGuards.Verdict}. The verdict's
      * {@link MetadataGuards.ErrorTag} is captured into {@link Result#tags} so
      * the response carries a machine-readable field next to the {@code error}
@@ -294,6 +306,47 @@ public final class BmObjectHelper
     public static Result executeWriteOnObject(IProject project, String ownerFqn, boolean dryRun,
         MdObjectAction action, PreExecuteCheck preCheck, boolean autoBorrowOwner)
     {
+        return executeOnObject(project, ownerFqn, dryRun, action, preCheck, autoBorrowOwner, true);
+    }
+
+    /**
+     * Runs a read against a resolved owner with no write question asked.
+     * <p>
+     * The reading operations - {@code mxl_workshop} reading a template, naming its areas, measuring
+     * its print width - reach the model through this entry, which asks nothing: no support question,
+     * no supplier lock, no adoption of a not-yet-resolved owner, so a template of a closed object
+     * stays readable the way EDT reads it. The action still runs inside a transaction that rolls
+     * back, because the reader of a template without a spreadsheet model touches the model to build
+     * its answer.
+     * </p>
+     *
+     * @param project the workspace project
+     * @param ownerFqn the owner the read is aimed at, the way the write entry takes it
+     * @param action the read to execute inside the transaction
+     * @return the result of the read, or an error result
+     */
+    public static Result executeReadOnObject(IProject project, String ownerFqn,
+        MdObjectAction action)
+    {
+        return executeOnObject(project, ownerFqn, true, action, null, false, false);
+    }
+
+    /**
+     * The one body behind the write and the read entries.
+     *
+     * @param project the workspace project
+     * @param ownerFqn the owner the call is aimed at
+     * @param dryRun whether the transaction commits or rolls back
+     * @param action the action to execute inside the transaction
+     * @param preCheck a caller-provided check, or <code>null</code>
+     * @param autoBorrowOwner whether a not-found owner is adopted on the fly
+     * @param guarded whether the write questions are asked: the support registry before anything
+     *        else, the supplier lock inside the transaction. A read passes <code>false</code>.
+     * @return the result of the action, or an error result
+     */
+    private static Result executeOnObject(IProject project, String ownerFqn, boolean dryRun,
+        MdObjectAction action, PreExecuteCheck preCheck, boolean autoBorrowOwner, boolean guarded)
+    {
         Result r = new Result();
         r.fqn = ownerFqn;
         if (dryRun)
@@ -304,6 +357,26 @@ public final class BmObjectHelper
         {
             r.error = "project and ownerFqn are required"; //$NON-NLS-1$
             return r;
+        }
+
+        // GUARD 0: the support registry's own answer, asked by the address before any service is
+        // reached. It runs here so that a preview is judged by the same question a real call is,
+        // and so that the refusal arrives before anything of the model is touched to find out. The
+        // one case it cannot see is an owner this very call adopts (the address of a not-yet-adopted
+        // base object resolves to nothing); that one is asked again below, once the owner exists.
+        if (guarded)
+        {
+            MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, ownerFqn);
+            if (notEditable.blocked)
+            {
+                r.error = notEditable.error + (notEditable.hint == null
+                    || notEditable.hint.isEmpty() ? "" : " - " + notEditable.hint); //$NON-NLS-1$ //$NON-NLS-2$
+                if (notEditable.tag != null)
+                {
+                    r.tags.put(notEditable.tag.name, notEditable.tag.data);
+                }
+                return r;
+            }
         }
 
         IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
@@ -400,6 +473,24 @@ public final class BmObjectHelper
                     // wouldAutoBorrow tag and leaves owner null so the preview keeps the
                     // "no mutation" contract; a real run adopts and surfaces autoBorrowed.
                     owner = maybeLazyBorrowOwner(project, configProvider, parts, normalized, r, dryRun);
+                    if (owner != null && guarded)
+                    {
+                        // The adoption is what made the owner resolvable, so the address question
+                        // above could not have seen it: the freshly adopted object is asked about
+                        // here, once it exists.
+                        MetadataGuards.Verdict adopted =
+                            ModelEditabilityGuard.checkObject(project, owner);
+                        if (adopted.blocked)
+                        {
+                            r.error = adopted.error + (adopted.hint == null
+                                || adopted.hint.isEmpty() ? "" : " - " + adopted.hint); //$NON-NLS-1$ //$NON-NLS-2$
+                            if (adopted.tag != null)
+                            {
+                                r.tags.put(adopted.tag.name, adopted.tag.data);
+                            }
+                            return r;
+                        }
+                    }
                 }
             }
             else
@@ -461,11 +552,14 @@ public final class BmObjectHelper
                             throw new RuntimeException("Owner not found in transaction"); //$NON-NLS-1$
                         }
 
-                        // GUARD 1: supplier lock - always
-                        MetadataGuards.Verdict lock = MetadataGuards.checkSupplierLock(txOwner);
-                        if (lock.blocked)
+                        // GUARD 1: supplier lock - on a write, never on a read
+                        if (guarded)
                         {
-                            throw new MetadataGuards.BlockedGuardException(lock);
+                            MetadataGuards.Verdict lock = MetadataGuards.checkSupplierLock(txOwner);
+                            if (lock.blocked)
+                            {
+                                throw new MetadataGuards.BlockedGuardException(lock);
+                            }
                         }
 
                         // GUARD 2: caller-provided preCheck (optional)
@@ -704,6 +798,315 @@ public final class BmObjectHelper
     }
 
     /**
+     * Creates a top-level metadata object through the project-aware model object
+     * factory - the route the EDT wizard takes - so the object carries the
+     * per-type defaults the wizard writes into the {@code .mdo} (level count,
+     * code length, standard commands, produced types, ...), and answers why
+     * nothing was created when it produced no object.
+     *
+     * <p>{@link MdClassFactory} instantiates the EClass and stops there, which
+     * leaves those features at their Ecore defaults. The factory runs the type's
+     * {@code IMdObjectInitializer} for the given project version instead, and
+     * falls back to {@link MdClassFactory} itself for an EClass that has no
+     * initializer, so no type loses its old behaviour. A UUID is still ensured
+     * here, as the other creation routes in this class do - the catalog and the
+     * document initializers set one, but nothing in the factory contract makes
+     * every initializer do so.
+     *
+     * <p>The outcome carries the difference the caller needs: a name the runtime
+     * has no EClass for is a name to correct, while a factory that is not
+     * registered or that threw means the per-type initializers did not run at
+     * all - and the fallback {@link #createGenericObject(String)} then builds an
+     * object without any of the wizard's defaults. There is deliberately no
+     * object-only entry point: a caller that dropped the reason would have nothing
+     * to tell a degraded object from a fully initialized one.
+     *
+     * @param typeName English bare type name, e.g. {@code "Catalog"},
+     *     {@code "Document"}.
+     * @param v8Project project whose version and configuration the defaults are
+     *     taken from; {@code null} makes the initializers unrunnable and is
+     *     reported as an unreachable factory.
+     * @return the outcome of the attempt; its object is {@code null} unless the
+     *     factory produced one.
+     */
+    public static CreationOutcome createInitializedObjectWithReason(String typeName, IV8Project v8Project)
+    {
+        if (typeName == null || typeName.isEmpty())
+        {
+            return CreationOutcome.typeUnresolved("No metadata type name was given."); //$NON-NLS-1$
+        }
+        if (v8Project == null)
+        {
+            return CreationOutcome.factoryUnavailable("no V8 project was resolved, so the " //$NON-NLS-1$
+                + "per-type initializers cannot run"); //$NON-NLS-1$
+        }
+        EClass eClass = resolveMdEClass(typeName);
+        // EFactory.create() throws IllegalArgumentException on an abstract or
+        // interface EClass, and the factory turns that into null - which the
+        // caller would read as "the type does not resolve". Asked here instead,
+        // so an unusable type name is refused before the fallback hides it.
+        if (eClass == null || eClass.isAbstract() || eClass.isInterface())
+        {
+            return CreationOutcome.typeUnresolved("'" + typeName //$NON-NLS-1$
+                + "' has no usable metadata EClass on this runtime"); //$NON-NLS-1$
+        }
+        IModelObjectFactory factory;
+        try
+        {
+            factory = modelObjectFactory();
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("Metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' is not available: " + e.getMessage()); //$NON-NLS-1$
+            return CreationOutcome.factoryUnavailable("the metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' could not be resolved: " + e.getMessage()); //$NON-NLS-1$
+        }
+        if (factory == null)
+        {
+            return CreationOutcome.factoryUnavailable("the metadata model object factory '" //$NON-NLS-1$
+                + MD_OBJECT_FACTORY_SERVICE + "' is not registered on this runtime"); //$NON-NLS-1$
+        }
+        try
+        {
+            Object created = factory.create(eClass, v8Project);
+            if (created instanceof MdObject)
+            {
+                MdObject obj = (MdObject) created;
+                if (obj.getUuid() == null)
+                {
+                    obj.setUuid(UUID.randomUUID());
+                }
+                return CreationOutcome.created(obj);
+            }
+            return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
+                + ") answered " + (created == null ? "no object" //$NON-NLS-1$ //$NON-NLS-2$
+                    : created.getClass().getName()) + " instead of a metadata object"); //$NON-NLS-1$
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("MdObjectFactory.create(" + typeName //$NON-NLS-1$
+                + ") failed: " + e.getMessage()); //$NON-NLS-1$
+            return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
+                + ") failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Stands in for the factory lookup while a test drives the routes on which the
+     * service is missing or the factory throws. {@code null} outside tests, and the
+     * lookup below asks the service registry then.
+     */
+    private static Supplier<IModelObjectFactory> factorySupplier;
+
+    /**
+     * Sets the factory lookup {@link #modelObjectFactory()} answers with, in place of
+     * the service registry.
+     *
+     * <p>Package-visible on purpose: the test in this package is the only caller, and
+     * a running runtime keeps resolving the published service.
+     *
+     * @param supplier the lookup to use, or {@code null} to go back to the registry.
+     */
+    static void setFactorySupplier(Supplier<IModelObjectFactory> supplier)
+    {
+        factorySupplier = supplier;
+    }
+
+    /**
+     * The metadata model object factory EDT publishes for the application model.
+     *
+     * <p>Taken by service name because {@code IModelObjectFactory} is registered
+     * by several bundles - the metadata model, forms, graphical schemes and the
+     * core - and an unfiltered {@code ServiceAccess.get} refuses to choose
+     * between them. The name is the one {@code MdPlugin} registers itself under.
+     *
+     * @return the factory, or {@code null} when no such service is registered.
+     * @throws RuntimeException when the registry holds more than one match and
+     *     cannot choose between them.
+     */
+    private static IModelObjectFactory modelObjectFactory()
+    {
+        Supplier<IModelObjectFactory> supplier = factorySupplier;
+        if (supplier != null)
+        {
+            return supplier.get();
+        }
+        return ServiceAccess.get(IModelObjectFactory.class,
+            ServiceProperties.SERVICE_NAME, MD_OBJECT_FACTORY_SERVICE);
+    }
+
+    /**
+     * What a creation through the project-aware factory produced, and why it produced
+     * nothing when it did not.
+     *
+     * <p>The failures are told apart because they mean different things to a caller:
+     * an unresolvable type is a name to correct, while an unreachable or failing
+     * factory is a runtime on which the wizard's initializers did not run - and any
+     * object the caller then builds through the raw factory carries none of the
+     * per-type defaults a wizard-created {@code .mdo} holds.
+     */
+    public static final class CreationOutcome
+    {
+        /**
+         * How the creation ended.
+         */
+        public enum Status
+        {
+            /** The object came from the project-aware factory. */
+            CREATED,
+            /** No usable EClass: the name is unknown, abstract or an interface. */
+            TYPE_UNRESOLVED,
+            /** No metadata model object factory is registered on this runtime. */
+            FACTORY_UNAVAILABLE,
+            /** The factory was reached and threw, or answered with something else. */
+            FACTORY_FAILED
+        }
+
+        private final MdObject object;
+        private final Status status;
+        private final String reason;
+
+        /**
+         * @param object the created object, or {@code null} when nothing was created.
+         * @param status how the creation ended.
+         * @param reason why nothing was created, or {@code null} when the factory produced
+         *     the object.
+         */
+        private CreationOutcome(MdObject object, Status status, String reason)
+        {
+            this.object = object;
+            this.status = status;
+            this.reason = reason;
+        }
+
+        /**
+         * @return the created object, or {@code null} when nothing was created.
+         */
+        public MdObject getObject()
+        {
+            return object;
+        }
+
+        /**
+         * @return how the creation ended.
+         */
+        public Status getStatus()
+        {
+            return status;
+        }
+
+        /**
+         * Whether the initialized route did not run because the factory was unreachable
+         * or failed - the case in which the raw fallback loses the wizard defaults.
+         *
+         * @return {@code true} for an unavailable or failing factory, {@code false} for
+         *     a created object and for a type that does not resolve.
+         */
+        public boolean isFactoryFailure()
+        {
+            return status == Status.FACTORY_UNAVAILABLE || status == Status.FACTORY_FAILED;
+        }
+
+        /**
+         * @return why nothing was created, in the words the caller reports, or
+         *     {@code null} when the factory produced the object.
+         */
+        public String getReason()
+        {
+            return reason;
+        }
+
+        /**
+         * The sentence a creating operation answers with when it had to fall back to the
+         * raw factory: what the object is missing, and why the initialized route did not
+         * run.
+         *
+         * @return the warning, or {@code null} when none is due - the object came from the
+         *     factory, or the type does not resolve and the call is refused instead.
+         */
+        public String getDefaultsWarning()
+        {
+            if (!isFactoryFailure())
+            {
+                return null;
+            }
+            return "Created without the EDT wizard defaults (level count, code length, " //$NON-NLS-1$
+                + "standard commands, produced types): " + reason; //$NON-NLS-1$
+        }
+
+        /**
+         * @param object the object the factory produced.
+         * @return the outcome of a creation that went through the factory.
+         */
+        private static CreationOutcome created(MdObject object)
+        {
+            return new CreationOutcome(object, Status.CREATED, null);
+        }
+
+        /**
+         * @param reason why the name has no usable EClass.
+         * @return the outcome of a name this runtime cannot turn into a metadata type.
+         */
+        private static CreationOutcome typeUnresolved(String reason)
+        {
+            return new CreationOutcome(null, Status.TYPE_UNRESOLVED, reason);
+        }
+
+        /**
+         * @param reason why the factory could not be reached.
+         * @return the outcome of a runtime without a usable metadata model object factory.
+         */
+        private static CreationOutcome factoryUnavailable(String reason)
+        {
+            return new CreationOutcome(null, Status.FACTORY_UNAVAILABLE, reason);
+        }
+
+        /**
+         * @param reason what the factory did instead of answering an object.
+         * @return the outcome of a factory that was reached and failed.
+         */
+        private static CreationOutcome factoryFailed(String reason)
+        {
+            return new CreationOutcome(null, Status.FACTORY_FAILED, reason);
+        }
+    }
+
+    /**
+     * Resolves the EClass of a bare English metadata type name through
+     * {@code MdClassPackage.eINSTANCE.get<typeName>()}.
+     *
+     * @param typeName English bare type name, e.g. {@code "Catalog"}.
+     * @return the EClass, or {@code null} when the name has no package getter.
+     */
+    private static EClass resolveMdEClass(String typeName)
+    {
+        if (typeName == null || typeName.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            Method getter = MdClassPackage.class.getMethod("get" + typeName); //$NON-NLS-1$
+            Object lookup = getter.invoke(MdClassPackage.eINSTANCE);
+            if (lookup instanceof EClass)
+            {
+                return (EClass) lookup;
+            }
+        }
+        catch (NoSuchMethodException nsme)
+        {
+            return null;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("EClass lookup for " + typeName //$NON-NLS-1$
+                + " failed: " + e.getMessage()); //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
      * Creates a child metadata object (Attribute, TabularSection, Form,
      * Command, Predefined, PredefinedItem, Dimension, Resource, ContentItem)
      * inside the given owner.
@@ -912,30 +1315,7 @@ public final class BmObjectHelper
      */
     private static MdObject createViaPackage(String typeName)
     {
-        if (typeName == null || typeName.isEmpty())
-        {
-            return null;
-        }
-        EClass eClass = null;
-        try
-        {
-            Method getter = MdClassPackage.class.getMethod("get" + typeName); //$NON-NLS-1$
-            Object lookup = getter.invoke(MdClassPackage.eINSTANCE);
-            if (lookup instanceof EClass)
-            {
-                eClass = (EClass) lookup;
-            }
-        }
-        catch (NoSuchMethodException nsme)
-        {
-            return null;
-        }
-        catch (Exception e)
-        {
-            Activator.logWarning("createViaPackage(" + typeName //$NON-NLS-1$
-                + ") - EClass lookup failed: " + e.getMessage()); //$NON-NLS-1$
-            return null;
-        }
+        EClass eClass = resolveMdEClass(typeName);
         if (eClass == null)
         {
             return null;

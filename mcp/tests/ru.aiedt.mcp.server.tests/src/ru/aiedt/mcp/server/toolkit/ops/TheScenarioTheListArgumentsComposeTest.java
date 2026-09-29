@@ -765,8 +765,11 @@ public class TheScenarioTheListArgumentsComposeTest
             String answer = answered(p);
             assertTrue(other[0] + " beside the list arguments is still refused: " + answer, //$NON-NLS-1$
                 answer.contains("only one of them")); //$NON-NLS-1$
+            // A field only a finished run produces. The path fields cannot serve as the marker
+            // any more: the answer that names its result files names them per branch, so a refusal
+            // and a run that wrote its results would have to be told apart by something else.
             assertFalse(other[0] + " reached the launch: " + answer, //$NON-NLS-1$
-                answer.contains("junitXmlPath")); //$NON-NLS-1$
+                answer.contains("summary")); //$NON-NLS-1$
         }
     }
 

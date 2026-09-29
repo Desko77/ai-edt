@@ -863,7 +863,7 @@ public class QueryValidator
         }
 
         String scrubbed =
-            queryText.replaceAll("\"(?:[^\"]|\"\")*\"", " ").replaceAll("(?iu)\\bКАК\\s+[\\p{L}_]\\w*", " "); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            queryText.replaceAll("\"(?:[^\"]|\"\")*\"", " ").replaceAll("(?iuU)\\bКАК\\s+[\\p{L}_]\\w*", " "); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
         addWordHint(hints, scrubbed, "LIMIT", "1C QL has no LIMIT - use ВЫБРАТЬ ПЕРВЫЕ N right after ВЫБРАТЬ"); //$NON-NLS-1$ //$NON-NLS-2$
         addWordHint(hints, scrubbed, "SELECT", "SQL keyword - 1C QL uses ВЫБРАТЬ"); //$NON-NLS-1$ //$NON-NLS-2$

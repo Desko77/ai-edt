@@ -162,7 +162,10 @@ public final class YaxunitHelp
             + "## Troubleshooting\n"
             + "- **`yaxunit_tests` returns 0 tests** - extension may be loaded but inactive.\n"
             + "  Check that YAxUnit is Active in Configuration - Configuration extensions.\n"
-            + "- **Run hangs at \"Update configuration?\" modal** - pass `updateBeforeLaunch=true` (default).\n"
+            + "- **Run hangs at \"Update configuration?\" modal** - the infobase is updated before the\n"
+            + "  launch (`updateBeforeLaunch=true`, the default). A run that hangs there anyway was\n"
+            + "  started with `updateBeforeLaunch=false`, or the launch configuration itself waits for\n"
+            + "  a modal EDT cannot answer; check the client window.\n"
             + "- **installYaxunit reports a download/resolve failure** - GitHub may be\n"
             + "  unreachable or rate-limited (anonymous calls: ~60/hour per IP). Use the\n"
             + "  manual steps above, or mirror the repo and pass `yaxunitRepo`.\n"
@@ -195,10 +198,9 @@ public final class YaxunitHelp
             + "- `Server` — runs on server (default for `&НаСервере` modules)\n"
             + "- `Client` — runs on managed-application client\n"
             + "- `ExternalConnection` — runs via COM/COM+\n\n"
-            + "Filter through tool params:\n"
-            + "- `contexts=Server,Client` — run only Server and Client tests\n"
-            + "- `tags=smoke,integration` — run only tagged tests\n"
-            + "- `suites=ТестыПримеры,ТестыКадры` — restrict to named suites\n";
+            + "The tool filters a run by extension, module and test name only - the three the\n"
+            + "YAXUnit launch configuration carries. A call naming any other filter is refused\n"
+            + "rather than answered with a full run.\n";
     }
 
     private static String buildAdvanced()
@@ -211,7 +213,8 @@ public final class YaxunitHelp
             + "- See https://github.com/bia-technologies/yaxunit/blob/main/docs/MOCK.md\n\n"
             + "## Tags\n"
             + "Tag a test with `// @smoke` / `// @integration` etc. before procedure declaration.\n"
-            + "Filter via `yaxunit_tests tags=smoke,fast`.\n\n"
+            + "YAXUnit reads the annotations; `yaxunit_tests` has no argument that filters by them -\n"
+            + "narrow the run with `modules=` / `tests=` instead.\n\n"
             + "## Suites\n"
             + "Group tests into suites by module name or via `// @suite=Кадры` annotation.\n\n"
             + "## RPC mode\n"

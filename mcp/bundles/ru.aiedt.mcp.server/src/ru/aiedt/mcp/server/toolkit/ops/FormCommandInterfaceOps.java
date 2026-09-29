@@ -2,10 +2,21 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.InternalEObject;
+
+import com._1c.g5.v8.bm.core.IBmTransaction;
+import com._1c.g5.v8.dt.mcore.Command;
+import com._1c.g5.v8.dt.mcore.CommandGroupCategory;
+import com._1c.g5.v8.dt.mcore.McoreFactory;
+import com._1c.g5.v8.dt.mcore.StandardCommandGroup;
+import com._1c.g5.v8.dt.metadata.mdclass.AdjustableBoolean;
+import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -20,12 +31,23 @@ import ru.aiedt.mcp.server.support.TextSuggest;
  * from {@link EditMetadataTool} (Inc4 god-class split); handlers are package-visible
  * and dispatched through the single-source op-registry. Shared stateless helpers live
  * on {@link EditMetadataTool} (qualified calls); cluster-local helpers
- * ({@link #validateCommandInterfaceGroup}, {@link #applyCommandInterfaceMutation},
- * {@link #findCommandInterfaceItemByFqn}, {@link #createCommandInterfaceItem},
- * {@link #setCommandInterfaceItemProperty}, {@link #coerceForSetter}) are private here.
+ * ({@link #validateCommandInterfaceGroup}, {@link #findCommandInterfaceItemByFqn},
+ * {@link #createCommandInterfaceItem}, {@link #setCommandInterfaceItemProperty},
+ * {@link #coerceForSetter}) are private here. {@link #applyCommandInterfaceMutation} and
+ * {@link #commandFqnOfItem} are package-visible because the regression test drives them
+ * directly against a form model built from the factories.
  */
 final class FormCommandInterfaceOps
 {
+    /** Lower-case prefix of a form command address, compared against a lower-cased address. */
+    private static final String FORM_COMMAND_MARKER = "form.command."; //$NON-NLS-1$
+
+    /** Lower-case prefix of every address that names something inside a form. */
+    private static final String FORM_PREFIX = "form."; //$NON-NLS-1$
+
+    /** Lower-case marker of a standard command segment inside an address. */
+    private static final String STANDARD_COMMAND_MARKER = ".standardcommand."; //$NON-NLS-1$
+
     String opAddFormCommandInterfaceItem(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -83,7 +105,7 @@ final class FormCommandInterfaceOps
         final Integer indexFinal = index;
         final boolean formDryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         String result = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) ->
-            applyCommandInterfaceMutation(form, panelLcFinal, commandFqn,
+            applyCommandInterfaceMutation(tx, form, panelLcFinal, commandFqn,
                 "add", groupFinal, visibleFinal, indexFinal, null)); //$NON-NLS-1$
         return EditMetadataTool.formatFormResultWithApiTag(result, "add_form_command_interface_item", formFqn); //$NON-NLS-1$
     }
@@ -127,7 +149,7 @@ final class FormCommandInterfaceOps
         }
         final boolean formDryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         String result = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) ->
-            applyCommandInterfaceMutation(form, panelLc, commandFqn,
+            applyCommandInterfaceMutation(tx, form, panelLc, commandFqn,
                 "remove", null, null, null, null)); //$NON-NLS-1$
         return EditMetadataTool.formatFormResultWithApiTag(result, "remove_form_command_interface_item", formFqn); //$NON-NLS-1$
     }
@@ -190,7 +212,7 @@ final class FormCommandInterfaceOps
         final String propValueFinal = propertyValue;
         final boolean formDryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         String result = helper.executeFormOperation(project, formFqn, formDryRun, (tx, form) ->
-            applyCommandInterfaceMutation(form, panelLc, commandFqn,
+            applyCommandInterfaceMutation(tx, form, panelLc, commandFqn,
                 "set_property", null, null, null, //$NON-NLS-1$
                 new String[] { propLcFinal, propValueFinal }));
         return EditMetadataTool.formatFormResultWithApiTag(result, "set_form_command_interface_item_property", formFqn); //$NON-NLS-1$
@@ -235,10 +257,23 @@ final class FormCommandInterfaceOps
      * <p>When the EDT runtime exposes no {@code Form.getCommandInterface()}
      * method (older builds), the response carries
      * {@code formApiNotFound} so the agent picks the GUI
-     * fallback.
+     * fallback. The same tag carries a command address that resolves to no
+     * command: the item is not created and the panel is left untouched.
+     *
+     * @param transaction the BM transaction the mutation runs in, or <code>null</code> when the
+     *     caller holds none
+     * @param form the form being edited
+     * @param panelLc the panel, lower-cased: {@code navigation} or {@code commandbar}
+     * @param commandFqn the address of the command
+     * @param mode {@code add}, {@code remove} or {@code set_property}
+     * @param group the group to apply on an add, or <code>null</code>
+     * @param visible the visibility to apply on an add, or <code>null</code>
+     * @param index the position to apply on an add, or <code>null</code>
+     * @param property the name and value of the property to set on {@code set_property}
+     * @return the status text the caller turns into the tool answer
      */
     @SuppressWarnings("unchecked")
-    private static String applyCommandInterfaceMutation(Object form, String panelLc,
+    static String applyCommandInterfaceMutation(Object transaction, Object form, String panelLc,
         String commandFqn, String mode, String group, Boolean visible, Integer index,
         String[] property)
     {
@@ -291,38 +326,47 @@ final class FormCommandInterfaceOps
                             + "setFormCommandInterfaceItemProperty to change its " //$NON-NLS-1$
                             + "group/visible/index, or removeFormCommandInterfaceItem first."; //$NON-NLS-1$
                     }
+                    // The command is the one property an item cannot exist without, and the model
+                    // carries it as a Command object rather than as its FQN. The address is
+                    // therefore resolved before the item is created: an address that names no
+                    // command is refused here, with the panel still untouched.
+                    Object command = resolveCommandByFqn(transaction, form, commandFqn);
+                    if (command == null)
+                    {
+                        return "Error: formApiNotFound:" //$NON-NLS-1$
+                            + "command '" + commandFqn + "' does not resolve to a command. Expected " //$NON-NLS-1$
+                            + "Form.Command.<Name>, Form.StandardCommand.<Name>, " //$NON-NLS-1$
+                            + "CommonCommand.<Name>, <Type>.<Object>.Command.<Name> or " //$NON-NLS-1$
+                            + "<Type>.<Object>.StandardCommand.<Name>."; //$NON-NLS-1$
+                    }
                     Object newItem = createCommandInterfaceItem(panelObject, commandFqn);
                     if (newItem == null)
                     {
                         return "Error: formApiNotFound:" //$NON-NLS-1$
                             + "no factory method to create a command interface item."; //$NON-NLS-1$
                     }
-                    // The command is the one property an item cannot exist without. The EDT 2026.1
-                    // model exposes setCommand(Command), not setCommandFqn(String), and resolving the
-                    // FQN to the Command EObject needs the BM transaction this reflection path does
-                    // not hold - so if binding the command did not take, refuse rather than add an
-                    // empty item that would corrupt the panel. Point at the GUI, same as a missing
-                    // getCommandInterface().
-                    String commandNotApplied = setCommandInterfaceItemProperty(newItem, "commandFqn", commandFqn); //$NON-NLS-1$
+                    String commandNotApplied = setCommandInterfaceItemProperty(newItem, "command", command); //$NON-NLS-1$
                     if (commandNotApplied != null)
                     {
+                        // An item without its command would corrupt the panel, so refuse rather
+                        // than add it half-bound. Point at the GUI, same as a missing
+                        // getCommandInterface().
                         return "Error: formApiNotFound:" //$NON-NLS-1$
-                            + "binding a command by FQN is not supported on this EDT runtime " //$NON-NLS-1$
-                            + "(setCommand needs the resolved Command object, not the FQN string). " //$NON-NLS-1$
-                            + "Use the EDT GUI 'Command interface' editor to add the command."; //$NON-NLS-1$
+                            + "the resolved command was not bound to the item (" //$NON-NLS-1$
+                            + commandNotApplied + ")."; //$NON-NLS-1$
                     }
                     java.util.List<String> notAppliedList = new java.util.ArrayList<>();
                     if (group != null && !group.isEmpty())
                     {
-                        addIfNotNull(notAppliedList, setCommandInterfaceItemProperty(newItem, "group", group)); //$NON-NLS-1$
+                        addIfNotNull(notAppliedList, applyCommandInterfaceGroup(newItem, panelObject, group));
                     }
                     if (visible != null)
                     {
-                        addIfNotNull(notAppliedList, setCommandInterfaceItemProperty(newItem, "visible", visible)); //$NON-NLS-1$
+                        addIfNotNull(notAppliedList, applyCommandInterfaceVisible(newItem, visible));
                     }
                     if (index != null)
                     {
-                        addIfNotNull(notAppliedList, setCommandInterfaceItemProperty(newItem, "order", index)); //$NON-NLS-1$
+                        addIfNotNull(notAppliedList, setCommandInterfaceItemProperty(newItem, "index", index)); //$NON-NLS-1$
                     }
                     itemList.add(newItem);
                     return "added " + commandFqn + " to " + panelLc //$NON-NLS-1$ //$NON-NLS-2$
@@ -346,18 +390,18 @@ final class FormCommandInterfaceOps
                     String notApplied;
                     if ("group".equals(propLc)) //$NON-NLS-1$
                     {
-                        notApplied = setCommandInterfaceItemProperty(existing, "group", propValue); //$NON-NLS-1$
+                        notApplied = applyCommandInterfaceGroup(existing, panelObject, propValue);
                     }
                     else if ("visible".equals(propLc)) //$NON-NLS-1$
                     {
-                        notApplied = setCommandInterfaceItemProperty(existing, "visible", //$NON-NLS-1$
+                        notApplied = applyCommandInterfaceVisible(existing,
                             "true".equalsIgnoreCase(propValue)); //$NON-NLS-1$
                     }
                     else if ("index".equals(propLc)) //$NON-NLS-1$
                     {
                         try
                         {
-                            notApplied = setCommandInterfaceItemProperty(existing, "order", //$NON-NLS-1$
+                            notApplied = setCommandInterfaceItemProperty(existing, "index", //$NON-NLS-1$
                                 Integer.parseInt(propValue));
                         }
                         catch (NumberFormatException nfe)
@@ -385,12 +429,24 @@ final class FormCommandInterfaceOps
         }
     }
 
+    /**
+     * Finds the item of a panel whose command carries an address.
+     *
+     * @param items the panel's items
+     * @param commandFqn the address of the command
+     * @return the item, or <code>null</code> when no item carries that address
+     */
     private static Object findCommandInterfaceItemByFqn(
         org.eclipse.emf.common.util.EList<Object> items, String commandFqn)
     {
+        if (commandFqn == null)
+        {
+            return null;
+        }
         for (Object item : items)
         {
-            if (java.util.Objects.equals(commandFqn, commandFqnOfItem(item)))
+            String itemFqn = commandFqnOfItem(item);
+            if (itemFqn != null && itemFqn.equalsIgnoreCase(commandFqn))
             {
                 return item;
             }
@@ -399,30 +455,30 @@ final class FormCommandInterfaceOps
     }
 
     /**
-     * Best-effort FQN of the command bound to a command-interface item, probed in reliability order:
-     * a hypothetical {@code getCommandFqn} accessor first (kept for forward compatibility with a
-     * runtime that might expose one), then the EDT-native {@code bmGetFqn()} of the bound command when
-     * it is itself a top BM object (a free-standing {@code CommonCommand.X} - the common case for a
-     * command-interface reference), then the command's {@code toString()} as a weak last resort.
-     * Returns {@code null} when no probe yields a value.
+     * The address of the command bound to a command-interface item, probed in reliability order: a
+     * hypothetical {@code getCommandFqn} accessor first (kept for forward compatibility with a runtime
+     * that might expose one), then the command path built by walking the command's own container, then
+     * the EDT-native {@code bmGetFqn()} of the bound command when it is a top BM object, then the
+     * command's {@code toString()} as a weak last resort. Returns {@code null} when no probe yields a
+     * value.
      * <p>
      * The EDT 2026.1 {@code FormCommandInterfaceItem} model exposes only {@code getCommand(Command)};
      * the {@code getCommandFqn} probe this class originally led with never resolved here, so every
-     * by-FQN lookup fell through to {@code Command.toString()} (an EMF label, not an FQN) and silently
-     * returned null - {@code remove} and {@code set_property} always answered "not present" and the
-     * {@code add} duplicate check never saw an existing entry. The {@code bmGetFqn} step fixes the
-     * free-standing common-command case.
+     * by-FQN lookup fell through to {@code Command.toString()} (an EMF label, not an address) and
+     * silently returned null - {@code remove} and {@code set_property} always answered "not present"
+     * and the {@code add} duplicate check never saw an existing entry.
      * </p>
      * <p>
-     * Known limitation: {@code IBmObject.bmGetFqn()} asserts {@code bmIsTop()} and throws for a nested
-     * object command ({@code Catalog.X.Command.Y}) or a form command ({@code ...Form.F.Command.C}), so
-     * those do not resolve here - the by-FQN lookup honestly returns null rather than risk a wrong match
-     * from a guessed containment path (the segment type for a {@code CatalogCommand} is {@code Command}
-     * but for a {@code StandardCommand} it stays {@code StandardCommand}, and that mapping is not
-     * reconstructible from the EClass alone). The canonical FQN for a nested command comes from EDT's
-     * {@code DelegatingFqnProvider} (resource-set context), which this reflection path does not hold;
-     * wiring it is follow-up that needs a live form to verify.
+     * {@code IBmObject.bmGetFqn()} asserts {@code bmIsTop()} and throws for every command nested in
+     * another object - an object command ({@code Catalog.X.Command.Y}), a standard command of an
+     * object ({@code Catalog.X.StandardCommand.Y}) or a command of the form itself
+     * ({@code Form.Command.<Name>}, {@code Form.Item.<Item>.StandardCommand.<Name>}). The container
+     * walk answers those, in the spelling the {@code .form} file writes and
+     * {@code get_form_structure} reports, so an address read from the form is the address the
+     * mutation operations accept.
      * </p>
+     * @param item the command-interface item
+     * @return the address of its command, or <code>null</code> when no probe yields one
      */
     static String commandFqnOfItem(Object item)
     {
@@ -439,6 +495,11 @@ final class FormCommandInterfaceOps
         if (cmd == null)
         {
             return null;
+        }
+        String path = GetFormStructureTool.commandPath(cmd);
+        if (path != null && !path.isEmpty())
+        {
+            return path;
         }
         Object bmFqn = reflectiveGetter(cmd, "bmGetFqn"); //$NON-NLS-1$
         if (bmFqn instanceof String && !((String)bmFqn).isEmpty())
@@ -461,6 +522,217 @@ final class FormCommandInterfaceOps
             // "this element has no such property".
             return null;
         }
+    }
+
+    /**
+     * Resolves the address of a command to the command object the model holds, so a mutation binds
+     * an object rather than a string.
+     *
+     * <p>The accepted addresses are the ones {@code get_form_structure} reports and the form file
+     * writes: {@code Form.Command.<Name>} for a command of the form itself,
+     * {@code Form.StandardCommand.<Name>} and {@code Form.Item.<Item>.StandardCommand.<Name>} for a
+     * standard command the form carries, {@code CommonCommand.<Name>},
+     * {@code <Type>.<Object>.Command.<Name>} and {@code <Type>.<Object>.StandardCommand.<Name>} for
+     * a command of the project model. Names are matched case-insensitively.
+     *
+     * @param transaction the BM transaction the mutation runs in, or <code>null</code> when the
+     *     caller holds none
+     * @param form the form being edited
+     * @param commandFqn the command address
+     * @return the command object, or <code>null</code> when nothing reachable from the form or the
+     *     project carries that address
+     */
+    private static Object resolveCommandByFqn(Object transaction, Object form, String commandFqn)
+    {
+        if (commandFqn == null || commandFqn.isEmpty())
+        {
+            return null;
+        }
+        String fqn = commandFqn.trim();
+        String lower = fqn.toLowerCase(Locale.ROOT);
+        if (lower.startsWith(FORM_COMMAND_MARKER))
+        {
+            return findNamed(form, "getFormCommands", //$NON-NLS-1$
+                fqn.substring(FORM_COMMAND_MARKER.length()));
+        }
+        int standard = lower.lastIndexOf(STANDARD_COMMAND_MARKER);
+        if (lower.startsWith(FORM_PREFIX))
+        {
+            // A standard command of the form or of one of its items; the form carries both, so the
+            // item the address names does not have to be located.
+            return standard < 0 ? null
+                : findNamed(form, "getCommands", //$NON-NLS-1$
+                    fqn.substring(standard + STANDARD_COMMAND_MARKER.length()));
+        }
+        if (standard > 0)
+        {
+            Object owner = referenceTarget(transaction, fqn.substring(0, standard));
+            return owner == null ? null
+                : findNamed(owner, "getStandardCommands", //$NON-NLS-1$
+                    fqn.substring(standard + STANDARD_COMMAND_MARKER.length()));
+        }
+        return referenceTarget(transaction, fqn);
+    }
+
+    /**
+     * Resolves an address that names something outside the form, through the BM transaction, and
+     * keeps it only when it is a command.
+     *
+     * @param transaction the BM transaction the mutation runs in, or <code>null</code> when the
+     *     caller holds none
+     * @param fqn the address of a metadata object or of one of its commands
+     * @return the command the address names, or <code>null</code> when the address resolves to
+     *     nothing or to something that is not a command
+     */
+    private static Object referenceTarget(Object transaction, String fqn)
+    {
+        if (!(transaction instanceof IBmTransaction))
+        {
+            // The reflection path can be driven without a transaction, and nothing outside the form
+            // is reachable then; the caller reads null as "not resolved".
+            return null;
+        }
+        Object target;
+        try
+        {
+            target = EditMetadataTool.resolveReferenceTarget((IBmTransaction) transaction, fqn);
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logWarning("resolveCommandByFqn: '" + fqn + "' not resolved - " //$NON-NLS-1$ //$NON-NLS-2$
+                + e.getMessage());
+            return null;
+        }
+        return target instanceof Command ? target : null;
+    }
+
+    /**
+     * Finds a named element of a model list.
+     *
+     * @param container the object holding the list, or <code>null</code>
+     * @param listGetter the getter of the list, for example {@code getFormCommands}
+     * @param name the wanted name, matched case-insensitively
+     * @return the element carrying the name, or <code>null</code> when the container has no such
+     *     list or none of its elements carries the name
+     */
+    private static Object findNamed(Object container, String listGetter, String name)
+    {
+        if (container == null || name == null || name.isEmpty())
+        {
+            return null;
+        }
+        Object list = reflectiveGetter(container, listGetter);
+        if (!(list instanceof Iterable))
+        {
+            return null;
+        }
+        for (Object element : (Iterable<?>) list)
+        {
+            Object elementName = reflectiveGetter(element, "getName"); //$NON-NLS-1$
+            if (elementName instanceof String && name.equalsIgnoreCase((String)elementName))
+            {
+                return element;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Applies a group to a command-interface item. The item references a {@code CommandGroup}
+     * object, not a name, so a group another item of the same panel already carries is reused, and a
+     * group no item carries yet is created as a built-in one.
+     *
+     * @param item the item
+     * @param panelObject the panel the item belongs to or is being added to
+     * @param groupName the group name, one of the {@code FormNavigationPanel*} /
+     *     {@code FormCommandBar*} names
+     * @return <code>null</code> on success, or a short failure reason
+     */
+    private static String applyCommandInterfaceGroup(Object item, Object panelObject,
+        String groupName)
+    {
+        Object group = findGroupInPanel(panelObject, groupName);
+        if (group == null)
+        {
+            group = referenceStandardCommandGroup(groupName);
+        }
+        return setCommandInterfaceItemProperty(item, "group", group); //$NON-NLS-1$
+    }
+
+    /**
+     * The group that one of the panel's items already carries.
+     *
+     * @param panelObject the panel
+     * @param groupName the group name, matched case-insensitively
+     * @return the group object, or <code>null</code> when no item of the panel carries that name
+     */
+    private static Object findGroupInPanel(Object panelObject, String groupName)
+    {
+        Object items = reflectiveGetter(panelObject, "getCmiFragmentRecord"); //$NON-NLS-1$
+        if (!(items instanceof Iterable))
+        {
+            return null;
+        }
+        for (Object item : (Iterable<?>) items)
+        {
+            Object group = reflectiveGetter(item, "getGroup"); //$NON-NLS-1$
+            Object name = group == null ? null : reflectiveGetter(group, "getName"); //$NON-NLS-1$
+            if (name instanceof String && groupName.equalsIgnoreCase((String)name))
+            {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A reference to a built-in command group that the form does not carry yet.
+     *
+     * <p>A detached, factory-created {@code StandardCommandGroup} is a BM object with no namespace
+     * and no resource, so the transaction cannot build a persistable reference to it and the commit
+     * fails with "Failed to persist reference value". The reference is therefore written the way
+     * EDT's own XML reader writes a group it has not resolved yet: a proxy with an
+     * {@code unresolved:/<name>} URI, which the form writer serializes back to the bare group name
+     * in the {@code <group>} element.
+     *
+     * @param groupName the group name
+     * @return the group object to reference
+     */
+    private static StandardCommandGroup referenceStandardCommandGroup(String groupName)
+    {
+        StandardCommandGroup group = McoreFactory.eINSTANCE.createStandardCommandGroup();
+        group.setName(groupName);
+        group.setCategory(groupCategory(groupName));
+        ((InternalEObject)group).eSetProxyURI(URI.createURI("unresolved:/" + groupName)); //$NON-NLS-1$
+        return group;
+    }
+
+    /**
+     * The category a built-in form group name belongs to.
+     *
+     * @param groupName the group name
+     * @return the category the name's prefix selects
+     */
+    private static CommandGroupCategory groupCategory(String groupName)
+    {
+        return groupName.regionMatches(true, 0, "FormCommandBar", 0, "FormCommandBar".length()) //$NON-NLS-1$ //$NON-NLS-2$
+            ? CommandGroupCategory.FORM_COMMAND_BAR : CommandGroupCategory.FORM_NAVIGATION_PANEL;
+    }
+
+    /**
+     * Applies the visibility of a command-interface item. The model carries it as an
+     * {@code AdjustableBoolean} rather than as a plain flag, so the flag is wrapped before the
+     * setter is looked up.
+     *
+     * @param item the item
+     * @param visible the wanted visibility
+     * @return <code>null</code> on success, or a short failure reason
+     */
+    private static String applyCommandInterfaceVisible(Object item, boolean visible)
+    {
+        AdjustableBoolean flag = MdClassFactory.eINSTANCE.createAdjustableBoolean();
+        flag.setCommon(visible);
+        return setCommandInterfaceItemProperty(item, "userVisible", flag); //$NON-NLS-1$
     }
 
     private static Object createCommandInterfaceItem(Object panelObject, String commandFqn)

@@ -112,6 +112,8 @@ public class AnUnknownComparisonTypeIsRefusedTest
             message.contains("Failed to set " + property)); //$NON-NLS-1$
         assertTrue("and it names the literals that are allowed: " + message, //$NON-NLS-1$
             message.contains("Allowed:")); //$NON-NLS-1$
+        assertTrue("set off from the setter's answer as a sentence of its own: " + message, //$NON-NLS-1$
+            message.contains(". Allowed: ")); //$NON-NLS-1$
     }
 
     /**
@@ -149,7 +151,9 @@ public class AnUnknownComparisonTypeIsRefusedTest
         {
             assertRefusalNamesTheLiterals(e, "comparisonType"); //$NON-NLS-1$
         }
-        assertEquals("the appearance gained no item", 0, itemCount("conditionalAppearance")); //$NON-NLS-1$ //$NON-NLS-2$
+        EList<EObject> variants = BmDcsHelper.getEObjectList(schema, "getSettingsVariants"); //$NON-NLS-1$
+        assertTrue("the appearance gained no item", variants == null || variants.isEmpty() //$NON-NLS-1$
+            || itemCount("conditionalAppearance") == 0); //$NON-NLS-1$
     }
 
     /**

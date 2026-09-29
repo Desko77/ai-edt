@@ -199,12 +199,7 @@ public class GenerateEventHandlersTool implements IMcpTool
         String existing = null;
         try
         {
-            BslModuleAccess.ModulePathResolution resolved =
-                BslModuleAccess.resolveModulePath(project, modulePath);
-            if (resolved.isResolved())
-            {
-                existing = BslModuleAccess.readFileText(project.getFile(resolved.getPath()));
-            }
+            existing = BslModuleAccess.readModuleIfPresent(project, modulePath);
         }
         catch (Exception cannotRead)
         {

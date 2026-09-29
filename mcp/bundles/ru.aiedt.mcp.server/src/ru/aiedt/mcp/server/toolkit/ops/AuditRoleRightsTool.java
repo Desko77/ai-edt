@@ -40,6 +40,16 @@ public class AuditRoleRightsTool implements IMcpTool
 {
     public static final String NAME = "audit_role_rights"; //$NON-NLS-1$
 
+    /** The description of {@code apply}, shared with the security_audit facade. */
+    static final String ORPHANS_APPLY_DESCRIPTION =
+        "orphans mode: removes the entries this call finds and lists them in `removed`; " //$NON-NLS-1$
+            + "call without apply first to read the list."; //$NON-NLS-1$
+
+    /** The description of {@code objectType}, shared with the security_audit facade. */
+    static final String OBJECT_TYPE_DESCRIPTION =
+        "Catalog | Document | Register | Report | any metadata type | all (default all). " //$NON-NLS-1$
+            + "Register selects every register kind."; //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -57,24 +67,21 @@ public class AuditRoleRightsTool implements IMcpTool
             + "XML imports - and removes them only when asked with apply=true."; //$NON-NLS-1$
     }
 
+    /** {@inheritDoc} */
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("roleName", "Role name (required for rights / missing modes)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("roleName", "Role name (required for rights / missing / orphans modes)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("roleNames", //$NON-NLS-1$
                 "Comma-separated role names (for conflicts / impact modes)") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
                 "rights | missing | conflicts | impact | orphans (default rights)") //$NON-NLS-1$
-            .booleanProperty("apply", //$NON-NLS-1$
-                "orphans mode: actually remove what was found. Off by default - a rights entry " //$NON-NLS-1$
-                    + "removed is a security change nobody reviews afterwards, so the first answer " //$NON-NLS-1$
-                    + "is always a list to read.") //$NON-NLS-1$
-            .stringProperty("objectType", //$NON-NLS-1$
-                "Catalog | Document | Register | Report | all (default all)") //$NON-NLS-1$
+            .booleanProperty("apply", ORPHANS_APPLY_DESCRIPTION) //$NON-NLS-1$
+            .stringProperty("objectType", OBJECT_TYPE_DESCRIPTION) //$NON-NLS-1$
             .stringProperty("objectFqn", "Specific object FQN to focus on") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("format", "json | markdown (default json)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("format", "json | markdown (default json). markdown applies to mode=rights") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("includeRls", "Include hasRls flag in output (default false)") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
@@ -110,6 +117,14 @@ public class AuditRoleRightsTool implements IMcpTool
         }
     }
 
+    /**
+     * Runs the requested mode against the project's configuration.
+     *
+     * @param project the project
+     * @param mode the mode name
+     * @param params the call arguments
+     * @return the JSON answer
+     */
     private String runMode(IProject project, String mode, Map<String, String> params)
     {
         IConfigurationProvider provider = Activator.getDefault().getConfigurationProvider();
@@ -123,6 +138,11 @@ public class AuditRoleRightsTool implements IMcpTool
             return ToolResult.error("Configuration not available").toJson(); //$NON-NLS-1$
         }
         String objectType = JsonUtils.extractStringArgument(params, "objectType"); //$NON-NLS-1$
+        String unknownType = RoleRightsAnalyzer.unknownObjectTypeMessage(objectType);
+        if (unknownType != null)
+        {
+            return ToolResult.error(unknownType).toJson();
+        }
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
         boolean includeRls = JsonUtils.extractBooleanArgument(params, "includeRls", false); //$NON-NLS-1$
         Collection<MdObject> objects = collectObjects(config, objectType);
@@ -131,7 +151,7 @@ public class AuditRoleRightsTool implements IMcpTool
             case "rights": //$NON-NLS-1$
                 return runRights(project, config, objects, params, format, includeRls);
             case "orphans": //$NON-NLS-1$
-                return orphans(params, project, config);
+                return orphans(params, project, config, format);
             case "missing": //$NON-NLS-1$
                 return runMissing(project, config, objects, params, format);
             case "conflicts": //$NON-NLS-1$
@@ -144,6 +164,14 @@ public class AuditRoleRightsTool implements IMcpTool
         }
     }
 
+    /**
+     * The configuration's metadata objects of the kind {@code objectType} selects, by the rule of
+     * {@link RoleRightsAnalyzer#kindSelected(String, String)}.
+     *
+     * @param config the configuration
+     * @param objectType the kind filter; {@code null} or {@code all} selects every object
+     * @return the objects
+     */
     private Collection<MdObject> collectObjects(Configuration config, String objectType)
     {
         List<MdObject> objects = new ArrayList<>();
@@ -162,12 +190,6 @@ public class AuditRoleRightsTool implements IMcpTool
             {
                 continue;
             }
-            String type = name.substring(3);
-            if (objectType != null && !"all".equalsIgnoreCase(objectType) //$NON-NLS-1$
-                && !type.toLowerCase().startsWith(objectType.toLowerCase()))
-            {
-                continue;
-            }
             try
             {
                 Object value = m.invoke(config);
@@ -175,7 +197,8 @@ public class AuditRoleRightsTool implements IMcpTool
                 {
                     for (Object item : (java.util.List<?>) value)
                     {
-                        if (item instanceof MdObject)
+                        if (item instanceof MdObject
+                            && RoleRightsAnalyzer.kindSelected(((MdObject) item).eClass().getName(), objectType))
                         {
                             objects.add((MdObject) item);
                         }
@@ -225,6 +248,16 @@ public class AuditRoleRightsTool implements IMcpTool
         return tr.toJson();
     }
 
+    /**
+     * Lists the objects on which the role allows no right.
+     *
+     * @param project the project
+     * @param config the configuration
+     * @param objects the objects the kind filter selected
+     * @param params the call arguments
+     * @param format the requested format; this mode answers JSON
+     * @return the JSON answer
+     */
     private String runMissing(IProject project, Configuration config, Collection<MdObject> objects,
         Map<String, String> params, String format)
     {
@@ -241,14 +274,24 @@ public class AuditRoleRightsTool implements IMcpTool
         RoleRightsAnalyzer.RightsTable table = RoleRightsAnalyzer.analyze(project, role, objects);
         String objectType = JsonUtils.extractStringArgument(params, "objectType"); //$NON-NLS-1$
         List<String> missing = RoleRightsAnalyzer.missingObjects(table, objectType);
-        return ToolResult.success()
+        return withFormatNote(ToolResult.success()
             .put("mode", "missing") //$NON-NLS-1$ //$NON-NLS-2$
             .put("roleName", roleName) //$NON-NLS-1$
             .put("missingCount", missing.size()) //$NON-NLS-1$
-            .put("missing", missing) //$NON-NLS-1$
+            .put("missing", missing), format) //$NON-NLS-1$
             .toJson();
     }
 
+    /**
+     * Lists the rights one listed role allows and another denies on the same object.
+     *
+     * @param project the project
+     * @param config the configuration
+     * @param objects the objects the kind filter selected
+     * @param params the call arguments
+     * @param format the requested format; this mode answers JSON
+     * @return the JSON answer
+     */
     private String runConflicts(IProject project, Configuration config, Collection<MdObject> objects,
         Map<String, String> params, String format)
     {
@@ -280,15 +323,27 @@ public class AuditRoleRightsTool implements IMcpTool
                 allConflicts.addAll(RoleRightsAnalyzer.conflicts(tables.get(i), tables.get(j)));
             }
         }
-        return ToolResult.success()
+        return withFormatNote(ToolResult.success()
             .put("mode", "conflicts") //$NON-NLS-1$ //$NON-NLS-2$
             .put("roleNames", roleNames) //$NON-NLS-1$
             .put("conflictCount", allConflicts.size()) //$NON-NLS-1$
-            .put("conflicts", allConflicts) //$NON-NLS-1$
+            .put("conflicts", allConflicts), format) //$NON-NLS-1$
             .toJson();
     }
 
-    private String runImpact(IProject project, Configuration config, Collection<MdObject> objects,
+    /**
+     * Lists the rights exactly one of the listed roles allows: what a user holding all of them
+     * loses when that role is taken away. Every listed name must be a role of the configuration;
+     * the names that are not are refused together.
+     *
+     * @param project the project
+     * @param config the configuration
+     * @param objects the objects the kind filter selected
+     * @param params the call arguments
+     * @param format the requested format; this mode answers JSON
+     * @return the JSON answer
+     */
+    String runImpact(IProject project, Configuration config, Collection<MdObject> objects,
         Map<String, String> params, String format)
     {
         String roleNames = JsonUtils.extractStringArgument(params, "roleNames"); //$NON-NLS-1$
@@ -297,15 +352,28 @@ public class AuditRoleRightsTool implements IMcpTool
             return ToolResult.error("roleNames is required for mode=impact").toJson(); //$NON-NLS-1$
         }
         String[] names = roleNames.split("\\s*,\\s*"); //$NON-NLS-1$
-        // Per-object: count how many of the listed roles allow each right.
-        Map<String, Map<String, Integer>> allowCounts = new LinkedHashMap<>();
+        List<Role> roles = new ArrayList<>();
+        List<String> notFound = new ArrayList<>();
         for (String name : names)
         {
             Role role = RoleRightsAnalyzer.findRole(config, name.trim());
             if (role == null)
             {
-                continue;
+                notFound.add(name.trim());
             }
+            else
+            {
+                roles.add(role);
+            }
+        }
+        if (!notFound.isEmpty())
+        {
+            return errorRoleNotFound(config, String.join(", ", notFound)); //$NON-NLS-1$
+        }
+        // Per-object: count how many of the listed roles allow each right.
+        Map<String, Map<String, Integer>> allowCounts = new LinkedHashMap<>();
+        for (Role role : roles)
+        {
             RoleRightsAnalyzer.RightsTable table = RoleRightsAnalyzer.analyze(project, role, objects);
             for (Map.Entry<String, Map<String, RoleRightsAnalyzer.Verdict>> entry : table.rights
                 .entrySet())
@@ -337,15 +405,22 @@ public class AuditRoleRightsTool implements IMcpTool
                 }
             }
         }
-        return ToolResult.success()
+        return withFormatNote(ToolResult.success()
             .put("mode", "impact") //$NON-NLS-1$ //$NON-NLS-2$
             .put("roleNames", roleNames) //$NON-NLS-1$
             .put("exclusiveCount", exclusive.size()) //$NON-NLS-1$
-            .put("exclusive", exclusive) //$NON-NLS-1$
+            .put("exclusive", exclusive), format) //$NON-NLS-1$
             .toJson();
     }
 
-    private String errorRoleNotFound(Configuration config, String roleName)
+    /**
+     * The refusal for a role name the configuration does not have, with the roles it does have.
+     *
+     * @param config the configuration
+     * @param roleName the name, or several names joined by a comma, that were not found
+     * @return the JSON refusal
+     */
+    static String errorRoleNotFound(Configuration config, String roleName)
     {
         List<String> available = new ArrayList<>();
         for (Role role : RoleRightsAnalyzer.listRoles(config))
@@ -418,6 +493,23 @@ public class AuditRoleRightsTool implements IMcpTool
     {
         return value != null && !value.isEmpty() ? value : fallback;
     }
+
+    /**
+     * Adds a note to an answer that was asked for in markdown and is JSON: only mode=rights renders
+     * markdown.
+     *
+     * @param result the answer
+     * @param format the requested format
+     * @return the same answer
+     */
+    static ToolResult withFormatNote(ToolResult result, String format)
+    {
+        if ("markdown".equalsIgnoreCase(format)) //$NON-NLS-1$
+        {
+            result.put("formatNote", "format=markdown applies to mode=rights; this answer is JSON."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return result;
+    }
     /**
      * Reports - and on request removes - rights on objects the configuration no longer has.
      * <p>
@@ -427,17 +519,26 @@ public class AuditRoleRightsTool implements IMcpTool
      * repair to notice.
      * </p>
      *
-     * @param params the call's arguments.
-     * @param projectName the project.
+     * @param params the call's arguments
+     * @param project the project
+     * @param configuration the configuration
+     * @param format the requested format; this mode answers JSON
      * @return the report
      */
-    private static String orphans(Map<String, String> params, IProject project, Configuration configuration)
+    static String orphans(Map<String, String> params, IProject project, Configuration configuration,
+        String format)
     {
         String roleName = JsonUtils.extractStringArgument(params, "roleName"); //$NON-NLS-1$
         if (roleName == null || roleName.isEmpty())
         {
             return ToolResult.error("roleName is required for mode=orphans").toJson(); //$NON-NLS-1$
         }
+        Role role = RoleRightsAnalyzer.findRole(configuration, roleName);
+        if (role == null)
+        {
+            return errorRoleNotFound(configuration, roleName);
+        }
+        roleName = role.getName();
         boolean apply = JsonUtils.extractBooleanArgument(params, "apply", false); //$NON-NLS-1$
         if (apply)
         {
@@ -464,7 +565,8 @@ public class AuditRoleRightsTool implements IMcpTool
             .put("objectsInFile", sweep.total) //$NON-NLS-1$
             .put("orphanedCount", sweep.orphaned.size()) //$NON-NLS-1$
             .put("orphaned", sweep.orphaned) //$NON-NLS-1$
-            .put("removed", sweep.changed); //$NON-NLS-1$
+            .put("removedCount", sweep.removed.size()) //$NON-NLS-1$
+            .put("removed", sweep.removed); //$NON-NLS-1$
         if (!sweep.undecided.isEmpty())
         {
             // Reported as its own list, not folded into the orphans. These were left alone, and a
@@ -480,7 +582,7 @@ public class AuditRoleRightsTool implements IMcpTool
         }
         else if (sweep.changed)
         {
-            result.put("message", "Removed " + sweep.orphaned.size() //$NON-NLS-1$ //$NON-NLS-2$
+            result.put("message", "Removed " + sweep.removed.size() //$NON-NLS-1$ //$NON-NLS-2$
                 + " entries. Revalidate the role to bring the in-memory model in step with the " //$NON-NLS-1$
                 + "file."); //$NON-NLS-1$
         }
@@ -488,7 +590,7 @@ public class AuditRoleRightsTool implements IMcpTool
         {
             result.put("message", "Every object this role names is still in the configuration."); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return result.toJson();
+        return withFormatNote(result, format).toJson();
     }
 
     /**

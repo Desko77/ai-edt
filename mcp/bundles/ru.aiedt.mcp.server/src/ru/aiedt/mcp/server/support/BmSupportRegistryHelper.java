@@ -836,8 +836,14 @@ public final class BmSupportRegistryHelper
         public int unnamed;
     }
 
-    /** What the service lookup produced, and by which route. */
-    private static final class Service
+    /**
+     * What the service lookup produced, and by which route.
+     * <p>
+     * Package-visible rather than private: the model editability guard asks the same service the
+     * same way, and two lookups would be two answers to one question.
+     * </p>
+     */
+    static final class Service
     {
         IDistributionSupportManager manager;
 
@@ -864,7 +870,7 @@ public final class BmSupportRegistryHelper
      *
      * @return what was found, never <code>null</code>
      */
-    private static Service findService()
+    static Service findService()
     {
         Service found = new Service();
         try

@@ -11,11 +11,14 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
+import org.junit.After;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
@@ -54,6 +57,21 @@ public class AnAppearanceItemIsRemovedWhereItWasWrittenTest
             built instanceof EObject);
         schema = (EObject)built;
         tool = new DcsWorkshopTool();
+        // The operation checks the parameter name against the platform's output parameters. The
+        // platform's set is built by the platform-version bundles of the EDT installation, which
+        // answer only for the versions they carry, so the set the check reads is pinned here to
+        // the spelling pair this test writes.
+        DcsWorkshopTool.outputParameterNamesForTests =
+            Collections.unmodifiableList(Arrays.<String[]>asList(new String[] { "Заголовок", "Title" })); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Puts the output parameter names back the way the production path reads them.
+     */
+    @After
+    public void clearThePinnedNames()
+    {
+        DcsWorkshopTool.outputParameterNamesForTests = null;
     }
 
     /**

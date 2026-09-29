@@ -162,7 +162,7 @@ public class APreviewSaysItIsAPreviewTest
     public void aListWriteIsAnsweredTheSameWay()
     {
         JsonObject previewed = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
-            "Form.Форма", "Список", "conditional appearance added", true, List.of())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Form.Форма", "Список", "conditional appearance added", true, List.of(), null, null)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .getAsJsonObject();
 
         assertTrue("the settings on the form keep what they held, and the answer says so", //$NON-NLS-1$
@@ -171,11 +171,29 @@ public class APreviewSaysItIsAPreviewTest
             previewed.get("attributeName").getAsString()); //$NON-NLS-1$
 
         JsonObject applied = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
-            "Form.Форма", "Список", "conditional appearance added", false, List.of())) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Form.Форма", "Список", "conditional appearance added", false, List.of(), null, null)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             .getAsJsonObject();
 
         assertTrue(applied.get("success").getAsBoolean()); //$NON-NLS-1$
         assertFalse("a list write is not a preview: " + applied, applied.has("dryRun")); //$NON-NLS-1$
+        assertFalse("settings that reached the disk carry no warning: " + applied, //$NON-NLS-1$
+            applied.has("persistWarning")); //$NON-NLS-1$
+    }
+
+    /**
+     * A list write whose settings did not reach the disk says so, and stays a write that landed in
+     * the model.
+     */
+    @Test
+    public void aListWriteNotOnDiskSaysSo()
+    {
+        JsonObject answer = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
+            "Form.Форма", "Список", "order added", false, List.of(), null, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "Form.Форма.Attributes.Список.ExtInfo.ListSettings is changed in the model and not on disk")) //$NON-NLS-1$
+            .getAsJsonObject();
+
+        assertTrue(answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(answer.toString(), answer.get("persistWarning").getAsString().contains("ListSettings")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -187,7 +205,7 @@ public class APreviewSaysItIsAPreviewTest
     {
         JsonObject refused = JsonParser.parseString(DcsWorkshopTool.dynamicListAnswer(OP,
             "Form.Форма", "Список", "Error: no such attribute", true, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            List.of(Map.of("kind", "emptyFilterValue")))) //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(Map.of("kind", "emptyFilterValue")), null, null)) //$NON-NLS-1$ //$NON-NLS-2$
             .getAsJsonObject();
 
         assertFalse(refused.get("success").getAsBoolean()); //$NON-NLS-1$

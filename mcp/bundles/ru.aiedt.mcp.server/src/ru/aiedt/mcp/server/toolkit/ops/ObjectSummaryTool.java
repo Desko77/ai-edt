@@ -195,6 +195,13 @@ public class ObjectSummaryTool implements IMcpTool
         }
     }
 
+    /**
+     * Reads a property through a named getter.
+     *
+     * @param obj the object to read
+     * @param getter the getter name
+     * @return the text, or {@code null} when no such getter answers
+     */
     private static String invokeString(Object obj, String getter)
     {
         try

@@ -294,12 +294,17 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 1170 by 235: find_rls_violations and sensitive_data_scan advertise scope,
         // moduleFqn, methodName and subsystemName, one sentence each. The sentences that say
         // which combination is a walk and which is a refusal moved to operation help.
-        PROSE.put("security_audit", Integer.valueOf(1405));
+        // Raised from 1405 to 1792 for the complete orphan mode contract: role, apply behavior,
+        // and every object type accepted by the standalone audit.
+        PROSE.put("security_audit", Integer.valueOf(1792));
         PROSE.put("xdto_workshop", Integer.valueOf(1155));
         PROSE.put("get_form_screenshot", Integer.valueOf(1154));
         PROSE.put("code_review", Integer.valueOf(1129));
         PROSE.put("get_metadata_objects", Integer.valueOf(1090));
-        PROSE.put("yaxunit_tests", Integer.valueOf(1077));
+        // Raised from 1077 to 1123 for reuseRecent on the facade: the flag that takes a report of a
+        // run finished within the last five minutes, whose default (false) is the whole point of it
+        // - a second call after a delivered report runs the tests again (measured 29.09: 1123).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1123));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -511,6 +516,32 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 128 for addressingRegister, addressingAttributes, mainAddressingAttribute and
      * currentPerformer on edit_metadata, the four arguments of set_task_addressing: 95865.
      * </p>
+     * <p>
+     * And one by 196 for itemNames, field and index on edit_metadata: add_form_appearance_rule and
+     * remove_form_appearance_rule name the styled form items, the field of the condition and the
+     * rule to remove: 93805.
+     * </p>
+     * <p>
+     * And one by 15 for format on security_audit: markdown applies to audit_role_rights in
+     * mode=rights only: 93877.
+     * </p>
+     * <p>
+     * Raised from 93877 to 94099 for security_audit orphan cleanup: the facade now exposes its
+     * role, apply behavior and full object-type contract.
+     * </p>
+     * <p>
+     * Raised from 92685 to 92779 for normalizeInvalidCharacters on write_module_source: the module
+     * writer replaces the characters BSL has no place for unless the call turns that off, and the
+     * switch has to be in the schema to be turned off.
+     * </p>
+     * <p>
+     * And a thirty-fourth, by 127, for reuseRecent on the yaxunit_tests facade: the flag that takes
+     * the report of a run finished within the last five minutes has to say so in its own sentence,
+     * because its default - run again - is the answer a caller cannot guess from the name. The 127
+     * bytes are that sentence and nothing else; the two hidden aliases, run_yaxunit_tests and
+     * debug_yaxunit_tests, gained declarations of the same flags and are not weighed here, because
+     * {@code tools/list} under the default preset does not advertise them: 95864.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 95865;
+    private static final int DOCUMENT_PROSE = 96519;
 }

@@ -80,4 +80,28 @@ public class YaxunitHelpTest
         assertFalse("the registry was emptied through its own accessor", //$NON-NLS-1$
             YaxunitHelp.availableTopics().isEmpty());
     }
+
+    /**
+     * The help does not teach a filter the tool refuses.
+     * <p>
+     * Measured: the events and advanced topics told the reader to narrow a run with {@code tags=},
+     * {@code suites=} and {@code contexts=} long after the launch configuration stopped carrying
+     * them, and a call built from that advice answered a full-suite run as if it had been narrowed.
+     * The three topics below are every place the help discusses filtering.
+     */
+    @Test
+    public void noTopicOffersAFilterTheToolRefuses()
+    {
+        for (String topic : YaxunitHelp.availableTopics())
+        {
+            String body = YaxunitHelp.getTopic(topic);
+            assertFalse(topic + " offers tags=", body.contains("tags=")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(topic + " offers suites=", body.contains("suites=")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(topic + " offers contexts=", body.contains("contexts=")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // And the filter that does work is still offered where a run is narrowed.
+        boolean namedSomewhere = YaxunitHelp.availableTopics().stream()
+            .anyMatch(topic -> YaxunitHelp.getTopic(topic).contains("modules=")); //$NON-NLS-1$
+        assertTrue("the help no longer names any filter that works", namedSomewhere); //$NON-NLS-1$
+    }
 }
