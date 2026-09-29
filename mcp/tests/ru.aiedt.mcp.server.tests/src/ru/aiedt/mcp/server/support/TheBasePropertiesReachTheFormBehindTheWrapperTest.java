@@ -17,11 +17,9 @@ import org.junit.Test;
  * Where the base properties land when a metadata wrapper is handed in.
  * <p>
  * The properties belong to the {@code form.model.Form}, and a configuration holds that form under
- * an {@code mdclass} wrapper. Handing the wrapper to {@link FormBaseSetup#applyDefaults} used to set
- * nothing - the wrapper exposes none of the setters - and the count came back zero while the form
- * stayed without a command bar or a children align. Measured on a live project: an empty managed
- * form was created, the answer carried no {@code formScaffolded}, and the editor's form had none of
- * the base properties. The wrapper is now followed to the form behind it.
+ * an {@code mdclass} wrapper that exposes none of the setters. {@link FormBaseSetup#applyDefaults}
+ * follows the wrapper to the form behind it and sets the properties there, and the count it answers
+ * is the number set on that form.
  * </p>
  */
 public class TheBasePropertiesReachTheFormBehindTheWrapperTest
