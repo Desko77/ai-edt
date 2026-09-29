@@ -2572,7 +2572,7 @@ public final class BmComparisonHelper
      * @return the relative directory, or <code>null</code> when the name does not open with a
      *         metadata type this EDT knows.
      */
-    static String objectDirectoryOf(String fqn)
+    public static String objectDirectoryOf(String fqn)
     {
         if (fqn == null || fqn.isBlank())
         {

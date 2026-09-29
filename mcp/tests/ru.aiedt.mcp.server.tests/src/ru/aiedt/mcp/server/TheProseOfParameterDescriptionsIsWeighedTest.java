@@ -242,9 +242,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // and whether to create it).
         PROSE.put("git", Integer.valueOf(875));
         PROSE.put("compare_three_way", Integer.valueOf(3558));
-        // Raised from 5393 by 52: detect_query_anti_patterns names methodName, one sentence.
+        // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
-        PROSE.put("insights", Integer.valueOf(5445));
+        // Raised to 5949 for compare_configurations: mode now says that the answer's failed and
+        // failedCount name what the comparison could not read, so that a success:true answer
+        // carrying a failure is not read as a clean diff, and projectName says that mode=files
+        // takes the path of the first export rather than a project name. Measured 5949.
+        PROSE.put("insights", Integer.valueOf(5949));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
@@ -570,6 +574,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * a comparison made against the base's synchronization baseline before the update starts, in
      * place of the confirmation window that was read while the update ran (measured 29.09).
      * </p>
+     * <p>
+     * Raised from 96170 to 96231 for the compare_configurations contract on insights: the mode and
+     * projectName descriptions say what the operation reads and what failed / failedCount mean.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 97986;
+    private static final int DOCUMENT_PROSE = 98047;
 }
