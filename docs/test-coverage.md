@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 133 | a test class named after it |
+| direct | 134 | a test class named after it |
 | exercised | 197 | reached by some other test |
 | tool-sweep | 49 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 41 | needs a display or an extension point |
 | workspace-bound | 24 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **444** | across 522 test classes |
+| **total** | **445** | across 523 test classes |
 
 ## untested (0)
 
@@ -410,7 +410,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (133)
+## direct (134)
 
 **(root)**
 - BrowserOrigin
@@ -447,6 +447,7 @@ _none_
 - ComparisonSessions
 - ControlledFragment
 - DbViewSurvey
+- DcsSettingsImpact
 - DeliveryIdentity
 - DependencyGraphBuilder
 - DynamicListSettingsReader
@@ -586,12 +587,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 14 |
 | 5-8 | 42 |
-| 9-16 | 53 |
+| 9-16 | 54 |
 | 17+ | 22 |
 
-4224 test methods across 522 test classes; 133 classes have a test of their own, median 9 methods each.
+4240 test methods across 523 test classes; 134 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 133 of 444 classes have one: 49 are covered by the registry-wide contract sweep and 24 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 134 of 445 classes have one: 49 are covered by the registry-wide contract sweep and 24 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

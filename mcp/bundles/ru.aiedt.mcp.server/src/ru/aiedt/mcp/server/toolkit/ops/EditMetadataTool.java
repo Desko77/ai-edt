@@ -692,6 +692,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("userSettingID", //$NON-NLS-1$
                 "set_settings_parameter: the identifier under which the parameter appears in user " //$NON-NLS-1$
                     + "settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
+            .booleanProperty("reportAffectedSettings", //$NON-NLS-1$
+                "remove_dataset, remove_dataset_field, remove_parameter, remove_calculated_field, " //$NON-NLS-1$
+                    + "remove_total_field (and the edit_metadata names remove_data_set, " //$NON-NLS-1$
+                    + "remove_data_set_field, remove_schema_parameter, remove_calculated_field, " //$NON-NLS-1$
+                    + "remove_total_field): list settings that still reference the removed element. " //$NON-NLS-1$
+                    + "Default true. The settings are left unchanged. false omits the list.") //$NON-NLS-1$
             // ---- Parameters of the operations handed to a standalone tool
             //      (add_metadata_attribute / rename_metadata_object) ----
             .stringProperty("parentFqn", //$NON-NLS-1$

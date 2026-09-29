@@ -40,6 +40,7 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 import ru.aiedt.mcp.server.support.DcsSchemaRestorer;
+import ru.aiedt.mcp.server.support.DcsSettingsImpact;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
@@ -129,6 +130,9 @@ public class DcsWorkshopTool implements IMcpTool
             + "Auto-validates queryText and expressions before write. " //$NON-NLS-1$
             + "A settings write that leaves a filter comparing against nothing, or a standard " //$NON-NLS-1$
             + "period with no dates, answers with `settingsWarnings` - a warning, not a refusal. " //$NON-NLS-1$
+            + "Removing a dataset, a dataset field, a parameter, a calculated field or a total " //$NON-NLS-1$
+            + "field lists the settings that still reference it (`affectedSettings`) and does " //$NON-NLS-1$
+            + "not clear them. " //$NON-NLS-1$
             + "DCS direct save to .dcs disk file is automatic for extension projects."; //$NON-NLS-1$
     }
 
@@ -178,6 +182,11 @@ public class DcsWorkshopTool implements IMcpTool
             + "the schema lives in."); //$NON-NLS-1$
         rules.put("nestedSchemaName", "Without it an operation applies to the schema itself; with it, to the " //$NON-NLS-1$
             + "schema of that name within it."); //$NON-NLS-1$
+        rules.put("reportAffectedSettings", "remove_dataset, remove_dataset_field, remove_parameter, " //$NON-NLS-1$
+            + "remove_calculated_field, remove_total_field. Default true: the answer lists every " //$NON-NLS-1$
+            + "settings variant that still references what was removed (selection, order, filter, " //$NON-NLS-1$
+            + "structure, conditional appearance, data parameters) and leaves those settings " //$NON-NLS-1$
+            + "unchanged. false omits affectedSettings and affectedCount."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -269,6 +278,10 @@ public class DcsWorkshopTool implements IMcpTool
                 "New settings-variant name for rename_settings_variant.") //$NON-NLS-1$
             .stringProperty("topic", "Help topic name (use with operation=help)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("dryRun", "Preview changes inside BM transaction (default false)") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("reportAffectedSettings", //$NON-NLS-1$
+                "remove_dataset, remove_dataset_field, remove_parameter, remove_calculated_field, " //$NON-NLS-1$
+                    + "remove_total_field: list settings that still reference the removed element. " //$NON-NLS-1$
+                    + "Default true. The settings are left unchanged. false omits the list.") //$NON-NLS-1$
             .booleanProperty("overwriteModel", //$NON-NLS-1$
                 "repair_schema: replace a schema the model holds when it differs from the " //$NON-NLS-1$
                     + ".dcs. Default false.") //$NON-NLS-1$
@@ -753,6 +766,8 @@ public class DcsWorkshopTool implements IMcpTool
     /**
      * Generic schema-mutation dispatch that runs inside BmDcsHelper.executeWriteOnSchema.
      * Per-op semantics are implemented inline so the BM transaction holds for one op.
+     * A removal that was asked for the settings report attaches it here, after the write
+     * succeeds; the settings themselves are not part of what the removal changes.
      * <p>
      * Each op resolves the schema {@link EObject} via reflection, mutates the
      * corresponding child collection (DataSets / Parameters / CalculatedFields /
@@ -816,6 +831,11 @@ public class DcsWorkshopTool implements IMcpTool
         {
             attachSettingsWarnings(r.tags, written.warnings);
             attachOutputParameterNameCheck(r.tags, written.outputParameterNameNote);
+            attachRemovalImpact(r.tags);
+        }
+        else
+        {
+            REMOVAL_IMPACT.remove();
         }
         return formatResult(r, op);
     }
@@ -1262,10 +1282,17 @@ public class DcsWorkshopTool implements IMcpTool
     /**
      * Applies one schema-mutation operation on the resolved DCS schema. Called
      * inside the BM write transaction.
+     * <p>
+     * A removal that reports affected settings records that report here, on the model as it is
+     * before the element is taken out. The report is a read and is not a settings write.
+     * </p>
      */
     private Object applySchemaMutation(String op, Map<String, String> params, EObject schema,
         IProject project) throws Exception
     {
+        // A retry of the same call computes the report again. A previous call's report must not
+        // leak into an operation that does not build one.
+        REMOVAL_IMPACT.remove();
         MutationHandler handler = mutations.get(op);
         if (handler == null)
         {
@@ -1316,6 +1343,17 @@ public class DcsWorkshopTool implements IMcpTool
      * </p>
      */
     private static final ThreadLocal<SettingsWritten> WRITTEN_HERE = new ThreadLocal<>();
+
+    /**
+     * The settings a removal found still pointing at what it is about to delete.
+     * <p>
+     * {@code null} means the call did not build the list ({@code reportAffectedSettings=false},
+     * or the operation is not a removal). An empty list means the list was built and nothing
+     * matched. The removal reads the settings and does not write them, so this is not recorded
+     * through {@link #noteSettingsWritten}.
+     * </p>
+     */
+    private static final ThreadLocal<List<Map<String, Object>>> REMOVAL_IMPACT = new ThreadLocal<>();
 
     /** What one call wrote into, and what the completeness check found there. */
     private static final class SettingsWritten
@@ -3100,7 +3138,8 @@ public class DcsWorkshopTool implements IMcpTool
      * expects it to grow retries a dataset that is already gone.
      * </p>
      *
-     * @param params the dataset name
+     * @param params the dataset name, and {@code reportAffectedSettings} (default true) to list
+     *            the settings that still reference the dataset's fields
      * @param schema the schema root
      * @return what was removed, and how many datasets remain
      */
@@ -3120,6 +3159,10 @@ public class DcsWorkshopTool implements IMcpTool
             // signal the case by throwing and the helper unwraps verdict.
             throw notFoundTag(name, "dataSet"); //$NON-NLS-1$
         }
+        List<String> paths = new ArrayList<>();
+        addDataSetFieldPaths(existing, paths);
+        addCascadedFieldPaths(schema, name, paths);
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
         dataSets.remove(existing);
         // Cascade: a field whose expression's first path segment is this dataset.
         int removedCalc = removeFieldsReferencing(schema, "getCalculatedFields", name); //$NON-NLS-1$
@@ -3207,6 +3250,217 @@ public class DcsWorkshopTool implements IMcpTool
             }
         }
         return removed;
+    }
+
+    /**
+     * Records the settings that still reference what this removal is about to delete.
+     * <p>
+     * {@code reportAffectedSettings} defaults to true. False leaves the report unbuilt, so the
+     * answer carries neither {@code affectedSettings} nor {@code affectedCount}. The walk reads
+     * the variants that already exist and does not create one.
+     * </p>
+     *
+     * @param params the call
+     * @param schema the schema, before the element is removed
+     * @param fieldPaths data paths of the element, possibly empty for a parameter
+     * @param parameterNames parameter names, possibly empty for a field
+     */
+    private void recordAffectedSettings(Map<String, String> params, EObject schema,
+        List<String> fieldPaths, List<String> parameterNames)
+    {
+        if (!JsonUtils.extractBooleanArgument(params, "reportAffectedSettings", true)) //$NON-NLS-1$
+        {
+            return;
+        }
+        REMOVAL_IMPACT.set(DcsSettingsImpact.collect(schema, fieldPaths, parameterNames));
+    }
+
+    /**
+     * Adds a field path and its dataset-qualified form.
+     * <p>
+     * Settings store {@code Sales.Amount} for a field whose data path is {@code Amount}, and
+     * {@code Sales.Customer.TaxId} for {@code Customer.TaxId}. Both spellings have to be
+     * identifiers, or that setting is reported as untouched.
+     * </p>
+     *
+     * @param dataSetName the dataset the field belongs to, or <code>null</code> when the path is
+     *            already a schema path
+     * @param path the data path or field name
+     * @param paths the identifiers being built; a spelling that differs only in case is skipped
+     */
+    private static void addFieldPath(String dataSetName, String path, List<String> paths)
+    {
+        if (path == null || path.isEmpty())
+        {
+            return;
+        }
+        addUniquePath(paths, path);
+        if (dataSetName != null && !dataSetName.isEmpty())
+        {
+            addUniquePath(paths, dataSetName + "." + path); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Appends a path unless the list already holds it, ignoring case.
+     *
+     * @param paths the identifiers being built
+     * @param path the path to add
+     */
+    private static void addUniquePath(List<String> paths, String path)
+    {
+        for (String existing : paths)
+        {
+            if (existing.equalsIgnoreCase(path))
+            {
+                return;
+            }
+        }
+        paths.add(path);
+    }
+
+    /**
+     * Reads the data path and the field name off one dataset, calculated or total field.
+     *
+     * @param dataSetName the dataset, used to qualify the path, or <code>null</code> for a
+     *            calculated or total field
+     * @param field the field object
+     * @param paths the identifiers being built
+     */
+    private void addFieldPaths(String dataSetName, EObject field, List<String> paths)
+    {
+        addFieldPath(dataSetName, textOfGetter(invokeGetter(field, "getDataPath")), paths); //$NON-NLS-1$
+        addFieldPath(dataSetName, textOfGetter(invokeGetter(field, "getField")), paths); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds the data path of every field the dataset holds.
+     *
+     * @param dataSet the dataset about to be removed
+     * @param paths the identifiers being built
+     */
+    private void addDataSetFieldPaths(EObject dataSet, List<String> paths)
+    {
+        String dataSetName = textOfGetter(invokeGetter(dataSet, "getName")); //$NON-NLS-1$
+        EList<EObject> fields = BmDcsHelper.getEObjectList(dataSet, "getFields"); //$NON-NLS-1$
+        if (fields == null)
+        {
+            return;
+        }
+        for (EObject field : fields)
+        {
+            addFieldPaths(dataSetName, field, paths);
+        }
+    }
+
+    /**
+     * Adds the data paths of calculated and total fields the dataset removal will cascade.
+     * <p>
+     * Those fields leave with the dataset, so a setting that names them is affected by this
+     * removal even though the field is not one of the dataset's own.
+     * </p>
+     *
+     * @param schema the schema root
+     * @param dataSetName the dataset about to be removed
+     * @param paths the identifiers being built
+     */
+    private void addCascadedFieldPaths(EObject schema, String dataSetName, List<String> paths)
+    {
+        addCascadedFrom(schema, "getCalculatedFields", dataSetName, paths); //$NON-NLS-1$
+        addCascadedFrom(schema, "getTotalFields", dataSetName, paths); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds data paths from one calculated or total collection whose expressions read the dataset.
+     *
+     * @param schema the schema root
+     * @param getter {@code getCalculatedFields} or {@code getTotalFields}
+     * @param dataSetName the dataset about to be removed
+     * @param paths the identifiers being built
+     */
+    private void addCascadedFrom(EObject schema, String getter, String dataSetName,
+        List<String> paths)
+    {
+        EList<EObject> list = BmDcsHelper.getEObjectList(schema, getter);
+        if (list == null)
+        {
+            return;
+        }
+        for (EObject field : list)
+        {
+            Object expression = invokeGetter(field, "getExpression"); //$NON-NLS-1$
+            if (expression != null && expressionReadsDataSet(expression.toString(), dataSetName))
+            {
+                addFieldPaths(null, field, paths);
+            }
+        }
+    }
+
+    /**
+     * Adds an expression when it is itself a field path.
+     * <p>
+     * Settings name a calculated or total field by its data path, not by its formula. A formula
+     * that is a path, such as {@code Sales.Amount}, is also a reference. One with an operator,
+     * such as {@code Amount * 2}, is not: matching it would report every setting that names
+     * {@code Amount}.
+     * </p>
+     *
+     * @param expression the calculated or total expression
+     * @param paths the identifiers being built
+     */
+    private static void addExpressionPath(String expression, List<String> paths)
+    {
+        if (expression == null)
+        {
+            return;
+        }
+        String trimmed = expression.trim();
+        if (isFieldPath(trimmed))
+        {
+            addFieldPath(null, trimmed, paths);
+        }
+    }
+
+    /**
+     * Whether a calculated or total expression is itself a field path.
+     *
+     * @param expression the expression text, already trimmed
+     * @return <code>true</code> when every character is a letter, a digit, an underscore or a
+     *         dot, and at least one letter or digit is present
+     */
+    private static boolean isFieldPath(String expression)
+    {
+        if (expression == null || expression.isEmpty())
+        {
+            return false;
+        }
+        boolean hasLetterOrDigit = false;
+        for (int i = 0; i < expression.length(); i++)
+        {
+            char c = expression.charAt(i);
+            if (c == '.' || c == '_')
+            {
+                continue;
+            }
+            if (Character.isLetterOrDigit(c))
+            {
+                hasLetterOrDigit = true;
+                continue;
+            }
+            return false;
+        }
+        return hasLetterOrDigit;
+    }
+
+    /**
+     * The text a getter returned, or <code>null</code>.
+     *
+     * @param value whatever the getter returned
+     * @return the text, or <code>null</code> when there was nothing
+     */
+    private static String textOfGetter(Object value)
+    {
+        return value == null ? null : value.toString();
     }
 
     /**
@@ -3682,6 +3936,17 @@ public class DcsWorkshopTool implements IMcpTool
         }
     }
 
+    /**
+     * Removes a schema parameter.
+     * <p>
+     * When {@code reportAffectedSettings} is omitted or true, the answer lists filters and data
+     * parameters that still name it. The settings themselves are left as they are.
+     * </p>
+     *
+     * @param params the parameter name, and {@code reportAffectedSettings} (default true)
+     * @param schema the schema root
+     * @return the name that was removed
+     */
     private Object doRemoveParameter(Map<String, String> params, EObject schema)
     {
         String name = required(params, "name"); //$NON-NLS-1$
@@ -3695,6 +3960,8 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw notFoundTag(name, "parameter"); //$NON-NLS-1$
         }
+        recordAffectedSettings(params, schema, Collections.<String>emptyList(),
+            Collections.singletonList(name));
         parameters.remove(existing);
         return name;
     }
@@ -6018,9 +6285,17 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.43.x: removes a field from a dataset, located by field path
-     * ({@code getField} / {@code getDataPath}) inside
-     * {@code DataSet.getFields()}.
+     * Removes a field from a dataset, located by field path ({@code getField} /
+     * {@code getDataPath}) inside {@code DataSet.getFields()}.
+     * <p>
+     * When {@code reportAffectedSettings} is omitted or true, the answer lists the settings that
+     * still reference the field. Those settings are left as they are.
+     * </p>
+     *
+     * @param params the dataset name, the field name, and {@code reportAffectedSettings} (default
+     *            true)
+     * @param schema the schema root
+     * @return the field that was removed
      */
     private Object doRemoveDataSetField(Map<String, String> params, EObject schema)
     {
@@ -6054,6 +6329,10 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw notFoundTag(dataSetName + "." + name, "dataSetField"); //$NON-NLS-1$ //$NON-NLS-2$
         }
+        List<String> paths = new ArrayList<>();
+        addFieldPaths(dataSetName, toRemove, paths);
+        addFieldPath(dataSetName, name, paths);
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
         fields.remove(toRemove);
         return "dataset field '" + dataSetName + "." + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
@@ -6081,8 +6360,16 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.43.x: removes a calculated field by {@code dataPath} from
-     * {@code Schema.getCalculatedFields()}.
+     * Removes a calculated field by {@code dataPath} from {@code Schema.getCalculatedFields()}.
+     * <p>
+     * When {@code reportAffectedSettings} is omitted or true, the answer lists the settings that
+     * still reference the field's data path. A formula is a reference only when it is itself a
+     * field path. The settings are left as they are.
+     * </p>
+     *
+     * @param params the data path, and {@code reportAffectedSettings} (default true)
+     * @param schema the schema root
+     * @return the field that was removed
      */
     private Object doRemoveCalculatedField(Map<String, String> params, EObject schema)
     {
@@ -6097,6 +6384,11 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw notFoundTag(name, "calculatedField"); //$NON-NLS-1$
         }
+        List<String> paths = new ArrayList<>();
+        addFieldPaths(null, field, paths);
+        addExpressionPath(textOfGetter(invokeGetter(field, "getExpression")), paths); //$NON-NLS-1$
+        addFieldPath(null, name, paths);
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
         calc.remove(field);
         return "calculated field '" + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -6122,8 +6414,16 @@ public class DcsWorkshopTool implements IMcpTool
     }
 
     /**
-     * 1.43.x: removes a total field by {@code dataPath} from
-     * {@code Schema.getTotalFields()}.
+     * Removes a total field by {@code dataPath} from {@code Schema.getTotalFields()}.
+     * <p>
+     * When {@code reportAffectedSettings} is omitted or true, the answer lists the settings that
+     * still reference the field's data path. An aggregate expression is not a field path. The
+     * settings are left as they are.
+     * </p>
+     *
+     * @param params the data path, and {@code reportAffectedSettings} (default true)
+     * @param schema the schema root
+     * @return the field that was removed
      */
     private Object doRemoveTotalField(Map<String, String> params, EObject schema)
     {
@@ -6138,6 +6438,11 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw notFoundTag(name, "totalField"); //$NON-NLS-1$
         }
+        List<String> paths = new ArrayList<>();
+        addFieldPaths(null, field, paths);
+        addExpressionPath(textOfGetter(invokeGetter(field, "getExpression")), paths); //$NON-NLS-1$
+        addFieldPath(null, name, paths);
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
         totals.remove(field);
         return "total field '" + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -7692,6 +7997,12 @@ public class DcsWorkshopTool implements IMcpTool
             sb.append("- clear_settings_selected_fields, remove_settings_filter, remove_settings_order\n"); //$NON-NLS-1$
             sb.append("- set_settings_item_user_mode, remove_settings_variant, clone_settings_variant\n"); //$NON-NLS-1$
             sb.append("- rename_settings_variant, remove_user_field, set_user_field\n\n"); //$NON-NLS-1$
+            sb.append("**Removing a schema element.** remove_dataset, remove_dataset_field, " //$NON-NLS-1$
+                + "remove_parameter, remove_calculated_field and remove_total_field list every " //$NON-NLS-1$
+                + "settings variant that still references what was removed (selection, order, " //$NON-NLS-1$
+                + "filter, structure, conditional appearance, data parameters) in " //$NON-NLS-1$
+                + "`affectedSettings`, and leave those settings unchanged. " //$NON-NLS-1$
+                + "reportAffectedSettings=false omits the list.\n\n"); //$NON-NLS-1$
             sb.append("**Heuristic query editing (1.43.x batch 4b, dispatch-wired - use these exact names):**\n"); //$NON-NLS-1$
             sb.append("- add_query_field, remove_query_field, add_query_condition, remove_query_condition\n"); //$NON-NLS-1$
             sb.append("  (lexical token-splice of the dataset query; auto-revalidated; "); //$NON-NLS-1$
@@ -7886,6 +8197,14 @@ public class DcsWorkshopTool implements IMcpTool
             + "    flags) - set_output_parameter wrote the name without the platform's parameter\n" //$NON-NLS-1$
             + "    list to check it against; the note says why the list could not be read. Absent\n" //$NON-NLS-1$
             + "    when the name was checked.\n" //$NON-NLS-1$
+            + "- `affectedSettings` (success flag, array) - a removal of a dataset, a dataset " //$NON-NLS-1$
+            + "    field, a parameter, a calculated field or a total field. Each entry carries " //$NON-NLS-1$
+            + "    `variant`, `section` (selection, order, filter, structure, conditionalAppearance, " //$NON-NLS-1$
+            + "    dataParameters), `path` and `item` (the path or parameter name the settings still " //$NON-NLS-1$
+            + "    hold). The settings are not cleared.\n" //$NON-NLS-1$
+            + "- `affectedCount` (success flag, number) - how many entries `affectedSettings` " //$NON-NLS-1$
+            + "    holds. Both are absent when `reportAffectedSettings` is false. An empty list " //$NON-NLS-1$
+            + "    means the list was built and nothing matched.\n" //$NON-NLS-1$
             + "- `supportLock` - schema parent is on vendor support; use an extension.\n\n" //$NON-NLS-1$
             + "Pass `validate_query=false` or `validate_expression=false` to bypass\n" //$NON-NLS-1$
             + "pre-flight validation (use only for trusted templating).\n"; //$NON-NLS-1$
@@ -8099,6 +8418,54 @@ public class DcsWorkshopTool implements IMcpTool
         finally
         {
             endSettingsScope(written);
+        }
+    }
+
+    /**
+     * Copies a removal's settings report onto the answer, when one was built.
+     * <p>
+     * Absent when the call did not build the list. Present, and possibly empty, when it did.
+     * </p>
+     *
+     * @param tags the answer tags, or <code>null</code>
+     */
+    static void attachRemovalImpact(Map<String, Object> tags)
+    {
+        List<Map<String, Object>> found = REMOVAL_IMPACT.get();
+        REMOVAL_IMPACT.remove();
+        if (tags == null || found == null)
+        {
+            return;
+        }
+        tags.put("affectedSettings", found); //$NON-NLS-1$
+        tags.put("affectedCount", Integer.valueOf(found.size())); //$NON-NLS-1$
+    }
+
+    /**
+     * Runs one removal and answers the settings it still referenced.
+     * <p>
+     * {@code null} means the call did not build the list. An empty list means it did, and nothing
+     * matched. The settings are not written by the report.
+     * </p>
+     *
+     * @param op the operation name
+     * @param params its arguments
+     * @param schema the schema to remove from
+     * @return the hits, or <code>null</code> when the list was not built
+     * @throws Exception if the operation refuses
+     */
+    List<Map<String, Object>> removalImpactForTest(String op, Map<String, String> params,
+        EObject schema) throws Exception
+    {
+        try
+        {
+            applyToSchemaForTest(op, params, schema);
+            List<Map<String, Object>> found = REMOVAL_IMPACT.get();
+            return found == null ? null : new ArrayList<>(found);
+        }
+        finally
+        {
+            REMOVAL_IMPACT.remove();
         }
     }
 

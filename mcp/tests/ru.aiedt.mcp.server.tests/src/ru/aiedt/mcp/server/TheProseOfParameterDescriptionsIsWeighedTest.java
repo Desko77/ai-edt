@@ -231,7 +231,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
     private static final Map<String, Integer> PROSE = new HashMap<>();
     static
     {
-        PROSE.put("edit_metadata", Integer.valueOf(14188));
+        // Raised from 13730 by 458 for the route map and task addressing operations, and by 745 for
+        // reportAffectedSettings: the facade names the removal
+        // operations, workshop and its own, that list settings still pointing at what was removed.
+        PROSE.put("edit_metadata", Integer.valueOf(14933));
         // git: operation, projectName and the log's limit are the whole surface a client builds
         // the call from - the repository answers the rest. Grown to 875 for the commit's five
         // arguments (paths by name - there is no add-all - the message, and the author pair a
@@ -542,6 +545,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * debug_yaxunit_tests, gained declarations of the same flags and are not weighed here, because
      * {@code tools/list} under the default preset does not advertise them: 95864.
      * </p>
+     * <p>
+     * And by 444 for reportAffectedSettings on dcs_workshop and edit_metadata: the
+     * removal operations list settings that still reference what was removed.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 96578;
+    private static final int DOCUMENT_PROSE = 97022;
 }
