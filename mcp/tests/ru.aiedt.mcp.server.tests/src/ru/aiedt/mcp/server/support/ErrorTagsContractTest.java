@@ -31,7 +31,7 @@ import org.junit.Test;
 public class ErrorTagsContractTest
 {
     /** Total number of {@link ErrorTags} constants this test covers: 6 reliability + 54 folded. */
-    private static final int EXPECTED_CONSTANT_COUNT = 62;
+    private static final int EXPECTED_CONSTANT_COUNT = 63;
 
     private static Map<String, String> goldenWireStrings()
     {
@@ -108,6 +108,7 @@ public class ErrorTagsContractTest
         golden.put("DUMP_FAILED", "dumpFailed"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("OUT_OF_SYNC", "outOfSync"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("DATABASE_UPDATE_FAILED", "databaseUpdateFailed"); //$NON-NLS-1$ //$NON-NLS-2$
+        golden.put("INFOBASE_CHANGED", "infobaseChanged"); //$NON-NLS-1$ //$NON-NLS-2$
 
         return golden;
     }
