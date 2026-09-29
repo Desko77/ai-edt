@@ -292,6 +292,30 @@ public class ExportConfigurationSafetyTest
                 "Database configuration update completed successfully\nОшибка записи таблицы"));
     }
 
+    /**
+     * The log of a load and update run holds the load line first; that line vouches for the
+     * load, so on its own it leaves the update unverified, in either language.
+     */
+    @Test
+    public void theLoadLineAloneDoesNotConfirmTheUpdate()
+    {
+        assertEquals(DatabaseUpdateOutcome.UNVERIFIED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome("Загрузка конфигурации успешно завершена"));
+        assertEquals(DatabaseUpdateOutcome.UNVERIFIED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome("Configuration loaded successfully"));
+    }
+
+    /**
+     * The load line followed by the platform's own database update line is a confirmed update.
+     */
+    @Test
+    public void theLoadLineWithTheDatabaseUpdateLineConfirmsTheUpdate()
+    {
+        assertEquals(DatabaseUpdateOutcome.CONFIRMED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome(
+                "Загрузка конфигурации успешно завершена\nОбновление конфигурации базы данных успешно завершено"));
+    }
+
     // -- the .epf/.erf dump placement --
 
     @Test
