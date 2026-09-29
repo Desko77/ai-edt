@@ -997,20 +997,24 @@ public final class InfobaseObjectsExporter
                 {
                     if (cancelled != null && cancelled.getAsBoolean())
                     {
-                        throw abandon(what + " was cancelled while it was still running", running, //$NON-NLS-1$
-                            started, returned, launchClaim);
+                        throw abandon(what + " was cancelled while it was still running", //$NON-NLS-1$
+                            what + " was cancelled before its Designer run started; no Designer run was launched", //$NON-NLS-1$
+                            running, started, returned, launchClaim);
                     }
                     if (System.currentTimeMillis() >= deadline)
                     {
                         throw abandon(what + " did not finish within " + (budgetMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
+                            what + " did not reach its Designer run within " + (budgetMs / 1000) //$NON-NLS-1$
+                                + "s; no Designer run was launched", //$NON-NLS-1$
                             running, started, returned, launchClaim);
                     }
                 }
                 catch (InterruptedException interrupted)
                 {
                     Thread.currentThread().interrupt();
-                    throw abandon(what + " was interrupted while it was still running", running, //$NON-NLS-1$
-                        started, returned, launchClaim);
+                    throw abandon(what + " was interrupted while it was still running", //$NON-NLS-1$
+                        what + " was interrupted before its Designer run started; no Designer run was launched", //$NON-NLS-1$
+                        running, started, returned, launchClaim);
                 }
                 catch (java.util.concurrent.ExecutionException failed)
                 {
@@ -1034,14 +1038,22 @@ public final class InfobaseObjectsExporter
      * worker that has not crossed it yet starts no Designer run at all, and the Future is
      * cancelled. A boundary the worker already claimed means the launcher call is committed, and
      * the caller is told whether that call itself had returned.
+     *
+     * @param message the text of an abandonment whose launcher call was committed
+     * @param preventedMessage the text of an abandonment that kept the Designer run from starting
+     * @param running the worker's Future
+     * @param started set once the worker has begun
+     * @param returned counted down when the launcher call returns
+     * @param launchClaim the launch boundary, or {@code null} when the work has none
+     * @return the abandonment to throw
      */
-    private static Abandoned abandon(String message, Future<String> running,
+    private static Abandoned abandon(String message, String preventedMessage, Future<String> running,
         AtomicBoolean started, CountDownLatch returned, AtomicBoolean launchClaim)
     {
         boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
-        return new Abandoned(message, stillRunning, stillRunning ? task -> {
+        return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
                 {

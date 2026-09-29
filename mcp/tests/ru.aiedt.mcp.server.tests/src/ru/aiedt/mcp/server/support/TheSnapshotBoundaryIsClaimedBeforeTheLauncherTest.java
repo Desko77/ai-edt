@@ -68,11 +68,14 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
     /**
      * The sentence the answer carries when the platform process is still writing - the one that has
      * to be there for a call that crossed the boundary and absent for a call that never started.
-     * The abandonment's own message says "cancelled while it was still running" in both cases, so
-     * the flag itself is not readable from the text: this sentence is what separates them.
+     * The abandonment's own message differs as well: {@link #NOTHING_LAUNCHED} for a call that never
+     * started, "while it was still running" for one that crossed the boundary.
      */
     private static final String PROCESS_STILL_RUNNING =
         "the platform process is still running"; //$NON-NLS-1$
+
+    /** The words of an abandonment that kept the Designer run from starting. */
+    private static final String NOTHING_LAUNCHED = "no Designer run was launched"; //$NON-NLS-1$
 
     private Path work;
 
@@ -134,6 +137,10 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
         assertTrue(failed.toString(), failed.get("cancelled").getAsBoolean()); //$NON-NLS-1$
         assertFalse("a call that never started is not reported as running: " + failed, //$NON-NLS-1$
             failed.get("error").getAsString().contains(PROCESS_STILL_RUNNING)); //$NON-NLS-1$
+        assertTrue("the answer says no Designer run was launched: " + failed, //$NON-NLS-1$
+            failed.get("error").getAsString().contains(NOTHING_LAUNCHED)); //$NON-NLS-1$
+        assertFalse("the answer does not call a run that never started still running: " + failed, //$NON-NLS-1$
+            failed.get("error").getAsString().contains("while it was still running")); //$NON-NLS-1$
         assertFalse("no file is left for a process that does not exist: " + failed, //$NON-NLS-1$
             failed.has("leftBehind")); //$NON-NLS-1$
         assertFalse("a call that never started holds no claim: " + failed, //$NON-NLS-1$

@@ -259,8 +259,9 @@ public final class DtSnapshotRunner
      *
      * @param runKey the run's key
      * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live, otherwise
-     *         {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING} - the platform call already
-     *         under way is not something this side can pull back
+     *         {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}, whether or not the Designer run
+     *         has started - this side only wakes the wait, and the run's own answer under its runKey
+     *         says whether a Designer run was launched
      */
     static PendingWorkRegistry.StopOutcome stopTheRun(String runKey)
     {
@@ -652,7 +653,7 @@ public final class DtSnapshotRunner
             {
                 // The platform process is still writing into it. Deleting a file under a live writer
                 // loses whatever it has not written yet and says nothing; the answer names it
-                // instead, and the run that started the process cleans up when it returns.
+                // instead, and the file stays on disk after the process returns.
                 out.leftBehind = temp.toString();
             }
             else
