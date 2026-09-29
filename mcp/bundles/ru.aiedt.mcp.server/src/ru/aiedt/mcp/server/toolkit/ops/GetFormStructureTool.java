@@ -174,7 +174,7 @@ public class GetFormStructureTool implements IMcpTool
                     commandInterfaceObj[0] = collectCommandInterface(form);
                 }
                 dynamicListsRef[0] = collectDynamicLists(form);
-                appearanceRef.add(FormAppearanceOps.describe(form));
+                appearanceRef.add(FormAppearanceOps.describe(transaction, form));
             }
             catch (Throwable t)
             {
