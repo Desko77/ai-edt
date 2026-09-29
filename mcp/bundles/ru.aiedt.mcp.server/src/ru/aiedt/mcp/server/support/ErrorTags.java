@@ -269,6 +269,11 @@ public enum ErrorTags
      * stopped before anything was asked of the infobase. */
     DUMP_INFO_FORMAT("dumpInfoFormat"), //$NON-NLS-1$
 
+    /** update_database: the store's ConfigDumpInfo.xml was recorded for a
+     * different infobase than the one the call targets, so an incremental
+     * update would be decided against the wrong base. */
+    INFOBASE_CHANGED("infobaseChanged"), //$NON-NLS-1$
+
     /** set_infobase_credentials: writing the settings to secure storage
      * failed. */
     WRITE_FAILED("writeFailed"), //$NON-NLS-1$

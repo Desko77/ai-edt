@@ -415,6 +415,13 @@ public final class DumpInfoRebuilder
             {
                 DumpInfoProbe.rememberPair(infobaseIdentity, format, platform,
                     DumpInfoProbe.stateFile());
+                // The swap has just replaced the stored copy with this base's own dump, so the
+                // record of what the store holds is written from the file the platform produced.
+                // Without it the next update would read the rebuild itself as a change made by
+                // someone else - which is what that record exists to distinguish.
+                Path copy = SyncBaseline.dumpInfoFile(ctx.project, infobaseUuid.toString());
+                InfobaseOutsideChange.copyOf(copy, infobaseIdentity)
+                    .writeTo(InfobaseOutsideChange.recordFileOf(copy));
             }
 
             @Override
