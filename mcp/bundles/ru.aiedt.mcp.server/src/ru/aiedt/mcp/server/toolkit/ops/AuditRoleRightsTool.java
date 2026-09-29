@@ -25,7 +25,6 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmRightsHelper;
-import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -495,10 +494,10 @@ public class AuditRoleRightsTool implements IMcpTool
     /**
      * Whether one FQN from a rights file is still in the configuration.
      * <p>
-     * Three answers, and the third is the important one. A rights file names ordinary objects
-     * ({@code Catalog.Products}), their children ({@code Catalog.Products.Attribute.Price}) and the
-     * configuration root - and a prefix this does not recognise must come back as "cannot tell"
-     * rather than as "gone", because the caller may act on the difference.
+     * The walk is {@link BmRightsHelper#locateObject}: the same one a rights write uses, so a
+     * standard attribute or a URL template that the write accepts is not deleted here as an orphan.
+     * A child that walk cannot resolve, or whose collection kind the owner does not have, comes
+     * back {@code null} and is left in place.
      * </p>
      *
      * @param configuration the configuration.
@@ -507,118 +506,7 @@ public class AuditRoleRightsTool implements IMcpTool
      */
     private static Boolean stillThere(Configuration configuration, String fqn)
     {
-        if (fqn == null || fqn.isEmpty())
-        {
-            return null;
-        }
-        if (fqn.equals(configuration.getName()) || "Configuration".equals(fqn) //$NON-NLS-1$
-            || fqn.startsWith("Configuration.")) //$NON-NLS-1$
-        {
-            // Rights on the configuration itself. It is always there.
-            return Boolean.TRUE;
-        }
-        String[] parts = fqn.split("\\."); //$NON-NLS-1$
-        if (parts.length < 2)
-        {
-            return null;
-        }
-        String type = MetadataTypeCatalog.toEnglishSingular(parts[0]);
-        if (type == null)
-        {
-            type = parts[0];
-        }
-        if (MetadataTypeCatalog.resolve(type) == null)
-        {
-            // A collection this does not know. Saying "gone" here would delete rights on an object
-            // that exists perfectly well behind a name this happens not to recognise.
-            return null;
-        }
-        MdObject owner = MetadataTypeCatalog.findObject(configuration, type, parts[1]);
-        if (owner == null)
-        {
-            return Boolean.FALSE;
-        }
-        if (parts.length == 2)
-        {
-            return Boolean.TRUE;
-        }
-        // A child FQN: Subsystem.A.Subsystem.B, DataProcessor.X.Command.Y, Catalog.Z.Attribute.W.
-        // Measured on a real role, these are most of the file - 25 of 376 entries came back
-        // undecided on the first run, all of them children - so leaving them undecided made the
-        // sweep report almost nothing either way, which is a report nobody can act on.
-        return childStillThere(owner, parts, 2);
-    }
-
-    /**
-     * Walks a child FQN one segment pair at a time.
-     * <p>
-     * Each pair is a collection name and a member name - {@code Subsystem.Sales}, {@code Command.Post}
-     * - and the walk descends through them. A collection this cannot read leaves the answer
-     * undecided rather than negative: the same rule as the top level, for the same reason.
-     * </p>
-     *
-     * @param owner the object the walk has reached so far.
-     * @param parts the whole FQN, split.
-     * @param at the index of the next collection name.
-     * @return TRUE, FALSE, or {@code null} when undecidable
-     */
-    private static Boolean childStillThere(MdObject owner, String[] parts, int at)
-    {
-        if (at >= parts.length)
-        {
-            return Boolean.TRUE;
-        }
-        if (at + 1 >= parts.length)
-        {
-            // A trailing collection name with no member after it. Nothing to look for.
-            return null;
-        }
-        String collection = parts[at];
-        String member = parts[at + 1];
-        Object children = readChildren(owner, collection);
-        if (!(children instanceof Iterable))
-        {
-            return null;
-        }
-        for (Object child : (Iterable<?>)children)
-        {
-            if (child instanceof MdObject && member.equals(((MdObject)child).getName()))
-            {
-                return childStillThere((MdObject)child, parts, at + 2);
-            }
-        }
-        // The owner is there and this collection was readable, so a member missing from it is
-        // missing - that is the one case the sweep is allowed to act on.
-        return Boolean.FALSE;
-    }
-
-    /**
-     * Reads one named collection off a metadata object.
-     *
-     * @param owner the object.
-     * @param collection the collection's singular name as it appears in an FQN.
-     * @return the collection, or {@code null} when this object has no such getter
-     */
-    private static Object readChildren(MdObject owner, String collection)
-    {
-        String english = MetadataTypeCatalog.toEnglishSingular(collection);
-        String name = english != null ? english : collection;
-        for (String getter : new String[] {"get" + name + "s", "get" + name + "es", "get" + name}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        {
-            try
-            {
-                return owner.getClass().getMethod(getter).invoke(owner);
-            }
-            catch (NoSuchMethodException absent)
-            {
-                continue;
-            }
-            catch (Exception failed)
-            {
-                return null;
-            }
-        }
-        return null;
+        return BmRightsHelper.locateObject(configuration, fqn).presenceForRemoval();
     }
 
 }

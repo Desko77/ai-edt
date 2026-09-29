@@ -15,14 +15,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 
+import javax.xml.XMLConstants;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -33,6 +36,11 @@ import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.emf.ecore.EObject;
+
+import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -72,9 +80,41 @@ public final class BmRightsHelper
      */
     private static final Map<String, ReentrantLock> FILE_LOCKS = new ConcurrentHashMap<>();
 
+    /**
+     * The lock of one rights file.
+     * <p>
+     * The key is folded to lower case: Windows opens one role directory under any letter case, so
+     * a setter using the model's name and a sweep using the caller's spelling reach the same file
+     * and must take the same lock.
+     * </p>
+     *
+     * @param key the path of the rights file
+     * @return the lock shared by every writer of that file
+     */
     private static ReentrantLock fileLock(String key)
     {
-        return FILE_LOCKS.computeIfAbsent(key, k -> new ReentrantLock());
+        return FILE_LOCKS.computeIfAbsent(key.toLowerCase(java.util.Locale.ROOT), k -> new ReentrantLock());
+    }
+
+    /**
+     * The text of a failure without a local filesystem address.
+     * <p>
+     * A {@link java.nio.file.FileSystemException} puts the file path into its message; its class and
+     * reason are returned instead. Other failures keep their message.
+     * </p>
+     *
+     * @param failure the exception
+     * @return the text to put into an answer
+     */
+    static String failureWithoutPath(Exception failure)
+    {
+        if (failure instanceof java.nio.file.FileSystemException)
+        {
+            String reason = ((java.nio.file.FileSystemException)failure).getReason();
+            String kind = failure.getClass().getSimpleName();
+            return reason == null || reason.isEmpty() ? kind : kind + " (" + reason + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return failure.getMessage() != null ? failure.getMessage() : failure.getClass().getSimpleName();
     }
 
     private BmRightsHelper()
@@ -271,10 +311,31 @@ public final class BmRightsHelper
      * folder. Call AFTER the BM commit (file write + workspace refresh must not
      * run inside the transaction).
      *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param xml the document text
      * @return null on success, or a non-null error note (the BM mutation has
      *     already committed)
      */
     public static String writeRightsFile(IProject project, String roleName, String xml)
+    {
+        return writeRightsFile(project, roleName, xml, true);
+    }
+
+    /**
+     * Writes {@code Rights.rights} by a temporary file and a move, then refreshes the workspace
+     * folder so a later read through {@code IFile} sees the bytes just written.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param xml the document text
+     * @param refuseEmptyReplacement when {@code true}, XML with no object block does not replace a
+     *        file that still has one. A sweep that removed the last object on purpose passes
+     *        {@code false}.
+     * @return {@code null} on success, or the error text
+     */
+    public static String writeRightsFile(IProject project, String roleName, String xml,
+        boolean refuseEmptyReplacement)
     {
         if (project == null || roleName == null || roleName.isEmpty() || xml == null)
         {
@@ -292,7 +353,8 @@ public final class BmRightsHelper
         // existing file does, the mutated RoleDescription was read empty (e.g. a
         // cross-resource proxy that did not load) - refuse the wipe and keep the
         // file. The BM mutation has still committed; the caller surfaces this note.
-        if (!xml.contains("<object>")) //$NON-NLS-1$
+        // A sweep that deleted the last object opts out: that empty file is the result it asked for.
+        if (refuseEmptyReplacement && !xml.contains("<object>")) //$NON-NLS-1$
         {
             try
             {
@@ -309,13 +371,13 @@ public final class BmRightsHelper
                 // fall through to the write attempt - a read failure must not block a fresh write
             }
         }
+        Path tmp = dir.resolve("Rights.rights.tmp"); //$NON-NLS-1$
         try
         {
             Files.createDirectories(dir);
             // Write to a temp file then move into place, so the workspace refresh
             // below (and any EDT re-read it triggers) never observes a truncated
             // half-written Rights.rights.
-            Path tmp = dir.resolve("Rights.rights.tmp"); //$NON-NLS-1$
             Files.write(tmp, xml.getBytes(StandardCharsets.UTF_8));
             try
             {
@@ -329,7 +391,16 @@ public final class BmRightsHelper
         }
         catch (IOException ioe)
         {
-            return "Failed to write Rights.rights: " + ioe.getMessage(); //$NON-NLS-1$
+            try
+            {
+                Files.deleteIfExists(tmp);
+            }
+            catch (IOException ignored)
+            {
+                // The failure being returned is the write. A temp file that could not be
+                // removed is left for the next write, which replaces it.
+            }
+            return "Failed to write Rights.rights of role " + roleName + ": " + failureWithoutPath(ioe); //$NON-NLS-1$ //$NON-NLS-2$
         }
         try
         {
@@ -361,6 +432,16 @@ public final class BmRightsHelper
         public boolean fileCreated;
         public String previousValue; // "true" / "false" / null (not set before)
         public String error;
+        /** Wire tag such as {@code notFound}, or {@code null} when the call was not refused. */
+        public String failureKind;
+        /** What was missing: {@code role}, {@code object} or {@code right}. */
+        public String subject;
+        /** The role, object or right the refusal names. */
+        public String subjectName;
+        /** English object kind when a right does not apply, otherwise {@code null}. */
+        public String objectKind;
+        /** Canonical rights that do apply, when a right was refused for that reason. */
+        public List<String> applicableRights;
     }
 
     /**
@@ -378,10 +459,41 @@ public final class BmRightsHelper
      * {@code <restrictionByCondition>} blocks and root templates that a name/value
      * model would drop. Only the one {@code <object>/<right>/<value>} is touched.
      *
+     * A role the configuration does not contain, an object it does not contain, or a right that
+     * does not apply to that object's kind is refused before any file is created. A name that is
+     * not a single path segment (a separator, a dot, or {@code ..}) is refused the same way.
+     * Object and right names already in the file are matched without regard to case, so a re-cased
+     * call updates the existing block instead of appending a second one.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param targetFqn the metadata object, for example {@code Catalog.Goods}
+     * @param canonicalRightName the platform right name
      * @param granted true -&gt; {@code <value>true</value>} (SET), false -&gt; {@code false} (denied)
+     * @param dryRun {@code true} to leave the file untouched after a successful check
+     * @return what was written, or the refusal
      */
     public static FileRightResult applyRightToFile(IProject project, String roleName,
         String targetFqn, String canonicalRightName, boolean granted, boolean dryRun)
+    {
+        return applyRightToFile(project, roleName, targetFqn, canonicalRightName, granted, dryRun, null);
+    }
+
+    /**
+     * {@link #applyRightToFile(IProject, String, String, String, boolean, boolean)} with the
+     * caller's own answers for whether the role, the object and the right exist.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param targetFqn the metadata object
+     * @param canonicalRightName the platform right name
+     * @param granted true to grant the right, false to deny it
+     * @param dryRun {@code true} to leave the file untouched after a successful check
+     * @param gate the answers, or {@code null} to read them from the project model
+     * @return what was written, or the refusal
+     */
+    public static FileRightResult applyRightToFile(IProject project, String roleName,
+        String targetFqn, String canonicalRightName, boolean granted, boolean dryRun, RightsGate gate)
     {
         FileRightResult res = new FileRightResult();
         if (project == null || roleName == null || roleName.isEmpty()
@@ -391,11 +503,14 @@ public final class BmRightsHelper
             res.error = "project, roleName, targetFqn and rightName are required"; //$NON-NLS-1$
             return res;
         }
-        // L2: roleName becomes a path segment under src/Roles/ - reject traversal (matches
-        // the guard on set_restriction_template / set_role_restriction).
-        if (roleName.indexOf('/') >= 0 || roleName.indexOf('\\') >= 0 || roleName.contains("..")) //$NON-NLS-1$
+        // The directory is the role's name as the model stores it, not the caller's spelling.
+        // A dot is not a separator on disk, but it is not a simple metadata name either.
+        RightsGate effective = gateOf(project, gate);
+        String roleDirectory = effective.roleDirectoryName(roleName);
+        String nameError = simpleRoleNameError(roleDirectory);
+        if (nameError != null)
         {
-            res.error = "roleName must be a simple role name (no path separators or '..')"; //$NON-NLS-1$
+            res.error = nameError;
             return res;
         }
         if (project.getLocation() == null)
@@ -404,23 +519,31 @@ public final class BmRightsHelper
             return res;
         }
         Path file = project.getLocation().toFile().toPath()
-            .resolve("src").resolve("Roles").resolve(roleName).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        // M3: serialize the read-modify-write on this one Rights.rights so a concurrent
+            .resolve("src").resolve("Roles").resolve(roleDirectory).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        // Serialize the read-modify-write on this one Rights.rights so a concurrent
         // writer (or this op's own dependency cascade, N+1 writes) cannot interleave and
         // lose an edit. Lock before the try, release in finally.
         ReentrantLock lock = fileLock(file.toString());
         lock.lock();
         try
         {
-            Document doc;
-            if (Files.exists(file))
+            LoadedRights loaded = loadRights(file);
+            if (loaded.parseError != null)
             {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setNamespaceAware(false); // keep xmlns* as literal attributes for round-trip
-                DocumentBuilder db = dbf.newDocumentBuilder();
-                doc = db.parse(new ByteArrayInputStream(Files.readAllBytes(file)));
+                res.error = "Rights.rights could not be read: " + loaded.parseError; //$NON-NLS-1$
+                return res;
             }
-            else
+            Refusal refusal = assess(project, roleName, targetFqn, canonicalRightName, loaded.doc,
+                effective);
+            if (refusal != null)
+            {
+                applyRefusal(res, refusal);
+                return res;
+            }
+            String objectToWrite = effective.objectFqnToWrite(targetFqn);
+            String rightToWrite = effective.rightNameToWrite(targetFqn, canonicalRightName);
+            Document doc = loaded.doc;
+            if (doc == null)
             {
                 doc = newRightsDocument();
                 res.fileCreated = true;
@@ -431,19 +554,24 @@ public final class BmRightsHelper
                 res.error = "Rights.rights has no <Rights> root"; //$NON-NLS-1$
                 return res;
             }
-            Element objectEl = findChildByName(root, "object", targetFqn); //$NON-NLS-1$
+            Element objectEl = findObjectBlock(root, objectToWrite, targetFqn);
+            boolean rootRenamed = false;
             if (objectEl == null)
             {
                 objectEl = doc.createElement("object"); //$NON-NLS-1$
-                appendTextChild(doc, objectEl, "name", targetFqn); //$NON-NLS-1$
+                appendTextChild(doc, objectEl, "name", objectToWrite); //$NON-NLS-1$
                 root.appendChild(objectEl);
                 res.objectCreated = true;
             }
-            Element rightEl = findChildByName(objectEl, "right", canonicalRightName); //$NON-NLS-1$
+            else
+            {
+                rootRenamed = renameBareConfigurationRoot(objectEl, objectToWrite);
+            }
+            Element rightEl = findRightBlock(objectEl, rightToWrite, canonicalRightName);
             if (rightEl == null)
             {
                 rightEl = doc.createElement("right"); //$NON-NLS-1$
-                appendTextChild(doc, rightEl, "name", canonicalRightName); //$NON-NLS-1$
+                appendTextChild(doc, rightEl, "name", rightToWrite); //$NON-NLS-1$
                 appendTextChild(doc, rightEl, "value", String.valueOf(granted)); //$NON-NLS-1$
                 objectEl.appendChild(rightEl);
                 res.rightCreated = true;
@@ -457,9 +585,14 @@ public final class BmRightsHelper
                 {
                     res.idempotent = true;
                     res.ok = true;
-                    return res; // already at the requested value - no rewrite
+                    // The right is already set. A root block still stored without its name has to
+                    // be rewritten, so that one change is saved below.
+                    if (!rootRenamed)
+                    {
+                        return res;
+                    }
                 }
-                if (valueEl == null)
+                else if (valueEl == null)
                 {
                     appendTextChild(doc, rightEl, "value", String.valueOf(granted)); //$NON-NLS-1$
                 }
@@ -474,7 +607,7 @@ public final class BmRightsHelper
                 return res;
             }
             String xml = printRightsDom(doc);
-            String writeErr = writeRightsFile(project, roleName, xml);
+            String writeErr = writeRightsFile(project, roleDirectory, xml);
             if (writeErr != null)
             {
                 res.error = writeErr;
@@ -485,8 +618,7 @@ public final class BmRightsHelper
         }
         catch (Exception e)
         {
-            res.error = "Rights.rights edit failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            res.error = "Rights.rights edit failed: " + failureWithoutPath(e); //$NON-NLS-1$
             return res;
         }
         finally
@@ -505,6 +637,16 @@ public final class BmRightsHelper
         public boolean removed;    // remove: template was removed
         public boolean fileCreated;
         public String error;
+        /** Wire tag such as {@code notFound}, or {@code null} when the call was not refused. */
+        public String failureKind;
+        /** What was missing: {@code role}. */
+        public String subject;
+        /** The role the refusal names. */
+        public String subjectName;
+        /** Unused for a template; kept so every writer reports a refusal the same way. */
+        public String objectKind;
+        /** Unused for a template. */
+        public List<String> applicableRights;
     }
 
     /**
@@ -520,13 +662,39 @@ public final class BmRightsHelper
      * {@code remove} (remove=true): the template with that name is removed;
      * idempotent when absent (or the file does not exist).
      *
-     * @param templateName the template name/signature (e.g. {@code ДляОбъекта(ПолеОбъекта)})
-     * @param condition the RLS condition text (required for set, ignored for remove);
-     *        line endings are normalized to LF to match round-tripped conditions
+     * A role the configuration does not contain is refused before a file is created.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param templateName the template name
+     * @param condition the RLS condition text (required for set, ignored for remove)
      * @param remove true -&gt; remove; false -&gt; add/update
+     * @param dryRun {@code true} to leave the file untouched after a successful check
+     * @return what was written, or the refusal
      */
     public static FileTemplateResult applyRestrictionTemplateToFile(IProject project,
         String roleName, String templateName, String condition, boolean remove, boolean dryRun)
+    {
+        return applyRestrictionTemplateToFile(project, roleName, templateName, condition, remove, dryRun,
+            null);
+    }
+
+    /**
+     * {@link #applyRestrictionTemplateToFile(IProject, String, String, String, boolean, boolean)}
+     * with the caller's own answer for whether the role exists.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param templateName the template name
+     * @param condition the RLS condition text
+     * @param remove true to remove the template, false to add or update it
+     * @param dryRun {@code true} to leave the file untouched after a successful check
+     * @param gate the answers, or {@code null} to read them from the project model
+     * @return what was written, or the refusal
+     */
+    public static FileTemplateResult applyRestrictionTemplateToFile(IProject project,
+        String roleName, String templateName, String condition, boolean remove, boolean dryRun,
+        RightsGate gate)
     {
         FileTemplateResult res = new FileTemplateResult();
         if (project == null || roleName == null || roleName.isEmpty()
@@ -540,10 +708,12 @@ public final class BmRightsHelper
             res.error = "condition is required to set a restriction template"; //$NON-NLS-1$
             return res;
         }
-        // Defend the path: roleName becomes a path segment under src/Roles/.
-        if (roleName.indexOf('/') >= 0 || roleName.indexOf('\\') >= 0 || roleName.contains("..")) //$NON-NLS-1$
+        RightsGate effective = gateOf(project, gate);
+        String roleDirectory = effective.roleDirectoryName(roleName);
+        String nameError = simpleRoleNameError(roleDirectory);
+        if (nameError != null)
         {
-            res.error = "roleName must be a simple role name (no path separators or '..')"; //$NON-NLS-1$
+            res.error = nameError;
             return res;
         }
         // 1C identifiers are case-insensitive; match and store the trimmed name.
@@ -559,27 +729,34 @@ public final class BmRightsHelper
             return res;
         }
         Path file = project.getLocation().toFile().toPath()
-            .resolve("src").resolve("Roles").resolve(roleName).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        // M3: same per-file lock as applyRightToFile, so this writer serializes against
+            .resolve("src").resolve("Roles").resolve(roleDirectory).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        // Same per-file lock as applyRightToFile, so this writer serializes against
         // set_role_right / cascade and the other restriction writer on one Rights.rights.
         ReentrantLock lock = fileLock(file.toString());
         lock.lock();
         try
         {
-            if (!Files.exists(file) && remove)
+            LoadedRights loaded = loadRights(file);
+            if (loaded.parseError != null)
+            {
+                res.error = "Rights.rights could not be read: " + loaded.parseError; //$NON-NLS-1$
+                return res;
+            }
+            // A template has no object and no right; only the role is checked.
+            Refusal refusal = assess(project, roleName, null, null, loaded.doc, effective);
+            if (refusal != null)
+            {
+                applyRefusal(res, refusal);
+                return res;
+            }
+            if (loaded.doc == null && remove)
             {
                 res.idempotent = true; // nothing to remove
                 res.ok = true;
                 return res;
             }
-            Document doc;
-            if (Files.exists(file))
-            {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setNamespaceAware(false); // keep xmlns* as literal attributes for round-trip
-                doc = dbf.newDocumentBuilder().parse(new ByteArrayInputStream(Files.readAllBytes(file)));
-            }
-            else
+            Document doc = loaded.doc;
+            if (doc == null)
             {
                 doc = newRightsDocument();
                 res.fileCreated = true;
@@ -646,7 +823,7 @@ public final class BmRightsHelper
                 return res;
             }
             String xml = printRightsDom(doc);
-            String writeErr = writeRightsFile(project, roleName, xml);
+            String writeErr = writeRightsFile(project, roleDirectory, xml);
             if (writeErr != null)
             {
                 res.error = writeErr;
@@ -657,8 +834,7 @@ public final class BmRightsHelper
         }
         catch (Exception e)
         {
-            res.error = "Rights.rights template edit failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            res.error = "Rights.rights template edit failed: " + failureWithoutPath(e); //$NON-NLS-1$
             return res;
         }
         finally
@@ -679,6 +855,16 @@ public final class BmRightsHelper
         public boolean rightCreated;
         public boolean fileCreated;
         public String error;
+        /** Wire tag such as {@code notFound}, or {@code null} when the call was not refused. */
+        public String failureKind;
+        /** What was missing: {@code role}, {@code object} or {@code right}. */
+        public String subject;
+        /** The role, object or right the refusal names. */
+        public String subjectName;
+        /** English object kind when a right does not apply, otherwise {@code null}. */
+        public String objectKind;
+        /** Canonical rights that do apply, when a right was refused for that reason. */
+        public List<String> applicableRights;
     }
 
     /**
@@ -696,13 +882,42 @@ public final class BmRightsHelper
      * intact (use set_role_right to revoke a right). Idempotent (set: condition unchanged;
      * remove: no restriction / no right / no object / no file).
      *
+     * A role, object or right the configuration does not contain is refused before a file is created.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param targetFqn the metadata object
      * @param rightName canonical right name (Read / Insert / Update / Delete / ...)
      * @param condition RLS condition text (required for set, ignored for remove); LF-normalized
      * @param remove true -&gt; remove the restriction; false -&gt; add/update
+     * @param dryRun {@code true} to leave the file untouched after a successful check
+     * @return what was written, or the refusal
      */
     public static FileRestrictionResult applyRoleRestrictionToFile(IProject project,
         String roleName, String targetFqn, String rightName, String condition, boolean remove,
         boolean dryRun)
+    {
+        return applyRoleRestrictionToFile(project, roleName, targetFqn, rightName, condition, remove,
+            dryRun, null);
+    }
+
+    /**
+     * {@link #applyRoleRestrictionToFile(IProject, String, String, String, String, boolean, boolean)}
+     * with the caller's own answers for the role, the object and the right.
+     *
+     * @param project the EDT project
+     * @param roleName the simple role name
+     * @param targetFqn the metadata object
+     * @param rightName the canonical right name
+     * @param condition the RLS condition text
+     * @param remove true to remove the restriction, false to add or update it
+     * @param dryRun {@code true} to leave the file untouched after a successful check
+     * @param gate the answers, or {@code null} to read them from the project model
+     * @return what was written, or the refusal
+     */
+    public static FileRestrictionResult applyRoleRestrictionToFile(IProject project,
+        String roleName, String targetFqn, String rightName, String condition, boolean remove,
+        boolean dryRun, RightsGate gate)
     {
         FileRestrictionResult res = new FileRestrictionResult();
         if (project == null || roleName == null || roleName.isEmpty()
@@ -717,9 +932,12 @@ public final class BmRightsHelper
             res.error = "condition is required to set a role restriction"; //$NON-NLS-1$
             return res;
         }
-        if (roleName.indexOf('/') >= 0 || roleName.indexOf('\\') >= 0 || roleName.contains("..")) //$NON-NLS-1$
+        RightsGate effective = gateOf(project, gate);
+        String roleDirectory = effective.roleDirectoryName(roleName);
+        String nameError = simpleRoleNameError(roleDirectory);
+        if (nameError != null)
         {
-            res.error = "roleName must be a simple role name (no path separators or '..')"; //$NON-NLS-1$
+            res.error = nameError;
             return res;
         }
         if (project.getLocation() == null)
@@ -728,27 +946,35 @@ public final class BmRightsHelper
             return res;
         }
         Path file = project.getLocation().toFile().toPath()
-            .resolve("src").resolve("Roles").resolve(roleName).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        // M3: same per-file lock as applyRightToFile, so this writer serializes against
+            .resolve("src").resolve("Roles").resolve(roleDirectory).resolve("Rights.rights"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        // Same per-file lock as applyRightToFile, so this writer serializes against
         // set_role_right / cascade and the other restriction writer on one Rights.rights.
         ReentrantLock lock = fileLock(file.toString());
         lock.lock();
         try
         {
-            if (!Files.exists(file) && remove)
+            LoadedRights loaded = loadRights(file);
+            if (loaded.parseError != null)
+            {
+                res.error = "Rights.rights could not be read: " + loaded.parseError; //$NON-NLS-1$
+                return res;
+            }
+            Refusal refusal = assess(project, roleName, targetFqn, rightName, loaded.doc, effective);
+            if (refusal != null)
+            {
+                applyRefusal(res, refusal);
+                return res;
+            }
+            if (loaded.doc == null && remove)
             {
                 res.idempotent = true; // nothing to remove
                 res.ok = true;
                 return res;
             }
-            Document doc;
-            if (Files.exists(file))
-            {
-                DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                dbf.setNamespaceAware(false); // keep xmlns* as literal attributes for round-trip
-                doc = dbf.newDocumentBuilder().parse(new ByteArrayInputStream(Files.readAllBytes(file)));
-            }
-            else
+            String objectToWrite = effective.objectFqnToWrite(targetFqn);
+            String rightToWrite = effective.rightNameToWrite(targetFqn, rightName);
+            Document doc = loaded.doc;
+            if (doc == null)
             {
                 doc = newRightsDocument();
                 res.fileCreated = true;
@@ -759,7 +985,7 @@ public final class BmRightsHelper
                 res.error = "Rights.rights has no <Rights> root"; //$NON-NLS-1$
                 return res;
             }
-            Element objectEl = findChildByName(root, "object", targetFqn); //$NON-NLS-1$
+            Element objectEl = findObjectBlock(root, objectToWrite, targetFqn);
             if (remove && objectEl == null)
             {
                 res.idempotent = true;
@@ -769,11 +995,11 @@ public final class BmRightsHelper
             if (objectEl == null)
             {
                 objectEl = doc.createElement("object"); //$NON-NLS-1$
-                appendTextChild(doc, objectEl, "name", targetFqn); //$NON-NLS-1$
+                appendTextChild(doc, objectEl, "name", objectToWrite); //$NON-NLS-1$
                 root.appendChild(objectEl);
                 res.objectCreated = true;
             }
-            Element rightEl = findChildByName(objectEl, "right", rightName); //$NON-NLS-1$
+            Element rightEl = findRightBlock(objectEl, rightToWrite, rightName);
             if (remove && rightEl == null)
             {
                 res.idempotent = true;
@@ -783,7 +1009,7 @@ public final class BmRightsHelper
             if (rightEl == null)
             {
                 rightEl = doc.createElement("right"); //$NON-NLS-1$
-                appendTextChild(doc, rightEl, "name", rightName); //$NON-NLS-1$
+                appendTextChild(doc, rightEl, "name", rightToWrite); //$NON-NLS-1$
                 appendTextChild(doc, rightEl, "value", "true"); //$NON-NLS-1$ //$NON-NLS-2$
                 objectEl.appendChild(rightEl);
                 res.rightCreated = true;
@@ -843,7 +1069,7 @@ public final class BmRightsHelper
                 return res;
             }
             String xml = printRightsDom(doc);
-            String writeErr = writeRightsFile(project, roleName, xml);
+            String writeErr = writeRightsFile(project, roleDirectory, xml);
             if (writeErr != null)
             {
                 res.error = writeErr;
@@ -854,8 +1080,7 @@ public final class BmRightsHelper
         }
         catch (Exception e)
         {
-            res.error = "Rights.rights restriction edit failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            res.error = "Rights.rights restriction edit failed: " + failureWithoutPath(e); //$NON-NLS-1$
             return res;
         }
         finally
@@ -864,12 +1089,15 @@ public final class BmRightsHelper
         }
     }
 
-    /** Builds an empty Rights document with the stock root + three default flags. */
+    /**
+     * Builds an empty Rights document with the stock root and the three default flags.
+     *
+     * @return the document
+     * @throws Exception when the JDK parser rejects the secure settings
+     */
     private static Document newRightsDocument() throws Exception
     {
-        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-        dbf.setNamespaceAware(false);
-        Document doc = dbf.newDocumentBuilder().newDocument();
+        Document doc = newRightsBuilder().newDocument();
         Element root = doc.createElement("Rights"); //$NON-NLS-1$
         root.setAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"); //$NON-NLS-1$ //$NON-NLS-2$
         root.setAttribute("xmlns", "http://v8.1c.ru/8.2/roles"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -937,9 +1165,10 @@ public final class BmRightsHelper
             sweep.error = "project, roleName and a resolver are required"; //$NON-NLS-1$
             return sweep;
         }
-        if (roleName.indexOf('/') >= 0 || roleName.indexOf('\\') >= 0 || roleName.contains("..")) //$NON-NLS-1$
+        String nameError = simpleRoleNameError(roleName);
+        if (nameError != null)
         {
-            sweep.error = "roleName must be a simple role name (no path separators or '..')"; //$NON-NLS-1$
+            sweep.error = nameError;
             return sweep;
         }
         if (project.getLocation() == null)
@@ -960,10 +1189,19 @@ public final class BmRightsHelper
         lock.lock();
         try
         {
-            DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-            dbf.setNamespaceAware(false);
-            Document doc = dbf.newDocumentBuilder()
-                .parse(new ByteArrayInputStream(Files.readAllBytes(file)));
+            Document doc;
+            try
+            {
+                doc = parseRights(Files.readAllBytes(file));
+            }
+            catch (Exception refused)
+            {
+                // The parser's own message names the DOCTYPE or the malformed markup. The path is
+                // not part of that answer: it is a local filesystem address.
+                sweep.ok = false;
+                sweep.error = "Rights.rights could not be read: " + failureWithoutPath(refused); //$NON-NLS-1$
+                return sweep;
+            }
             Element root = doc.getDocumentElement();
             java.util.List<Element> doomed = new java.util.ArrayList<>();
             NodeList kids = root.getChildNodes();
@@ -1004,14 +1242,25 @@ public final class BmRightsHelper
                 root.removeChild(dead);
             }
             String written = printRightsDom(doc);
-            Files.write(file, written.getBytes(StandardCharsets.UTF_8));
+            // The same temporary-file move and workspace refresh the other writer uses, so the
+            // workspace does not keep the bytes from before the sweep and no .tmp file is left.
+            // The empty-replacement guard is off: removing the last object is the point of a sweep.
+            String writeErr = writeRightsFile(project, roleName, written, false);
+            if (writeErr != null)
+            {
+                sweep.ok = false;
+                sweep.error = writeErr;
+                return sweep;
+            }
             sweep.changed = true;
             return sweep;
         }
         catch (Exception e)
         {
             sweep.ok = false;
-            sweep.error = "could not sweep " + file + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+            // The path of the rights file is a local filesystem address and is not part of the
+            // answer, the same rule as the parse failure above.
+            sweep.error = "could not sweep the role: " + failureWithoutPath(e); //$NON-NLS-1$
             return sweep;
         }
         finally
@@ -1020,7 +1269,234 @@ public final class BmRightsHelper
         }
     }
 
-    /** Finds a direct child element {@code <tag>} whose {@code <name>} text equals value. */
+    /**
+     * The gate to ask, reading the project when the caller did not supply one.
+     *
+     * @param project the project, used when {@code gate} is {@code null}
+     * @param gate the caller's answers, or {@code null}
+     * @return the gate that answers this write
+     */
+    private static RightsGate gateOf(IProject project, RightsGate gate)
+    {
+        return gate != null ? gate : RightsGate.forProject(project);
+    }
+
+    /**
+     * The object block to update. The canonical address is tried first; a block stored under the
+     * caller's spelling is the same block when the two differ only by case. A block stored with a
+     * Russian type or collection kind ({@code Справочник.Товары}) is the same block as its English
+     * address. A root stored as {@code Configuration} or {@code Конфигурация}, with no
+     * configuration name, is the block of {@code Configuration.<name>}.
+     *
+     * @param root the {@code Rights} element
+     * @param canonical the address to store
+     * @param caller the address the caller passed
+     * @return the block, or {@code null} when no spelling of the address is there
+     */
+    private static Element findObjectBlock(Element root, String canonical, String caller)
+    {
+        Element found = findChildByName(root, "object", canonical); //$NON-NLS-1$
+        if (found == null && caller != null && (canonical == null || !caller.equalsIgnoreCase(canonical)))
+        {
+            found = findChildByName(root, "object", caller); //$NON-NLS-1$
+        }
+        if (found != null || canonical == null)
+        {
+            return found;
+        }
+        String wanted = spellingKey(canonical);
+        NodeList kids = root.getChildNodes();
+        for (int i = 0; i < kids.getLength(); i++)
+        {
+            Node n = kids.item(i);
+            if (n instanceof Element && "object".equals(((Element)n).getTagName())) //$NON-NLS-1$
+            {
+                Element nameEl = firstChild((Element)n, "name"); //$NON-NLS-1$
+                String stored = nameEl == null ? null : nameEl.getTextContent().trim();
+                if (stored != null && (wanted.equals(spellingKey(stored))
+                    || bareConfigurationNamesTheRoot(canonical, stored)))
+                {
+                    return (Element)n;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * An object address with its type and collection kinds in English and in lower case, so two
+     * spellings of one address compare equal.
+     *
+     * @param fqn the address
+     * @return the comparison key
+     */
+    static String spellingKey(String fqn)
+    {
+        String[] parts = fqn.split("\\.", -1); //$NON-NLS-1$
+        StringBuilder key = new StringBuilder();
+        for (int i = 0; i < parts.length; i++)
+        {
+            String part = parts[i];
+            String english = null;
+            if (i == 0)
+            {
+                english = isConfigurationType(part) ? "Configuration" //$NON-NLS-1$
+                    : MetadataTypeCatalog.toEnglishSingular(part);
+            }
+            else if (i % 2 == 0)
+            {
+                english = BmObjectHelper.canonicalChildKind(part);
+                if (english == null)
+                {
+                    english = MetadataTypeCatalog.toEnglishSingular(part);
+                }
+            }
+            if (i > 0)
+            {
+                key.append('.');
+            }
+            key.append(english != null ? english : part);
+        }
+        return key.toString().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Whether an address segment names the configuration root, in either language.
+     *
+     * @param segment the first segment of an address
+     * @return {@code true} for {@code Configuration} and {@code Конфигурация} in any letter case
+     */
+    private static boolean isConfigurationType(String segment)
+    {
+        return "Configuration".equalsIgnoreCase(segment) || "Конфигурация".equalsIgnoreCase(segment); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Whether {@code parts} name the configuration itself.
+     * <p>
+     * One segment is the root when it is {@code Configuration}, {@code Конфигурация}, or the
+     * configuration's own name, in any letter case. Two segments are the root when the first is
+     * {@code Configuration} or {@code Конфигурация} and the second is that name.
+     * </p>
+     *
+     * @param configuration the configuration
+     * @param parts the address split on dots
+     * @return {@code true} when the address is the root
+     */
+    private static boolean isConfigurationRoot(Configuration configuration, String[] parts)
+    {
+        if (parts.length == 1)
+        {
+            return isConfigurationType(parts[0]) || sameConfigurationName(configuration, parts[0]);
+        }
+        return parts.length == 2 && isConfigurationType(parts[0])
+            && sameConfigurationName(configuration, parts[1]);
+    }
+
+    /**
+     * Whether {@code segment} is the configuration's name, ignoring letter case.
+     *
+     * @param configuration the configuration
+     * @param segment one address segment
+     * @return {@code true} when the names match
+     */
+    private static boolean sameConfigurationName(Configuration configuration, String segment)
+    {
+        String name = configuration.getName();
+        return name != null && !name.isEmpty() && name.equalsIgnoreCase(segment);
+    }
+
+    /**
+     * Whether {@code fqn} is the root stored as {@code Configuration.<name>}.
+     *
+     * @param fqn the address to store
+     * @return {@code true} when it is two segments and the first names the configuration
+     */
+    private static boolean isNamedConfigurationRoot(String fqn)
+    {
+        if (fqn == null)
+        {
+            return false;
+        }
+        String[] parts = fqn.split("\\.", -1); //$NON-NLS-1$
+        return parts.length == 2 && isConfigurationType(parts[0]) && !parts[1].isEmpty();
+    }
+
+    /**
+     * Whether a stored name is the configuration type with no configuration name after it.
+     *
+     * @param name the name in the file, already trimmed
+     * @return {@code true} for {@code Configuration} and {@code Конфигурация}
+     */
+    private static boolean isBareConfigurationType(String name)
+    {
+        return name != null && name.indexOf('.') < 0 && isConfigurationType(name);
+    }
+
+    /**
+     * Whether a block stored without the configuration name is the root {@code canonical} names.
+     *
+     * @param canonical the address to store, {@code Configuration.<name>}
+     * @param stored the name in the file
+     * @return {@code true} when {@code stored} is {@code Configuration} or {@code Конфигурация}
+     */
+    private static boolean bareConfigurationNamesTheRoot(String canonical, String stored)
+    {
+        return isNamedConfigurationRoot(canonical) && isBareConfigurationType(stored);
+    }
+
+    /**
+     * Rewrites a root block stored as {@code Configuration} or {@code Конфигурация} to
+     * {@code Configuration.<name>}.
+     *
+     * @param objectEl the object block that was found
+     * @param canonical the address to store
+     * @return {@code true} when the stored name was replaced
+     */
+    private static boolean renameBareConfigurationRoot(Element objectEl, String canonical)
+    {
+        if (!isNamedConfigurationRoot(canonical))
+        {
+            return false;
+        }
+        Element nameEl = firstChild(objectEl, "name"); //$NON-NLS-1$
+        if (nameEl == null || !isBareConfigurationType(nameEl.getTextContent().trim()))
+        {
+            return false;
+        }
+        nameEl.setTextContent(canonical);
+        return true;
+    }
+
+    /**
+     * The right block to update, matched on the spelling that will be stored and on the name the
+     * caller passed.
+     *
+     * @param objectEl the object element
+     * @param canonical the right name to store
+     * @param caller the right name the caller passed
+     * @return the block, or {@code null} when neither name is there
+     */
+    private static Element findRightBlock(Element objectEl, String canonical, String caller)
+    {
+        Element found = findChildByName(objectEl, "right", canonical); //$NON-NLS-1$
+        if (found == null && caller != null && (canonical == null || !caller.equalsIgnoreCase(canonical)))
+        {
+            found = findChildByName(objectEl, "right", caller); //$NON-NLS-1$
+        }
+        return found;
+    }
+
+    /**
+     * Finds a direct child {@code tag} whose {@code name} text matches {@code name} without regard
+     * to case. 1C object and right names do not distinguish case, so a re-cased call must update
+     * the block that is already there.
+     *
+     * @param parent the element to search
+     * @param tag the child tag ({@code object} or {@code right})
+     * @param name the name to match
+     * @return the child, or {@code null}
+     */
     private static Element findChildByName(Element parent, String tag, String name)
     {
         NodeList kids = parent.getChildNodes();
@@ -1030,7 +1506,7 @@ public final class BmRightsHelper
             if (n instanceof Element && tag.equals(((Element) n).getTagName()))
             {
                 Element nameEl = firstChild((Element) n, "name"); //$NON-NLS-1$
-                if (nameEl != null && name.equals(nameEl.getTextContent().trim()))
+                if (nameEl != null && name.equalsIgnoreCase(nameEl.getTextContent().trim()))
                 {
                     return (Element) n;
                 }
@@ -1161,5 +1637,1037 @@ public final class BmRightsHelper
         }
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
             .replace("\"", "&quot;").replace("'", "&apos;"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+    }
+
+    /**
+     * Why a role name may not become a directory under {@code src/Roles}.
+     *
+     * @param roleName the candidate name
+     * @return the refusal text, or {@code null} when the name is a single segment
+     */
+    private static String simpleRoleNameError(String roleName)
+    {
+        // A dot is a legal file-system character and would create "Role.Full" as a folder.
+        // Metadata names do not contain one, so it is refused with the path forms.
+        if (roleName.indexOf('/') >= 0 || roleName.indexOf('\\') >= 0
+            || roleName.indexOf('.') >= 0 || roleName.contains("..")) //$NON-NLS-1$
+        {
+            return "roleName must be a simple role name (no path separators, dots or '..')"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Answers used to decide whether a rights file may be created or changed.
+     * <p>
+     * {@link #roleExists} returns {@code null} when the configuration cannot be read, and that
+     * refuses the write as {@code configuration not readable} rather than as a missing role.
+     * {@link #objectExists} returns {@code null} when a child cannot be resolved, and that does
+     * not refuse the write; a top-level object that cannot be resolved is still refused.
+     * {@link #applicableRights} returns {@code null} when the registry is not ready, and that
+     * does not refuse the right.
+     * </p>
+     */
+    public interface RightsGate
+    {
+        /**
+         * Whether the role is in the configuration.
+         *
+         * @param roleName the simple role name
+         * @return {@code TRUE} when it is there, {@code FALSE} when it is not, {@code null} when
+         *         the model cannot tell
+         */
+        Boolean roleExists(String roleName);
+
+        /**
+         * Whether the metadata object is in the configuration.
+         *
+         * @param targetFqn the object address
+         * @return {@code TRUE}, {@code FALSE}, or {@code null} when the model cannot tell
+         */
+        Boolean objectExists(String targetFqn);
+
+        /**
+         * The canonical right names that apply to the object.
+         *
+         * @param targetFqn the object address
+         * @return the names, or {@code null} when applicability cannot be decided
+         */
+        Set<String> applicableRights(String targetFqn);
+
+        /**
+         * A gate that allows the role and the object and does not judge the right.
+         *
+         * @return the gate
+         */
+        static RightsGate allowAll()
+        {
+            return ALLOW_ALL;
+        }
+
+        /**
+         * A gate that reads the project's configuration.
+         *
+         * @param project the project
+         * @return the gate
+         */
+        static RightsGate forProject(IProject project)
+        {
+            return new ProjectGate(project);
+        }
+
+        /**
+         * A gate over a configuration already in memory. A {@code null} configuration is not
+         * readable.
+         *
+         * @param configuration the model, or {@code null} when it could not be read
+         * @return the gate
+         */
+        static RightsGate forConfiguration(Configuration configuration)
+        {
+            return new ProjectGate(null, true, configuration);
+        }
+
+        /**
+         * The directory name under {@code src/Roles} for {@code roleName}. A gate that has read
+         * the role returns the name stored on it. The default is the name the caller passed.
+         *
+         * @param roleName the simple role name
+         * @return the directory name to create or update
+         */
+        default String roleDirectoryName(String roleName)
+        {
+            return roleName;
+        }
+
+        /**
+         * The object address to store in the rights file. A gate that has located the object
+         * returns the English type and the names stored on the model. The default is the address
+         * the caller passed.
+         *
+         * @param targetFqn the object address
+         * @return the address to write
+         */
+        default String objectFqnToWrite(String targetFqn)
+        {
+            return targetFqn;
+        }
+
+        /**
+         * The right name to store. The spelling in {@link #applicableRights} wins when that set
+         * contains the right; otherwise {@code rightName} is stored as given.
+         *
+         * @param targetFqn the object address the right is stored on
+         * @param rightName the right name, already mapped from an alias when the caller did that
+         * @return the name to write
+         */
+        default String rightNameToWrite(String targetFqn, String rightName)
+        {
+            return rightSpelling(applicableRights(targetFqn), rightName);
+        }
+    }
+
+    /** Allows every role and object and leaves the right unjudged. */
+    private static final class AllowAllGate implements RightsGate
+    {
+        /**
+         * @param roleName the simple role name
+         * @return {@code TRUE}
+         */
+        @Override
+        public Boolean roleExists(String roleName)
+        {
+            return Boolean.TRUE;
+        }
+
+        /**
+         * @param targetFqn the object address
+         * @return {@code TRUE}
+         */
+        @Override
+        public Boolean objectExists(String targetFqn)
+        {
+            return Boolean.TRUE;
+        }
+
+        /**
+         * @param targetFqn the object address
+         * @return {@code null}, so the right is not judged
+         */
+        @Override
+        public Set<String> applicableRights(String targetFqn)
+        {
+            return null;
+        }
+    }
+
+    private static final RightsGate ALLOW_ALL = new AllowAllGate();
+
+    /**
+     * Reads the configuration of one project. A project that is not a configuration answers
+     * {@code null}, which the callers treat as "the configuration cannot be read": nothing is
+     * written.
+     */
+    private static final class ProjectGate implements RightsGate
+    {
+        private final IProject project;
+
+        private Configuration configuration;
+
+        private boolean loaded;
+
+        /**
+         * @param project the project whose configuration is read
+         */
+        ProjectGate(IProject project)
+        {
+            this.project = project;
+        }
+
+        /**
+         * @param project the project, unused when {@code loaded} is already true
+         * @param loaded whether {@code configuration} is the answer and must not be read again
+         * @param configuration the model, or {@code null} when the caller already knows it is not
+         *        readable
+         */
+        private ProjectGate(IProject project, boolean loaded, Configuration configuration)
+        {
+            this.project = project;
+            this.loaded = loaded;
+            this.configuration = configuration;
+        }
+
+        /**
+         * @param roleName the simple role name
+         * @return whether a role of that name is in the configuration, or {@code null} when the
+         *         configuration cannot be read
+         */
+        @Override
+        public Boolean roleExists(String roleName)
+        {
+            Configuration model = configuration();
+            if (model == null)
+            {
+                return null;
+            }
+            return MetadataTypeCatalog.findObject(model, "Role", roleName) != null //$NON-NLS-1$
+                ? Boolean.TRUE : Boolean.FALSE;
+        }
+
+        /**
+         * The name stored on the role, so the rights file is created under that directory.
+         *
+         * @param roleName the simple role name the caller used
+         * @return the model's name, or {@code roleName} when the role was not read
+         */
+        @Override
+        public String roleDirectoryName(String roleName)
+        {
+            Configuration model = configuration();
+            if (model == null || roleName == null)
+            {
+                return roleName;
+            }
+            MdObject role = MetadataTypeCatalog.findObject(model, "Role", roleName); //$NON-NLS-1$
+            if (role == null || role.getName() == null || role.getName().isEmpty())
+            {
+                return roleName;
+            }
+            return role.getName();
+        }
+
+        /**
+         * @param targetFqn the object address
+         * @return whether that object is in the configuration, or {@code null} when it cannot be
+         *         decided
+         */
+        @Override
+        public Boolean objectExists(String targetFqn)
+        {
+            Configuration model = configuration();
+            if (model == null)
+            {
+                return null;
+            }
+            return locateObject(model, targetFqn).present;
+        }
+
+        /**
+         * The address {@link #locateObject} built from the model, when it found the object.
+         *
+         * @param targetFqn the object address the caller used
+         * @return the canonical address, or {@code targetFqn} when the object was not located
+         */
+        @Override
+        public String objectFqnToWrite(String targetFqn)
+        {
+            Configuration model = configuration();
+            if (model == null || targetFqn == null)
+            {
+                return targetFqn;
+            }
+            LocatedObject located = locateObject(model, targetFqn);
+            return located.canonicalFqn != null ? located.canonicalFqn : targetFqn;
+        }
+
+        /**
+         * @param targetFqn the object address
+         * @return the rights that apply, or {@code null} when they cannot be decided
+         */
+        @Override
+        public Set<String> applicableRights(String targetFqn)
+        {
+            Configuration model = configuration();
+            EObject target = model == null ? null : locateObject(model, targetFqn).object;
+            if (target != null)
+            {
+                Set<String> fromService = ApplicableRightsResolver.rightsFor(target);
+                if (fromService != null)
+                {
+                    return fromService;
+                }
+            }
+            // A child (Catalog.Goods.Attribute.Price) does not inherit the parent's right list.
+            // Without the platform registry the answer is "not ready", not a guess.
+            if (targetFqn != null && dotCount(targetFqn) > 1)
+            {
+                return null;
+            }
+            return ApplicableRightsResolver.knownRights(ApplicableRightsResolver.kindOf(targetFqn));
+        }
+
+        /**
+         * The configuration, read once.
+         *
+         * @return the model, or {@code null} when this project has none
+         */
+        private Configuration configuration()
+        {
+            if (!loaded)
+            {
+                loaded = true;
+                configuration = readConfiguration(project);
+            }
+            return configuration;
+        }
+    }
+
+    /**
+     * Where one FQN landed in a configuration, and the address to store when it was found.
+     * <p>
+     * Three outcomes. Found: the object is in the configuration and {@link #canonicalFqn} is the
+     * address to store. Absent ({@link #absent()}, including {@link #noSuchKind}): the object is
+     * not there, and a write is refused. Unresolved ({@link #unresolved()}): the walk could not
+     * decide, a write is not refused, and a sweep does not delete the entry.
+     * </p>
+     */
+    public static final class LocatedObject
+    {
+        /** {@code TRUE}, {@code FALSE}, or {@code null} when the walk could not decide. */
+        public final Boolean present;
+
+        /** The object, when {@link #present} is {@code TRUE}. */
+        public final EObject object;
+
+        /**
+         * English type plus the names stored on the model ({@code Catalog.Товары}), or
+         * {@code null} when the object was not found.
+         */
+        public final String canonicalFqn;
+
+        /**
+         * The collection segment of the address that the owner's class has no collection for
+         * ({@code Atribute} in {@code Catalog.Goods.Atribute.Price}), or {@code null}.
+         * {@link #present} is then {@code FALSE}.
+         */
+        public final String missingKind;
+
+        private LocatedObject(Boolean present, EObject object, String canonicalFqn, String missingKind)
+        {
+            this.present = present;
+            this.object = object;
+            this.canonicalFqn = canonicalFqn;
+            this.missingKind = missingKind;
+        }
+
+        /**
+         * Whether an orphan sweep may treat the object as gone.
+         * <p>
+         * An address whose collection kind the owner does not have is refused on write, but a
+         * sweep leaves it in place: the kind may be one this locator does not map.
+         * </p>
+         *
+         * @return {@link #present}, or {@code null} when the collection kind is missing
+         */
+        public Boolean presenceForRemoval()
+        {
+            return missingKind != null ? null : present;
+        }
+
+        /**
+         * @param object the object that was found
+         * @param canonicalFqn the address to store
+         * @return a positive location
+         */
+        static LocatedObject found(EObject object, String canonicalFqn)
+        {
+            return new LocatedObject(Boolean.TRUE, object, canonicalFqn, null);
+        }
+
+        /**
+         * @return a location that is sure the object is absent
+         */
+        static LocatedObject absent()
+        {
+            return new LocatedObject(Boolean.FALSE, null, null, null);
+        }
+
+        /**
+         * @param segment the collection segment the owner has no collection for
+         * @return a location that is sure the object is absent because the kind is
+         */
+        static LocatedObject noSuchKind(String segment)
+        {
+            return new LocatedObject(Boolean.FALSE, null, null, segment);
+        }
+
+        /**
+         * @return a location that could not decide
+         */
+        static LocatedObject unresolved()
+        {
+            return new LocatedObject(null, null, null, null);
+        }
+    }
+
+    /**
+     * Locates one FQN in a configuration.
+     * <p>
+     * The configuration root is one segment ({@code Configuration}, {@code Конфигурация}, or the
+     * configuration's own name) or two segments whose first is {@code Configuration} or
+     * {@code Конфигурация} and whose second is that name. Any other address that starts with the
+     * configuration type is absent. The top segment of any other address is the English metadata
+     * type. Each later pair is a child collection and a member. The collection is the structural
+     * feature of that name, matched without regard to case, and the member is the object whose
+     * {@code getName()} matches. A feature that cannot be read, or a member whose name cannot be
+     * read, is not treated as absent. A Latin collection segment the class does not have is
+     * absent; a segment in another script that this writer cannot map stays unresolved.
+     * </p>
+     *
+     * @param configuration the configuration; {@code null} cannot be decided
+     * @param fqn the object address
+     * @return where the walk landed
+     */
+    public static LocatedObject locateObject(Configuration configuration, String fqn)
+    {
+        if (configuration == null)
+        {
+            return LocatedObject.unresolved();
+        }
+        if (fqn == null || fqn.isEmpty())
+        {
+            return LocatedObject.absent();
+        }
+        String[] parts = fqn.split("\\."); //$NON-NLS-1$
+        if (isConfigurationRoot(configuration, parts))
+        {
+            // The rights file names the root Configuration.<name>.
+            String name = configuration.getName();
+            return LocatedObject.found(configuration,
+                name == null || name.isEmpty() ? "Configuration" : "Configuration." + name); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (parts.length > 0 && isConfigurationType(parts[0]))
+        {
+            return LocatedObject.absent();
+        }
+        if (parts.length < 2)
+        {
+            return LocatedObject.unresolved();
+        }
+        String type = MetadataTypeCatalog.toEnglishSingular(parts[0]);
+        if (type == null)
+        {
+            type = parts[0];
+        }
+        if (MetadataTypeCatalog.resolve(type) == null)
+        {
+            return LocatedObject.unresolved();
+        }
+        MdObject owner = MetadataTypeCatalog.findObject(configuration, type, parts[1]);
+        if (owner == null)
+        {
+            return LocatedObject.absent();
+        }
+        String canonical = type + "." + owner.getName(); //$NON-NLS-1$
+        if (parts.length == 2)
+        {
+            return LocatedObject.found(owner, canonical);
+        }
+        return walkChildren(owner, parts, 2, canonical);
+    }
+
+    /**
+     * Walks a child FQN one collection/member pair at a time.
+     * <p>
+     * A Latin collection segment the owner does not have is absent. A segment in another script
+     * that this writer cannot map is unresolved: the write is not refused and a sweep does not
+     * delete the entry.
+     * </p>
+     *
+     * @param owner the object reached so far
+     * @param parts the whole address, split on dots
+     * @param at the index of the next collection name
+     * @param canonicalSoFar the address of {@code owner}, already in canonical form
+     * @return the location
+     */
+    private static LocatedObject walkChildren(EObject owner, String[] parts, int at,
+        String canonicalSoFar)
+    {
+        if (at >= parts.length)
+        {
+            return LocatedObject.found(owner, canonicalSoFar);
+        }
+        if (at + 1 >= parts.length)
+        {
+            return LocatedObject.unresolved();
+        }
+        String kind = canonicalCollectionKind(parts[at]);
+        org.eclipse.emf.ecore.EStructuralFeature feature = collectionFeature(owner, kind);
+        if (feature == null)
+        {
+            // A Latin segment that names no collection is a typo and the write is refused. A
+            // segment in another script may be a kind this writer does not map: the walk stays
+            // unresolved, so the write is not refused and a sweep does not delete the entry.
+            if (isLatinSegment(parts[at]))
+            {
+                return LocatedObject.noSuchKind(parts[at]);
+            }
+            return LocatedObject.unresolved();
+        }
+        if (BmObjectHelper.canonicalChildKind(parts[at]) == null
+            && MetadataTypeCatalog.toEnglishSingular(parts[at]) == null)
+        {
+            kind = kindOfFeature(feature.getName());
+        }
+        Object children;
+        try
+        {
+            children = owner.eGet(feature);
+        }
+        catch (RuntimeException failed)
+        {
+            // The feature is there but did not answer. The walk stays undecided rather than
+            // treating a reflective failure as "the child does not exist".
+            return LocatedObject.unresolved();
+        }
+        if (!(children instanceof Iterable))
+        {
+            return LocatedObject.unresolved();
+        }
+        String member = parts[at + 1];
+        boolean sawName = false;
+        boolean anyChild = false;
+        for (Object child : (Iterable<?>)children)
+        {
+            if (!(child instanceof EObject))
+            {
+                continue;
+            }
+            anyChild = true;
+            String name = objectName((EObject)child);
+            if (name == null)
+            {
+                continue;
+            }
+            sawName = true;
+            if (member.equalsIgnoreCase(name))
+            {
+                String next = canonicalSoFar + "." + kind + "." + name; //$NON-NLS-1$ //$NON-NLS-2$
+                return walkChildren((EObject)child, parts, at + 2, next);
+            }
+        }
+        // Children are there but none of them answered getName(). That is not "the member is
+        // missing": the walk could not read the collection.
+        if (anyChild && !sawName)
+        {
+            return LocatedObject.unresolved();
+        }
+        return LocatedObject.absent();
+    }
+
+    /**
+     * The English collection kind an address segment names.
+     *
+     * @param segment the collection segment of an FQN
+     * @return the English kind, or {@code segment} when it is not a known child kind
+     */
+    private static String canonicalCollectionKind(String segment)
+    {
+        String canonical = BmObjectHelper.canonicalChildKind(segment);
+        if (canonical != null)
+        {
+            return canonical;
+        }
+        String english = MetadataTypeCatalog.toEnglishSingular(segment);
+        return english != null ? english : segment;
+    }
+
+    /**
+     * The collection feature of one kind on a metadata object.
+     * <p>
+     * The collection is a many-valued structural feature whose name matches {@code kind} without
+     * regard to case, including the plural the model uses ({@code urlTemplates} for
+     * {@code URLTemplate}). A getter built by concatenating the kind would look for
+     * {@code getURLTemplates} and miss it.
+     * </p>
+     *
+     * @param owner the object
+     * @param kind the collection's English singular name as it appears in an FQN
+     * @return the feature, or {@code null} when the class of this object has no such collection
+     */
+    private static org.eclipse.emf.ecore.EStructuralFeature collectionFeature(EObject owner, String kind)
+    {
+        if (owner == null || kind == null)
+        {
+            return null;
+        }
+        org.eclipse.emf.ecore.EStructuralFeature matched = null;
+        for (org.eclipse.emf.ecore.EStructuralFeature feature : owner.eClass().getEAllStructuralFeatures())
+        {
+            if (!feature.isMany() || !namesTheCollection(feature.getName(), kind))
+            {
+                continue;
+            }
+            if (feature instanceof org.eclipse.emf.ecore.EReference
+                && ((org.eclipse.emf.ecore.EReference)feature).isContainment())
+            {
+                matched = feature;
+                break;
+            }
+            if (matched == null)
+            {
+                matched = feature;
+            }
+        }
+        return matched;
+    }
+
+    /**
+     * The singular English kind of a collection feature the kind table does not list
+     * ({@code recalculations} to {@code Recalculation}).
+     * <p>
+     * One trailing {@code s} is removed and the first letter is raised. When that result matches
+     * a kind in the table without regard to case, the table's spelling is used
+     * ({@code urlTemplates} to {@code URLTemplate}).
+     * </p>
+     *
+     * @param featureName the feature name as the model spells it
+     * @return the kind to store in an address
+     */
+    private static String kindOfFeature(String featureName)
+    {
+        String singular = featureName.endsWith("s") && featureName.length() > 1 //$NON-NLS-1$
+            ? featureName.substring(0, featureName.length() - 1) : featureName;
+        String spelled = Character.toUpperCase(singular.charAt(0)) + singular.substring(1);
+        String fromTable = BmObjectHelper.canonicalChildKind(spelled);
+        return fromTable != null ? fromTable : spelled;
+    }
+
+    /**
+     * Whether a structural feature is the collection {@code kind} names.
+     *
+     * @param featureName the feature name, as the model spells it ({@code urlTemplates})
+     * @param kind the English singular kind ({@code URLTemplate})
+     * @return {@code true} when the names are equal, or the feature is {@code kind} with one
+     *         trailing {@code s}. A stem that is one letter short of {@code kind} does not match
+     */
+    private static boolean namesTheCollection(String featureName, String kind)
+    {
+        if (featureName == null || kind == null)
+        {
+            return false;
+        }
+        return featureName.equalsIgnoreCase(kind)
+            || featureName.equalsIgnoreCase(kind + "s"); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a collection segment is written in Latin letters and digits.
+     * <p>
+     * A Latin segment that names no collection is refused. Any other spelling is unknown to this
+     * writer and stays unresolved.
+     * </p>
+     *
+     * @param segment the collection segment of an address
+     * @return {@code true} when every character is an ASCII letter or digit
+     */
+    private static boolean isLatinSegment(String segment)
+    {
+        if (segment == null || segment.isEmpty())
+        {
+            return false;
+        }
+        for (int i = 0; i < segment.length(); i++)
+        {
+            char c = segment.charAt(i);
+            boolean letter = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+            boolean digit = c >= '0' && c <= '9';
+            if (!letter && !digit)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The name of a child, including one that is not an {@link MdObject}.
+     *
+     * @param object the child
+     * @return the name, or {@code null} when the child has no readable {@code getName()}
+     */
+    private static String objectName(EObject object)
+    {
+        try
+        {
+            Object name = object.getClass().getMethod("getName").invoke(object); //$NON-NLS-1$
+            if (name == null)
+            {
+                return null;
+            }
+            String text = name.toString();
+            return text.isEmpty() ? null : text;
+        }
+        catch (ReflectiveOperationException | RuntimeException failed)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * The spelling of {@code rightName} in {@code applicable}, when the set contains it.
+     *
+     * @param applicable the rights that apply, or {@code null} when they were not decided
+     * @param rightName the name the caller used
+     * @return the set's spelling, or {@code rightName} when the set does not contain it
+     */
+    private static String rightSpelling(Set<String> applicable, String rightName)
+    {
+        if (applicable == null || rightName == null)
+        {
+            return rightName;
+        }
+        for (String name : applicable)
+        {
+            if (name != null && rightName.equalsIgnoreCase(name))
+            {
+                return name;
+            }
+        }
+        return rightName;
+    }
+
+    /**
+     * Whether {@code fqn} names a child rather than a top-level object.
+     *
+     * @param fqn the address
+     * @return {@code true} when the address has more than one dot
+     */
+    private static boolean isChildAddress(String fqn)
+    {
+        return fqn != null && dotCount(fqn) > 1;
+    }
+
+    /**
+     * How many dots an address contains. One dot is a top-level object; more than one is a child.
+     *
+     * @param fqn the address
+     * @return the count
+     */
+    private static int dotCount(String fqn)
+    {
+        int dots = 0;
+        for (int i = 0; i < fqn.length(); i++)
+        {
+            if (fqn.charAt(i) == '.')
+            {
+                dots++;
+            }
+        }
+        return dots;
+    }
+
+    /**
+     * The project's configuration, or {@code null} when it has none.
+     *
+     * @param project the project
+     * @return the configuration
+     */
+    private static Configuration readConfiguration(IProject project)
+    {
+        try
+        {
+            Activator activator = Activator.getDefault();
+            if (activator == null)
+            {
+                return null;
+            }
+            IConfigurationProvider provider = activator.getConfigurationProvider();
+            if (provider == null)
+            {
+                return null;
+            }
+            return provider.getConfiguration(project);
+        }
+        catch (Throwable unavailable)
+        {
+            // A plain workspace project is not a configuration. Absence is the answer, not an error
+            // the caller should retry.
+            return null;
+        }
+    }
+
+    /** Why a write was refused before the file changed. */
+    private static final class Refusal
+    {
+        final String error;
+
+        final String failureKind;
+
+        final String subject;
+
+        final String subjectName;
+
+        final String objectKind;
+
+        final List<String> applicableRights;
+
+        private Refusal(String error, String failureKind, String subject, String subjectName,
+            String objectKind, List<String> applicableRights)
+        {
+            this.error = error;
+            this.failureKind = failureKind;
+            this.subject = subject;
+            this.subjectName = subjectName;
+            this.objectKind = objectKind;
+            this.applicableRights = applicableRights;
+        }
+
+        /**
+         * @param subject {@code role} or {@code object}
+         * @param name the missing name
+         * @param error the sentence returned to the caller
+         * @return the refusal
+         */
+        static Refusal notFound(String subject, String name, String error)
+        {
+            return new Refusal(error, ErrorTags.NOT_FOUND.wire(), subject, name, null, null);
+        }
+
+        /**
+         * A refusal that carries no wire tag.
+         *
+         * @param error the sentence returned to the caller
+         * @return the refusal
+         */
+        static Refusal plain(String error)
+        {
+            return new Refusal(error, null, null, null, null, null);
+        }
+
+        /**
+         * @param right the canonical right
+         * @param kind the object kind
+         * @param applicable the rights that do apply
+         * @param error the sentence returned to the caller
+         * @return the refusal
+         */
+        static Refusal right(String right, String kind, List<String> applicable, String error)
+        {
+            return new Refusal(error, ErrorTags.NOT_APPLICABLE_HERE.wire(), "right", right, kind, //$NON-NLS-1$
+                applicable);
+        }
+    }
+
+    /** A rights file that was read, or the reason it was not. */
+    private static final class LoadedRights
+    {
+        /** The document, or {@code null} when the file does not exist yet. */
+        Document doc;
+
+        /** Why the bytes were refused, or {@code null} when they were read or the file is absent. */
+        String parseError;
+    }
+
+    /**
+     * Reads {@code Rights.rights} when it exists. A missing file is an empty load, not an error.
+     * A failure names its class and reason, not the file path.
+     *
+     * @param file the rights file
+     * @return the load
+     */
+    private static LoadedRights loadRights(Path file)
+    {
+        LoadedRights loaded = new LoadedRights();
+        if (!Files.exists(file))
+        {
+            return loaded;
+        }
+        try
+        {
+            loaded.doc = parseRights(Files.readAllBytes(file));
+        }
+        catch (Exception refused)
+        {
+            loaded.parseError = failureWithoutPath(refused);
+        }
+        return loaded;
+    }
+
+    /**
+     * Parses rights XML with external entities and DOCTYPE turned off.
+     *
+     * @param xml the file bytes
+     * @return the document
+     * @throws Exception when the bytes are not well-formed or declare a DOCTYPE
+     */
+    private static Document parseRights(byte[] xml) throws Exception
+    {
+        return newRightsBuilder().parse(new ByteArrayInputStream(xml));
+    }
+
+    /**
+     * A document builder that will not follow a DOCTYPE or an external entity. A rights file does
+     * not carry a DOCTYPE, so a document that declares one is a parse error rather than a read of
+     * whatever the entity points at.
+     *
+     * @return a fresh builder
+     * @throws ParserConfigurationException when the JDK parser rejects one of the settings
+     */
+    private static DocumentBuilder newRightsBuilder() throws ParserConfigurationException
+    {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setNamespaceAware(false); // keep xmlns* as literal attributes for round-trip
+        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true); //$NON-NLS-1$
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false); //$NON-NLS-1$
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false); //$NON-NLS-1$
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false); //$NON-NLS-1$
+        factory.setXIncludeAware(false);
+        factory.setExpandEntityReferences(false);
+        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, ""); //$NON-NLS-1$
+        factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, ""); //$NON-NLS-1$
+        return factory.newDocumentBuilder();
+    }
+
+    /**
+     * Refuses the write when the configuration cannot be read, or the role, the object or the right
+     * is not one it has. A child the locator could not resolve is not refused. A right already
+     * stored on this kind in {@code doc} is a precedent and is not refused.
+     *
+     * @param project the project, used when {@code gate} is {@code null}
+     * @param roleName the simple role name
+     * @param targetFqn the object address, or {@code null} for a template (role only)
+     * @param canonicalRight the platform right name, or {@code null} when there is no right
+     * @param doc the file already read, or {@code null} when there is no file yet
+     * @param gate the caller's answers, or {@code null} to read the project model
+     * @return the refusal, or {@code null} when the write may proceed
+     */
+    private static Refusal assess(IProject project, String roleName, String targetFqn,
+        String canonicalRight, Document doc, RightsGate gate)
+    {
+        RightsGate effective = gate != null ? gate : RightsGate.forProject(project);
+        Boolean role = effective.roleExists(roleName);
+        if (role == null)
+        {
+            return Refusal.plain("configuration not readable; Rights.rights was not written"); //$NON-NLS-1$
+        }
+        if (!role.booleanValue())
+        {
+            return Refusal.notFound("role", roleName, //$NON-NLS-1$
+                "role not found: " + roleName + "; Rights.rights was not written"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (targetFqn == null)
+        {
+            return null;
+        }
+        Boolean object = effective.objectExists(targetFqn);
+        if (object == null)
+        {
+            // A child the locator could not resolve is not judged. A top-level object that could
+            // not be resolved is still a refusal: there is no collection left unread behind it.
+            if (!isChildAddress(targetFqn))
+            {
+                return Refusal.plain("could not resolve " + targetFqn //$NON-NLS-1$
+                    + " in the configuration; Rights.rights was not written"); //$NON-NLS-1$
+            }
+        }
+        else if (!object.booleanValue())
+        {
+            return Refusal.notFound("object", targetFqn, //$NON-NLS-1$
+                "object not found: " + targetFqn + "; Rights.rights was not written"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (canonicalRight == null)
+        {
+            return null;
+        }
+        String kind = ApplicableRightsResolver.kindOf(targetFqn);
+        boolean precedent = doc != null
+            && ApplicableRightsResolver.seen(doc.getDocumentElement(), kind, canonicalRight);
+        ApplicableRightsResolver.Decision decision = ApplicableRightsResolver.decide(kind,
+            canonicalRight, effective.applicableRights(targetFqn), precedent);
+        if (!decision.allowed)
+        {
+            return Refusal.right(canonicalRight, kind, decision.applicableRights, decision.error);
+        }
+        return null;
+    }
+
+    /**
+     * Copies a refusal onto a right-write result.
+     *
+     * @param res the result
+     * @param refusal why the write stopped
+     */
+    private static void applyRefusal(FileRightResult res, Refusal refusal)
+    {
+        res.error = refusal.error;
+        res.failureKind = refusal.failureKind;
+        res.subject = refusal.subject;
+        res.subjectName = refusal.subjectName;
+        res.objectKind = refusal.objectKind;
+        res.applicableRights = refusal.applicableRights;
+    }
+
+    /**
+     * Copies a refusal onto a template-write result.
+     *
+     * @param res the result
+     * @param refusal why the write stopped
+     */
+    private static void applyRefusal(FileTemplateResult res, Refusal refusal)
+    {
+        res.error = refusal.error;
+        res.failureKind = refusal.failureKind;
+        res.subject = refusal.subject;
+        res.subjectName = refusal.subjectName;
+        res.objectKind = refusal.objectKind;
+        res.applicableRights = refusal.applicableRights;
+    }
+
+    /**
+     * Copies a refusal onto a restriction-write result.
+     *
+     * @param res the result
+     * @param refusal why the write stopped
+     */
+    private static void applyRefusal(FileRestrictionResult res, Refusal refusal)
+    {
+        res.error = refusal.error;
+        res.failureKind = refusal.failureKind;
+        res.subject = refusal.subject;
+        res.subjectName = refusal.subjectName;
+        res.objectKind = refusal.objectKind;
+        res.applicableRights = refusal.applicableRights;
     }
 }
