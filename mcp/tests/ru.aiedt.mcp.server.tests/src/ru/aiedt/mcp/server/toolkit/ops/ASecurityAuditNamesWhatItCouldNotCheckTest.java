@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -136,6 +137,57 @@ public class ASecurityAuditNamesWhatItCouldNotCheckTest
     }
 
     /**
+     * Orphan mode refuses a role absent from the model before reading or changing its leftover
+     * rights file, both for preview and apply calls.
+     *
+     * @throws IOException when the rights file cannot be written or read
+     */
+    @Test
+    public void anUnknownOrphanRoleIsRefusedWithoutChangingItsFile() throws IOException
+    {
+        String text = rights("<right><name>Read</name><value>true</value></right>") //$NON-NLS-1$
+            .replace("Catalog.Goods", "Document.Deleted"); //$NON-NLS-1$ //$NON-NLS-2$
+        writeRights("Ghost", text); //$NON-NLS-1$
+        Path file = projectDir.resolve("src").resolve("Roles").resolve("Ghost") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .resolve("Rights.rights"); //$NON-NLS-1$
+        byte[] before = Files.readAllBytes(file);
+        Configuration config = configuration("Clerk"); //$NON-NLS-1$
+
+        for (boolean apply : new boolean[] {false, true})
+        {
+            String answer = AuditRoleRightsTool.orphans(Map.of("roleName", "Ghost", //$NON-NLS-1$ //$NON-NLS-2$
+                "apply", Boolean.toString(apply)), project, config, "json"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertTrue(answer, answer.contains("Role not found: Ghost")); //$NON-NLS-1$
+            assertTrue(answer, answer.contains("Clerk")); //$NON-NLS-1$
+            assertArrayEquals("an unknown model role must not change Rights.rights", //$NON-NLS-1$
+                before, Files.readAllBytes(file));
+        }
+    }
+
+    /**
+     * An apply call names and counts every orphan it removed from the role's rights file.
+     *
+     * @throws IOException when the rights file cannot be written or read
+     */
+    @Test
+    public void anAppliedOrphanSweepListsWhatItRemoved() throws IOException
+    {
+        String text = rights("<right><name>Read</name><value>true</value></right>") //$NON-NLS-1$
+            .replace("Catalog.Goods", "Document.Deleted"); //$NON-NLS-1$ //$NON-NLS-2$
+        writeRights("Cleaner", text); //$NON-NLS-1$
+
+        String answer = AuditRoleRightsTool.orphans(Map.of("roleName", "Cleaner", //$NON-NLS-1$ //$NON-NLS-2$
+            "apply", "true"), project, configuration("Cleaner"), "json"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue(answer, answer.contains("\"removedCount\":1")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("\"removed\":[\"Document.Deleted\"]")); //$NON-NLS-1$
+        Path file = projectDir.resolve("src").resolve("Roles").resolve("Cleaner") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .resolve("Rights.rights"); //$NON-NLS-1$
+        assertFalse(Files.readString(file, StandardCharsets.UTF_8).contains("Document.Deleted")); //$NON-NLS-1$
+    }
+
+    /**
      * A role whose rights file cannot be parsed keeps "no role restricts rows" from being answered,
      * and is named.
      *
@@ -175,14 +227,16 @@ public class ASecurityAuditNamesWhatItCouldNotCheckTest
             + "<restrictionByCondition><condition>WHERE TRUE</condition></restrictionByCondition></right>")); //$NON-NLS-1$
 
         FindRlsViolationsTool.RlsVerdict verdict = FindRlsViolationsTool.rlsOf(project,
-            configuration("Broken", "Guarded"), null); //$NON-NLS-1$ //$NON-NLS-2$
+            configuration("Guarded", "Broken"), null); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertEquals(Boolean.FALSE, verdict.noRlsConfigured);
+        assertEquals(List.of("Broken"), verdict.unreadRoles); //$NON-NLS-1$
         ToolResult answer = ToolResult.success();
         verdict.putInto(answer);
         String json = answer.toJson();
         assertFalse(json, json.contains("noRlsConfigured")); //$NON-NLS-1$
         assertFalse(json, json.contains("rlsNotDetermined")); //$NON-NLS-1$
+        assertTrue(json, json.contains("\"rightsNotRead\":[\"Broken\"]")); //$NON-NLS-1$
     }
 
     /**
