@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -377,6 +378,68 @@ public class RunReceiptTest
         assertTrue("the file that would not delete stays", Files.exists(oldest)); //$NON-NLS-1$
         assertFalse(Files.exists(next));
         assertFalse(Files.exists(afterNext));
+    }
+
+    /**
+     * The window snapshots a timeout left in the receipt directory are trimmed with the receipts:
+     * the same limit applies, the newest by modification time stay, and a picture that is not a
+     * snapshot is left where it is.
+     *
+     * @throws IOException when the stand-in files cannot be written or listed
+     */
+    @Test
+    public void snapshotsArePrunedWithTheReceipts() throws IOException
+    {
+        Files.createDirectories(dir);
+        long written = 1_600_000_000_000L;
+        List<Path> snapshots = new ArrayList<>();
+        for (int i = 0; i < RunReceipts.KEEP + 3; i++)
+        {
+            // The name carries the process and the read order, so it does not sort the way the
+            // snapshots were taken: the modification time is what orders them.
+            Path snapshot = dir.resolve(String.format(Locale.ROOT, "blocking-%d-0.png", Integer.valueOf(i))); //$NON-NLS-1$
+            Files.write(snapshot, new byte[] { 1 });
+            Files.setLastModifiedTime(snapshot, FileTime.fromMillis(written + i * 1000L));
+            snapshots.add(snapshot);
+        }
+        Path notASnapshot = dir.resolve("run-report.png"); //$NON-NLS-1$
+        Files.write(notASnapshot, new byte[] { 1 });
+        Files.setLastModifiedTime(notASnapshot, FileTime.fromMillis(written));
+        for (int i = 0; i < RunReceipts.KEEP + 3; i++)
+        {
+            Files.write(dir.resolve(String.format(Locale.ROOT, "%013d.json", Integer.valueOf(i))), //$NON-NLS-1$
+                new byte[] { '{' });
+        }
+
+        RunReceipts.Outcome outcome = RunReceipts.writeTo(dir, receiptFields(99));
+        assertNull(outcome.error);
+
+        List<Path> kept = snapshotsOnDisk();
+        assertEquals(RunReceipts.KEEP, kept.size());
+        assertFalse("the least recently written snapshot goes", Files.exists(snapshots.get(0))); //$NON-NLS-1$
+        assertFalse(Files.exists(snapshots.get(2)));
+        assertTrue("the newest snapshot stays", Files.exists(snapshots.get(snapshots.size() - 1))); //$NON-NLS-1$
+        assertTrue("a picture that is not a snapshot is left alone", Files.exists(notASnapshot)); //$NON-NLS-1$
+    }
+
+    /**
+     * Lists the window snapshots of the test directory.
+     *
+     * @return the {@code blocking-*.png} files, sorted by name
+     * @throws IOException when the directory cannot be listed
+     */
+    private List<Path> snapshotsOnDisk() throws IOException
+    {
+        List<Path> snapshots = new ArrayList<>();
+        try (Stream<Path> entries = Files.list(dir))
+        {
+            entries.filter(p -> {
+                String name = p.getFileName().toString();
+                return name.startsWith("blocking-") && name.endsWith(".png"); //$NON-NLS-1$ //$NON-NLS-2$
+            }).forEach(snapshots::add);
+        }
+        snapshots.sort(Comparator.comparing(p -> p.getFileName().toString()));
+        return snapshots;
     }
 
     /**

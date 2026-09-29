@@ -290,7 +290,10 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("config_io", Integer.valueOf(7748)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
         // sentence in the tool's own description that names the way they compose an action.
-        BUDGETS.put("vanessa", Integer.valueOf(7160)); //$NON-NLS-1$
+        // Raised from 7160 to 7834 for the sentence that a timeout held by a 1C window returns
+        // blockingWindows (title, texts, buttons, imageFile) and does not ask to raise the
+        // deadline. Measured 29.09: 7834.
+        BUDGETS.put("vanessa", Integer.valueOf(7834)); //$NON-NLS-1$
         BUDGETS.put("extension_workshop", Integer.valueOf(5402)); //$NON-NLS-1$
         // Raised from 5400 for startupOption: the startup string is how an object opened at
         // startup receives its parameters, and the test runners already pass theirs the same way.
