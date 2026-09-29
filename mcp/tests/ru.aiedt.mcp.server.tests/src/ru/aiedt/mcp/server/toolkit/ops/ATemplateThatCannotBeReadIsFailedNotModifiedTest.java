@@ -23,6 +23,8 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.IWorkspace;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.preferences.IEclipsePreferences;
+import org.eclipse.core.runtime.preferences.InstanceScope;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -55,9 +57,16 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
 
     private static IProject second;
 
+    private static String refreshOnAccess;
+
     @BeforeClass
     public static void twoProjectsWhoseTemplatesDiffer() throws Exception
     {
+        // Reading a file that is out of sync schedules a refresh of it, and once that has run the
+        // workspace no longer lists the template: the next comparison answers "removed".
+        IEclipsePreferences resources = InstanceScope.INSTANCE.getNode(ResourcesPlugin.PI_RESOURCES);
+        refreshOnAccess = resources.get(ResourcesPlugin.PREF_LIGHTWEIGHT_AUTO_REFRESH, null);
+        resources.putBoolean(ResourcesPlugin.PREF_LIGHTWEIGHT_AUTO_REFRESH, false);
         firstRoot = Files.createTempDirectory("aiedt-compare-template-a"); //$NON-NLS-1$
         secondRoot = Files.createTempDirectory("aiedt-compare-template-b"); //$NON-NLS-1$
         write(firstRoot, SAME, "same"); //$NON-NLS-1$
@@ -79,6 +88,15 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
         deleteProject(second);
         deleteTree(firstRoot);
         deleteTree(secondRoot);
+        IEclipsePreferences resources = InstanceScope.INSTANCE.getNode(ResourcesPlugin.PI_RESOURCES);
+        if (refreshOnAccess == null)
+        {
+            resources.remove(ResourcesPlugin.PREF_LIGHTWEIGHT_AUTO_REFRESH);
+        }
+        else
+        {
+            resources.put(ResourcesPlugin.PREF_LIGHTWEIGHT_AUTO_REFRESH, refreshOnAccess);
+        }
     }
 
     private static void write(Path root, String srcRelative, String content) throws Exception
@@ -132,30 +150,43 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
         String answer = new CompareConfigurationsTool().execute(params);
 
         assertTrue(answer, answer.contains("\"failedCount\":1")); //$NON-NLS-1$
-        assertTrue(answer, answer.contains("src/" + UNREAD)); //$NON-NLS-1$
+        com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(answer);
+        String key = "src/" + UNREAD; //$NON-NLS-1$
+        assertTrue("the failed list names the key with its reason: " + answer, //$NON-NLS-1$
+            listNames(parsed, "failed", //$NON-NLS-1$
+                e -> e.isJsonPrimitive() && e.getAsString().startsWith(key + " (not read: "))); //$NON-NLS-1$
         assertFalse("the failed key is not also in the modified list", //$NON-NLS-1$
-            modifiedListsName(com.google.gson.JsonParser.parseString(answer), "src/" + UNREAD)); //$NON-NLS-1$
+            listNames(parsed, "modified", e -> e.toString().contains(key))); //$NON-NLS-1$
     }
 
     /**
-     * Whether any {@code modified} list in the answer names the key. The failed entry carries the
-     * read error, whose text holds the file path, so the key is looked for in the lists only.
+     * Whether an entry of any list under the given name in the answer matches. The failed entry
+     * carries the read error, whose text holds the file path, so a key is looked for in the
+     * named lists only.
      *
      * @param node the answer, or a part of it
-     * @param key the key looked for
-     * @return whether a modified list names it
+     * @param list the name of the lists looked in
+     * @param entry what a matching entry satisfies
+     * @return whether a list under that name has a matching entry
      */
-    private static boolean modifiedListsName(com.google.gson.JsonElement node, String key)
+    private static boolean listNames(com.google.gson.JsonElement node, String list,
+        java.util.function.Predicate<com.google.gson.JsonElement> entry)
     {
         if (node.isJsonObject())
         {
-            for (Map.Entry<String, com.google.gson.JsonElement> entry : node.getAsJsonObject().entrySet())
+            for (Map.Entry<String, com.google.gson.JsonElement> field : node.getAsJsonObject().entrySet())
             {
-                if ("modified".equals(entry.getKey()) && entry.getValue().toString().contains(key)) //$NON-NLS-1$
+                if (list.equals(field.getKey()) && field.getValue().isJsonArray())
                 {
-                    return true;
+                    for (com.google.gson.JsonElement item : field.getValue().getAsJsonArray())
+                    {
+                        if (entry.test(item))
+                        {
+                            return true;
+                        }
+                    }
                 }
-                if (modifiedListsName(entry.getValue(), key))
+                if (listNames(field.getValue(), list, entry))
                 {
                     return true;
                 }
@@ -165,7 +196,7 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
         {
             for (com.google.gson.JsonElement item : node.getAsJsonArray())
             {
-                if (modifiedListsName(item, key))
+                if (listNames(item, list, entry))
                 {
                     return true;
                 }

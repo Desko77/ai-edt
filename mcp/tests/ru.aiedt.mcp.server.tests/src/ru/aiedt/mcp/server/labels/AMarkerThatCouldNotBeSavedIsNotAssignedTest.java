@@ -216,8 +216,8 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
     }
 
     /**
-     * Sets or clears the read-only state of a file. The DOS attribute exists only on Windows file
-     * systems; elsewhere the permission bits carry it.
+     * Sets or clears the read-only state of a file. The permission bit carries it everywhere; the
+     * DOS attribute is changed on Windows only, although Linux offers a DOS view as well.
      *
      * @param file the file to change
      * @param readOnly true to make the file read-only
