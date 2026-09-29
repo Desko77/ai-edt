@@ -84,10 +84,6 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
     @AfterClass
     public static void theProjectsGo() throws Exception
     {
-        deleteProject(first);
-        deleteProject(second);
-        deleteTree(firstRoot);
-        deleteTree(secondRoot);
         IEclipsePreferences resources = InstanceScope.INSTANCE.getNode(ResourcesPlugin.PI_RESOURCES);
         if (refreshOnAccess == null)
         {
@@ -97,6 +93,10 @@ public class ATemplateThatCannotBeReadIsFailedNotModifiedTest
         {
             resources.put(ResourcesPlugin.PREF_LIGHTWEIGHT_AUTO_REFRESH, refreshOnAccess);
         }
+        deleteProject(first);
+        deleteProject(second);
+        deleteTree(firstRoot);
+        deleteTree(secondRoot);
     }
 
     private static void write(Path root, String srcRelative, String content) throws Exception
