@@ -78,9 +78,6 @@ public final class QlValidator
         // utility class
     }
 
-    /**
-     * Severity-tagged validation issue.
-     */
     /** The alias the wrapper gives an expression it checks as a query. */
     static final String EXPRESSION_PROBE_ALIAS = "__DcsExpressionProbe"; //$NON-NLS-1$
 
@@ -88,6 +85,9 @@ public final class QlValidator
     private static final String EXPRESSION_PROBE_ALIAS_LOWER =
         EXPRESSION_PROBE_ALIAS.toLowerCase(java.util.Locale.ROOT);
 
+    /**
+     * Severity-tagged validation issue.
+     */
     public static final class QlIssue
     {
         public final String severity; // ERROR / WARNING / INFO
