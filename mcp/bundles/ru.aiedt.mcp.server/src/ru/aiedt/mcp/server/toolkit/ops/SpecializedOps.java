@@ -18,6 +18,7 @@ import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.metadata.mdclass.AddressingAttribute;
 import com._1c.g5.v8.dt.metadata.mdclass.BusinessProcess;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
@@ -1114,6 +1115,8 @@ final class SpecializedOps
         final boolean[] idempotentSkip = { false };
         final EditMetadataTool.SynonymResult[] synOut = { null };
 
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 EList<MdObject> recalcs = EditMetadataTool.invokeListGetter(owner, "getRecalculations"); //$NON-NLS-1$
@@ -1127,7 +1130,8 @@ final class SpecializedOps
                     idempotentSkip[0] = true;
                     return name;
                 }
-                MdObject recalc = BmObjectHelper.createGenericObject("Recalculation"); //$NON-NLS-1$
+                MdObject recalc = BmObjectHelper.createChildObject("Recalculation", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (recalc == null)
                 {
                     throw new RuntimeException("Cannot create Recalculation - " //$NON-NLS-1$
@@ -1146,6 +1150,10 @@ final class SpecializedOps
             r.tags.put("idempotentSkip", idem); //$NON-NLS-1$
         }
         EditMetadataTool.addSynonymTags(r, synOut[0]);
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
+        }
         return EditMetadataTool.formatResult(r, "add_recalculation"); //$NON-NLS-1$
     }
 
@@ -1187,6 +1195,8 @@ final class SpecializedOps
 
         final boolean[] idempotentSkip = { false };
 
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 EList<MdObject> recalcs = EditMetadataTool.invokeListGetter(owner, "getRecalculations"); //$NON-NLS-1$
@@ -1230,7 +1240,8 @@ final class SpecializedOps
                     idempotentSkip[0] = true;
                     return recalculationName + "." + name; //$NON-NLS-1$
                 }
-                MdObject dim = BmObjectHelper.createGenericObject("RecalculationDimension"); //$NON-NLS-1$
+                MdObject dim = BmObjectHelper.createChildObject("RecalculationDimension", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (dim == null)
                 {
                     throw new RuntimeException("Cannot create RecalculationDimension - " //$NON-NLS-1$
@@ -1258,6 +1269,10 @@ final class SpecializedOps
             r.tags.put("idempotentSkip", idem); //$NON-NLS-1$
         }
         EditMetadataTool.addSynonymTags(r, recalcDimSynOut[0]);
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
+        }
         return EditMetadataTool.formatResult(r, "add_recalculation_dimension"); //$NON-NLS-1$
     }
 
@@ -1588,6 +1603,8 @@ final class SpecializedOps
         {
             return ToolResult.error("Project not found").toJson(); //$NON-NLS-1$
         }
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 EList<MdObject> values = EditMetadataTool.invokeListGetter(owner, "getEnumValues"); //$NON-NLS-1$
@@ -1599,7 +1616,8 @@ final class SpecializedOps
                 {
                     return name + " (already exists)"; //$NON-NLS-1$
                 }
-                MdObject value = BmObjectHelper.createGenericObject("EnumValue"); //$NON-NLS-1$
+                MdObject value = BmObjectHelper.createChildObject("EnumValue", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (value == null)
                 {
                     throw new RuntimeException("Cannot create EnumValue: " //$NON-NLS-1$
@@ -1613,6 +1631,10 @@ final class SpecializedOps
                 return name;
             });
         EditMetadataTool.addSynonymTags(r, valueSynOut[0]);
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
+        }
         return EditMetadataTool.formatResult(r, "add_enum_value"); //$NON-NLS-1$
     }
 

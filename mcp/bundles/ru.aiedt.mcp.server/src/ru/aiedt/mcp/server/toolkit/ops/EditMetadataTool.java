@@ -1026,8 +1026,7 @@ public class EditMetadataTool implements IMcpTool
                 }
                 catch (Exception e)
                 {
-                    Activator.logError("edit_metadata error in operation " + op, e); //$NON-NLS-1$
-                    resultRef.set(ToolResult.error(TextSuggest.safeMessage(e)).toJson());
+                    resultRef.set(answerFor(op, e));
                 }
             });
         }
@@ -1036,6 +1035,38 @@ public class EditMetadataTool implements IMcpTool
             MetadataMutationLock.release();
         }
         return resultRef.get();
+    }
+
+    /**
+     * The answer to an operation that threw.
+     * <p>
+     * A guard refusal - {@link MetadataGuards.BlockedGuardException}, thrown directly or wrapped by
+     * the model on its way out of a write task - answers with its error, hint and structured tag,
+     * the same fields the operation would have answered with had it caught the refusal itself.
+     * Anything else is logged and answers with its message.
+     * </p>
+     *
+     * @param op the operation name, never {@code null}
+     * @param e what the operation threw, never {@code null}
+     * @return the answer as JSON, never {@code null}
+     */
+    static String answerFor(String op, Exception e)
+    {
+        MetadataGuards.BlockedGuardException blocked = MetadataGuards.BlockedGuardException.unwrap(e);
+        if (blocked != null)
+        {
+            MetadataGuards.Verdict v = blocked.verdict;
+            ToolResult result = ToolResult.error(v.error != null ? v.error : "blocked") //$NON-NLS-1$
+                .put("operation", op) //$NON-NLS-1$
+                .put("hint", v.hint != null ? v.hint : ""); //$NON-NLS-1$ //$NON-NLS-2$
+            if (v.tag != null)
+            {
+                result.put(v.tag.name, v.tag.data);
+            }
+            return result.toJson();
+        }
+        Activator.logError("edit_metadata error in operation " + op, e); //$NON-NLS-1$
+        return ToolResult.error(TextSuggest.safeMessage(e)).toJson();
     }
 
     /**
