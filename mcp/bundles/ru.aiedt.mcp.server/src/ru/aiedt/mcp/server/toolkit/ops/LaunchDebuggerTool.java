@@ -103,7 +103,7 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "Without topic - lists actions.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", "EDT project name (most actions).") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("applicationId", "Application identifier from list_applications.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("applicationId", "Application identifier from infobase_admin operation=get_applications.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
                 "launch: exact name of an EDT debug launch configuration (runtime client or Attach). " //$NON-NLS-1$
                     + "Use for Attach configurations (server-side debug: HTTP services, background jobs, " //$NON-NLS-1$
@@ -464,7 +464,7 @@ public class LaunchDebuggerTool implements IMcpTool
         if ("workflow".equals(topic)) //$NON-NLS-1$
         {
             sb.append("# launch_debugger - typical workflow\n\n"); //$NON-NLS-1$
-            sb.append("1. `list_applications` to get applicationId.\n"); //$NON-NLS-1$
+            sb.append("1. `infobase_admin operation=get_applications` to get applicationId.\n"); //$NON-NLS-1$
             sb.append("2. `launch_debugger action=launch applicationId=...`.\n"); //$NON-NLS-1$
             sb.append("3. `launch_debugger action=add_breakpoint modulePath=... line=...`.\n"); //$NON-NLS-1$
             sb.append("4. User triggers a code path in 1C:Enterprise.\n"); //$NON-NLS-1$
