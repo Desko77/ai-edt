@@ -1136,6 +1136,12 @@ public final class PendingWorkRegistry
      * (a FULL infobase update, a large metadata batch) reaches this TTL; evicting it there is the
      * defect this guard exists for.
      * </p>
+     * <p>
+     * A run whose body has left but whose result is not recorded yet is not abandoned either: the
+     * body settles its exit in its own {@code finally}, and the result lands on the entry a moment
+     * later, when the tracking future completes. Evicted in between, a run that outlived the TTL
+     * would lose the result it has just produced.
+     * </p>
      */
     public void pruneExpired()
     {
@@ -1150,7 +1156,7 @@ public final class PendingWorkRegistry
             {
                 it.remove();
             }
-            else if (entry.completedAt == 0 && !entry.workIsRunning()
+            else if (entry.completedAt == 0 && !entry.workIsRunning() && !entry.workHasLeft()
                 && now - (entry.beganAt > 0 ? entry.beganAt : entry.startedAt) > abandonedTtlMs)
             {
                 if (entry.future != null && !entry.future.isDone())

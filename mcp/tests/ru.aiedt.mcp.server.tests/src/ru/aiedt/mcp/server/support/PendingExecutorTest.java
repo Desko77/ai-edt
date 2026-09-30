@@ -327,6 +327,57 @@ public class PendingExecutorTest
     }
 
     /**
+     * A run whose body has left but whose result is not recorded yet keeps its entry past the
+     * abandoned TTL: the result lands on the entry when the tracking future completes, a moment
+     * after the body's own exit, and a prune in between would drop it.
+     */
+    @Test
+    public void workThatLeftBeforeItsResultWasRecordedIsNotEvictedByTheAbandonedTtl() throws Exception
+    {
+        String rk = key("left-not-recorded"); //$NON-NLS-1$
+        CountDownLatch began = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        Supplier<String> longWork = () ->
+        {
+            began.countDown();
+            try
+            {
+                release.await(20, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return "{\"updated\":true}"; //$NON-NLS-1$
+        };
+        try
+        {
+            PendingExecutor.start(REG, "update_database", rk, 100L, longWork, null); //$NON-NLS-1$
+            assertTrue("the body is executing", began.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
+
+            PendingWorkRegistry.PendingEntry entry = REG.get(rk);
+            assertNotNull(entry);
+            entry.beganAt = System.currentTimeMillis() - REG.abandonedTtlMs() - 1000L;
+            entry.workExited();
+            assertEquals("the result is not recorded yet", 0L, entry.completedAt); //$NON-NLS-1$
+
+            REG.pruneExpired();
+
+            assertNotNull("a run whose body has left keeps its entry until the result lands", //$NON-NLS-1$
+                REG.get(rk));
+
+            release.countDown();
+            String result = PendingExecutor.resume(REG, "update_database", rk, 5000L, null); //$NON-NLS-1$
+            assertTrue("the result is collectable", result.contains("\"updated\":true")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            release.countDown();
+            REG.remove(rk);
+        }
+    }
+
+    /**
      * Collecting a result drops the run that produced it, not whatever run holds the key by then.
      * <p>
      * A caller with the same arguments coalesces onto one run, so a second caller can be waiting
