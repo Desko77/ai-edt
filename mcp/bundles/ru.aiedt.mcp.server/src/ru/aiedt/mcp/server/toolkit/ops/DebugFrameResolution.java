@@ -130,6 +130,11 @@ final class DebugFrameResolution
                 {
                     return Resolution.refused(STALE_THREAD_ID);
                 }
+                String foreign = DebugThreadOwnership.foreignOwner(thread, null);
+                if (foreign != null)
+                {
+                    return Resolution.refused(DebugThreadOwnership.describe(foreign));
+                }
                 return inStack(thread.getStackFrames(), frameIndex, threadId);
             }
 

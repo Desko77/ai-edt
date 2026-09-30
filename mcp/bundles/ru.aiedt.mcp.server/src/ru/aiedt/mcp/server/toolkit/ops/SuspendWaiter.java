@@ -242,7 +242,30 @@ public final class SuspendWaiter implements IMcpTool
     static ToolResult buildSnapshotResult(DebugSessionBook.SuspendSnapshot snapshot,
         DebugSessionBook registry, String applicationId, boolean autoResolved) throws Exception
     {
-        IThread thread = snapshot.thread;
+        return buildThreadResult(snapshot.threadId, snapshot.thread, registry, applicationId,
+            autoResolved);
+    }
+
+    /**
+     * The same body for a thread the caller named by id rather than through a snapshot.
+     * <p>
+     * A snapshot is one stopped thread of one application as the registry recorded it; a caller that
+     * named a thread directly has its own id for it, and the answer has to echo that id - not one the
+     * registry happened to issue for another thread of the same session.
+     * </p>
+     *
+     * @param threadId the id the caller named, or -1 when none is known
+     * @param thread the suspended thread
+     * @param registry the session registry
+     * @param applicationId the application that suspended
+     * @param autoResolved whether the application was auto-resolved rather than named by the caller
+     * @return the result document, carrying hit / threadId / threadName / applicationId / frames and,
+     *         when there is a stack, topFrameRef
+     * @throws Exception when the debug model refuses to yield stack frames or frame details
+     */
+    static ToolResult buildThreadResult(long threadId, IThread thread, DebugSessionBook registry,
+        String applicationId, boolean autoResolved) throws Exception
+    {
         List<Map<String, Object>> frames = new ArrayList<>();
         IStackFrame[] stackFrames = thread.getStackFrames();
         for (int i = 0; i < stackFrames.length; i++)
@@ -265,7 +288,7 @@ public final class SuspendWaiter implements IMcpTool
         }
 
         ToolResult result = ToolResult.success().put("hit", true) //$NON-NLS-1$
-            .put("threadId", snapshot.threadId) //$NON-NLS-1$
+            .put("threadId", threadId) //$NON-NLS-1$
             .put("threadName", thread.getName()) //$NON-NLS-1$
             .put("applicationId", applicationId) //$NON-NLS-1$
             .put("frames", frames); //$NON-NLS-1$

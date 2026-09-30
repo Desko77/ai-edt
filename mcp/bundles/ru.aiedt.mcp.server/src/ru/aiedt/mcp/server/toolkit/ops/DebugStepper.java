@@ -104,6 +104,12 @@ public final class DebugStepper implements IMcpTool
         {
             return ToolResult.error("threadId is stale - call wait_for_break again").toJson(); //$NON-NLS-1$
         }
+        ToolResult foreignThread = DebugThreadOwnership.refusal(thread,
+            DebugThreadOwnership.namedApplication(params), threadId);
+        if (foreignThread != null)
+        {
+            return foreignThread.toJson();
+        }
         if (!(thread instanceof IStep))
         {
             return ToolResult.error("this thread does not support stepping").toJson(); //$NON-NLS-1$
