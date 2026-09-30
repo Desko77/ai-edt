@@ -165,8 +165,55 @@ public class ListInterceptorsTool implements IMcpTool
         }
 
         List<String> allowedKinds = parseKindFilter(kindFilterCsv);
-        List<Map<String, Object>> hits = new ArrayList<>();
-        int[] scanned = { 0 };
+        Scan scan = scan(project, baseProject, allowedKinds, maxResults);
+        if (scan.error != null)
+        {
+            return ToolResult.error("Workspace traversal failed: " + scan.error).toJson(); //$NON-NLS-1$
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("projectName", projectName); //$NON-NLS-1$
+        body.put("filesScanned", scan.filesScanned); //$NON-NLS-1$
+        body.put("interceptorsFound", scan.hits.size()); //$NON-NLS-1$
+        body.put("truncated", scan.hits.size() >= maxResults); //$NON-NLS-1$
+        summarise(body, baseProject == null ? null : baseProjectName, scan.hits);
+        body.put("interceptors", scan.hits); //$NON-NLS-1$
+        body.put("hint", "kind=before/after/around/changeAndValidate maps to Russian " //$NON-NLS-1$ //$NON-NLS-2$
+            + "&Перед/&После/&Вместо/&ИзменениеИКонтроль and their English aliases.");
+        return ToolResult.success().put("listInterceptors", body).toJson(); //$NON-NLS-1$
+    }
+
+    /** One scan's answer: the entries, how many modules were read, and why nothing more came. */
+    public static final class Scan
+    {
+        /** The interceptor entries, in scan order. */
+        public final List<Map<String, Object>> hits = new ArrayList<>();
+
+        /** How many modules were read. */
+        public int filesScanned;
+
+        /** Why the walk stopped early. Null when it ran to the end. */
+        public String error;
+    }
+
+    /**
+     * Scans a project's modules for interceptors, optionally validating each against a base.
+     * <p>
+     * The one scan behind this tool's own answer and behind {@code extension_workshop
+     * update_borrowed}, which classifies the same interceptors among everything else the
+     * extension borrowed. Reaching for the entries here, rather than parsing this tool's JSON,
+     * keeps the two answers built from one walk.
+     * </p>
+     *
+     * @param project the extension project to scan
+     * @param baseProject the base to validate against, or null for no validation
+     * @param allowedKinds the kinds to keep, or null for all of them
+     * @param maxResults the cap on entries, already defaulted by the caller
+     * @return the scan's answer
+     */
+    public static Scan scan(IProject project, IProject baseProject, List<String> allowedKinds,
+        int maxResults)
+    {
+        Scan scan = new Scan();
         try
         {
             project.accept(new IResourceVisitor()
@@ -174,15 +221,16 @@ public class ListInterceptorsTool implements IMcpTool
                 @Override
                 public boolean visit(IResource resource)
                 {
-                    if (hits.size() >= maxResults)
+                    if (scan.hits.size() >= maxResults)
                     {
                         return false;
                     }
                     if (resource.getType() == IResource.FILE
                         && "bsl".equalsIgnoreCase(resource.getFileExtension())) //$NON-NLS-1$
                     {
-                        scanned[0]++;
-                        scanFile((IFile) resource, allowedKinds, hits, maxResults, baseProject);
+                        scan.filesScanned++;
+                        scanFile((IFile) resource, allowedKinds, scan.hits, maxResults,
+                            baseProject);
                     }
                     return true;
                 }
@@ -190,19 +238,9 @@ public class ListInterceptorsTool implements IMcpTool
         }
         catch (Exception e)
         {
-            return ToolResult.error("Workspace traversal failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())).toJson();
+            scan.error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
         }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("projectName", projectName); //$NON-NLS-1$
-        body.put("filesScanned", scanned[0]); //$NON-NLS-1$
-        body.put("interceptorsFound", hits.size()); //$NON-NLS-1$
-        body.put("truncated", hits.size() >= maxResults); //$NON-NLS-1$
-        summarise(body, baseProject == null ? null : baseProjectName, hits);
-        body.put("interceptors", hits); //$NON-NLS-1$
-        body.put("hint", "kind=before/after/around/changeAndValidate maps to Russian " //$NON-NLS-1$ //$NON-NLS-2$
-            + "&Перед/&После/&Вместо/&ИзменениеИКонтроль and their English aliases.");
-        return ToolResult.success().put("listInterceptors", body).toJson(); //$NON-NLS-1$
+        return scan;
     }
 
     /**
