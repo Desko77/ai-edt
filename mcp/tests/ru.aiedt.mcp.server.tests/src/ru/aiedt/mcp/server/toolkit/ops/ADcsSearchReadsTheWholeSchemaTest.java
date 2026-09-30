@@ -154,6 +154,27 @@ public class ADcsSearchReadsTheWholeSchemaTest
         assertTrue(hits.get(0).text, hits.get(0).text.contains("Товары.Ссылка")); //$NON-NLS-1$
     }
 
+    /** Whitespace opening a match across a line break leaves the hit on the line of its text. */
+    @Test
+    public void leadingWhitespaceKeepsTheHitOnTheLineOfItsText()
+    {
+        DcsSearchTool.Collector c = search("\\s*Товары\\.Ссылка", true); //$NON-NLS-1$
+        assertEquals(1, c.totalMatches);
+        DcsSearchTool.Hit hit = c.matchesByFile.get(PATH).get(0);
+        assertEquals(3, hit.line);
+        assertEquals(3, hit.endLine);
+        assertEquals("Товары.Ссылка", hit.text); //$NON-NLS-1$
+    }
+
+    /** A match that ends on a line break is filed under the line that break ends. */
+    @Test
+    public void aMatchEndingOnALineBreakStaysOnItsLine()
+    {
+        assertEquals(0, DcsSearchTool.Collector.startOfContent("\n", 0, 1)); //$NON-NLS-1$
+        assertEquals(3, DcsSearchTool.Collector.startOfContent("a \n b", 1, 4)); //$NON-NLS-1$
+        assertEquals(1, DcsSearchTool.Collector.startOfContent("a \nb", 1, 3)); //$NON-NLS-1$
+    }
+
     /** A query on one line is counted once per line, whatever it matches on that line. */
     @Test
     public void aQueryOnOneLineIsCountedPerLine()

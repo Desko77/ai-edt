@@ -363,8 +363,9 @@ public class DcsSearchTool implements IMcpTool
          * Searches one schema's text as a whole, so a match may span lines.
          * <p>
          * A hit is counted once per line it starts on, as the search counted lines before a
-         * match could span them. Trailing line breaks are dropped first: an empty last line is
-         * not a line of the schema, and {@code .*} would match it.
+         * match could span them; whitespace that opens a match across a line break is not where
+         * it starts (see {@link #startOfContent}). Trailing line breaks are dropped first: an
+         * empty last line is not a line of the schema, and {@code .*} would match it.
          * </p>
          *
          * @param content the schema text
@@ -385,8 +386,9 @@ public class DcsSearchTool implements IMcpTool
             int lastLine = 0;
             while (m.find())
             {
-                line += countBreaks(text, counted, m.start());
-                counted = m.start();
+                int start = startOfContent(text, m.start(), m.end());
+                line += countBreaks(text, counted, start);
+                counted = start;
                 if (line == lastLine)
                 {
                     continue;
@@ -395,12 +397,39 @@ public class DcsSearchTool implements IMcpTool
                 totalMatches++;
                 if (shownMatches < maxResults)
                 {
-                    int endLine = line + countBreaks(text, m.start(), Math.max(m.start(), m.end() - 1));
+                    int endLine = line + countBreaks(text, start, Math.max(start, m.end() - 1));
                     matchesByFile.computeIfAbsent(displayPath, k -> new ArrayList<>())
-                        .add(new Hit(line, endLine, fragment(text, m.start(), m.end())));
+                        .add(new Hit(line, endLine, fragment(text, start, m.end())));
                     shownMatches++;
                 }
             }
+        }
+
+        /**
+         * Where a match starts for the line it is filed under.
+         * <p>
+         * A match that opens with whitespace running across a line break - {@code \s*ВЫБРАТЬ}
+         * matched from the end of the line above - starts after the last of those breaks. A
+         * match made only of whitespace and ending on a line break keeps its start, the line
+         * that break ends.
+         * </p>
+         *
+         * @param text the schema text
+         * @param start where the match starts
+         * @param end where the match ends
+         * @return the offset the match's line is read from
+         */
+        static int startOfContent(String text, int start, int end)
+        {
+            int from = start;
+            for (int i = start; i < end && Character.isWhitespace(text.charAt(i)); i++)
+            {
+                if (text.charAt(i) == '\n' && i + 1 < end)
+                {
+                    from = i + 1;
+                }
+            }
+            return from;
         }
 
         /**
