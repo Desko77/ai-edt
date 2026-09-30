@@ -15,8 +15,8 @@ Agent mode and paste this prompt:
 ```
 
 Two steps stay with the person, and the agent asks for them at the right moment: closing EDT on a
-first installation (a window close raises a prompt only a human can answer) and switching the
-`ai-edt` server on in Cursor's settings.
+first installation (a window close raises a prompt only a human can answer) and allowing the
+`ai-edt` server in Cursor (Customize, MCPs).
 
 ## Rules for the agent
 
@@ -139,17 +139,21 @@ Remove-Item -Recurse -Force "$env:TEMP\cursor-1c-skills"
 If `.cursor\skills\ai-edt-tools` or `.cursor\rules\mcp-tool-priority.mdc` already exists and
 differs, show the person the difference and ask before replacing it.
 
-## 8. Switch the server on in Cursor
+## 8. Allow the server in Cursor
 
 Cursor does not load a new MCP server until it is allowed.
 
 - If `cursor-agent` is on PATH, run `cursor-agent mcp enable ai-edt` and then
   `cursor-agent mcp list-tools ai-edt`; the second command lists the tools when the connection
   works.
-- In the Cursor editor, ask the person to do it, in these words: press `Ctrl+Shift+J`, choose the MCP
-  section on the left (named **Tools & MCP**, **MCP** or **Tools & Integrations** depending on the
-  version), find `ai-edt` and turn on the switch next to it; a green mark with a number of tools
-  means it is connected. Wait for the person to confirm.
+- In the Cursor editor, ask the person to do it, in these words: press `Ctrl+Shift+J`, choose
+  **Customize** on the left (or **Open Customize** on the banner at the top), press the **MCPs**
+  filter at the top of the Customize tab. Servers are grouped: **Connected** (green mark, number of
+  tools enabled) and **Needs Attention** (not allowed yet, or failed). If `ai-edt` is under **Needs
+  Attention**, click it and allow it; for a failed one, **Show Output** gives the error. It is done
+  when `ai-edt` is under **Connected**. Wait for the person to confirm.
+- The skill and the rule show up in the same tab: filter **Skills**, group **Workspaces**,
+  `ai-edt-tools`; filter **Rules**, `mcp-tool-priority`.
 
 ## 9. Check
 
@@ -158,6 +162,6 @@ both answer, report to the person: the EDT version, the workspace, the projects,
 you created or changed (with backups), and that they can now give tasks in plain words, for example
 "find where Catalog.Products is used".
 
-If the tools are not visible to you, the server is not switched on in Cursor (step 8) or Cursor needs
+If the tools are not visible to you, the server is not allowed in Cursor (step 8) or Cursor needs
 the window reloaded: ask the person to run **Developer: Reload Window** from `Ctrl+Shift+P`, then
 check again.
