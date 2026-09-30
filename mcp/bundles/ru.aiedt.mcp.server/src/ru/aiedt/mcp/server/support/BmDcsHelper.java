@@ -1383,25 +1383,7 @@ public final class BmDcsHelper
                 // platform opens the report with no schema.
                 BmExportHelper.Result ownerExport =
                     BmExportHelper.forceExportAndWait(mm, project, objectFqn);
-                if (ownerExport != null && ownerExport.syncFlushPending)
-                {
-                    // Row 42: committed to BM, disk flush pending - the
-                    // <mainDataCompositionSchema> line may briefly lag on disk.
-                    // Surface as a tag (Result.tags reaches the JSON response),
-                    // not just a log line.
-                    r.tags.put("diskFlushPending", Boolean.TRUE); //$NON-NLS-1$
-                    r.tags.put("diskFlushHint", "Schema written; owner .mdo " //$NON-NLS-1$ //$NON-NLS-2$
-                        + "<mainDataCompositionSchema> disk flush pending - re-run resync_to_disk " //$NON-NLS-1$
-                        + "once EDT settles if the report opens without the schema."); //$NON-NLS-1$
-                    Activator.logWarning("create_schema: owner .mdo flush pending for " //$NON-NLS-1$
-                        + objectFqn + " - <mainDataCompositionSchema> may briefly lag on disk"); //$NON-NLS-1$
-                }
-                else if (ownerExport != null && !ownerExport.isOk())
-                {
-                    Activator.logWarning("create_schema: owner .mdo export failed for " //$NON-NLS-1$
-                        + objectFqn + " - <mainDataCompositionSchema> may not reach disk: " //$NON-NLS-1$
-                        + ownerExport.error);
-                }
+                noteOwnerExport(r, ownerExport, objectFqn);
             }
         }
         catch (DryRunAbort dra)
@@ -1925,11 +1907,70 @@ public final class BmDcsHelper
     }
 
     /**
+     * Judges the owner .mdo export that follows a schema creation.
+     * <p>
+     * The creation writes the schema template and the .dcs file, and mutates the owner's
+     * mainDataCompositionSchema reference in the model; only the owner export carries that
+     * reference into the .mdo. An export whose flush has not confirmed yet is tagged
+     * {@code diskFlushPending} and left a success. An export that failed is refused: answering
+     * success there means the platform opens the report without a schema while the caller holds
+     * a "created" answer.
+     * </p>
+     *
+     * @param r the creation result to annotate, whose {@code ok} this may clear
+     * @param ownerExport the owner export outcome, or <code>null</code> when none was taken
+     * @param ownerFqn the owner object FQN, for the tag and the log line
+     */
+    static void noteOwnerExport(Result r, BmExportHelper.Result ownerExport, String ownerFqn)
+    {
+        if (ownerExport == null)
+        {
+            return;
+        }
+        if (ownerExport.syncFlushPending)
+        {
+            // Committed to BM, disk flush pending - the
+            // <mainDataCompositionSchema> line may briefly lag on disk.
+            // Surface as a tag (Result.tags reaches the JSON response),
+            // not just a log line.
+            r.tags.put("diskFlushPending", Boolean.TRUE); //$NON-NLS-1$
+            r.tags.put("diskFlushHint", "Schema written; owner .mdo " //$NON-NLS-1$ //$NON-NLS-2$
+                + "<mainDataCompositionSchema> disk flush pending - re-run resync_to_disk " //$NON-NLS-1$
+                + "once EDT settles if the report opens without the schema."); //$NON-NLS-1$
+            Activator.logWarning("create_schema: owner .mdo flush pending for " //$NON-NLS-1$
+                + ownerFqn + " - <mainDataCompositionSchema> may briefly lag on disk"); //$NON-NLS-1$
+            return;
+        }
+        if (!ownerExport.isOk())
+        {
+            String detail = ownerExport.error != null ? ownerExport.error
+                : "force-export did not confirm"; //$NON-NLS-1$
+            Map<String, Object> info = new LinkedHashMap<>();
+            info.put("owner", ownerFqn); //$NON-NLS-1$
+            info.put("error", detail); //$NON-NLS-1$
+            r.tags.put("ownerExportFailed", info); //$NON-NLS-1$
+            String ownerLine = "the owner .mdo export failed (" + detail + "), so the owner's " //$NON-NLS-1$ //$NON-NLS-2$
+                + "mainDataCompositionSchema reference did not reach disk. Re-run resync_to_disk on " //$NON-NLS-1$
+                + ownerFqn + " once EDT settles, then check the .mdo carries the schema reference."; //$NON-NLS-1$
+            // A refusal already set here is the .dcs save's own: the file did not reach disk
+            // either, so the owner line is added to it instead of claiming the file was written.
+            r.error = r.ok || r.error == null
+                ? "the schema template and the .dcs file were written, but " + ownerLine //$NON-NLS-1$
+                : r.error + " Also " + ownerLine; //$NON-NLS-1$
+            r.ok = false;
+            Activator.logWarning("create_schema: owner .mdo export failed for " //$NON-NLS-1$
+                + ownerFqn + " - <mainDataCompositionSchema> did not reach disk: " //$NON-NLS-1$
+                + detail);
+        }
+    }
+
+    /**
      * Judges the disk-save and refuses a write that changed nothing.
      * <p>
-     * Two outcomes are not a success. A save that FAILED is tagged {@code diskSaveFailed}. A save
-     * that wrote a file byte-identical to the one already there is tagged {@code schemaUnchanged}
-     * and refused: the call asked for a change and the schema does not carry one.
+     * Two outcomes are not a success. A save that FAILED is refused and tagged
+     * {@code diskSaveFailed}. A save that wrote a file byte-identical to the one already there is
+     * tagged {@code schemaUnchanged} and refused: the call asked for a change and the schema does
+     * not carry one.
      * </p>
      *
      * @param r the result to annotate, whose {@code ok} this may clear
@@ -1966,6 +2007,11 @@ public final class BmDcsHelper
                 info.put("filePath", ds.filePath); //$NON-NLS-1$
             }
             r.tags.put("diskSaveFailed", info); //$NON-NLS-1$
+            r.ok = false;
+            r.error = "the schema was not written to disk" //$NON-NLS-1$
+                + (ds.error != null ? ": " + ds.error : "") //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Without the .dcs file the change exists only in memory; read the schema " //$NON-NLS-1$
+                + "back before repeating it."; //$NON-NLS-1$
             return;
         }
         if (ds != null && ds.ok && ds.declaredMissing)

@@ -8205,6 +8205,11 @@ public class DcsWorkshopTool implements IMcpTool
             + "- `affectedCount` (success flag, number) - how many entries `affectedSettings` " //$NON-NLS-1$
             + "    holds. Both are absent when `reportAffectedSettings` is false. An empty list " //$NON-NLS-1$
             + "    means the list was built and nothing matched.\n" //$NON-NLS-1$
+            + "- `diskSaveFailed` { error, notFound, filePath } - the .dcs file was not written;\n" //$NON-NLS-1$
+            + "    the call is refused.\n" //$NON-NLS-1$
+            + "- `ownerExportFailed` { owner, error } - create_schema wrote the template and the\n" //$NON-NLS-1$
+            + "    .dcs, but the owner .mdo export failed, so the main schema reference did not reach\n" //$NON-NLS-1$
+            + "    disk; the call is refused.\n" //$NON-NLS-1$
             + "- `supportLock` - schema parent is on vendor support; use an extension.\n\n" //$NON-NLS-1$
             + "Pass `validate_query=false` or `validate_expression=false` to bypass\n" //$NON-NLS-1$
             + "pre-flight validation (use only for trusted templating).\n"; //$NON-NLS-1$
