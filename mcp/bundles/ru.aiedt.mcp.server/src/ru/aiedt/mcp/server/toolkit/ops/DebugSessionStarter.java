@@ -95,6 +95,21 @@ public final class DebugSessionStarter implements IMcpTool
      */
     private static final long LAUNCH_RESUME_WAIT_MS = 30_000L;
 
+    /**
+     * The launches handed to a {@code runKey} that have not settled yet, by the application they
+     * start.
+     * <p>
+     * A handed-over launch keeps running after the call that made it has returned its Pending
+     * envelope, and {@link #LAUNCH_LOCK} goes with that call. Without this reservation the
+     * already-running check sees no target - the first client has not registered one yet - and a
+     * second launch of the same application starts a second client, so answering the dialog that
+     * held the first open starts two. The reservation leaves with the launch it names, not with
+     * the call that started it.
+     * </p>
+     */
+    private static final Map<String, String> LAUNCHES_IN_FLIGHT =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public String getName()
     {
@@ -405,6 +420,14 @@ public final class DebugSessionStarter implements IMcpTool
                     .toJson();
             }
 
+            // A launch of this application still in flight answers with its key: the first client
+            // has registered no target yet, and a second launch would start a second client.
+            String inFlightRunKey = inFlightLaunchRunKey(effectiveAppId);
+            if (inFlightRunKey != null)
+            {
+                return launchInFlightAnswer(effectiveAppId, inFlightRunKey);
+            }
+
             // The external object is resolved BEFORE the already-running check: a running session
             // was started without these arguments, and answering success would lose them.
             if (effectiveAppId != null && DebugSessionBook.findActiveTarget(effectiveAppId) != null)
@@ -546,7 +569,7 @@ public final class DebugSessionStarter implements IMcpTool
                     : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
             }
 
-            LaunchOutcome outcome = performLaunch(toLaunch, isAttach);
+            LaunchOutcome outcome = performLaunch(toLaunch, isAttach, effectiveAppId);
             if (outcome.pendingAnswer != null)
             {
                 return outcome.pendingAnswer;
@@ -678,6 +701,14 @@ public final class DebugSessionStarter implements IMcpTool
                     Activator.logError("Failed to check application", e); //$NON-NLS-1$
                     // Continue - try to find a launch configuration anyway.
                 }
+            }
+
+            // A launch of this application still in flight answers with its key: the first client
+            // has registered no target yet, and a second launch would start a second client.
+            String inFlightRunKey = inFlightLaunchRunKey(applicationId);
+            if (inFlightRunKey != null)
+            {
+                return launchInFlightAnswer(applicationId, inFlightRunKey);
             }
 
             // Before the update, not after: an object that cannot be resolved is a typo, and a typo
@@ -856,7 +887,7 @@ public final class DebugSessionStarter implements IMcpTool
             String flagState = application == null ? "not applied: the application was not resolved" //$NON-NLS-1$
                 : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
 
-            LaunchOutcome outcome = performLaunch(matchingConfig, false);
+            LaunchOutcome outcome = performLaunch(matchingConfig, false, applicationId);
             if (outcome.pendingAnswer != null)
             {
                 return outcome.pendingAnswer;
@@ -1311,10 +1342,13 @@ public final class DebugSessionStarter implements IMcpTool
      *
      * @param config the configuration to launch.
      * @param isAttach whether it attaches rather than starts a client.
+     * @param applicationId the application the launch starts, held as an in-flight reservation
+     *            when the launch is handed over; may be <code>null</code> when unknown
      * @return the outcome; {@link LaunchOutcome#started} false carries the refusal, and a
      *         non-null {@link LaunchOutcome#pendingAnswer} carries the whole answer to return
      */
-    private LaunchOutcome performLaunch(ILaunchConfiguration config, boolean isAttach)
+    private LaunchOutcome performLaunch(ILaunchConfiguration config, boolean isAttach,
+        String applicationId)
     {
         List<Map<String, Object>> dialogsBefore = ModalDialogWatch.current().getDialogs();
         LaunchUnderWay launch = startLaunch(config);
@@ -1331,7 +1365,8 @@ public final class DebugSessionStarter implements IMcpTool
                 return outcomeOfLaunch(launch, isAttach, dialogsBefore);
             case ANSWER_BLOCKED_BY_DIALOG:
             case ANSWER_PENDING:
-                return LaunchOutcome.handOver(pendingLaunchAnswer(launch, isAttach, dialogsBefore));
+                return LaunchOutcome.handOver(
+                    pendingLaunchAnswer(launch, isAttach, dialogsBefore, applicationId));
             default:
                 break;
             }
@@ -1613,20 +1648,45 @@ public final class DebugSessionStarter implements IMcpTool
      * a button: which answer the environment's question gets is a person's decision or an explicit
      * {@code answer_dialog} call, never the launch's own.
      * </p>
+     * <p>
+     * The application is reserved as in flight BEFORE the run is dispatched, and the reservation
+     * leaves in the run body's own {@code finally}: the body can settle before this method returns,
+     * and a reservation written after that would never be released.
+     * </p>
      *
      * @param launch the launch that has not returned
      * @param isAttach whether the configuration attaches rather than starts a client
      * @param dialogsBefore what was open before the launch
+     * @param applicationId the application the launch starts, held as in flight until it settles;
+     *            <code>null</code> or empty reserves nothing
      * @return the Pending answer for the caller
      */
     static String pendingLaunchAnswer(LaunchUnderWay launch, boolean isAttach,
-        List<Map<String, Object>> dialogsBefore)
+        List<Map<String, Object>> dialogsBefore, String applicationId)
     {
         String runKey = PendingWorkRegistry.computeRunKey(NAME,
             String.valueOf(System.nanoTime()));
+        boolean reserveApplication = applicationId != null && !applicationId.isEmpty();
+        if (reserveApplication)
+        {
+            LAUNCHES_IN_FLIGHT.put(applicationId, runKey);
+        }
         PendingWorkRegistry.PendingEntry entry =
             PendingWorkRegistry.DEBUG_LAUNCH.getOrStart(runKey,
-                ongoing -> awaitLaunchOutcome(launch, isAttach, dialogsBefore));
+                ongoing ->
+                {
+                    try
+                    {
+                        return awaitLaunchOutcome(launch, isAttach, dialogsBefore);
+                    }
+                    finally
+                    {
+                        if (reserveApplication)
+                        {
+                            LAUNCHES_IN_FLIGHT.remove(applicationId, runKey);
+                        }
+                    }
+                });
         if (entry.startedBy == null)
         {
             entry.startedBy = NAME;
@@ -1681,6 +1741,71 @@ public final class DebugSessionStarter implements IMcpTool
                 .toJson();
         }
         return refusalFor(outcome, "Could not launch the debug session").toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * The {@code runKey} of the launch still in flight for an application, when there is one.
+     * <p>
+     * A reservation whose run no longer answers is swept here rather than left to leak: the
+     * registry drops a cancelled run's tracking, and judging liveness at the read keeps the
+     * refusal below honest without a background cleaner. A cancelled run whose body still parks on
+     * a person reads as settled here - the caller asked for the run to stop, and the body's own
+     * exit releases the reservation for good when it comes.
+     * </p>
+     *
+     * @param applicationId the application a new launch is being considered for
+     * @return the runKey the caller can poll, or <code>null</code> when no launch of it is in
+     *         flight
+     */
+    static String inFlightLaunchRunKey(String applicationId)
+    {
+        if (applicationId == null || applicationId.isEmpty())
+        {
+            return null;
+        }
+        String runKey = LAUNCHES_IN_FLIGHT.get(applicationId);
+        if (runKey == null)
+        {
+            return null;
+        }
+        PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.DEBUG_LAUNCH.get(runKey);
+        if (entry != null && !entry.isDone())
+        {
+            return runKey;
+        }
+        LAUNCHES_IN_FLIGHT.remove(applicationId, runKey);
+        return null;
+    }
+
+    /**
+     * The refusal a launch call gets while an earlier launch of the same application is still in
+     * flight under a {@code runKey}.
+     * <p>
+     * The earlier launch has not registered its debug target yet, so the already-running check
+     * cannot see it; what it came to is not known until somebody answers what holds it open, and a
+     * second client started beside the first is exactly what the reservation exists to prevent.
+     * The answer names the key to poll instead.
+     * </p>
+     *
+     * @param applicationId the application the in-flight launch starts
+     * @param runKey the key its Pending envelope carried
+     * @return the refusal, ready to return
+     */
+    static String launchInFlightAnswer(String applicationId, String runKey)
+    {
+        return ToolResult
+            .error("A launch of this application is still in flight: an earlier call handed it " //$NON-NLS-1$
+                + "to a runKey while a modal question or the wait window held it open, and what it " //$NON-NLS-1$
+                + "came to is not known yet. Poll that key instead of starting a second client - " //$NON-NLS-1$
+                + "answering the question one of them waits on could start two. Nothing was " //$NON-NLS-1$
+                + "launched.") //$NON-NLS-1$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("launchInFlight", true) //$NON-NLS-1$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("hint", "Call this tool again with runKey=\"" + runKey //$NON-NLS-1$ //$NON-NLS-2$
+                + "\" to collect the outcome.") //$NON-NLS-1$
+            .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+            .toJson();
     }
 
     /**

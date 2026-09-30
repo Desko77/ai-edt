@@ -94,7 +94,7 @@ public class ALaunchHeldByAQuestionAnswersPendingTest
         };
 
         JsonObject pending = FakeDebugToolCalls
-            .json(DebugSessionStarter.pendingLaunchAnswer(underWay, false, List.of()));
+            .json(DebugSessionStarter.pendingLaunchAnswer(underWay, false, List.of(), null));
         String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
 
         assertEquals("Pending", pending.get("status").getAsString()); //$NON-NLS-1$
@@ -113,6 +113,80 @@ public class ALaunchHeldByAQuestionAnswersPendingTest
             collected.get("error").getAsString().contains("terminated straight away")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("a collected key is not held by the registry any more", null, //$NON-NLS-1$
             PendingWorkRegistry.DEBUG_LAUNCH.get(runKey));
+    }
+
+    @Test
+    public void aHandedOverLaunchHoldsItsApplicationUntilItSettles() throws Exception
+    {
+        CountDownLatch returned = new CountDownLatch(1);
+        ILaunch[] launched = {aLaunchThatTerminatedAtOnce()};
+        DebugSessionStarter.LaunchUnderWay underWay = aLaunchUnderWay(launched, returned);
+
+        JsonObject pending = FakeDebugToolCalls.json(
+            DebugSessionStarter.pendingLaunchAnswer(underWay, false, List.of(), "app-under-test")); //$NON-NLS-1$
+        String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
+
+        assertEquals("the application is held while its launch is in flight", runKey, //$NON-NLS-1$
+            DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$
+        assertEquals("another application is not held by it", null, //$NON-NLS-1$
+            DebugSessionStarter.inFlightLaunchRunKey("another-app")); //$NON-NLS-1$
+
+        returned.countDown();
+        JsonObject collected = FakeDebugToolCalls.json(new DebugSessionStarter()
+            .execute(Map.of("runKey", runKey))); //$NON-NLS-1$
+        assertEquals(false, collected.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("the application is free again once the launch settled", null, //$NON-NLS-1$
+            DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theInFlightRefusalNamesTheKeyToPoll()
+    {
+        JsonObject answer = FakeDebugToolCalls.json(
+            DebugSessionStarter.launchInFlightAnswer("app-under-test", "the-run-key")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(false, answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(true, answer.get("launchInFlight").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("the-run-key", answer.get("runKey").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the answer says how to collect the outcome: " + answer, //$NON-NLS-1$
+            answer.get("hint").getAsString().contains("the-run-key")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(true, answer.get("nothingWasLaunchedOrUpdated").getAsBoolean()); //$NON-NLS-1$
+    }
+
+    /**
+     * @param launched where the launch lands once it returns
+     * @param returned the latch its return counts down
+     * @return a launch that has not returned until the latch opens
+     */
+    private static DebugSessionStarter.LaunchUnderWay aLaunchUnderWay(ILaunch[] launched,
+        CountDownLatch returned)
+    {
+        return new DebugSessionStarter.LaunchUnderWay()
+        {
+            @Override
+            public boolean hasReturned()
+            {
+                return returned.getCount() == 0;
+            }
+
+            @Override
+            public ILaunch launch()
+            {
+                return launched[0];
+            }
+
+            @Override
+            public String error()
+            {
+                return null;
+            }
+
+            @Override
+            public void awaitReturn() throws InterruptedException
+            {
+                returned.await();
+            }
+        };
     }
 
     /**
