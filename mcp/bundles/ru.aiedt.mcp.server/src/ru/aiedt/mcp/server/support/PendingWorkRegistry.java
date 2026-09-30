@@ -188,6 +188,18 @@ public final class PendingWorkRegistry
         "retrieve_database_changes", "retrieve-changes-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * Async backend for a debug launch that outlived its inline wait.
+     * <p>
+     * A launch is a mutator, so the key is unique per call: two identical launches are two runs,
+     * never one coalesced future and never a replayed cached answer. The body of each entry parks
+     * on the launch the call handed over - which is what a modal question holds open for as long
+     * as nobody answers it - so the pool carries a thread per launch still waiting on a person.
+     * </p>
+     */
+    public static final PendingWorkRegistry DEBUG_LAUNCH = new PendingWorkRegistry(
+        "debug_launch", "debug-launch-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * What a cancel reaches in each of the domains that have no process or client of their
      * own to destroy.
      * <p>
@@ -634,7 +646,7 @@ public final class PendingWorkRegistry
     {
         return Collections.unmodifiableList(
             Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, SNAPSHOT, REFERENCES, IMPORT_BINARY,
-                VANESSA, NAPARNIK, GENERIC, RETRIEVE));
+                VANESSA, NAPARNIK, GENERIC, RETRIEVE, DEBUG_LAUNCH));
     }
 
     /**

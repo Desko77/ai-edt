@@ -142,6 +142,8 @@ public class LaunchDebuggerTool implements IMcpTool
             .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
                 "launch: how long to wait for waitForEndpoint, default 20, limit 50. Refused " //$NON-NLS-1$
                     + "without waitForEndpoint.") //$NON-NLS-1$
+            .stringProperty("runKey", //$NON-NLS-1$
+                "launch: resume a launch that answered Pending, by the runKey it answered with.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$
                 "terminate: stop every active EDT launch (default false).") //$NON-NLS-1$
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
@@ -155,7 +157,7 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "set_breakpoint_state.") //$NON-NLS-1$
             .booleanProperty("breakpointEnabled", //$NON-NLS-1$
                 "set_breakpoint_state: true enables the breakpoint, false switches it off " //$NON-NLS-1$
-                    + "without removing it. Required - neither default suits every caller.") //$NON-NLS-1$
+                    + "without removing it; that action refuses a call without it.") //$NON-NLS-1$
             .booleanProperty("replaceModuleSet", //$NON-NLS-1$
                 "add_breakpoint batch: drop the breakpoints the addressed modules already carry, " //$NON-NLS-1$
                     + "so the batch is their whole set (default false).") //$NON-NLS-1$
