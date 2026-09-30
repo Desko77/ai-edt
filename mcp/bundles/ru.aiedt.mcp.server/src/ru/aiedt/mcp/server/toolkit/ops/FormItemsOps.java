@@ -1616,6 +1616,11 @@ final class FormItemsOps
      * A runtime that registers no stock pictures answers with a refusal tagged
      * {@code serviceUnavailable} carrying the common pictures, not with an empty stock list.
      * </p>
+     * <p>
+     * A {@code projectName} that names no open project is refused with {@code projectNotFound}
+     * rather than answered with the newest version's pictures - an absent project is not the same
+     * question as a versionless listing.
+     * </p>
      *
      * @param params projectName (optional; its platform version, the newest without it) and filter
      * @return the JSON answer
@@ -1624,6 +1629,19 @@ final class FormItemsOps
     {
         String filter = JsonUtils.extractStringArgument(params, "filter"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        // A project the caller named has to exist: the stock list follows the project's
+        // platform version, and a name that resolves to nothing used to read as the newest
+        // version instead - the same answer a call without a project name gives, so the
+        // caller could not tell a typo from a deliberate versionless listing.
+        if (projectName != null && !projectName.isEmpty())
+        {
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project == null)
+            {
+                return ProjectResolver.notFound(projectName)
+                    .put(ErrorTags.PROJECT_NOT_FOUND.wire(), true).toJson();
+            }
+        }
         java.util.List<StockPictures.Entry> all = StockPictures.read(StockPictures.versionOf(projectName));
         java.util.List<String> common = listCommonPictures(projectName, filter);
         if (all.isEmpty())

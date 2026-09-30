@@ -3208,19 +3208,24 @@ public class BmFormHelper
     }
 
     /**
-     * Adds an item to a container before the element with the specified name.
-     * If the element is not found, adds to the end.
+     * Adds an item to a container before the element with the specified name. When no element
+     * carries that name, the item is added to the end and the answer says so: the caller asked
+     * for a position, and a silent fall-through to the end reads back as the position being
+     * taken.
      *
      * @param container the container
      * @param item the item to add
      * @param beforeName the name of the element to insert before
+     * @return true when a named sibling was found and the item went in front of it; false when
+     *         the name matched nothing and the item was appended at the end
      * @throws Exception if adding fails
      */
-    public void addToContainerBefore(Object container, Object item, String beforeName) throws Exception
+    public boolean addToContainerBefore(Object container, Object item, String beforeName) throws Exception
     {
         Object items = containerIface.getMethod("getItems").invoke(container); //$NON-NLS-1$
         int size = (Integer) items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
         int insertIndex = size; // Default: end of list
+        boolean siblingFound = false;
 
         for (int i = 0; i < size; i++)
         {
@@ -3231,6 +3236,7 @@ public class BmFormHelper
                 if (beforeName.equals(existingName))
                 {
                     insertIndex = i;
+                    siblingFound = true;
                     break;
                 }
             }
@@ -3242,6 +3248,7 @@ public class BmFormHelper
 
         items.getClass().getMethod("add", Integer.TYPE, Object.class) //$NON-NLS-1$
             .invoke(items, insertIndex, item);
+        return siblingFound;
     }
 
     /**
@@ -3263,7 +3270,8 @@ public class BmFormHelper
      *                       empty to move the item to the form root
      * @param beforeName the name of the sibling to insert before, or {@code null}
      *                       to append at the end of the destination
-     * @return a short description of what moved where
+     * @return a short description of what moved where, plus a warning line when the named
+     *                       sibling was not in the destination and the item went to its end
      * @throws Exception if the model rejects the insertion
      */
     public String moveItemToContainer(Object form, String itemName, String targetName,
@@ -3307,16 +3315,21 @@ public class BmFormHelper
             reorderWithin(items, item, currentIndex, beforeName);
             return "moved '" + itemName + "' within " + from; //$NON-NLS-1$ //$NON-NLS-2$
         }
+        String description = "moved '" + itemName + "' from " + from + " to " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + (toRoot ? "the form root" : "'" + targetName + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         if (beforeName != null && !beforeName.isEmpty())
         {
-            addToContainerBefore(target, item, beforeName);
+            if (!addToContainerBefore(target, item, beforeName))
+            {
+                description += "\nWarning: element '" + beforeName + "' is not in the target " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "container, so the item was placed at its end."; //$NON-NLS-1$
+            }
         }
         else
         {
             addToContainer(target, item);
         }
-        return "moved '" + itemName + "' from " + from + " to " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + (toRoot ? "the form root" : "'" + targetName + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return description;
     }
 
     /**
@@ -5141,7 +5154,7 @@ public class BmFormHelper
      * wait was moreover unbounded and could pin an HTTP worker thread).
      * <p>
      * A shorter 5s budget (vs the 10s metadata default) bounds the UI-thread
-     * stall: form ops run inside {@code Display.syncExec}, so this blocking wait
+     * stall: form ops run on the EDT UI thread, so this blocking wait
      * freezes the EDT UI on a stuck sync manager; the daemon finishes the save
      * in the background regardless. Returns the {@link BmExportHelper.Result} so
      * the caller can note a pending or failed flush; failures are non-fatal and

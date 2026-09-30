@@ -22,7 +22,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool.ResponseType;
  * parameter validation for required fields, help operation output.
  * <p>
  * Note: operations other than 'help' require Eclipse workspace and
- * PlatformUI (Display.syncExec, BM transactions), so only pre-dispatch
+ * PlatformUI (UiSync on the UI thread, BM transactions), so only pre-dispatch
  * validation and the help operation can be tested without Eclipse runtime.
  */
 public class EditFormToolTest
@@ -226,7 +226,7 @@ public class EditFormToolTest
     // -- Validation order --
     // help is checked BEFORE projectName/formFqn/operation validation.
     // Other operations require valid projectName, formFqn, and operation.
-    // Invalid operation and name-required checks happen inside Display.syncExec,
+    // Invalid operation and name-required checks happen on the UI thread through UiSync,
     // which requires Eclipse runtime - not testable here.
 
     @Test
