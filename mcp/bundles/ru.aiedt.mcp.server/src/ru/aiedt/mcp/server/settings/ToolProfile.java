@@ -425,6 +425,12 @@ public enum ToolProfile
      * reads of the same facade - status, branches, log, show_file_changes - stay on under all three,
      * because only the doors are named here.
      * </p>
+     * <p>
+     * {@code extension_workshop} is named as a whole: its borrow operations and
+     * {@code update_borrowed} with {@code apply=true} write the extension, and its group is one Code
+     * Review keeps on. Read-only and Debug &amp; Test switch its group off already, so under all three
+     * the facade, its reads included, is off.
+     * </p>
      *
      * @return the names no write-blocking preset may leave enabled
      */
