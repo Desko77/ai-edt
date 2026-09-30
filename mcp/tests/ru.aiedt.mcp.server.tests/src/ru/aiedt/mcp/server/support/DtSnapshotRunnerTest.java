@@ -297,6 +297,40 @@ public class DtSnapshotRunnerTest
     }
 
     /**
+     * A dump given up because its budget ran out is answered as budgetExpired, not as a cancel:
+     * nobody asked for it to stop.
+     */
+    @Test
+    public void aBudgetThatRanOutIsNotAnsweredAsACancel()
+    {
+        ProbeIo io = new ProbeIo();
+        io.dumpThrows = new DumpInfoRebuilder.Abandoned("the export did not reach its Designer run " //$NON-NLS-1$
+            + "within 600s; that run was not launched", false, true, true, null); //$NON-NLS-1$
+
+        JsonObject answer = answer(DtSnapshotRunner.dispatchExport(call(), "Проект", null, //$NON-NLS-1$
+            work.resolve("budget.dt").toString(), null, false, factory(io), STARTER)); //$NON-NLS-1$
+
+        assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(answer.toString(), answer.has("budgetExpired")); //$NON-NLS-1$
+        assertFalse(answer.toString(), answer.has("cancelled")); //$NON-NLS-1$
+    }
+
+    /** A dump the caller cancelled is still answered as cancelled. */
+    @Test
+    public void aCancelledDumpIsAnsweredAsCancelled()
+    {
+        ProbeIo io = new ProbeIo();
+        io.dumpThrows = new DumpInfoRebuilder.Abandoned("the export was cancelled before the Designer " //$NON-NLS-1$
+            + "run it was waiting for started; that run was not launched", false, true, false, null); //$NON-NLS-1$
+
+        JsonObject answer = answer(DtSnapshotRunner.dispatchExport(call(), "Проект", null, //$NON-NLS-1$
+            work.resolve("cancelled.dt").toString(), null, false, factory(io), STARTER)); //$NON-NLS-1$
+
+        assertTrue(answer.toString(), answer.has("cancelled")); //$NON-NLS-1$
+        assertFalse(answer.toString(), answer.has("budgetExpired")); //$NON-NLS-1$
+    }
+
+    /**
      * A cancel for a key no run holds changes nothing and says the key was not found, and the
      * stopper itself answers NOTHING_TO_STOP when there is no live run under the key.
      */
@@ -504,6 +538,9 @@ public class DtSnapshotRunnerTest
         /** When set, the next dump throws instead of writing - for a load, that is the backup. */
         boolean failTheDump;
 
+        /** When set, the next dump throws this instead of writing. */
+        Exception dumpThrows;
+
         /** The file the load read. */
         Path loadedFrom;
 
@@ -545,6 +582,12 @@ public class DtSnapshotRunnerTest
         public void exportTo(Path target, BooleanSupplier cancelled) throws Exception
         {
             ran.add("dump"); //$NON-NLS-1$
+            if (dumpThrows != null)
+            {
+                Exception thrown = dumpThrows;
+                dumpThrows = null;
+                throw thrown;
+            }
             if (failTheDump)
             {
                 failTheDump = false;

@@ -55,6 +55,9 @@ public final class DumpInfoRebuilder
         /** Whether the abandonment took the launch boundary first, so no Designer run started. */
         private final boolean launchPrevented;
 
+        /** Whether the wait gave up because its budget ran out rather than on a cancel. */
+        private final boolean timedOut;
+
         /**
          * Schedules cleanup for when that call actually returns. {@code null} when the caller threw
          * this itself (a test) or the call had already finished.
@@ -84,9 +87,23 @@ public final class DumpInfoRebuilder
         Abandoned(String message, boolean processStillRunning, boolean launchPrevented,
             java.util.function.Consumer<Runnable> onFinished)
         {
+            this(message, processStillRunning, launchPrevented, false, onFinished);
+        }
+
+        /**
+         * @param message what was abandoned and why
+         * @param processStillRunning whether a launch that crossed the boundary is still running
+         * @param launchPrevented whether the abandonment took the boundary first
+         * @param timedOut whether the wait gave up because its budget ran out
+         * @param onFinished schedules the cleanup for the call's own return, or {@code null}
+         */
+        Abandoned(String message, boolean processStillRunning, boolean launchPrevented,
+            boolean timedOut, java.util.function.Consumer<Runnable> onFinished)
+        {
             super(message);
             this.processStillRunning = processStillRunning;
             this.launchPrevented = launchPrevented;
+            this.timedOut = timedOut;
             this.onFinished = onFinished;
         }
 
@@ -106,6 +123,15 @@ public final class DumpInfoRebuilder
         boolean launchPrevented()
         {
             return launchPrevented;
+        }
+
+        /**
+         * @return whether the wait gave up because its budget ran out; {@code false} for a cancel
+         *         or an interruption
+         */
+        boolean timedOut()
+        {
+            return timedOut;
         }
 
         /**
@@ -678,7 +704,7 @@ public final class DumpInfoRebuilder
             throw abandon(what + " did not finish within " + (timeoutMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
                 what + " did not reach its Designer run within " + (timeoutMs / 1000) //$NON-NLS-1$
                     + "s; that run was not launched", //$NON-NLS-1$
-                running, started, returned, launchClaim);
+                running, started, returned, launchClaim, true);
         }
         catch (InterruptedException interrupted)
         {
@@ -691,7 +717,7 @@ public final class DumpInfoRebuilder
             throw abandon(what + " was interrupted while it was still running", //$NON-NLS-1$
                 what + " was interrupted before the Designer run it was waiting for started; that run " //$NON-NLS-1$
                     + "was not launched", //$NON-NLS-1$
-                running, started, returned, launchClaim);
+                running, started, returned, launchClaim, false);
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -739,13 +765,14 @@ public final class DumpInfoRebuilder
      * @param started whether the call began at all
      * @param returned the call's own return signal
      * @param launchClaim the launch boundary of this run, or {@code null} for a stand-in call
+     * @param timedOut whether the wait gave up because its budget ran out
      * @return the abandonment to throw
      */
     private static Abandoned abandon(String message, String preventedMessage,
         java.util.concurrent.Future<Path> running,
         java.util.concurrent.atomic.AtomicBoolean started,
         java.util.concurrent.CountDownLatch returned,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim)
+        java.util.concurrent.atomic.AtomicBoolean launchClaim, boolean timedOut)
     {
         // The boundary is claimed BEFORE the cancel: once the wait gives up, no new launch may
         // commit. Taking it means the worker cannot start the Designer - it exits at the
@@ -756,7 +783,7 @@ public final class DumpInfoRebuilder
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
         return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, launchPrevented,
-            stillRunning ? task -> {
+            timedOut, stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
                 {

@@ -69,7 +69,8 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
      * The sentence the answer carries when the platform process is still writing - the one that has
      * to be there for a call that crossed the boundary and absent for a call that never started.
      * The abandonment's own message differs as well: {@link #NOTHING_LAUNCHED} for a call that never
-     * started, "while it was still running" for one that crossed the boundary.
+     * started, "while it was still running" for a cancel of one that crossed the boundary, and "did
+     * not finish within" for one whose budget ran out.
      */
     private static final String PROCESS_STILL_RUNNING =
         "the platform process is still running"; //$NON-NLS-1$
@@ -124,8 +125,8 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
         fixture.lock.lock();
         Thread run = startTheRun(fixture, runKey, answer, file);
         assertTrue("the worker waits for the infobase lock", aWorkerIsWaitingFor(fixture.lock)); //$NON-NLS-1$
-        assertEquals("a cancel for a live run is answered as still running by the stopper", //$NON-NLS-1$
-            PendingWorkRegistry.StopOutcome.STILL_RUNNING, DtSnapshotRunner.stopTheRun(runKey.get()));
+        assertEquals("a cancel whose abandonment took the boundary is answered as prevented", //$NON-NLS-1$
+            PendingWorkRegistry.StopOutcome.PREVENTED, DtSnapshotRunner.stopTheRun(runKey.get()));
         // The lock is let go only once the answer is out: held while the run decides, the worker
         // cannot reach the boundary and the abandonment is the side that claims it.
         run.join(PATIENCE_MS);

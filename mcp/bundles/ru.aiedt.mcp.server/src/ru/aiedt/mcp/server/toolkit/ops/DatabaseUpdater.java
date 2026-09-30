@@ -1792,8 +1792,7 @@ public class DatabaseUpdater implements IMcpTool
             // before the base is touched.
             if (entry != null && !entry.claimTheLaunch())
             {
-                ToolResult cancelled = ToolResult.error("The update was cancelled before it reached "
-                    + "the infobase. Nothing was started; the base is as it was.");
+                ToolResult cancelled = ToolResult.error(cancelledBeforeTheLaunch(freedClients));
                 cancelled.put("tag", ErrorTags.CANCELLED.wire()); //$NON-NLS-1$
                 cancelled.put("projectName", projectName); //$NON-NLS-1$
                 cancelled.put("applicationId", applicationId); //$NON-NLS-1$
@@ -2677,6 +2676,33 @@ public class DatabaseUpdater implements IMcpTool
         {
             result.put("rootCauseMessage", root.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The sentence a cancel that arrived before the update's launch boundary is answered with.
+     * <p>
+     * The base itself is untouched. Client sessions this call had already stopped to free it are
+     * a change that did happen, and the sentence names them rather than calling everything as it
+     * was.
+     * </p>
+     *
+     * @param freedClients the rows {@link #freeClientsForApplication} returned, or {@code null}
+     *            when no client was freed
+     * @return the sentence
+     */
+    static String cancelledBeforeTheLaunch(List<Map<String, Object>> freedClients)
+    {
+        long stopped = freedClients == null ? 0L
+            : freedClients.stream().filter(row -> Boolean.TRUE.equals(row.get("terminated"))).count(); //$NON-NLS-1$
+        if (stopped == 0L)
+        {
+            return "The update was cancelled before it reached the infobase. Nothing was started; " //$NON-NLS-1$
+                + "the base is as it was."; //$NON-NLS-1$
+        }
+        return "The update was cancelled before it reached the infobase. Nothing was started and " //$NON-NLS-1$
+            + "the base itself was not changed, but " + stopped + " client session(s) of this " //$NON-NLS-1$ //$NON-NLS-2$
+            + "application were stopped to free it before the cancel arrived and are not started " //$NON-NLS-1$
+            + "again - see freedClients."; //$NON-NLS-1$
     }
 
     /**
