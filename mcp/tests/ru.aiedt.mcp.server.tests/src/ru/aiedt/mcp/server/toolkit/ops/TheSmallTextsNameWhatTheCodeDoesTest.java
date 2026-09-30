@@ -120,6 +120,25 @@ public class TheSmallTextsNameWhatTheCodeDoesTest
         assertEquals("No data", byLanguage.get("en")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * The localized string of composition settings is the appearance value itself, not something a
+     * value carries, and it reads by language too.
+     */
+    @Test
+    public void aSettingsLocalizedStringReadsByLanguage()
+    {
+        com._1c.g5.v8.dt.dcs.model.core.LocalString text =
+            com._1c.g5.v8.dt.dcs.model.core.DcsFactory.eINSTANCE.createLocalString();
+        text.getContent().put("ru", "Итого"); //$NON-NLS-1$ //$NON-NLS-2$
+        text.getContent().put("en", "Total"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Object read = FormAppearanceOps.appearanceValue(text);
+
+        assertTrue(String.valueOf(read), read instanceof Map);
+        assertEquals("Итого", ((Map<?, ?>)read).get("ru")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Total", ((Map<?, ?>)read).get("en")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     /** Any other carried value reads as its text, as before. */
     @Test
     public void anotherValueReadsAsItsText()

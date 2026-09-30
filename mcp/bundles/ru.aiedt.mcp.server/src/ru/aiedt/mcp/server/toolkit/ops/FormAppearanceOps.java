@@ -596,13 +596,22 @@ final class FormAppearanceOps
     /**
      * The value of an appearance parameter as the answer carries it: a localized string as its
      * texts by language, anything else as {@link #valueText}.
+     * <p>
+     * The localized string of composition settings is itself the value: it implements
+     * {@code mcore.Value} and has {@code getContent} but no {@code getValue}. A value that carries
+     * one through {@code getValue} is read as well.
+     * </p>
      *
      * @param value an mcore value
      * @return language to text for a localized string, otherwise the text
      */
     static Object appearanceValue(Object value)
     {
-        Map<String, String> localized = localizedText(invoke(value, "getValue")); //$NON-NLS-1$
+        Map<String, String> localized = localizedText(value);
+        if (localized == null)
+        {
+            localized = localizedText(invoke(value, "getValue")); //$NON-NLS-1$
+        }
         return localized != null ? localized : valueText(value);
     }
 

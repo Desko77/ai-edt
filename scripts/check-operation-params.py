@@ -588,7 +588,7 @@ def facade_common_reads(source: str, handlers: set[str], depth: int = 5,
             seen.add(method)
             body = method_body(source, method)
             if dispatch:
-                body = body.replace(dispatch, "")
+                body = body.replace(dispatch, " ", 1)
             if not body:
                 continue
             names |= set(EXTRACT.findall(body))
@@ -620,7 +620,7 @@ def branch_deep_reads(branch: str, source: str, dispatch: str, depth: int = 5) -
             seen.add(method)
             body = method_body(source, method)
             if dispatch:
-                body = body.replace(dispatch, "")
+                body = body.replace(dispatch, " ", 1)
             if not body:
                 continue
             names |= set(EXTRACT.findall(body))
