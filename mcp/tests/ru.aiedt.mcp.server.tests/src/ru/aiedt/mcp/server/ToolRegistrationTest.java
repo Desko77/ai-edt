@@ -122,6 +122,8 @@ public class ToolRegistrationTest
         // (+2 -> 138): a running session can be suspended and a breakpoint flipped on and off
         // without being removed.
         // On 2026-09-29 git_revert_file joined the declaration list (+1 -> 139).
-        assertEquals(139, declared.size());
+        // On 2026-09-30 cluster_admin and its five write doors joined the declaration list
+        // (+6 -> 145).
+        assertEquals(145, declared.size());
     }
 }

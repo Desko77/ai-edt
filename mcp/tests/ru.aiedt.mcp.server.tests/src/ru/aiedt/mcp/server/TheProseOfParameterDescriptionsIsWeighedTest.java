@@ -251,6 +251,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // 1854 for the line endings revert_file names, the editor note on dryRun and the file limit
         // of show_file_changes, and 143 more for pointId of restore_merge_point.
         PROSE.put("git", Integer.valueOf(1997));
+        // cluster_admin: one sentence per argument of six operations - the tree the read answers,
+        // the two places a create hangs a cluster, the move's model check and collection rule, and
+        // the dry run that still passes the write door (measured 30.09: 1590).
+        PROSE.put("cluster_admin", Integer.valueOf(1590));
         // Grown to 3747: the intent sentence says a changing run records a restore point first.
         PROSE.put("compare_three_way", Integer.valueOf(3747));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
@@ -615,6 +619,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * reads the infobase's own ConfigDumpInfo and refuses when it does not match the stored copy.
      * Measured 29.09: 101764.
      * </p>
+     * <p>
+     * And for cluster_admin joining the list with the prose of its six operations' arguments.
+     * Measured 30.09: 103340.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 101764;
+    private static final int DOCUMENT_PROSE = 103340;
 }

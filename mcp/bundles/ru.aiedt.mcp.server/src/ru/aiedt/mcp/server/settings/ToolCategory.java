@@ -66,14 +66,22 @@ public enum ToolCategory
         "dcs_search", //$NON-NLS-1$
         "docs_lookup"), //$NON-NLS-1$
 
-    /** The plugin's own metadata tags, bookmarks and task markers. */
+    /** The plugin's own metadata tags, bookmarks, task markers and navigator clusters. */
     TAGS("tags", "Tags & Marks", //$NON-NLS-1$ //$NON-NLS-2$
-        "Read tags, bookmarks and task markers, and query objects by tag", //$NON-NLS-1$
+        "Read tags, bookmarks and task markers, query objects by tag, and edit navigator clusters", //$NON-NLS-1$
         "get_tags", //$NON-NLS-1$
         "get_objects_by_tags", //$NON-NLS-1$
         "get_bookmarks", //$NON-NLS-1$
         "get_tasks", //$NON-NLS-1$
-        "workspace_marks"), //$NON-NLS-1$
+        "workspace_marks", //$NON-NLS-1$
+        "cluster_admin", //$NON-NLS-1$
+        // The write doors of the cluster facade, named one by one: this group is a reading
+        // group, which no write-blocking preset switches off wholesale.
+        "create_cluster", //$NON-NLS-1$
+        "update_cluster", //$NON-NLS-1$
+        "delete_cluster", //$NON-NLS-1$
+        "add_to_cluster", //$NON-NLS-1$
+        "remove_from_cluster"), //$NON-NLS-1$
 
     /**
      * Everything that touches a live infobase or the shape of the workspace: launching, updating,

@@ -138,6 +138,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `security_audit` | Role rights, RLS violations, sensitive-data scan. |
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
+| `cluster_admin` | The Navigator's custom folders: read the cluster tree of a collection, create, rename, describe and delete clusters, move objects in and out. Five writes, each gated by its own door. |
 | `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch, what changed in a file, putting one file back, and a restore point taken before a merge. |
 | `yaxunit_tests` | YAxUnit unit tests. |
 

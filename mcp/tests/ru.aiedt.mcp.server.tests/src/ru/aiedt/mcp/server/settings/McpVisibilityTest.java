@@ -58,12 +58,14 @@ public class McpVisibilityTest
         // The exact membership: 7 from code_search, 3 from git, 18 from launch_debugger, 2 from
         // yaxunit_tests, 7 from extension_workshop, 6 from diagnostics, 10 from project_admin,
         // 11 from infobase_admin, 6 from config_io, 9 from insights, 3 from security_audit, 4 from
-        // workspace_marks, 2 from docs_lookup, 3 from edit_metadata. Pinning the
-        // size catches an accidental add or drop.
-        assertEquals(91, unlisted.size());
+        // workspace_marks, 2 from docs_lookup, 3 from edit_metadata, 5 from cluster_admin.
+        // Pinning the size catches an accidental add or drop.
+        assertEquals(96, unlisted.size());
 
         // A standalone from each facade is hidden.
         assertTrue(unlisted.contains("git_revert_file")); //$NON-NLS-1$ // git
+        assertTrue(unlisted.contains("create_cluster")); //$NON-NLS-1$ // cluster_admin
+        assertTrue(unlisted.contains("remove_from_cluster")); //$NON-NLS-1$ // cluster_admin
         assertTrue(unlisted.contains("search_in_code")); //$NON-NLS-1$ // code_search
         assertTrue(unlisted.contains("get_outgoing_structures")); //$NON-NLS-1$ // code_search (ungrouped)
         assertTrue(unlisted.contains("set_breakpoint")); //$NON-NLS-1$ // launch_debugger
@@ -105,6 +107,7 @@ public class McpVisibilityTest
         assertFalse(unlisted.contains("security_audit")); //$NON-NLS-1$
         assertFalse(unlisted.contains("workspace_marks")); //$NON-NLS-1$
         assertFalse(unlisted.contains("docs_lookup")); //$NON-NLS-1$
+        assertFalse(unlisted.contains("cluster_admin")); //$NON-NLS-1$
 
         // edit_metadata is itself a facade - for delete_metadata_object / rename_metadata_object /
         // add_metadata_attribute, asserted above - so it stays listed like every other facade name,

@@ -16,7 +16,7 @@
 - [Проект и конфигурация](#проект-и-конфигурация) - проекты, свойства конфигурации, валидация
 - [Диагностика и проблемы](#диагностика-и-проблемы) - ошибки EDT, code review, состояние MCP
 - [Исследование модели](#исследование-модели) - метаданные, ссылки, документация, семантический поиск
-- [Метки и задачи](#метки-и-задачи) - теги, закладки, TODO/FIXME
+- [Метки и задачи](#метки-и-задачи) - теги, закладки, TODO/FIXME, кластеры навигатора
 - [Информационная база и запуск](#информационная-база-и-запуск) - ИБ, приложения, тесты, импорт и синхронизация
 - [Отладка и профилирование](#отладка-и-профилирование) - breakpoints, stack, variables, profiling
 - [Исходный код BSL](#исходный-код-bsl) - чтение, запись, навигация, запросы
@@ -105,7 +105,7 @@
 
 ## Метки и задачи
 
-Навигационные метки AI-EDT и стандартные маркеры рабочего пространства.
+Навигационные метки AI-EDT, стандартные маркеры рабочего пространства и кластеры навигатора.
 
 | Инструмент | Режим | Назначение |
 |---|---|---|
@@ -114,6 +114,12 @@
 | `get_bookmarks` | Чтение | Читает закладки рабочего пространства EDT. |
 | `get_tasks` | Чтение | Возвращает TODO/FIXME и другие task-маркеры. Ответ называет закрытые проекты, которые не читались. |
 | [`workspace_marks`](#workspace_marks) | Фасад · Чтение | Объединяет теги, объекты по тегам, закладки и задачи. |
+| [`cluster_admin`](#cluster_admin) | Фасад · Смешанный | Кластеры навигатора - своя иерархия папок над коллекциями метаданных, хранится в `.settings/aiedt-clusters.yaml` проекта: `get_clusters` (дерево кластеров одной коллекции `collectionPath` или всех коллекций, с объектами каждого кластера), `create_cluster` (`name` + `collectionPath`, либо вложенность под `parentClusterPath`; порядок среди сиблингов назначается сам), `update_cluster` (`newName`, `description`), `delete_cluster` (удаляет и вложенные кластеры; `dryRun=true` отвечает `nestedClusters` и `objects` без записи), `add_to_cluster` (переносит объект из текущего кластера, ответ называет `movedFrom`; объект проверяется по модели EDT - нет объекта, отказ `objectNotFound` с ближайшими именами, объект чужой коллекции - отказ `outsideCollection`), `remove_from_cluster` (убирает из всех кластеров, ответ `removedFrom`; объект вне кластеров - отказ `notClustered`). Отказ несет `reason`: код записи кластера как есть (`clusterNotFound`, `clusterExists`, `nameTaken`, `changedOnDisk`, `unreadableFile`, `lockRefused`, `accessDenied`, `writeFailed`), `serviceUnavailable` (службы кластеров нет), `projectNotFound`, `invalidName`. Служба кластеров не является службой OSGi и может отсутствовать - операции отвечают `serviceUnavailable`, а не падают. Пять записей гасятся пресетами Read-only, Debug & Test и Code Review каждая своей дверью и отвергаются до чтения файла. |
+| `create_cluster` | Запись (операция фасада `cluster_admin`) | Имя, под которым создание кластера гасится пресетами. Вызываемо и напрямую как алиас `cluster_admin operation=create_cluster`. |
+| `update_cluster` | Запись (операция фасада `cluster_admin`) | Имя, под которым переименование и описание кластера гасятся пресетами. Вызываемо и напрямую как алиас `cluster_admin operation=update_cluster`. |
+| `delete_cluster` | Запись (операция фасада `cluster_admin`) | Имя, под которым удаление кластера гасится пресетами; `dryRun` проходит ту же дверь. Вызываемо и напрямую как алиас `cluster_admin operation=delete_cluster`. |
+| `add_to_cluster` | Запись (операция фасада `cluster_admin`) | Имя, под которым перенос объекта в кластер гасится пресетами. Вызываемо и напрямую как алиас `cluster_admin operation=add_to_cluster`. |
+| `remove_from_cluster` | Запись (операция фасада `cluster_admin`) | Имя, под которым вывод объекта из кластеров гасится пресетами. Вызываемо и напрямую как алиас `cluster_admin operation=remove_from_cluster`. |
 | `git` | Фасад · Смешанный | Git репозитория проекта внутри IDE через JGit, который среда несет сама: `status` (дерево и индекс против HEAD, ahead/behind по tracking-ветке), `branches` (текущая первой), `log` (последние коммиты, `limit` до 100), `commit` (постановка и коммит названных файлов - `paths` поименно и обязательно, add-all отвергается; автор и все пути проверяются до записи в индекс: `.`, `*`, шаблон по `*`/`?`/`[`, каталог, абсолютный путь и `..` отвергаются по имени, а удаленный отслеживаемый файл коммитится как удаление; в коммит идут только названные пути - застейдженное до вызова остается вне коммита, и вызов, у которого ни один названный путь не изменен, отвергается; ответ несет `sha`, `shortSha`, `author`, `filesCount`, `files`, `changes` (путь и вид изменения), `message` и, когда есть, `unchanged`; автор из `user.name`/`user.email` репозитория или `authorName`/`authorEmail`; в ответе `boundInfobase`, когда ветка привязана к ИБ), `checkout` (`branch`, `createBranch`; переход, который перезаписал бы незакоммиченные файлы, отвергается с их списком в `conflicting` и ничего не меняет), `show_file_changes` (построчный diff файла `filePath` между `fromRef`, по умолчанию HEAD, и `toRef`, по умолчанию рабочий каталог; без `filePath` - перечень измененных файлов со счетчиками строк и без hunk-ов (файл больше 5 МБ с любой стороны отвечается размером `sizeInBytes` с `linesNotCounted: true`, без счета строк), не больше `limit` (по умолчанию 50, не больше 200), общее число в `totalFileCount`, признак усечения `truncated`; `granularity=method` только для одного `.bsl` и называет измененные процедуры и функции, правки вне методов входят в счетчики файла), `revert_file` (один файл `filePath` из коммита `fromRef`, по умолчанию HEAD, с концами строк, которые дал бы `git checkout` этого пути по `.gitattributes` и `core.autocrlf`, без правила - концы строк текущего файла; ответ несет `lineEndings`, `bytesWritten`, `restoredFrom`, `fileStatus`, `indexUntouched`, а при `dryRun` - `bytesWritten: 0`, `restoredFrom`, `lineEndings`, `files` с diff и `note`, без `fileStatus` и `indexUntouched`; `dryRun=true` ничего не пишет и при открытом редакторе с несохраненными правками, запись в этом случае отвергается; для `.form`/`.mdo`/`.dcs` ответ советует `revalidate_objects`), `create_merge_restore_point` (файлы проекта без движения HEAD: для проекта в git - коммит под ссылкой `refs/aiedt/merge-restore/<pointId>`, иначе копия каталога проекта; `compare_three_way` с изменяющим намерением записывает точку сам до объединения и отвечает `mergeRestorePoint`, без точки объединение не начинается, `mergeStarted: false`), `restore_merge_point` (`pointId`, по умолчанию последняя точка проекта; возвращает файлы точки и удаляет файлы проекта, которых в точке нет, ответ несет `restoredFiles`, `restoredCount`, `removedFiles`; база не откатывается). Записи `commit`, `checkout`, `revert_file` и `restore_merge_point` выключаются пресетами Read-only, Debug & Test и Code Review под именами `git_commit`, `git_checkout` и `git_revert_file` и отвергаются до постановки или возврата файлов; `create_merge_restore_point` в рабочее дерево не пишет, но заводит ссылку в репозитории либо копию каталога проекта и пресетами не выключается. |
 | `git_commit` | Запись (операция фасада `git`) | Имя, под которым операция `commit` гасится пресетами: под Read-only вызов отвергается до постановки файлов. Вызываемо и напрямую как алиас `git operation=commit`. |
 | `git_checkout` | Запись (операция фасада `git`) | Имя, под которым операция `checkout` гасится пресетами: под Read-only переход отвергается до чтения дерева. Вызываемо и напрямую как алиас `git operation=checkout`. |
@@ -516,6 +522,42 @@
 <summary><code>workspace_marks</code> - метки рабочего пространства</summary>
 
 Объединяет `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks` и встроенную справку.
+</details>
+
+<a id="cluster_admin"></a>
+<details>
+<summary><code>cluster_admin</code> - кластеры навигатора</summary>
+
+Кластер - своя папка в навигаторе над коллекцией метаданных (`Catalog`, `CommonModule` и т.п.);
+состав каждого кластера хранится в `.settings/aiedt-clusters.yaml` проекта, и объект в кластере
+скрывается со своего обычного места в дереве. Служба кластеров не является службой OSGi: до старта
+плагина и после остановки ее нет, и каждая операция отвечает `serviceUnavailable`, а не падает.
+
+Операции: `get_clusters` (дерево кластеров: `fullPath`, `name`, `description`, `order`, `objects`,
+`children`; с `collectionPath` - одна коллекция, без - все коллекции проекта), `create_cluster`
+(`name` + `collectionPath`, либо вложенность под `parentClusterPath`; имя пустое после обрезки
+пробелов или со слешем - отказ `invalidName`, отсутствующий родитель - `clusterNotFound`),
+`update_cluster` (`newName` обязателен, `description` опционален; занятое имя - `nameTaken`,
+повтор того же состояния - `noChange: true`), `delete_cluster` (удаляет вложенные кластеры;
+`dryRun=true` отвечает `{deleted:false, nestedClusters:N, objects:M}` без записи, где
+`nestedClusters` - кластеры под указанным, `objects` - объекты во всех удаляемых), `add_to_cluster`
+(объект переносится из текущего кластера, ответ `{clusterPath, movedFrom}` с `movedFrom: null`,
+когда прежнего кластера не было; повтор в тот же кластер - `noChange: true`, не отказ),
+`remove_from_cluster` (ответ `removedFrom` со всеми кластерами-держателями; объект вне кластеров -
+отказ `notClustered`).
+
+`add_to_cluster` проверяет `objectFqn` по модели EDT до записи: объект не найден - отказ
+`objectNotFound` с ближайшими именами той же коллекции, объект другой коллекции, чем кластер
+(`Document.X` в кластер `Catalog`) - отказ `outsideCollection`. Коллекция кластера - первый сегмент
+его полного пути; тип объекта - первый сегмент FQN.
+
+Отказ записи несет `reason` с кодом исхода как есть (`clusterNotFound`, `clusterExists`,
+`nameTaken`, `changedOnDisk`, `unreadableFile`, `notReadByThisStore`, `readFailed`, `lockRefused`,
+`accessDenied`, `writeFailed`) и текст для человека; все доводы проверяются до записи.
+
+Пять записей (`create_cluster`, `update_cluster`, `delete_cluster`, `add_to_cluster`,
+`remove_from_cluster`) выключаются пресетами Read-only, Debug & Test и Code Review каждая своей
+дверью и отвергаются до чтения файла кластеров; `dryRun` удаления проходит ту же дверь.
 </details>
 
 <a id="docs_lookup"></a>

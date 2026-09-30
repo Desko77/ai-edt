@@ -56,6 +56,12 @@ import ru.aiedt.mcp.server.toolkit.ops.AiContextTool;
 import ru.aiedt.mcp.server.toolkit.ops.AuditRoleRightsTool;
 import ru.aiedt.mcp.server.toolkit.ops.BranchInfobaseTool;
 import ru.aiedt.mcp.server.toolkit.ops.BslCodeReviewTool;
+import ru.aiedt.mcp.server.toolkit.ops.ClusterAddTool;
+import ru.aiedt.mcp.server.toolkit.ops.ClusterAdminFacadeTool;
+import ru.aiedt.mcp.server.toolkit.ops.ClusterCreateTool;
+import ru.aiedt.mcp.server.toolkit.ops.ClusterDeleteTool;
+import ru.aiedt.mcp.server.toolkit.ops.ClusterRemoveTool;
+import ru.aiedt.mcp.server.toolkit.ops.ClusterUpdateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCleaner;
 import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
 import ru.aiedt.mcp.server.toolkit.ops.CodeTemplateTool;
@@ -1557,7 +1563,13 @@ public class McpHttpEndpoint
             new SecurityAuditFacadeTool(),
             new SupportRegistryTool(),
             new WorkspaceMarksFacadeTool(),
-            new DocsLookupFacadeTool());
+            new DocsLookupFacadeTool(),
+            new ClusterAdminFacadeTool(),
+            new ClusterCreateTool(),
+            new ClusterUpdateTool(),
+            new ClusterDeleteTool(),
+            new ClusterAddTool(),
+            new ClusterRemoveTool());
     }
 
     /**

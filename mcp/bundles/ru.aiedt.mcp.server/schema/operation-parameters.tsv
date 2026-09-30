@@ -11,6 +11,12 @@ BranchInfobaseTool	bind	applicationId:string	read in place	action:string,branch:
 BranchInfobaseTool	current	projectName:string	passed in as locals	action:string,applicationId:string,branch:string
 BranchInfobaseTool	list	projectName:string	passed in as locals	action:string,applicationId:string,branch:string
 BranchInfobaseTool	unbind	action:string,projectName:string	passed in as locals	applicationId:string,branch:string
+ClusterAdminFacadeTool	add_to_cluster	clusterPath:string,objectFqn:string,projectName:string	read in place	collectionPath:string,description:string,dryRun:boolean,name:string,newName:string,parentClusterPath:string
+ClusterAdminFacadeTool	create_cluster	collectionPath:string,description:string,name:string,parentClusterPath:string,projectName:string	read in place	clusterPath:string,dryRun:boolean,newName:string,objectFqn:string
+ClusterAdminFacadeTool	delete_cluster	clusterPath:string,dryRun:boolean,projectName:string	read in place	collectionPath:string,description:string,name:string,newName:string,objectFqn:string,parentClusterPath:string
+ClusterAdminFacadeTool	get_clusters	collectionPath:string,projectName:string	read in place	clusterPath:string,description:string,dryRun:boolean,name:string,newName:string,objectFqn:string,parentClusterPath:string
+ClusterAdminFacadeTool	remove_from_cluster	objectFqn:string,projectName:string	read in place	clusterPath:string,collectionPath:string,description:string,dryRun:boolean,name:string,newName:string,parentClusterPath:string
+ClusterAdminFacadeTool	update_cluster	clusterPath:string,description:string,newName:string,projectName:string	read in place	collectionPath:string,dryRun:boolean,name:string,objectFqn:string,parentClusterPath:string
 CodeSearchTool	call_hierarchy	depth:?,direction:string,limit:integer,methodName:string,modulePath:string,projectName:string	delegate CallHierarchyReader through rewriteForCallHierarchy	
 CodeSearchTool	content_assist	column:integer,contains:string,extendedDocumentation:boolean,filePath:string,limit:integer,line:integer,offset:integer,positions:array,projectName:string	delegate ContentAssistReader	
 CodeSearchTool	help	find:string,topic:string	read in place	
