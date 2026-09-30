@@ -298,6 +298,25 @@ public final class BmFormResourceHelper
     }
 
     /**
+     * Whether the form's {@code Form.form} is on disk.
+     *
+     * @param project the EDT project
+     * @param ownerFqn the owner's FQN
+     * @param formName the form's name
+     * @return {@code true} when the file exists; {@code false} when it does not or the form
+     *     directory does not resolve
+     */
+    public static boolean formFileExists(IProject project, String ownerFqn, String formName)
+    {
+        if (project == null || ownerFqn == null || formName == null)
+        {
+            return false;
+        }
+        Path formDir = resolveFormDir(project, ownerFqn, formName);
+        return formDir != null && Files.exists(formDir.resolve("Form.form")); //$NON-NLS-1$
+    }
+
+    /**
      * Resolves the on-disk form directory based on the owner FQN. The result is normalized and
      * checked to be inside the project: a path that would land outside the project the caller named
      * is not resolved at all.
