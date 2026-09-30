@@ -1635,59 +1635,6 @@ final class FormItemsOps
      * </p>
      *
      * @param params projectName (optional; its platform version, the newest without it) and filter
-     * @return the JSON answer
-     */
-    String opListPictures(Map<String, String> params)
-    {
-        return opListPictures(params, PLATFORM_READS);
-    }
-
-    /**
-     * The reads a picture listing performs by the project's name: the stock list of the project's
-     * platform version, and the common pictures of the project's configuration. A seam the answer
-     * route reads through, so a caller that stands in for the platform can see which spelling of
-     * the name each read received.
-     */
-    interface PictureReads
-    {
-        /**
-         * Reads the stock and extended stock pictures of a platform version.
-         *
-         * @param projectName the project whose version decides the list
-         * @return the entries the version registers
-         */
-        java.util.List<StockPictures.Entry> stock(String projectName);
-
-        /**
-         * Reads the common pictures of a project's configuration.
-         *
-         * @param projectName the project whose configuration is read
-         * @param filter the name filter, or <code>null</code> for every picture
-         * @return the common picture names
-         */
-        java.util.List<String> common(String projectName, String filter);
-    }
-
-    /** The reads the platform itself answers with. */
-    private static final PictureReads PLATFORM_READS = new PictureReads()
-    {
-        @Override
-        public java.util.List<StockPictures.Entry> stock(String projectName)
-        {
-            return StockPictures.read(StockPictures.versionOf(projectName));
-        }
-
-        @Override
-        public java.util.List<String> common(String projectName, String filter)
-        {
-            return listCommonPictures(projectName, filter);
-        }
-    };
-
-    /**
-     * Lists the pictures a form element or command can take, reading them through the given reads.
-     *
-     * @param params projectName (optional; its platform version, the newest without it) and filter
      * @param reads where the stock list and the common pictures come from
      * @return the JSON answer
      */
@@ -1741,6 +1688,63 @@ final class FormItemsOps
             .toJson();
     }
 
+    /**
+     * Lists the pictures a form element or command can take, read from the platform itself.
+     * <p>
+     * The overload above carries the body and stays first in this file: the operation census
+     * ({@code scripts/check-operation-params.py}) reads the first method of a name, and this
+     * delegator alone reads no argument.
+     * </p>
+     *
+     * @param params projectName (optional; its platform version, the newest without it) and filter
+     * @return the JSON answer
+     */
+    String opListPictures(Map<String, String> params)
+    {
+        return opListPictures(params, PLATFORM_READS);
+    }
+
+    /**
+     * The reads a picture listing performs by the project's name: the stock list of the project's
+     * platform version, and the common pictures of the project's configuration. A seam the answer
+     * route reads through, so a caller that stands in for the platform can see which spelling of
+     * the name each read received.
+     */
+    interface PictureReads
+    {
+        /**
+         * Reads the stock and extended stock pictures of a platform version.
+         *
+         * @param projectName the project whose version decides the list
+         * @return the entries the version registers
+         */
+        java.util.List<StockPictures.Entry> stock(String projectName);
+
+        /**
+         * Reads the common pictures of a project's configuration.
+         *
+         * @param projectName the project whose configuration is read
+         * @param filter the name filter, or <code>null</code> for every picture
+         * @return the common picture names
+         */
+        java.util.List<String> common(String projectName, String filter);
+    }
+
+    /** The reads the platform itself answers with. */
+    private static final PictureReads PLATFORM_READS = new PictureReads()
+    {
+        @Override
+        public java.util.List<StockPictures.Entry> stock(String projectName)
+        {
+            return StockPictures.read(StockPictures.versionOf(projectName));
+        }
+
+        @Override
+        public java.util.List<String> common(String projectName, String filter)
+        {
+            return listCommonPictures(projectName, filter);
+        }
+    };
 
     private static java.util.List<String> listCommonPictures(String projectName, String filter)
     {
