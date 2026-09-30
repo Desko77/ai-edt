@@ -251,6 +251,12 @@ public final class ToolRoad
             return false;
         }
         String operation = arguments == null ? null : arguments.get("operation"); //$NON-NLS-1$
+        if (operation == null)
+        {
+            // The debugger facade dispatches by `action` what the others dispatch by `operation`;
+            // the poll is judged by the operation the call names, whichever argument carries it.
+            operation = arguments.get("action"); //$NON-NLS-1$
+        }
         String starter = named.resumes(domain.domain(), operation);
         return starter != null && entry.resumableBy(starter);
     }

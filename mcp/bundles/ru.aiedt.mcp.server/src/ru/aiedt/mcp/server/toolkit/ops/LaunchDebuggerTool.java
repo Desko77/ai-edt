@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -221,6 +222,33 @@ public class LaunchDebuggerTool implements IMcpTool
         }
         return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", true) //$NON-NLS-1$
             ? "update_database" : null; //$NON-NLS-1$
+    }
+
+    /**
+     * Polls a launch this facade's launch actions started.
+     * <p>
+     * {@code launch} and {@code debug_launch} hand the call to {@link DebugSessionStarter}, which
+     * reads {@code runKey} and resumes the run it names; every other action starts new work, so a
+     * live launch key must not exempt it. The name returned is the one the run was stamped with -
+     * the starter's own, not this facade's.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the action argument, normalized exactly as {@link #execute} normalizes it;
+     *            may be {@code null}
+     * @return {@link DebugSessionStarter#NAME} when this call polls a handed-over launch,
+     *         <code>null</code> otherwise
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.DEBUG_LAUNCH.domain().equals(domain))
+        {
+            return null;
+        }
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        return "launch".equals(normalized) || "debug_launch".equals(normalized) //$NON-NLS-1$ //$NON-NLS-2$
+            ? DebugSessionStarter.NAME : null;
     }
 
     @Override
