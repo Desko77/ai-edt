@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.eclipse.emf.common.util.EMap;
 import org.eclipse.emf.common.util.Enumerator;
@@ -168,6 +169,26 @@ final class MetadataFormatter
     static String format(MdObject object, boolean full, String language, Set<String> sections,
         boolean outline)
     {
+        return format(object, full, language, sections, outline, null);
+    }
+
+    /**
+     * Writes an object out with the support mode of the object and of each of its forms.
+     *
+     * @param object the metadata object; may be <code>null</code>
+     * @param full <code>true</code> to dump every property the model holds and widen the attribute
+     *            tables, <code>false</code> for the name, the synonym and the comment
+     * @param language which language to prefer out of a synonym; may be <code>null</code> or unknown
+     * @param sections the section headings to keep; <code>null</code> or empty writes every section
+     * @param outline <code>true</code> to answer with the section map alone
+     * @param supportMode the support mode of a metadata object, <code>null</code> for one that has
+     *            none; the whole function is <code>null</code> when the project is not on support.
+     *            A <code>Support Mode</code> row and column appear only where a mode is known
+     * @return the markdown, never <code>null</code>. It opens at heading level 2
+     */
+    static String format(MdObject object, boolean full, String language, Set<String> sections,
+        boolean outline, Function<MdObject, String> supportMode)
+    {
         if (object == null)
         {
             return NULL_OBJECT_ERROR;
@@ -187,8 +208,13 @@ final class MetadataFormatter
         {
             appendBasicProperties(out, object, language);
         }
+        String mode = supportMode == null ? null : supportMode.apply(object);
+        if (mode != null)
+        {
+            out.row("Support Mode", mode); //$NON-NLS-1$
+        }
         appendStandardAttributes(out, object, language);
-        appendContainmentSections(out, object, full, language);
+        appendContainmentSections(out, object, full, language, supportMode);
         appendSubsystems(out, object);
 
         return out.toString() + unknownSectionNote(out);
@@ -384,9 +410,10 @@ final class MetadataFormatter
      * @param object the object, not <code>null</code>
      * @param full whether the wide tables were asked for
      * @param language the preferred language
+     * @param supportMode the support mode of a child, or <code>null</code> when none is read
      */
     private static void appendContainmentSections(MarkdownWriter out, MdObject object, boolean full,
-        String language)
+        String language, Function<MdObject, String> supportMode)
     {
         for (EStructuralFeature feature : object.eClass().getEAllStructuralFeatures())
         {
@@ -414,7 +441,8 @@ final class MetadataFormatter
             {
                 continue;
             }
-            appendCollection(out, formatFeatureName(reference.getName()), (Collection<?>)value, full, language);
+            appendCollection(out, formatFeatureName(reference.getName()), (Collection<?>)value, full, language,
+                supportMode);
         }
     }
 
@@ -439,15 +467,16 @@ final class MetadataFormatter
      * @param items the children, never empty
      * @param full whether the wide tables were asked for
      * @param language the preferred language
+     * @param supportMode the support mode of a form, or <code>null</code> when none is read
      */
     private static void appendCollection(MarkdownWriter out, String name, Collection<?> items, boolean full,
-        String language)
+        String language, Function<MdObject, String> supportMode)
     {
         Object first = items.iterator().next();
 
         if (first instanceof BasicForm)
         {
-            appendForms(out, name, items, language);
+            appendForms(out, name, items, language, supportMode);
         }
         else if (first instanceof BasicCommand)
         {
@@ -486,25 +515,53 @@ final class MetadataFormatter
     }
 
     /**
-     * Writes the forms.
+     * Writes the forms, with a support mode column when some form has a mode.
      *
      * @param out where to write
      * @param name the heading
      * @param items the forms
      * @param language the preferred language
+     * @param supportMode the support mode of a form, or <code>null</code> when none is read
      */
-    private static void appendForms(MarkdownWriter out, String name, Collection<?> items, String language)
+    private static void appendForms(MarkdownWriter out, String name, Collection<?> items, String language,
+        Function<MdObject, String> supportMode)
     {
-        out.sectionHeader(name);
-        out.tableHeader("Name", "Synonym", "Form Type"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        List<BasicForm> forms = new ArrayList<>();
+        List<String> modes = new ArrayList<>();
+        boolean anyMode = false;
         for (Object item : items)
         {
-            if (!(item instanceof BasicForm))
+            if (item instanceof BasicForm)
             {
-                continue;
+                BasicForm form = (BasicForm)item;
+                String mode = supportMode == null ? null : supportMode.apply(form);
+                forms.add(form);
+                modes.add(mode);
+                anyMode |= mode != null;
             }
-            BasicForm form = (BasicForm)item;
-            out.row(form.getName(), getSynonym(form.getSynonym(), language), formatEnum(form.getFormType()));
+        }
+        out.sectionHeader(name);
+        if (anyMode)
+        {
+            out.tableHeader("Name", "Synonym", "Form Type", "Support Mode"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        }
+        else
+        {
+            out.tableHeader("Name", "Synonym", "Form Type"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        for (int i = 0; i < forms.size(); i++)
+        {
+            BasicForm form = forms.get(i);
+            String synonym = getSynonym(form.getSynonym(), language);
+            String type = formatEnum(form.getFormType());
+            if (anyMode)
+            {
+                out.row(form.getName(), synonym, type, modes.get(i));
+            }
+            else
+            {
+                out.row(form.getName(), synonym, type);
+            }
         }
     }
 
