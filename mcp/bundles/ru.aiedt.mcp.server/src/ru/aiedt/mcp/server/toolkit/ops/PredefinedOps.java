@@ -65,15 +65,46 @@ final class PredefinedOps
      */
     static String existingItemName(List<?> items, String name)
     {
+        Object item = itemNamed(items, name);
+        return item == null ? null : (String) reflectNoArg(item, "getName"); //$NON-NLS-1$
+    }
+
+    /**
+     * Finds the predefined item with this name, ignoring case as 1C does.
+     *
+     * @param items the predefined items
+     * @param name the name asked for
+     * @return the item, or {@code null} when none has the name
+     */
+    static Object itemNamed(List<?> items, String name)
+    {
         for (Object item : items)
         {
             Object stored = reflectNoArg(item, "getName"); //$NON-NLS-1$
             if (stored instanceof String && name.equalsIgnoreCase((String) stored))
             {
-                return (String) stored;
+                return item;
             }
         }
         return null;
+    }
+
+    /**
+     * Describes an item that was not added because one with the same name already exists.
+     *
+     * @param stored the existing item's name as stored
+     * @param requested the name the caller gave
+     * @return the {@code idempotentSkip} tag: the stored name, and the requested one when it differs
+     */
+    static Map<String, Object> idempotentSkipTag(String stored, String requested)
+    {
+        Map<String, Object> tag = new LinkedHashMap<>();
+        tag.put("name", stored != null ? stored : requested); //$NON-NLS-1$
+        if (stored != null && !stored.equals(requested))
+        {
+            tag.put("requestedName", requested); //$NON-NLS-1$
+        }
+        return tag;
     }
 
     /** Metadata types exposing a {@code getPredefined()} predefined-data container. */
@@ -134,6 +165,7 @@ final class PredefinedOps
         final String fCode = code;
         final boolean fIsFolder = isFolder;
         final boolean[] idempotentSkip = { false };
+        final String[] skippedAs = { null };
         final boolean[] codeApplied = { false };
         final List<String> warn = new ArrayList<>();
 
@@ -186,6 +218,7 @@ final class PredefinedOps
                 if (existing != null)
                 {
                     idempotentSkip[0] = true;
+                    skippedAs[0] = existing;
                     return existing;
                 }
                 Object item = BmObjectHelper.createMdClassEObject(ec + "PredefinedItem"); //$NON-NLS-1$
@@ -257,9 +290,7 @@ final class PredefinedOps
 
         if (idempotentSkip[0])
         {
-            Map<String, Object> idem = new LinkedHashMap<>();
-            idem.put("name", name); //$NON-NLS-1$
-            r.tags.put("idempotentSkip", idem); //$NON-NLS-1$
+            r.tags.put("idempotentSkip", idempotentSkipTag(skippedAs[0], name)); //$NON-NLS-1$
         }
         if (r.ok && fCode != null && !fCode.isEmpty())
         {
@@ -579,14 +610,7 @@ final class PredefinedOps
         {
             return null;
         }
-        for (Object it : (EList<?>) items)
-        {
-            if (name.equals(reflectNoArg(it, "getName"))) //$NON-NLS-1$
-            {
-                return it;
-            }
-        }
-        return null;
+        return itemNamed((EList<?>) items, name);
     }
 
     /**

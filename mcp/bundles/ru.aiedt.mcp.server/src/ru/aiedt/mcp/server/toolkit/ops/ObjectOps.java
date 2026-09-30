@@ -654,8 +654,7 @@ final class ObjectOps
                     cfSerialized = cfExp != null && cfExp.isOk();
                     if (!cfSerialized)
                     {
-                        cfExportFailure = cfExp == null ? "the export returned no result" //$NON-NLS-1$
-                            : "the export did not confirm the form"; //$NON-NLS-1$
+                        cfExportFailure = exportFailureText(cfExp);
                     }
                     if (cfExp != null && cfExp.syncFlushPending)
                     {
@@ -687,11 +686,13 @@ final class ObjectOps
             {
                 // Inner form not force-exportable - fall back to a minimal stub so
                 // the form at least exists on disk for follow-up edits.
+                boolean formFileExisted = BmFormResourceHelper.formFileExists(
+                    project, "CommonForm." + name, name); //$NON-NLS-1$
                 String resErr = BmFormResourceHelper.writeEmptyFormResources(
                     project, "CommonForm." + name, name); //$NON-NLS-1$
-                ok.put("emptyFormStubWritten", "The form " + cfInnerFormFqn //$NON-NLS-1$ //$NON-NLS-2$
-                    + " could not be exported (" + cfExportFailure + "); an empty form was written " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "to disk instead of the content built for it. Fill the form before using it."); //$NON-NLS-1$
+                Map.Entry<String, String> fallback =
+                    formFallbackOutcome(cfInnerFormFqn, cfExportFailure, formFileExisted, resErr);
+                ok.put(fallback.getKey(), fallback.getValue());
                 if (resErr != null)
                 {
                     Activator.logWarning("create_object CommonForm resource init for " //$NON-NLS-1$
@@ -791,19 +792,20 @@ final class ObjectOps
         final List<String> choiceApplied = new ArrayList<>();
         final List<String> choiceUnresolved = new ArrayList<>();
         final List<String> choiceDiag = new ArrayList<>();
+        if (isChoiceParams || isChoiceLinks)
+        {
+            String partial = partialStructArrayRefusal(propertyName, propertyValue,
+                choiceItems == null ? 0 : choiceItems.size());
+            if (partial != null)
+            {
+                return ToolResult.error(partial).toJson();
+            }
+        }
         if ((isChoiceParams || isChoiceLinks) && (choiceItems == null || choiceItems.isEmpty()))
         {
             return ToolResult.error(propertyName + " requires propertyValue as a JSON array, e.g. " //$NON-NLS-1$
                 + (isChoiceLinks ? "[{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]" //$NON-NLS-1$
                     : "[{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}]")).toJson(); //$NON-NLS-1$
-        }
-        if (isChoiceParams || isChoiceLinks)
-        {
-            String partial = partialStructArrayRefusal(propertyName, propertyValue, choiceItems.size());
-            if (partial != null)
-            {
-                return ToolResult.error(partial).toJson();
-            }
         }
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, topFqn, dryRun,
@@ -1930,9 +1932,58 @@ final class ObjectOps
         {
             return null;
         }
-        return propertyName + " was given " + declared + " elements, and only the first " //$NON-NLS-1$ //$NON-NLS-2$
-            + parsedCount + " of them were read as objects: every element must be an object, e.g. " //$NON-NLS-1$
+        String read = parsedCount <= 0 ? "none of them was read as an object" //$NON-NLS-1$
+            : "only the first " + parsedCount + " of them were read as objects"; //$NON-NLS-1$ //$NON-NLS-2$
+        return propertyName + " was given " + declared + " elements, and " + read //$NON-NLS-1$ //$NON-NLS-2$
+            + ": every element must be an object, e.g. " //$NON-NLS-1$
             + "{\"name\":\"...\",\"value\":\"...\"}. Nothing was changed."; //$NON-NLS-1$
+    }
+
+    /**
+     * Names why the export of a created common form was not confirmed.
+     *
+     * @param result the export result; may be {@code null}
+     * @return the reason, with the export's own error text when it gave one
+     */
+    static String exportFailureText(ru.aiedt.mcp.server.support.BmExportHelper.Result result)
+    {
+        if (result == null)
+        {
+            return "the export returned no result"; //$NON-NLS-1$
+        }
+        return result.error != null && !result.error.isEmpty()
+            ? "the export did not confirm the form: " + result.error //$NON-NLS-1$
+            : "the export did not confirm the form"; //$NON-NLS-1$
+    }
+
+    /**
+     * Describes what reached the disk after the export of a created common form was not confirmed
+     * and the empty-form fallback ran.
+     *
+     * @param formFqn the inner form
+     * @param exportFailure why the export was not confirmed
+     * @param formFileExisted whether {@code Form.form} was on disk before the fallback ran; the
+     *     fallback leaves an existing file as it is
+     * @param writeError the fallback's error, or {@code null} when it wrote what it had to
+     * @return the response tag and its text
+     */
+    static Map.Entry<String, String> formFallbackOutcome(String formFqn, String exportFailure,
+        boolean formFileExisted, String writeError)
+    {
+        String unconfirmed = "The form " + formFqn + " could not be exported (" + exportFailure + ")"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (writeError != null)
+        {
+            return Map.entry("formNotWritten", unconfirmed //$NON-NLS-1$
+                + ", and writing an empty form in its place failed: " + writeError + "."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (formFileExisted)
+        {
+            return Map.entry("formExportUnconfirmed", unconfirmed //$NON-NLS-1$
+                + "; the Form.form already on disk was left as it is."); //$NON-NLS-1$
+        }
+        return Map.entry("emptyFormStubWritten", unconfirmed //$NON-NLS-1$
+            + "; an empty form was written to disk instead of the content built for it. " //$NON-NLS-1$
+            + "Fill the form before using it."); //$NON-NLS-1$
     }
 
     /** Maps ONE reference-type token ({@code CatalogRef.X}) to its object FQN ({@code Catalog.X}), else null. */
