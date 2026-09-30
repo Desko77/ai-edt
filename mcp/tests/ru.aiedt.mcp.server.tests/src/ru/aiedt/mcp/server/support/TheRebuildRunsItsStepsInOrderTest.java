@@ -573,11 +573,12 @@ public class TheRebuildRunsItsStepsInOrderTest
     }
 
     /**
-     * A quick run that throws after leaving a readable file uses that file. The exception is not a
-     * reason to start the full dump, and the file is not ignored.
+     * A quick run that throws after leaving a file is refused with its own error: a Configurator
+     * failure makes whatever bytes it left unusable, so the file is not verified, not swapped in,
+     * and the full dump is not started on top of the failure.
      */
     @Test
-    public void aQuickRunThatThrowsAfterLeavingAFileUsesThatFile() throws IOException
+    public void aQuickRunThatThrowsAfterLeavingAFileIsRefusedWithItsError() throws IOException
     {
         Path stored = storedOld();
         StandIn io = standIn();
@@ -589,11 +590,47 @@ public class TheRebuildRunsItsStepsInOrderTest
 
         Outcome outcome = run(io);
 
-        assertTrue(outcome.ok);
-        assertEquals(platformDump(), new String(Files.readAllBytes(stored), StandardCharsets.UTF_8));
-        assertFalse(io.asked.contains("dumpFull")); //$NON-NLS-1$
-        assertTrue(outcome.rebuildPath.contains("configDumpInfoOnly")); //$NON-NLS-1$
-        assertTrue(outcome.rebuildPath.contains("the log could not be read")); //$NON-NLS-1$
+        assertFalse(outcome.ok);
+        assertEquals("untouched", outcome.fileState); //$NON-NLS-1$
+        assertTrue(outcome.error.contains("the log could not be read")); //$NON-NLS-1$
+        assertTrue("the stored file keeps the previous dump", //$NON-NLS-1$
+            new String(Files.readAllBytes(stored), StandardCharsets.UTF_8).contains("\"2.20\"")); //$NON-NLS-1$
+        assertFalse("the full dump is not started on top of a failed quick run", //$NON-NLS-1$
+            io.asked.contains("dumpFull")); //$NON-NLS-1$
+        assertFalse("the file the failed run left is not verified for the swap", //$NON-NLS-1$
+            outcome.sequence.contains("verify")); //$NON-NLS-1$
+        assertFalse("no backup is taken of a file that is not replaced", //$NON-NLS-1$
+            outcome.sequence.contains("backup")); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "reconnect", "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+    }
+
+    /**
+     * A dump that reads as a ConfigDumpInfo root but carries no Metadata records is what an
+     * interrupted dump leaves: the refusal names the record count and the stored file stays as
+     * it was. The same refusal covers a file that does not read (a count of -1).
+     */
+    @Test
+    public void aDumpWithoutRecordsIsRefusedWithTheCount() throws IOException
+    {
+        Path stored = storedOld();
+        StandIn io = standIn();
+        io.quick = dir -> {
+            Files.write(dir.resolve(DumpInfoProbe.FILE_NAME),
+                dumpInfo("2.7", "").getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        };
+
+        Outcome outcome = run(io);
+
+        assertFalse(outcome.ok);
+        assertEquals("untouched", outcome.fileState); //$NON-NLS-1$
+        assertTrue(outcome.error, outcome.error.contains("carries 0 Metadata records")); //$NON-NLS-1$
+        assertTrue("the stored file keeps the previous dump", //$NON-NLS-1$
+            new String(Files.readAllBytes(stored), StandardCharsets.UTF_8).contains("\"2.20\"")); //$NON-NLS-1$
+        assertFalse("the pair is not recorded for a dump that did not verify", //$NON-NLS-1$
+            io.asked.contains("rememberPair")); //$NON-NLS-1$
+        assertOrder(outcome.sequence, "release", "dumpInfoOnly", "verify", "reconnect", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "cleanup", "unlock"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

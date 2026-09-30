@@ -748,6 +748,35 @@ public class SyncControlTool implements IMcpTool
         return uuids;
     }
 
+    /**
+     * The refusal for a baseline-writing operation aimed at an infobase this project is not bound
+     * to, or {@code null} when the infobase IS one of the project's applications. Every writer
+     * asks this before it resolves the baseline's path, whatever the baseline records: the
+     * application list is what says the infobase is this project's, and a baseline of an infobase
+     * bound only to another workspace's project is that project's synchronization state - neither
+     * re-signed nor re-stamped here. The refusal names the bindings the project does have.
+     *
+     * @param project the project
+     * @param liveUuid the project's configuration id, already validated
+     * @param infobaseUuid the infobase the caller named, already validated as a canonical UUID
+     * @return {@code null} when bound, otherwise the refusal text
+     */
+    private String refuseUnboundInfobase(IProject project, String liveUuid, String infobaseUuid)
+    {
+        List<String> applications = bindingUuids(project, liveUuid);
+        if (applications != null && applications.contains(infobaseUuid))
+        {
+            return null;
+        }
+        return "infobase " + infobaseUuid + " is not one of the project's applications (" //$NON-NLS-1$ //$NON-NLS-2$
+            + (applications == null ? "the application list could not be read in this runtime" //$NON-NLS-1$
+                : project.getName() + ": " //$NON-NLS-1$
+                    + (applications.isEmpty() ? "none" : String.join(", ", applications))) //$NON-NLS-1$ //$NON-NLS-2$
+            + "). A baseline is written only for an infobase this project is bound to. To bind " //$NON-NLS-1$
+            + "this one, run update_database fullUpdate=true: it carries the whole configuration " //$NON-NLS-1$
+            + "into the infobase and writes the baseline itself."; //$NON-NLS-1$
+    }
+
     private List<Map<String, Object>> listExtensions(File ibDir)
     {
         List<Map<String, Object>> result = new ArrayList<>();
@@ -913,6 +942,12 @@ public class SyncControlTool implements IMcpTool
             return ToolResult.error(TextSuggest.missingParam("infobaseUuid", //$NON-NLS-1$
                 "sync_control operation=diagnose_delta projectName=" + project.getName() //$NON-NLS-1$
                     + " infobaseUuid=<matchedBaseline from status>")).toJson(); //$NON-NLS-1$
+        }
+        if (SyncBaseline.parseInfobaseUuid(infobaseUuid) == null)
+        {
+            // Before any path is built from it: an id that is not a canonical UUID would read
+            // whatever index.idx root.resolve(infobaseUuid) lands on, inside the store or not.
+            return ToolResult.error("infobaseUuid is not a valid UUID: '" + infobaseUuid + "'.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         Map<String, byte[]> current = computeEdtSignatures(project);
         if (current == null)
@@ -1100,6 +1135,8 @@ public class SyncControlTool implements IMcpTool
      * {@code getDelegate()}) so EDT's in-memory holder and the on-disk index.idx are both
      * updated under the infobase lock - a raw file write would be ignored while EDT has the
      * holder cached. DANGEROUS: only valid when the configuration truly matches the infobase.
+     * The infobase must be one of the project's applications: the baseline of an infobase only
+     * another workspace's project is bound to is that project's state and is not re-stamped.
      */
     private String doReseedBaseline(IProject project, Map<String, String> params)
     {
@@ -1119,12 +1156,8 @@ public class SyncControlTool implements IMcpTool
                 "sync_control operation=reseed_baseline projectName=" + project.getName() //$NON-NLS-1$
                     + " infobaseUuid=<from status> confirm=true")).toJson(); //$NON-NLS-1$
         }
-        UUID ibUuid;
-        try
-        {
-            ibUuid = UUID.fromString(infobaseUuid.trim());
-        }
-        catch (IllegalArgumentException e)
+        UUID ibUuid = SyncBaseline.parseInfobaseUuid(infobaseUuid);
+        if (ibUuid == null)
         {
             return ToolResult.error("infobaseUuid is not a valid UUID: '" + infobaseUuid + "'.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -1143,6 +1176,16 @@ public class SyncControlTool implements IMcpTool
         {
             return ToolResult.error("The project's Configuration UUID is not a parseable UUID: '" //$NON-NLS-1$
                 + liveUuid + "'.").toJson(); //$NON-NLS-1$
+        }
+
+        // A write is allowed only to a baseline of an infobase this project is bound to, whatever
+        // the baseline records: indexOf would otherwise hand back a baseline of another
+        // workspace's project from the shared per-user store, and re-stamping it would rewrite
+        // that project's synchronization state.
+        String unbound = refuseUnboundInfobase(project, liveUuid, infobaseUuid.trim());
+        if (unbound != null)
+        {
+            return ToolResult.error(unbound).toJson();
         }
 
         // The baseline must already hold this project's resource signatures; reseeding an empty/missing
@@ -2213,12 +2256,8 @@ public class SyncControlTool implements IMcpTool
             return ToolResult.error(TextSuggest.missingParam("infobaseUuid", //$NON-NLS-1$
                 "sync_control operation=recover_stuck_merge infobaseUuid=<from diagnose_stuck_locks> confirm=true")).toJson(); //$NON-NLS-1$
         }
-        UUID ibUuid;
-        try
-        {
-            ibUuid = UUID.fromString(infobaseUuid.trim());
-        }
-        catch (IllegalArgumentException ex)
+        UUID ibUuid = SyncBaseline.parseInfobaseUuid(infobaseUuid);
+        if (ibUuid == null)
         {
             return ToolResult.error("infobaseUuid is not a valid UUID: '" + infobaseUuid + "'.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -2392,8 +2431,12 @@ public class SyncControlTool implements IMcpTool
      * configuration id the delegate writes is empty, which {@code UpdateInfobaseFlow.start()} would read as a
      * foreign configuration and answer with a full reload - so the project's own configuration id is stamped
      * onto the fresh baseline afterwards through the same delegate
-     * ({@code forceConfigurationUUID(InfobaseReference, IProject, UUID)}). An infobase that is NOT among the
-     * project's applications is refused with the list of the ones that are.
+     * ({@code forceConfigurationUUID(InfobaseReference, IProject, UUID)}).
+     *
+     * <p>Every mark requires the infobase to be among the project's applications, checked before
+     * the baseline's path is resolved and whatever the baseline records - a recorded configuration
+     * id matching the project does not make a foreign infobase this project's. One that is not is
+     * refused with the list of the ones that are.</p>
      *
      * <p>A baseline that exists and records an EMPTY configuration id is treated as that same fresh case
      * rather than as one belonging to another configuration: it is the state a failed stamp leaves behind,
@@ -2419,12 +2462,8 @@ public class SyncControlTool implements IMcpTool
                 "sync_control operation=mark_synchronized projectName=" + project.getName() //$NON-NLS-1$
                     + " infobaseUuid=<matchedBaseline from status> confirm=true")).toJson(); //$NON-NLS-1$
         }
-        UUID ibUuid;
-        try
-        {
-            ibUuid = UUID.fromString(infobaseUuid.trim());
-        }
-        catch (IllegalArgumentException e)
+        UUID ibUuid = SyncBaseline.parseInfobaseUuid(infobaseUuid);
+        if (ibUuid == null)
         {
             return ToolResult.error("infobaseUuid is not a valid UUID: '" + infobaseUuid + "'.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -2443,40 +2482,27 @@ public class SyncControlTool implements IMcpTool
             return ToolResult.error("The project's Configuration UUID is not a parseable UUID: '" //$NON-NLS-1$
                 + liveUuid + "'.").toJson(); //$NON-NLS-1$
         }
+        // The binding is checked on EVERY mark, whatever the baseline records: a baseline whose
+        // configuration id matches the project is not thereby this project's to rewrite - an
+        // infobase bound only to another workspace's project would otherwise get a baseline of
+        // this project written into the store.
+        String unbound = refuseUnboundInfobase(project, liveUuid, infobaseUuid.trim());
+        if (unbound != null)
+        {
+            return ToolResult.error(unbound).toJson();
+        }
         Path idx = SyncBaseline.indexOf(project, infobaseUuid.trim());
         IndexInfo before = idx.toFile().isFile() ? parseIndexIdx(idx) : null;
         // An infobase registered in EDT but not yet updated from this project is one of its
         // applications with no baseline: index.idx is written by the first update, there is
-        // nothing to re-sign, and forceEdtSynchronization is what creates one. An infobase that is
-        // NOT an application of this project is a different answer - nothing can be stamped for a
-        // binding that does not exist, and the caller needs the list of the ones that do.
+        // nothing to re-sign, and forceEdtSynchronization is what creates one.
         //
         // A baseline that exists but records NO configuration id is the same case, not the
         // "different configuration" one: that is the state forceEdtSynchronization leaves behind
         // when a stamp failed, and reading it as a foreign configuration would refuse the only
         // call that can repair it. Such a baseline is stamped again on every mark_synchronized.
-        boolean freshBinding = false;
-        if (before == null || before.configurationUuid.isEmpty())
-        {
-            List<String> applications = bindingUuids(project, liveUuid);
-            if (applications == null || !applications.contains(infobaseUuid.trim()))
-            {
-                // Whichever of the two states this baseline is in, it is still re-signed only for a
-                // binding of this project - the application list is what says the infobase is one.
-                String opening = before == null
-                    ? "No baseline at infobase " + infobaseUuid + " (index.idx missing)" //$NON-NLS-1$ //$NON-NLS-2$
-                    : "The baseline at infobase " + infobaseUuid + " records no configuration id"; //$NON-NLS-1$ //$NON-NLS-2$
-                return ToolResult.error(opening
-                    + ", and it is not one of the project's applications (" //$NON-NLS-1$
-                    + (applications == null ? "the application list could not be read in this runtime" //$NON-NLS-1$
-                        : project.getName() + ": " + (applications.isEmpty() ? "none" : String.join(", ", applications))) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-                    + "). A baseline is re-signed only for an infobase this project is bound to. To bind " //$NON-NLS-1$
-                    + "this one, run update_database fullUpdate=true: it carries the whole configuration " //$NON-NLS-1$
-                    + "into the infobase and writes the baseline itself.").toJson(); //$NON-NLS-1$
-            }
-            freshBinding = true;
-        }
-        else if (!liveUuid.equals(before.configurationUuid))
+        boolean freshBinding = before == null || before.configurationUuid.isEmpty();
+        if (!freshBinding && !liveUuid.equals(before.configurationUuid))
         {
             return ToolResult.error("The baseline at infobase " + infobaseUuid + " is for a different configuration (" //$NON-NLS-1$ //$NON-NLS-2$
                 + before.configurationUuid + " vs project " + liveUuid //$NON-NLS-1$

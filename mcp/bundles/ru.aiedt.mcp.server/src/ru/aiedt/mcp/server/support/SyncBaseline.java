@@ -418,6 +418,38 @@ public final class SyncBaseline
     }
 
     /**
+     * An infobase id supplied by a caller, taken strictly: the trimmed text must BE the canonical
+     * lowercase string of the UUID it parses to. Anything else - an absolute path, a {@code ..}
+     * segment, a non-canonical or differently-cased spelling - is refused, so a value that is not
+     * a plain UUID never reaches a path built from it ({@code root.resolve(infobaseUuid)} would
+     * otherwise resolve outside the store).
+     *
+     * @param text the supplied id; {@code null} or blank is not an id either
+     * @return the parsed UUID, or {@code null} when the text is not a canonical UUID
+     */
+    public static UUID parseInfobaseUuid(String text)
+    {
+        if (text == null)
+        {
+            return null;
+        }
+        String trimmed = text.trim();
+        if (trimmed.isEmpty())
+        {
+            return null;
+        }
+        try
+        {
+            UUID uuid = UUID.fromString(trimmed);
+            return uuid.toString().equals(trimmed) ? uuid : null;
+        }
+        catch (IllegalArgumentException e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * The stored dump-info of an infobase's last synchronization: the file beside the index that
      * the platform reads on every {@code config dump-files} to decide what the base still holds.
      *
