@@ -220,6 +220,14 @@ public class BranchInfobaseTool
      */
     private static String list(String projectName, IProject project, String branch)
     {
+        String unreadable = BranchInfobaseBook.unreadableReason(project);
+        if (unreadable != null)
+        {
+            // An empty list here would read as "no rules" while the rules are merely unreadable,
+            // which is the one state the caller must not act on as if nothing were bound.
+            return ToolResult.error("The bindings file cannot be read: " + unreadable //$NON-NLS-1$
+                + ". Fix or remove it; until then update_database refuses on every branch.").toJson(); //$NON-NLS-1$
+        }
         Map<String, String> bindings = BranchInfobaseBook.all(project);
         ToolResult result = ToolResult.success()
             .put("projectName", projectName) //$NON-NLS-1$

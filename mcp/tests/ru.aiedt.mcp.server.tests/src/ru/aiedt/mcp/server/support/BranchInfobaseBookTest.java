@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
@@ -160,5 +161,129 @@ public class BranchInfobaseBookTest
         assertTrue(text.contains("prod-copy")); //$NON-NLS-1$
         assertTrue("and it should be nested under something named: " + text, //$NON-NLS-1$
             text.contains("bindings")); //$NON-NLS-1$
+    }
+
+    /** Binding onto a project with no file creates it, exactly as before. */
+    @Test
+    public void bindCreatesTheFileWhenItIsAbsent() throws Exception
+    {
+        Path file = project.resolve(".settings").resolve(BranchInfobaseBook.FILE); //$NON-NLS-1$
+        assertTrue(!Files.exists(file));
+
+        assertNull(BranchInfobaseBook.bindAt(project, "main", "app")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(Files.isRegularFile(file));
+    }
+
+    /**
+     * Binding onto a file that cannot be parsed is refused, and the file keeps its bytes.
+     * <p>
+     * Reading it out as an empty map and writing the new binding over it would keep that one
+     * binding and lose every other the file held.
+     * </p>
+     */
+    @Test
+    public void bindRefusesAnUnparsableFile() throws Exception
+    {
+        byte[] broken = "this: [is: not: valid".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        Path file = writeBindingsFile(broken);
+
+        String failure = BranchInfobaseBook.bindAt(project, "main", "app"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertNotNull(failure);
+        assertTrue("the refusal names the file: " + failure, failure.contains(file.toString())); //$NON-NLS-1$
+        assertArrayEquals("the file must be untouched", broken, Files.readAllBytes(file)); //$NON-NLS-1$
+    }
+
+    /** The markers a merge conflict leaves are unparsable YAML, and get the same refusal. */
+    @Test
+    public void bindRefusesMergeConflictMarkers() throws Exception
+    {
+        byte[] conflicted = ("<<<<<<< HEAD\n" //$NON-NLS-1$
+            + "bindings:\n  main: app-one\n" //$NON-NLS-1$
+            + "=======\n" //$NON-NLS-1$
+            + "bindings:\n  main: app-two\n" //$NON-NLS-1$
+            + ">>>>>>> other\n").getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        Path file = writeBindingsFile(conflicted);
+
+        String failure = BranchInfobaseBook.bindAt(project, "wip", "app"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertNotNull(failure);
+        assertArrayEquals("the file must be untouched", conflicted, Files.readAllBytes(file)); //$NON-NLS-1$
+    }
+
+    /** A {@code bindings} that is a list holds no bindings the tool can keep, so bind refuses. */
+    @Test
+    public void bindRefusesBindingsThatAreNotAMapping() throws Exception
+    {
+        byte[] listed = "bindings:\n  - main\n  - wip\n".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        Path file = writeBindingsFile(listed);
+
+        String failure = BranchInfobaseBook.bindAt(project, "main", "app"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertNotNull(failure);
+        assertTrue("the refusal names the file: " + failure, failure.contains(file.toString())); //$NON-NLS-1$
+        assertArrayEquals("the file must be untouched", listed, Files.readAllBytes(file)); //$NON-NLS-1$
+    }
+
+    /**
+     * A binding with a numeric value cannot be read back whole, so bind refuses rather than
+     * rewriting the file without it.
+     */
+    @Test
+    public void bindRefusesANonTextBinding() throws Exception
+    {
+        byte[] numeric = "bindings:\n  good: app\n  main: 42\n".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        Path file = writeBindingsFile(numeric);
+
+        String failure = BranchInfobaseBook.bindAt(project, "wip", "app"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertNotNull(failure);
+        assertArrayEquals("the file must be untouched", numeric, Files.readAllBytes(file)); //$NON-NLS-1$
+        assertEquals("the readable half is still visible", "app", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            BranchInfobaseBook.allAt(project).get("good")); //$NON-NLS-1$
+    }
+
+    /** Unbinding over an unreadable file is refused the same way, and writes nothing. */
+    @Test
+    public void unbindRefusesAnUnreadableFile() throws Exception
+    {
+        byte[] broken = "this: [is: not: valid".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
+        Path file = writeBindingsFile(broken);
+
+        String failure = BranchInfobaseBook.unbindAt(project, "main"); //$NON-NLS-1$
+
+        assertNotNull(failure);
+        assertTrue("the refusal names the file: " + failure, failure.contains(file.toString())); //$NON-NLS-1$
+        assertArrayEquals("the file must be untouched", broken, Files.readAllBytes(file)); //$NON-NLS-1$
+    }
+
+    /** Once the file parses again, binding works again - the refusal is about the file, not sticky. */
+    @Test
+    public void aRepairedFileBindsAgain() throws Exception
+    {
+        Path file = writeBindingsFile("this: [is: not: valid".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+        assertNotNull(BranchInfobaseBook.bindAt(project, "main", "app")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Files.write(file, "bindings:\n  main: repaired\n".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+
+        assertNull(BranchInfobaseBook.bindAt(project, "wip", "scratch")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("repaired", BranchInfobaseBook.allAt(project).get("main")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("scratch", BranchInfobaseBook.allAt(project).get("wip")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Puts the bindings file beside the temporary project.
+     *
+     * @param contents the bytes to write.
+     * @return the file written
+     * @throws Exception when the write fails
+     */
+    private Path writeBindingsFile(byte[] contents) throws Exception
+    {
+        Path file = project.resolve(".settings").resolve(BranchInfobaseBook.FILE); //$NON-NLS-1$
+        Files.createDirectories(file.getParent());
+        Files.write(file, contents);
+        return file;
     }
 }
