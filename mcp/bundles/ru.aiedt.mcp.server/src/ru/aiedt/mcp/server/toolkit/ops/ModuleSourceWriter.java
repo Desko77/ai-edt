@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
@@ -427,7 +428,8 @@ public class ModuleSourceWriter implements IMcpTool
                     source = normalizeWhereWritten(source, moduleTextBefore(originalLines, totalOriginal),
                         normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>(originalLines);
-                    newLines.addAll(splitSourceLines(source));
+                    newLines.addAll(separatedInsert(source,
+                        totalOriginal > 0 ? originalLines.get(totalOriginal - 1) : null, null));
                     break;
                 case MODE_SEARCH_REPLACE:
                 {
@@ -495,7 +497,8 @@ public class ModuleSourceWriter implements IMcpTool
                         normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, line - 1));
-                    newLines.addAll(splitSourceLines(source));
+                    newLines.addAll(separatedInsert(source,
+                        line > 1 ? originalLines.get(line - 2) : null, originalLines.get(line - 1)));
                     newLines.addAll(originalLines.subList(line - 1, totalOriginal));
                     break;
                 }
@@ -511,7 +514,8 @@ public class ModuleSourceWriter implements IMcpTool
                         normalizeInvalidCharacters, characterFix, null);
                     newLines = new ArrayList<>();
                     newLines.addAll(originalLines.subList(0, line));
-                    newLines.addAll(splitSourceLines(source));
+                    newLines.addAll(separatedInsert(source, originalLines.get(line - 1),
+                        line < totalOriginal ? originalLines.get(line) : null));
                     if (line < totalOriginal)
                         newLines.addAll(originalLines.subList(line, totalOriginal));
                     break;
@@ -957,6 +961,82 @@ public class ModuleSourceWriter implements IMcpTool
         if (beforeLine <= 0)
             return ""; //$NON-NLS-1$
         return String.join("\n", lines.subList(0, Math.min(beforeLine, lines.size()))) + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Matches the line that opens a method, an asynchronous one included, in either language.
+     */
+    private static final Pattern WHOLE_METHOD_START = Pattern.compile(
+        "^\\s*(?:(?:\u0410\u0441\u0438\u043D\u0445|Async)\\s+)?(?:\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0430|\u0424\u0443\u043D\u043A\u0446\u0438\u044F|Procedure|Function)\\s+\\S+?\\s*\\(", //$NON-NLS-1$
+        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE | Pattern.UNICODE_CHARACTER_CLASS);
+
+    /**
+     * The lines of an insert, with one empty line added on each side where a whole method would
+     * otherwise touch the module's code.
+     * <p>
+     * A whole method is text that, blank lines at its edges aside, begins with a header comment, a
+     * compile directive or the line that opens a method, holds that opening line, and ends with the
+     * line that closes a method. A side is taken when the module has a line there and the line is
+     * not blank; the start and the end of the file are not taken. An insert that already begins or
+     * ends with a blank line keeps that side as it is, and any other text is returned as split.
+     * </p>
+     *
+     * @param source the inserted text, normalised to {@code \n}
+     * @param lineBefore the module line just above the insert, or {@code null} at the start of the file
+     * @param lineAfter the module line just below the insert, or {@code null} at the end of the file
+     * @return the lines to insert
+     */
+    static List<String> separatedInsert(String source, String lineBefore, String lineAfter)
+    {
+        List<String> lines = splitSourceLines(source);
+        if (!isWholeMethod(lines))
+            return lines;
+        List<String> result = new ArrayList<>(lines);
+        if (isTaken(lineBefore) && !lines.get(0).trim().isEmpty())
+            result.add(0, ""); //$NON-NLS-1$
+        if (isTaken(lineAfter) && !lines.get(lines.size() - 1).trim().isEmpty())
+            result.add(""); //$NON-NLS-1$
+        return result;
+    }
+
+    /**
+     * Whether a module line next to an insert is code the insert would touch.
+     *
+     * @param line the neighbouring line, or {@code null} past an end of the file
+     * @return {@code true} when the line exists and is not blank
+     */
+    private static boolean isTaken(String line)
+    {
+        return line != null && !line.trim().isEmpty();
+    }
+
+    /**
+     * Whether inserted lines are one or more whole methods.
+     *
+     * @param lines the inserted lines
+     * @return {@code true} when, blank edges aside, they open with a comment, a directive or a method
+     *         opening, hold a method opening and close with a method end
+     */
+    private static boolean isWholeMethod(List<String> lines)
+    {
+        int first = 0;
+        while (first < lines.size() && lines.get(first).trim().isEmpty())
+            first++;
+        int last = lines.size() - 1;
+        while (last >= first && lines.get(last).trim().isEmpty())
+            last--;
+        if (first > last || !BslModuleAccess.METHOD_END_PATTERN.matcher(lines.get(last)).find())
+            return false;
+        String opening = lines.get(first).trim();
+        if (!opening.startsWith("//") && !opening.startsWith("&") //$NON-NLS-1$ //$NON-NLS-2$
+            && !WHOLE_METHOD_START.matcher(opening).find())
+            return false;
+        for (int i = first; i <= last; i++)
+        {
+            if (WHOLE_METHOD_START.matcher(lines.get(i)).find())
+                return true;
+        }
+        return false;
     }
 
     /**
