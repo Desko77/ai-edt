@@ -72,16 +72,19 @@ public final class UiSync
         Supplier<T> carried = ToolCallScope.carryCancellation(work);
         Display display = Display.getDefault();
         AtomicReference<T> result = new AtomicReference<>();
-        AtomicReference<RuntimeException> failure = new AtomicReference<>();
+        // Throwable, not RuntimeException: an Error the work raises would otherwise escape the
+        // catch, the latch would still open, and the caller would read the missing result as a
+        // null answer instead of the failure it was.
+        AtomicReference<Throwable> failure = new AtomicReference<>();
         CountDownLatch done = new CountDownLatch(1);
         display.asyncExec(() -> {
             try
             {
                 result.set(carried.get());
             }
-            catch (RuntimeException e)
+            catch (Throwable t)
             {
-                failure.set(e);
+                failure.set(t);
             }
             finally
             {
@@ -103,10 +106,20 @@ public final class UiSync
             throw new UiBusyException("The EDT UI thread did not respond within " + timeoutMs //$NON-NLS-1$
                 + " ms (it is busy, or a modal dialog is open)"); //$NON-NLS-1$
         }
-        RuntimeException f = failure.get();
+        Throwable f = failure.get();
+        if (f instanceof RuntimeException)
+        {
+            throw (RuntimeException)f;
+        }
+        if (f instanceof Error)
+        {
+            throw (Error)f;
+        }
         if (f != null)
         {
-            throw f;
+            // A Supplier declares no checked exception, so one can only arrive smuggled past the
+            // compiler; it still belongs to the caller, wrapped so the signature holds.
+            throw new RuntimeException(f);
         }
         return result.get();
     }
