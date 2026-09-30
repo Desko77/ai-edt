@@ -70,6 +70,33 @@ The answer carries `statistics.omittedBelowSeverityFilter` for what the severity
 | `docs_lookup` | `get_platform_documentation`, `get_object_help`, `help` |
 | `workspace_marks` | `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks`, `help` |
 | `git` | `status`, `branches`, `log`, `commit`, `checkout`, `show_file_changes`, `revert_file`, `create_merge_restore_point`, `restore_merge_point` |
+| `cluster_admin` | `get_clusters`, `create_cluster`, `update_cluster`, `delete_cluster`, `add_to_cluster`, `remove_from_cluster`, `help` |
+
+## Clusters
+
+`cluster_admin` edits the custom folder hierarchy of the Navigator: a cluster is a folder hanging
+under a metadata collection (`Catalog`, `CommonModule`), the objects it holds are stored per project
+in `.settings/aiedt-clusters.yaml` and hidden from their normal place in the tree.
+
+`get_clusters` answers the tree - `fullPath`, `name`, `description`, `order`, the held `objects` and
+the nested `children` - for one `collectionPath` or for every collection that has clusters. A full
+path joins the collection and the names with slashes: `Catalog/Shelf/Sub`.
+
+The five writes each pass their own door, so a write-blocking preset refuses them before the file is
+read: `create_cluster` (`name` plus `collectionPath`, or `parentClusterPath` to nest),
+`update_cluster` (`newName` required, `description` optional; the same state again answers
+`noChange: true`), `delete_cluster` (removes the nested clusters too; `dryRun=true` answers
+`nestedClusters` and `objects` and writes nothing), `add_to_cluster` (moves the object out of its
+current cluster and answers `movedFrom`), `remove_from_cluster` (out of every cluster at once,
+answer `removedFrom`).
+
+`add_to_cluster` checks the object against the EDT model first: an object that is not in the
+configuration is refused with `objectNotFound` and the nearest names, and an object of another
+collection than the cluster (`Document.X` into a `Catalog` cluster) with `outsideCollection`. An
+object that is in no cluster, asked off clusters, is refused with `notClustered`. A refused write
+answers with the cluster outcome's own code - `clusterExists`, `nameTaken`, `changedOnDisk`,
+`unreadableFile` - beside a sentence for a person. The cluster service is not an OSGi service and
+can be absent before the plugin starts; every operation answers `serviceUnavailable` then.
 
 `compare_configurations` with `mode=projects` pairs renames before classifying: an object whose
 content is equal once the name and its mirrors (the uuid, the synonym, the type ids) are set aside
