@@ -45,6 +45,9 @@ final class FormCommandInterfaceOps
     /** Lower-case prefix of every address that names something inside a form. */
     private static final String FORM_PREFIX = "form."; //$NON-NLS-1$
 
+    /** Lower-case prefix of an address that names something inside a form item. */
+    private static final String FORM_ITEM_MARKER = "form.item."; //$NON-NLS-1$
+
     /** Lower-case marker of a standard command segment inside an address. */
     private static final String STANDARD_COMMAND_MARKER = ".standardcommand."; //$NON-NLS-1$
 
@@ -530,8 +533,9 @@ final class FormCommandInterfaceOps
      *
      * <p>The accepted addresses are the ones {@code get_form_structure} reports and the form file
      * writes: {@code Form.Command.<Name>} for a command of the form itself,
-     * {@code Form.StandardCommand.<Name>} and {@code Form.Item.<Item>.StandardCommand.<Name>} for a
-     * standard command the form carries, {@code CommonCommand.<Name>},
+     * {@code Form.StandardCommand.<Name>} for a standard command the form carries,
+     * {@code Form.Item.<Item>.StandardCommand.<Name>} for a standard command a form item carries,
+     * {@code CommonCommand.<Name>},
      * {@code <Type>.<Object>.Command.<Name>} and {@code <Type>.<Object>.StandardCommand.<Name>} for
      * a command of the project model. Names are matched case-insensitively.
      *
@@ -558,11 +562,27 @@ final class FormCommandInterfaceOps
         int standard = lower.lastIndexOf(STANDARD_COMMAND_MARKER);
         if (lower.startsWith(FORM_PREFIX))
         {
-            // A standard command of the form or of one of its items; the form carries both, so the
-            // item the address names does not have to be located.
-            return standard < 0 ? null
-                : findNamed(form, "getCommands", //$NON-NLS-1$
-                    fqn.substring(standard + STANDARD_COMMAND_MARKER.length()));
+            if (standard < 0)
+            {
+                return null;
+            }
+            String commandName = fqn.substring(standard + STANDARD_COMMAND_MARKER.length());
+            if (lower.startsWith(FORM_ITEM_MARKER) && standard > FORM_ITEM_MARKER.length())
+            {
+                // A standard command an address pins to a form item is a child of that item (its
+                // FormStandardCommandSource.getCommands() list), not of the form; this mirrors the
+                // way the address is built from the command's container when the structure is read.
+                // The form's own list stays the fallback, so an item address that names a command
+                // the form itself carries keeps resolving the way it did.
+                Object item = findFormItemByName(form,
+                    fqn.substring(FORM_ITEM_MARKER.length(), standard));
+                Object command = findNamed(item, "getCommands", commandName); //$NON-NLS-1$
+                if (command != null)
+                {
+                    return command;
+                }
+            }
+            return findNamed(form, "getCommands", commandName); //$NON-NLS-1$
         }
         if (standard > 0)
         {
@@ -632,6 +652,42 @@ final class FormCommandInterfaceOps
             if (elementName instanceof String && name.equalsIgnoreCase((String)elementName))
             {
                 return element;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds a form item by name, walking {@code FormItemContainer.getItems()} recursively. An item
+     * that is not a container answers no {@code getItems()} and is read as a leaf.
+     *
+     * @param container the form or a container item to walk, or <code>null</code>
+     * @param name the item name, matched case-insensitively
+     * @return the item carrying the name, or <code>null</code> when the container holds no item
+     *     with that name
+     */
+    private static Object findFormItemByName(Object container, String name)
+    {
+        if (container == null || name == null || name.isEmpty())
+        {
+            return null;
+        }
+        Object items = reflectiveGetter(container, "getItems"); //$NON-NLS-1$
+        if (!(items instanceof Iterable))
+        {
+            return null;
+        }
+        for (Object item : (Iterable<?>) items)
+        {
+            Object itemName = reflectiveGetter(item, "getName"); //$NON-NLS-1$
+            if (itemName instanceof String && name.equalsIgnoreCase((String)itemName))
+            {
+                return item;
+            }
+            Object found = findFormItemByName(item, name);
+            if (found != null)
+            {
+                return found;
             }
         }
         return null;
