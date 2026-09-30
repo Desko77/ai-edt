@@ -65,6 +65,79 @@ public final class BmXdtoHelper
      */
     public static final String NO_CHANGE = "__xdto_no_change__"; //$NON-NLS-1$
 
+    /**
+     * What {@link #readSchema} and {@link #readSchemaFile} found.
+     * <p>
+     * Exactly one of the three is set: a loaded {@link Package}, an absent or empty file, or a load
+     * error. A load error is never reported as an absent file.
+     * </p>
+     */
+    public static final class SchemaRead
+    {
+        private final Package model;
+
+        private final String loadError;
+
+        private final boolean absentOrEmpty;
+
+        private SchemaRead(Package model, String loadError, boolean absentOrEmpty)
+        {
+            this.model = model;
+            this.loadError = loadError;
+            this.absentOrEmpty = absentOrEmpty;
+        }
+
+        /**
+         * @return a missing or empty file
+         */
+        static SchemaRead absent()
+        {
+            return new SchemaRead(null, null, true);
+        }
+
+        /**
+         * @param loadError why the file did not parse
+         * @return a file that is there but did not load
+         */
+        static SchemaRead failed(String loadError)
+        {
+            return new SchemaRead(null, loadError, false);
+        }
+
+        /**
+         * @param model the loaded package
+         * @return a schema that parsed
+         */
+        static SchemaRead loaded(Package model)
+        {
+            return new SchemaRead(model, null, false);
+        }
+
+        /**
+         * @return the package when the file parsed, otherwise {@code null}
+         */
+        public Package model()
+        {
+            return model;
+        }
+
+        /**
+         * @return why the file did not parse, or {@code null} when it parsed or is absent
+         */
+        public String loadError()
+        {
+            return loadError;
+        }
+
+        /**
+         * @return {@code true} only when the file is missing or empty
+         */
+        public boolean absentOrEmpty()
+        {
+            return absentOrEmpty;
+        }
+    }
+
     private BmXdtoHelper()
     {
         // utility
@@ -96,19 +169,19 @@ public final class BmXdtoHelper
      *                     proceed to save, or an error string to abort
      * @param dryRun       when true, run the mutator (validation) but do not
      *                     write the file
+     * @return {@code null} on success, or a descriptive error. A package name that
+     *         is empty, absolute, or not a single member of {@code src/XDTOPackages}
+     *         is an error and nothing is written.
      */
     public static String mutatePackage(IProject project, String packageName, String defaultNsUri,
         Function<Package, String> mutator, boolean dryRun)
     {
-        if (project == null || packageName == null || packageName.isEmpty())
+        Located located = locate(project, packageName);
+        if (located.refusal != null)
         {
-            return "project and packageName are required"; //$NON-NLS-1$
+            return located.refusal;
         }
-        Path xdtoFile = resolvePackageXdto(project, packageName);
-        if (xdtoFile == null)
-        {
-            return "Cannot resolve Package.xdto path for XDTOPackage." + packageName; //$NON-NLS-1$
-        }
+        Path xdtoFile = located.file;
         URI uri = URI.createFileURI(xdtoFile.toAbsolutePath().toString());
         XdtoResource resource = new XdtoResource(uri);
         Package pkg;
@@ -186,34 +259,80 @@ public final class BmXdtoHelper
     }
 
     /**
-     * Read-only access to the {@link Package} (returns null when the file is
-     * absent / empty / unreadable). Used by the read operation.
+     * Reads the schema file of one XDTO package.
+     * <p>
+     * A missing file and an empty file are {@link SchemaRead#absentOrEmpty()}. A file that is there
+     * but does not load, or whose root is not a {@link Package}, is {@link SchemaRead#loadError()}
+     * and names the reason. A name that is not one member of {@code src/XDTOPackages} is the same
+     * kind of error and the file outside the collection is not opened.
+     * </p>
+     *
+     * @param project the EDT project
+     * @param packageName the XDTO package name
+     * @return the schema, an absent file, or the reason the file could not be read
      */
-    public static Package readPackage(IProject project, String packageName)
+    public static SchemaRead readSchema(IProject project, String packageName)
     {
-        Path xdtoFile = resolvePackageXdto(project, packageName);
-        if (xdtoFile == null || !Files.exists(xdtoFile))
+        Located located = locate(project, packageName);
+        if (located.refusal != null)
         {
-            return null;
+            return SchemaRead.failed(located.refusal);
+        }
+        SchemaRead read = readSchemaFile(located.file);
+        if (read.loadError() != null)
+        {
+            Activator.logWarning("readPackage failed for " + packageName + ": " + read.loadError()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return read;
+    }
+
+    /**
+     * Reads one {@code Package.xdto} file that has already been resolved.
+     *
+     * @param xdtoFile the schema file; may name a file that is not there
+     * @return the schema, an absent or empty file, or the load failure
+     */
+    public static SchemaRead readSchemaFile(Path xdtoFile)
+    {
+        if (xdtoFile == null || Files.notExists(xdtoFile))
+        {
+            return SchemaRead.absent();
         }
         try
         {
-            XdtoResource resource = new XdtoResource(
-                URI.createFileURI(xdtoFile.toAbsolutePath().toString()));
             if (Files.size(xdtoFile) == 0)
             {
-                return null;
+                return SchemaRead.absent();
             }
+            XdtoResource resource = new XdtoResource(
+                URI.createFileURI(xdtoFile.toAbsolutePath().toString()));
             resource.load(new ByteArrayInputStream(Files.readAllBytes(xdtoFile)),
                 Collections.emptyMap());
             EObject root = resource.getContents().isEmpty() ? null : resource.getContents().get(0);
-            return root instanceof Package ? (Package) root : null;
+            if (!(root instanceof Package))
+            {
+                return SchemaRead.failed("Package.xdto root is not an XDTO Package (" //$NON-NLS-1$
+                    + (root == null ? "empty" : root.eClass().getName()) + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return SchemaRead.loaded((Package) root);
         }
         catch (Exception e)
         {
-            Activator.logWarning("readPackage failed for " + packageName + ": " + e); //$NON-NLS-1$ //$NON-NLS-2$
-            return null;
+            return SchemaRead.failed("Failed to load Package.xdto: " + e.getClass().getSimpleName() //$NON-NLS-1$
+                + ": " + e.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Why {@code packageName} may not be joined onto {@code src/XDTOPackages}.
+     *
+     * @param project the EDT project
+     * @param packageName the package name
+     * @return the refusal, or {@code null} when the name is one member of that directory
+     */
+    public static String refusePackagePath(IProject project, String packageName)
+    {
+        return locate(project, packageName).refusal;
     }
 
     // ---- model mutation helpers (operate on a live Package) ----
@@ -481,14 +600,51 @@ public final class BmXdtoHelper
         }
     }
 
-    private static Path resolvePackageXdto(IProject project, String packageName)
+    /**
+     * The {@code Package.xdto} path for one package, or why the name cannot be used.
+     */
+    private static final class Located
     {
+        /** The schema file when {@link #refusal} is {@code null}. */
+        final Path file;
+
+        /** Why the name was refused, or {@code null} when {@link #file} is set. */
+        final String refusal;
+
+        private Located(Path file, String refusal)
+        {
+            this.file = file;
+            this.refusal = refusal;
+        }
+    }
+
+    /**
+     * Resolves {@code src/XDTOPackages/&lt;name&gt;/Package.xdto}, or refuses the name.
+     *
+     * @param project the EDT project
+     * @param packageName the package name
+     * @return the schema path, or the refusal
+     */
+    private static Located locate(IProject project, String packageName)
+    {
+        if (project == null || packageName == null || packageName.isEmpty())
+        {
+            return new Located(null, "project and packageName are required"); //$NON-NLS-1$
+        }
         if (project.getLocation() == null)
         {
-            return null;
+            return new Located(null,
+                "Cannot resolve Package.xdto path for XDTOPackage." + packageName); //$NON-NLS-1$
         }
-        return project.getLocation().toFile().toPath().resolve("src") //$NON-NLS-1$
-            .resolve("XDTOPackages").resolve(packageName).resolve("Package.xdto"); //$NON-NLS-1$ //$NON-NLS-2$
+        Path collection = project.getLocation().toFile().toPath().resolve("src") //$NON-NLS-1$
+            .resolve("XDTOPackages"); //$NON-NLS-1$
+        CollectionMemberPath.Place place = CollectionMemberPath.member(collection, "packageName", //$NON-NLS-1$
+            packageName);
+        if (place.refusal() != null)
+        {
+            return new Located(null, place.refusal());
+        }
+        return new Located(place.path().resolve("Package.xdto"), null); //$NON-NLS-1$
     }
 
     private static void refresh(IProject project, String packageName)
