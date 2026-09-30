@@ -617,8 +617,7 @@ public final class DumpInfoRebuilder
     private static Path runDumpInfoOnlyUnderTimeout(
         ThickClientLaunch.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
-        java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
+        LaunchBoundary launchClaim = new LaunchBoundary();
         ctx.launchClaim = launchClaim;
         return underTimeout("the dump-info-only Designer run", timeoutMs, () -> { //$NON-NLS-1$
             BmInfobaseExtensionHelper.runDesignerDumpInfoOnly(ctx, tempDir);
@@ -633,8 +632,7 @@ public final class DumpInfoRebuilder
     private static Path runFullDumpUnderTimeout(
         ThickClientLaunch.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
-        java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
+        LaunchBoundary launchClaim = new LaunchBoundary();
         ctx.launchClaim = launchClaim;
         return underTimeout("the Designer dump", timeoutMs, //$NON-NLS-1$
             () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx, tempDir),
@@ -670,7 +668,7 @@ public final class DumpInfoRebuilder
      * @throws Exception when the call itself failed
      */
     static Path underTimeout(String what, long timeoutMs, PlatformRun run,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim) throws Exception
+        LaunchBoundary launchClaim) throws Exception
     {
         java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors
             .newSingleThreadExecutor(runnable -> {
@@ -772,14 +770,14 @@ public final class DumpInfoRebuilder
         java.util.concurrent.Future<Path> running,
         java.util.concurrent.atomic.AtomicBoolean started,
         java.util.concurrent.CountDownLatch returned,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim, boolean timedOut)
+        LaunchBoundary launchClaim, boolean timedOut)
     {
         // The boundary is claimed BEFORE the cancel: once the wait gives up, no new launch may
         // commit. Taking it means the worker cannot start the Designer - it exits at the
         // boundary - so nothing is running and nothing is waited for. Failing to take it means
         // the worker crossed first: the launcher call is committed, and only its own return
         // ends it.
-        boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
+        boolean launchPrevented = launchClaim != null && launchClaim.claimStop();
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
         return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, launchPrevented,

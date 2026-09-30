@@ -119,7 +119,7 @@ public class TheExportWaitBudgetTest
     @Test
     public void aBoundaryClaimedByTheAbandonmentStartsNoDesigner() throws Exception
     {
-        AtomicBoolean boundary = new AtomicBoolean(false);
+        LaunchBoundary boundary = new LaunchBoundary();
         AtomicBoolean called = new AtomicBoolean(false);
         try
         {
@@ -127,7 +127,7 @@ public class TheExportWaitBudgetTest
                 // Still on the way to the launch when the budget runs out: slow enough that the
                 // wait gives up and claims the boundary first.
                 Thread.sleep(500L);
-                if (!boundary.compareAndSet(false, true))
+                if (!boundary.claimLaunch())
                 {
                     throw new InterruptedException("the run was abandoned before its launch"); //$NON-NLS-1$
                 }

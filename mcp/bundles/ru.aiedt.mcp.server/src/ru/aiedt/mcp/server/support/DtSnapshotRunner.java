@@ -252,33 +252,39 @@ public final class DtSnapshotRunner
     static final class LiveRun
     {
         /**
-         * Completed by the current launcher call once its wait has ended: {@code true} when an
-         * abandonment took the launch boundary first, so no platform process was started.
-         * Replaced at the start of every launcher call, since a load makes two.
+         * Completed by the current launcher call once its wait has ended: {@code true} when the
+         * stop side holds the launch boundary, so no platform process was started. Replaced at
+         * the start of every launcher call, since a load makes two.
          */
         volatile java.util.concurrent.CompletableFuture<Boolean> launchDecision =
             new java.util.concurrent.CompletableFuture<>();
+
+        /**
+         * The launch boundary of the launcher call in progress, claimed by the stopper the moment
+         * the stop is signaled - a worker still waiting for the per-infobase lock then finds the
+         * boundary taken and starts no platform process, however soon the lock is freed.
+         */
+        volatile LaunchBoundary launchBoundary;
 
         /** Counted down by the stopper; the run's wait polls it. */
         final CountDownLatch stopped = new CountDownLatch(1);
     }
 
     /**
-     * Stops the run a registry cancel names: wakes the wait so the abandonment is answered now
-     * rather than at the budget's end, and reports how the launch boundary was decided.
+     * Stops the run a registry cancel names: claims the launch boundary at the signal, so a worker
+     * still waiting for the per-infobase lock starts no platform process however soon the lock is
+     * freed, wakes the wait so the abandonment is answered now rather than at the budget's end,
+     * and reports how the launch boundary was decided.
      * <p>
-     * The launch boundary itself is left to the two sides that can decide it - the worker, under the
-     * per-infobase lock right before the launcher, and the abandonment, before it declares itself.
-     * This stopper must not claim it as a third party: the abandonment reads a boundary it did not
-     * take as a launcher call that is already committed, so a claim made here over a worker that is
-     * still waiting for the lock would be reported as a platform process running when none was ever
-     * started.
+     * The claim only reserves the boundary for the stop side; who holds it is still read from the
+     * run's own decision, so a worker that crossed first is reported as a platform process still
+     * running, not as a prevented launch.
      * </p>
      *
      * @param runKey the run's key
      * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live,
-     *         {@link PendingWorkRegistry.StopOutcome#PREVENTED} when the abandonment took the
-     *         boundary first, otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
+     *         {@link PendingWorkRegistry.StopOutcome#PREVENTED} when the stop side holds the
+     *         boundary, otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
      */
     static PendingWorkRegistry.StopOutcome stopTheRun(String runKey)
     {
@@ -286,6 +292,11 @@ public final class DtSnapshotRunner
         if (live == null)
         {
             return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
+        }
+        LaunchBoundary boundary = live.launchBoundary;
+        if (boundary != null)
+        {
+            boundary.claimStop();
         }
         live.stopped.countDown();
         return InfobaseObjectsExporter.outcomeOnceDecided(live.launchDecision);
@@ -1249,12 +1260,13 @@ public final class DtSnapshotRunner
         {
             java.util.concurrent.CompletableFuture<Boolean> decision =
                 new java.util.concurrent.CompletableFuture<>();
+            LaunchBoundary launchClaim = new LaunchBoundary();
+            ctx.launchClaim = launchClaim;
             live.launchDecision = decision;
+            live.launchBoundary = launchClaim;
             LIVE.put(runKey, live);
             try
             {
-                AtomicBoolean launchClaim = new AtomicBoolean();
-                ctx.launchClaim = launchClaim;
                 BooleanSupplier watch = () -> live.stopped.getCount() == 0
                     || (callerCancelled != null && callerCancelled.getAsBoolean());
                 InfobaseObjectsExporter.runUnderBudget("the " + operation, SNAPSHOT_BUDGET_MS, //$NON-NLS-1$

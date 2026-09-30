@@ -453,7 +453,7 @@ public final class BmInfobaseExtensionHelper
      * @throws Exception whatever the work throws, after the infobase has been taken back
      */
     static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim,
+        LaunchBoundary launchClaim,
         java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
@@ -463,7 +463,7 @@ public final class BmInfobaseExtensionHelper
             {
                 lock.lockInterruptibly();
             }
-            if (launchClaim != null && !launchClaim.compareAndSet(false, true))
+            if (launchClaim != null && !launchClaim.claimLaunch())
             {
                 if (lock != null)
                 {
@@ -1993,7 +1993,7 @@ public final class BmInfobaseExtensionHelper
         {
             ctx.lock.lockInterruptibly();
         }
-        if (!ctx.launchClaim.compareAndSet(false, true))
+        if (!ctx.launchClaim.claimLaunch())
         {
             if (ctx.lock != null)
             {

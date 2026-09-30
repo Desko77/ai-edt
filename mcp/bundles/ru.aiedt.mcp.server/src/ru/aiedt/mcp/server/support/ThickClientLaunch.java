@@ -98,12 +98,11 @@ public final class ThickClientLaunch
         /**
          * The Designer launch boundary of the run this context belongs to, claimed once by whoever
          * crosses it first: the worker under the per-infobase lock, right before it calls the
-         * launcher, or the abandonment side when it gives the run up. Fresh for every run - a
-         * rebuild asks twice, the quick dump and the fallback - so each launch is claimed or
-         * abandoned on its own.
+         * launcher, or the stop side - the run's stopper at the signal, or the abandonment when it
+         * gives the run up. Fresh for every run - a rebuild asks twice, the quick dump and the
+         * fallback - so each launch is claimed or abandoned on its own.
          */
-        public java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
+        public LaunchBoundary launchClaim = new LaunchBoundary();
     }
 
     /**

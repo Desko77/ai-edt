@@ -255,6 +255,64 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
     }
 
     /**
+     * A stop signaled while the worker waits for the per-infobase lock holds the boundary even
+     * when the lock is freed in the same moment - inside the wait's poll gap: the worker that
+     * then acquires the lock finds the boundary taken, the launcher is never called, and the
+     * stopper answers PREVENTED.
+     */
+    @Test
+    public void aStopAtTheSignalHoldsTheBoundaryWhenTheLockIsFreedAtOnce() throws Exception
+    {
+        LauncherFixture fixture = new LauncherFixture(work);
+        Path file = work.resolve("dump.dt"); //$NON-NLS-1$
+        AtomicReference<String> runKey = new AtomicReference<>();
+        AtomicReference<String> answer = new AtomicReference<>();
+        AtomicReference<PendingWorkRegistry.StopOutcome> outcome = new AtomicReference<>();
+
+        fixture.lock.lock();
+        Thread run = startTheRun(fixture, runKey, answer, file);
+        try
+        {
+            assertTrue("the worker waits for the infobase lock", aWorkerIsWaitingFor(fixture.lock)); //$NON-NLS-1$
+
+            Thread stopper =
+                new Thread(() -> outcome.set(DtSnapshotRunner.stopTheRun(runKey.get())));
+            stopper.setDaemon(true);
+            stopper.start();
+            // The lock is let go the moment the stop is signaled, so a boundary the stopper did
+            // not claim itself is the worker's to take before the wait's next poll.
+            long deadline = System.currentTimeMillis() + PATIENCE_MS;
+            while (fixture.live.stopped.getCount() > 0 && System.currentTimeMillis() < deadline)
+            {
+                Thread.sleep(2L);
+            }
+            fixture.lock.unlock();
+            stopper.join(PATIENCE_MS);
+            fixture.release.set(true); // lets a launcher call that slipped through return
+
+            assertEquals("a stop at the signal is answered as prevented", //$NON-NLS-1$
+                PendingWorkRegistry.StopOutcome.PREVENTED, outcome.get());
+        }
+        finally
+        {
+            fixture.release.set(true);
+            if (fixture.lock.isHeldByCurrentThread())
+            {
+                fixture.lock.unlock();
+            }
+        }
+        run.join(PATIENCE_MS);
+        assertFalse("the run answered", run.isAlive()); //$NON-NLS-1$
+
+        assertTrue("the launcher was never called", fixture.calls.isEmpty()); //$NON-NLS-1$
+        JsonObject failed = parsed(answer.get());
+        assertTrue(failed.toString(), failed.get("cancelled").getAsBoolean()); //$NON-NLS-1$
+        assertTrue("the answer says the Designer run was not launched: " + failed, //$NON-NLS-1$
+            failed.get("error").getAsString().contains(NOTHING_LAUNCHED)); //$NON-NLS-1$
+        assertFalse("the destination was not written", Files.exists(file)); //$NON-NLS-1$
+    }
+
+    /**
      * Starts one dump on a thread of its own, so the test can act while the run is inside it.
      *
      * @param fixture the launcher the run goes through
@@ -319,6 +377,7 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
     {
         return (projectName, applicationId, operation, key, live, cancelled) -> {
             runKey.set(key);
+            fixture.live = live;
             return IoResolution.of(
                 new DtSnapshotRunner.EdtIo(fixture.ctx, operation, key, live, cancelled),
                 fixture.ctx.infobaseName);
@@ -461,6 +520,9 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
 
         /** What the run's infobase is claimed under. */
         final String identity;
+
+        /** What the run exposes to its stopper, set by the factory when the run starts. */
+        volatile DtSnapshotRunner.LiveRun live;
 
         /**
          * @param work the directory the infobase the run works on is named after
