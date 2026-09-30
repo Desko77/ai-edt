@@ -730,59 +730,7 @@ public class DiffModuleTool implements IMcpTool
         String[] oldLines, String[] newLines, int contextLines)
     {
         List<DiffLine> diffLines = computeDiff(oldLines, newLines);
-
-        // Collect hunks
-        List<List<DiffLine>> hunks = new ArrayList<>();
-        List<DiffLine> currentHunk = new ArrayList<>();
-        int lastChangeIdx = -contextLines - 1;
-
-        for (int i = 0; i < diffLines.size(); i++)
-        {
-            DiffLine dl = diffLines.get(i);
-            if (dl.type != DiffLine.Type.EQUAL)
-            {
-                // Start new hunk if gap > 2*contextLines
-                if (i - lastChangeIdx > contextLines * 2 + 1 && !currentHunk.isEmpty())
-                {
-                    hunks.add(currentHunk);
-                    currentHunk = new ArrayList<>();
-                    // Add leading context for new hunk
-                    int contextStart = Math.max(0, i - contextLines);
-                    for (int c = contextStart; c < i; c++)
-                    {
-                        currentHunk.add(diffLines.get(c));
-                    }
-                }
-                currentHunk.add(dl);
-                lastChangeIdx = i;
-            }
-            else if (i - lastChangeIdx <= contextLines)
-            {
-                // Trailing context after a change
-                currentHunk.add(dl);
-            }
-            else if (currentHunk.isEmpty())
-            {
-                // Check if there's a change coming within contextLines
-                boolean upcoming = false;
-                for (int peek = i + 1; peek < Math.min(i + contextLines + 1, diffLines.size()); peek++)
-                {
-                    if (diffLines.get(peek).type != DiffLine.Type.EQUAL)
-                    {
-                        upcoming = true;
-                        break;
-                    }
-                }
-                if (upcoming)
-                {
-                    currentHunk.add(dl);
-                }
-            }
-        }
-        if (!currentHunk.isEmpty())
-        {
-            hunks.add(currentHunk);
-        }
+        List<List<DiffLine>> hunks = groupHunks(diffLines, contextLines);
 
         // Count total changes
         int totalAdded = 0;
@@ -865,6 +813,51 @@ public class DiffModuleTool implements IMcpTool
         return fm.wrapContent(body.toString());
     }
 
+    /**
+     * Groups a diff into hunks.
+     * <p>
+     * Two changes share a hunk when no more than twice {@code contextLines} equal lines stand
+     * between them. A hunk is a contiguous run of the diff: every line from {@code contextLines}
+     * before its first change to {@code contextLines} after its last one, so the lines between two
+     * changes of one hunk are all shown and the hunk's line ranges count exactly its lines.
+     * </p>
+     *
+     * @param diffLines the whole diff, in order
+     * @param contextLines how many equal lines to show around a change; a negative value reads as 0
+     * @return the hunks, in order
+     */
+    static List<List<DiffLine>> groupHunks(List<DiffLine> diffLines, int contextLines)
+    {
+        int context = Math.max(0, contextLines);
+        List<List<DiffLine>> hunks = new ArrayList<>();
+        int start = -1;
+        int lastChange = -1;
+        for (int i = 0; i < diffLines.size(); i++)
+        {
+            if (diffLines.get(i).type == DiffLine.Type.EQUAL)
+            {
+                continue;
+            }
+            if (start >= 0 && i - lastChange - 1 > context * 2)
+            {
+                hunks.add(new ArrayList<>(
+                    diffLines.subList(start, Math.min(diffLines.size(), lastChange + context + 1))));
+                start = -1;
+            }
+            if (start < 0)
+            {
+                start = Math.max(0, i - context);
+            }
+            lastChange = i;
+        }
+        if (start >= 0)
+        {
+            hunks.add(new ArrayList<>(
+                diffLines.subList(start, Math.min(diffLines.size(), lastChange + context + 1))));
+        }
+        return hunks;
+    }
+
     // -- = --
     // Methods diff
     // -- = --
@@ -931,16 +924,22 @@ public class DiffModuleTool implements IMcpTool
             }
         }
 
+        boolean hasChanges = !diffs.isEmpty() || !previousContent.equals(currentContent);
         YamlFrontMatter fm = frontMatter(projectName, modulePath, provided)
             .put("previousRevision", previous.label()) //$NON-NLS-1$
             .put("mode", MODE_METHODS) //$NON-NLS-1$
-            .put("hasChanges", !diffs.isEmpty()) //$NON-NLS-1$
+            .put("hasChanges", hasChanges) //$NON-NLS-1$
             .put("totalChangedMethods", diffs.size()); //$NON-NLS-1$
 
         StringBuilder body = new StringBuilder();
         body.append("## Module Diff: ").append(modulePath).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
 
-        if (diffs.isEmpty())
+        if (diffs.isEmpty() && hasChanges)
+        {
+            body.append("Changes detected outside of methods ") //$NON-NLS-1$
+                .append("(comments, regions, variable declarations, etc.)\n"); //$NON-NLS-1$
+        }
+        else if (diffs.isEmpty())
         {
             body.append("No method-level changes detected.\n"); //$NON-NLS-1$
         }
@@ -1064,7 +1063,7 @@ public class DiffModuleTool implements IMcpTool
      * Computes line-level diff between old and new content.
      * Uses LCS-based algorithm for files under threshold, simple comparison for larger files.
      */
-    private List<DiffLine> computeDiff(String[] oldLines, String[] newLines)
+    static List<DiffLine> computeDiff(String[] oldLines, String[] newLines)
     {
         if (oldLines.length > LCS_THRESHOLD && newLines.length > LCS_THRESHOLD)
         {
@@ -1130,7 +1129,7 @@ public class DiffModuleTool implements IMcpTool
      * Simple line-by-line comparison for very large files.
      * Falls back to comparing lines at same positions.
      */
-    private List<DiffLine> computeSimpleDiff(String[] oldLines, String[] newLines)
+    private static List<DiffLine> computeSimpleDiff(String[] oldLines, String[] newLines)
     {
         List<DiffLine> result = new ArrayList<>();
         int commonLen = Math.min(oldLines.length, newLines.length);
@@ -1191,7 +1190,7 @@ public class DiffModuleTool implements IMcpTool
     /**
      * Represents a single line in a diff result.
      */
-    private static class DiffLine
+    static class DiffLine
     {
         enum Type
         {
