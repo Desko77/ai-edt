@@ -379,6 +379,13 @@ curl.exe http://localhost:12250/health
 }
 ```
 
+Пошаговая инструкция - подключение, скил и правило для Cursor, примеры задач и что делать, если не
+подключается: [docs/cursor.md](docs/cursor.md).
+
+**Установить и настроить все одним промптом агенту Cursor** - рецепт для агента
+[docs/cursor-agent-setup.md](docs/cursor-agent-setup.md), готовый промпт в начале
+[docs/cursor.md](docs/cursor.md).
+
 #### VS Code / GitHub Copilot
 
 Создайте `.vscode/mcp.json`; токен запрашивается при первом подключении и хранится VS Code, в файл он не попадает:
