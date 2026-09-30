@@ -1279,8 +1279,8 @@ public final class DumpInfoRebuilder
     /**
      * Records the format pair and rewrites the stored copy's sidecar as two attempts. The sidecar
      * is written even when the pair cannot be recorded, and a sidecar that cannot be written does
-     * not replace the pair's own failure. A copy without records leaves the sidecar's content as it
-     * was and clears a load mark on it.
+     * not replace the pair's own failure. A copy that reads no content - empty or unreadable -
+     * leaves the sidecar's content as it was and clears a load mark on it.
      *
      * @param infobaseIdentity the base the pair is for
      * @param format the dump-info format the platform wrote
@@ -1315,9 +1315,9 @@ public final class DumpInfoRebuilder
                 }
                 else
                 {
-                    // A dump with no records names no content to write, so writeTo would leave
-                    // the record as it was. The rebuild still loaded this base's own dump, so a
-                    // load mark no longer holds and is cleared.
+                    // A copy that reads no content - empty or unreadable - names nothing to
+                    // write, so writeTo would leave the record as it was. The rebuild still loaded
+                    // this base's own dump, so a load mark no longer holds and is cleared.
                     String notCleared = InfobaseOutsideChange.clearTheLoad(record);
                     if (notCleared != null && copyFailure != null)
                     {

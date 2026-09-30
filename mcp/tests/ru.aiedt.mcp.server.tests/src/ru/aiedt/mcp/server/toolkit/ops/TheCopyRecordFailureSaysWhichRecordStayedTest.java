@@ -107,6 +107,49 @@ public class TheCopyRecordFailureSaysWhichRecordStayedTest
         assertEquals("content-then", InfobaseOutsideChange.read(record).fingerprint); //$NON-NLS-1$
     }
 
+    /**
+     * A copy that reads but cannot be recorded over a record with a load mark says the mark
+     * stays, not that the next update compares.
+     */
+    @Test
+    public void aCopyThatCouldNotBeRecordedOverALoadMarkSaysTheMarkStays() throws IOException
+    {
+        Files.write(stored, DUMP.getBytes(StandardCharsets.UTF_8));
+        InfobaseOutsideChange.of(BASE, "content-then", 4) //$NON-NLS-1$
+            .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z").writeTo(record); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String sentence;
+        try (UnwritableRecord locked = UnwritableRecord.of(record))
+        {
+            sentence = DatabaseUpdater.recordTheCopy(stored, BASE);
+        }
+
+        assertNotNull(sentence);
+        assertTrue(sentence, sentence.contains("still carries its load mark")); //$NON-NLS-1$
+        assertFalse(sentence, sentence.contains("compares the copy with it")); //$NON-NLS-1$
+        assertTrue(InfobaseOutsideChange.read(record).replacedByLoad());
+    }
+
+    /**
+     * A copy that reads but cannot be recorded where no record was says nothing is left to
+     * compare with.
+     */
+    @Test
+    public void aCopyThatCouldNotBeRecordedWhereNoneWasSaysNothingIsLeft() throws IOException
+    {
+        Files.write(stored, DUMP.getBytes(StandardCharsets.UTF_8));
+        // A non-empty directory in the record's place: no record reads there, and the replacing
+        // move onto it fails on every platform.
+        Files.createDirectories(record);
+        Files.write(record.resolve("keep"), new byte[] { 1 }); //$NON-NLS-1$
+
+        String sentence = DatabaseUpdater.recordTheCopy(stored, BASE);
+
+        assertNotNull(sentence);
+        assertTrue(sentence, sentence.contains("no recorded content is left")); //$NON-NLS-1$
+        assertFalse(sentence, sentence.contains("compares the copy with it")); //$NON-NLS-1$
+    }
+
     /** A copy that reads and is recorded says nothing, and the record is the copy's. */
     @Test
     public void aRecordedCopySaysNothing() throws IOException

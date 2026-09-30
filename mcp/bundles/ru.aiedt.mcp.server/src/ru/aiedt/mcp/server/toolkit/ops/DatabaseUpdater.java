@@ -1424,8 +1424,8 @@ public class DatabaseUpdater implements IMcpTool
      * <p>
      * Two failures leave two different records behind. A copy that does not read has only a
      * load mark to clear; when the clear fails, the mark stays and the next incremental update
-     * refuses on it. A copy that reads is written as the new record; when that fails, the record
-     * the previous update left stays, and the next update compares the copy with it.
+     * refuses on it. A copy that reads is written as the new record; when that fails, the answer
+     * names what the record left behind makes of the next incremental update.
      * </p>
      *
      * @param stored the store's {@code ConfigDumpInfo.xml}
@@ -1456,9 +1456,32 @@ public class DatabaseUpdater implements IMcpTool
         catch (Exception | LinkageError cannotWrite)
         {
             return "the stored dump-info copy of this base could not be recorded after the " //$NON-NLS-1$
-                + "update; the record the previous update left stays, and the next update " //$NON-NLS-1$
-                + "compares the copy with it: " + cannotWrite; //$NON-NLS-1$
+                + "update; " + whatTheRecordLeft( //$NON-NLS-1$
+                    InfobaseOutsideChange.read(InfobaseOutsideChange.recordFileOf(stored)))
+                + ": " + cannotWrite; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * What the record that stayed beside the copy makes of the next incremental update.
+     *
+     * @param left the record as it is on disk after the failed write
+     * @return the clause naming it
+     */
+    static String whatTheRecordLeft(InfobaseOutsideChange left)
+    {
+        if (left.replacedByLoad())
+        {
+            return "the record left behind still carries its load mark, so the next incremental " //$NON-NLS-1$
+                + "update refuses on it"; //$NON-NLS-1$
+        }
+        if (!left.known())
+        {
+            return "no recorded content is left, so the next update has nothing to compare the " //$NON-NLS-1$
+                + "copy with"; //$NON-NLS-1$
+        }
+        return "the record the previous update left stays, and the next update compares the " //$NON-NLS-1$
+            + "copy with it"; //$NON-NLS-1$
     }
 
     /**
@@ -1915,7 +1938,7 @@ public class DatabaseUpdater implements IMcpTool
             }
             if (recordFailure != null)
             {
-                // Said rather than passed over: the record that stayed decides the next update.
+                // Said rather than passed over: the record that stayed shapes the next update.
                 result.put("infobaseChangeRecord", recordFailure); //$NON-NLS-1$
             }
 
