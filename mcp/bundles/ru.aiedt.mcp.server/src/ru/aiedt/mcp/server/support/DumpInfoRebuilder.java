@@ -1182,10 +1182,15 @@ public final class DumpInfoRebuilder
      * <p>The quick run is asked for first because the platform writes one
      * {@code ConfigDumpInfo.xml} for it in seconds, while the full dump writes the whole
      * configuration tree. The full dump runs only when the quick run finished without an error and
-     * left no file. A quick run that failed is refused with that error: a Configurator failure
-     * (credentials, a locked configuration, an unknown key) must not be followed by the longest
-     * dump while the infobase is still released. A file the quick run left before it threw is the
-     * file that is verified - the full dump is not asked for on top of it.</p>
+     * left no file. A quick run that failed is refused with that error, and a file it managed to
+     * leave before it threw is not accepted: a Configurator failure (credentials, a locked
+     * configuration, an unknown key) makes whatever bytes it left unusable, and following it with
+     * the longest dump would keep the infobase released for nothing.</p>
+     *
+     * <p>Only a file that carries a versioned {@code ConfigDumpInfo} root AND at least one record
+     * replaces the stored one: a header without records is what an interrupted dump leaves, so a
+     * count of zero - or a file that does not read - is refused with the count and the stored
+     * file stays as it was.</p>
      *
      * <p>A quick run ABANDONED by its budget is carried up as it stands rather than retried with
      * the full dump: the platform process is still running and holding the base, which is exactly
@@ -1197,36 +1202,14 @@ public final class DumpInfoRebuilder
         String stamp, String identity) throws Exception
     {
         out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
-        String fallback = null;
-        Path freshFile = null;
-        Exception quickFailure = null;
-        try
-        {
-            freshFile = producedFile(io.runDumpInfoOnly(tempDir), tempDir);
-        }
-        catch (Abandoned givenUp)
-        {
-            throw givenUp;
-        }
-        catch (Exception refused)
-        {
-            // The call returned. A file it managed to leave is still the quick run's file; what it
-            // is not is a reason to start the full dump.
-            quickFailure = refused;
-            freshFile = producedFile(null, tempDir);
-        }
+        Path freshFile = producedFile(io.runDumpInfoOnly(tempDir), tempDir);
         if (freshFile != null)
         {
-            out.rebuildPath = quickFailure == null ? PATH_DUMP_INFO_ONLY
-                : PATH_DUMP_INFO_ONLY + " (left the file, then threw: " + oneLine(quickFailure) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        else if (quickFailure != null)
-        {
-            throw quickFailure;
+            out.rebuildPath = PATH_DUMP_INFO_ONLY;
         }
         else
         {
-            fallback = "the quick dump left no " + DumpInfoProbe.FILE_NAME; //$NON-NLS-1$
+            String fallback = "the quick dump left no " + DumpInfoProbe.FILE_NAME; //$NON-NLS-1$
             out.sequence.add("dumpFull"); //$NON-NLS-1$
             out.rebuildPath = PATH_FULL + " (" + fallback + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             freshFile = producedFile(io.runFullDump(tempDir), tempDir);
@@ -1237,7 +1220,8 @@ public final class DumpInfoRebuilder
         }
 
         // Verify before anything of the stored file's is touched: a file that is not there, or not
-        // a ConfigDumpInfo root with a version, is the platform's answer and not a reason to swap.
+        // a ConfigDumpInfo root with a version, or carrying no records is the platform's answer
+        // and not a reason to swap.
         out.newFormat = DumpInfoProbe.formatOf(freshFile);
         out.records = DumpInfoProbe.recordsIn(freshFile);
         out.sequence.add("verify"); //$NON-NLS-1$
@@ -1247,6 +1231,12 @@ public final class DumpInfoRebuilder
                 + DumpInfoProbe.FILE_NAME + " at " + freshFile //$NON-NLS-1$
                 + (freshFile.toFile().isFile() ? " (not a ConfigDumpInfo root with a version)" //$NON-NLS-1$
                     : " (no such file)")); //$NON-NLS-1$
+        }
+        if (out.records <= 0)
+        {
+            throw new IllegalStateException("the Designer run's " + DumpInfoProbe.FILE_NAME + " at " //$NON-NLS-1$ //$NON-NLS-2$
+                + freshFile + " carries " + out.records + " Metadata records - a dump without " //$NON-NLS-1$ //$NON-NLS-2$
+                + "records does not replace the stored file"); //$NON-NLS-1$
         }
 
         out.sequence.add("backup"); //$NON-NLS-1$
