@@ -301,9 +301,9 @@ public final class BmDefinedTypeHelper
                 String s = part.trim();
                 if (!s.isEmpty())
                 {
-                    // Normalize a Russian primitive name (Строка / Число / ...) to its
-                    // English canonical form so it resolves like the English spelling;
-                    // non-primitive tokens pass through unchanged.
+                    // A Russian primitive (Строка) and a Russian metadata-type prefix
+                    // (ОпределяемыйТип.X) become the English spelling. The check and the
+                    // builder both read that spelling, so the two writings name one object.
                     expandedFqns.add(normalizePrimitiveFqn(s));
                 }
             }
@@ -1598,8 +1598,18 @@ public final class BmDefinedTypeHelper
                 ? primitiveValueKind(readExistingTypeNames((MdObject) target)) : null;
             if ("Boolean".equals(kind)) //$NON-NLS-1$
             {
+                boolean flag;
+                try
+                {
+                    flag = parseBooleanLiteral(v);
+                }
+                catch (IllegalArgumentException rejected)
+                {
+                    return "fillValue '" + v + "' is not a valid Boolean: " //$NON-NLS-1$ //$NON-NLS-2$
+                        + rejected.getMessage();
+                }
                 value = createMcoreValue("createBooleanValue", boolean.class, //$NON-NLS-1$
-                    Boolean.valueOf(parseBooleanLiteral(v)));
+                    Boolean.valueOf(flag));
             }
             else if ("Number".equals(kind)) //$NON-NLS-1$
             {
@@ -1648,12 +1658,16 @@ public final class BmDefinedTypeHelper
         }
     }
 
-    /** True for the common true-literals (EN + RU); everything else is false. */
+    /**
+     * Reads a fill-value boolean through {@link BooleanLiteral}.
+     *
+     * @param v the text, already trimmed by the caller; may be empty
+     * @return the boolean it names
+     * @throws IllegalArgumentException when {@code v} is not an accepted spelling
+     */
     private static boolean parseBooleanLiteral(String v)
     {
-        String s = v.trim().toLowerCase();
-        return "true".equals(s) || "истина".equals(s) || "да".equals(s) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            || "1".equals(s) || "yes".equals(s); //$NON-NLS-1$ //$NON-NLS-2$
+        return BooleanLiteral.parse(v);
     }
 
     /**
@@ -3096,23 +3110,32 @@ public final class BmDefinedTypeHelper
     }
 
     /**
-     * Maps a bare Russian primitive type name to its English canonical form (via
-     * {@link #RU_PRIMITIVE_TO_EN}); returns any other token (dotted reference /
-     * defined types, English names, unknown words) unchanged. Applied to each
-     * expanded FQN before shape validation so "Строка" / "Число" resolve exactly
-     * like "String" / "Number".
+     * Maps a type token to the spelling the acceptance check and the type builder both read.
+     * <p>
+     * A bare Russian primitive ({@code Строка}, {@code Число}) becomes its English name. A dotted
+     * token whose prefix is a metadata type name becomes that type's English singular, which is how
+     * {@code ОпределяемыйТип.X} and {@code DefinedType.X} name one object and compare equal when a
+     * second write asks whether the type is already set. A dotted prefix the catalogue does not
+     * know, such as {@code CatalogRef} or {@code СправочникСсылка}, is returned unchanged: those
+     * names are produced-type kinds, not metadata type names, and the catalogue has no entry for
+     * them.
+     * </p>
      *
      * @param fqn a single (already comma-split) requested type token.
-     * @return the English primitive name when {@code fqn} is a Russian primitive,
-     *         otherwise {@code fqn} unchanged.
+     * @return the canonical spelling, or {@code fqn} when nothing maps it; {@code null} when
+     *         {@code fqn} is {@code null}
      */
     // Package-visible for BmDefinedTypeHelperTest: the map shipped without a test,
     // and what it must NOT map matters as much as what it must.
     static String normalizePrimitiveFqn(String fqn)
     {
-        if (fqn == null || fqn.indexOf('.') >= 0)
+        if (fqn == null)
         {
-            return fqn;
+            return null;
+        }
+        if (fqn.indexOf('.') >= 0)
+        {
+            return MetadataTypeCatalog.normalizeFqn(fqn);
         }
         String en = RU_PRIMITIVE_TO_EN.get(fqn.trim().toLowerCase(Locale.ROOT));
         return en != null ? en : fqn;
@@ -3198,14 +3221,9 @@ public final class BmDefinedTypeHelper
             // Characteristic.ОбъектыАдресацииЗадач. The gate used to fall through to the
             // refusal below and turn that legal type down, while createFromProducedTypes
             // right next door knows the kind perfectly well.
+            // A Russian ОпределяемыйТип prefix is already DefinedType here:
+            // normalizePrimitiveFqn translates it before this check and before the builder.
             return referenceTargetExists(parts[0], parts[1], project, config);
-        }
-        if (parts[0].equals("ОпределяемыйТип")) //$NON-NLS-1$
-        {
-            // Checked exactly like the English spelling. Left unconditional, the gate
-            // would wave through a defined type that does not exist when its kind was
-            // written in Russian and refuse the very same name written in English.
-            return referenceTargetExists("DefinedType", parts[1], project, config); //$NON-NLS-1$
         }
         return false;
     }

@@ -1454,10 +1454,22 @@ public final class BmObjectHelper
             {
                 continue;
             }
+            Class<?> paramType = m.getParameterTypes()[0];
+            Object converted;
             try
             {
-                Class<?> paramType = m.getParameterTypes()[0];
-                Object converted = coerceValue(obj, value, paramType);
+                converted = coerceValue(obj, value, paramType);
+            }
+            catch (IllegalArgumentException rejected)
+            {
+                // A number that does not parse, a boolean that is not one of the accepted
+                // spellings, and an enum name the type does not have all throw here, before the
+                // setter runs. The message names what was wrong. The catch after invoke is only
+                // for a value the setter received and refused.
+                return "Failed to set " + propertyName + ": " + rejected.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            try
+            {
                 if (converted == null && paramType.isPrimitive())
                 {
                     // A primitive has no null. Passing one reaches the JDK as
@@ -1605,7 +1617,7 @@ public final class BmObjectHelper
         }
         if (targetType == boolean.class || targetType == Boolean.class)
         {
-            return Boolean.valueOf(s);
+            return Boolean.valueOf(BooleanLiteral.parse(s));
         }
         if (targetType == int.class || targetType == Integer.class)
         {
