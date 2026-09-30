@@ -48,6 +48,12 @@ public class DcsSearchTool implements IMcpTool
     private static final int DEFAULT_MAX_RESULTS = 100;
     private static final int ABSOLUTE_MAX_RESULTS = 500;
 
+    /** How many unreadable schemas the answer names; the rest are counted. */
+    private static final int UNREADABLE_LISTED = 20;
+
+    /** The longest fragment a hit shows. */
+    private static final int FRAGMENT_LIMIT = 200;
+
     @Override
     public String getName()
     {
@@ -116,12 +122,7 @@ public class DcsSearchTool implements IMcpTool
         Pattern pattern;
         try
         {
-            int flags = Pattern.UNICODE_CHARACTER_CLASS;
-            if (!caseSensitive)
-            {
-                flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
-            }
-            pattern = Pattern.compile(isRegex ? query : Pattern.quote(query), flags);
+            pattern = compile(query, isRegex, caseSensitive);
         }
         catch (PatternSyntaxException e)
         {
@@ -146,7 +147,37 @@ public class DcsSearchTool implements IMcpTool
         return format(query, collector);
     }
 
-    private String format(String query, Collector c)
+    /**
+     * Compiles the query as the search reads it.
+     * <p>
+     * The whole schema text is searched at once, so a query may span lines. MULTILINE keeps
+     * {@code ^} and {@code $} at line boundaries, where a line-by-line search put them.
+     * </p>
+     *
+     * @param query the text or regular expression
+     * @param isRegex whether the query is a regular expression
+     * @param caseSensitive whether case must match
+     * @return the pattern
+     * @throws PatternSyntaxException when a regular expression does not compile
+     */
+    static Pattern compile(String query, boolean isRegex, boolean caseSensitive)
+    {
+        int flags = Pattern.UNICODE_CHARACTER_CLASS | Pattern.MULTILINE;
+        if (!caseSensitive)
+        {
+            flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+        }
+        return Pattern.compile(isRegex ? query : Pattern.quote(query), flags);
+    }
+
+    /**
+     * Renders the answer: the counts, the schemas that could not be read, and the hits by schema.
+     *
+     * @param query the query as given
+     * @param c the finished walk
+     * @return the markdown answer
+     */
+    String format(String query, Collector c)
     {
         StringBuilder sb = new StringBuilder();
         sb.append("## DCS Search for \"").append(query).append("\"\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -158,6 +189,21 @@ public class DcsSearchTool implements IMcpTool
             sb.append(" - showing first ").append(c.shownMatches); //$NON-NLS-1$
         }
         sb.append("\n\n"); //$NON-NLS-1$
+        if (c.unreadableFiles > 0)
+        {
+            sb.append("**Unreadable:** ").append(c.unreadableFiles) //$NON-NLS-1$
+                .append(" .dcs/.dcss file(s) could not be read and were not searched:\n"); //$NON-NLS-1$
+            for (String entry : c.unreadable)
+            {
+                sb.append("- ").append(entry).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (c.unreadableFiles > c.unreadable.size())
+            {
+                sb.append("- and ").append(c.unreadableFiles - c.unreadable.size()) //$NON-NLS-1$
+                    .append(" more\n"); //$NON-NLS-1$
+            }
+            sb.append("\n"); //$NON-NLS-1$
+        }
 
         if (c.matchesByFile.isEmpty())
         {
@@ -172,7 +218,12 @@ public class DcsSearchTool implements IMcpTool
             sb.append("`").append(path).append("`\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
             for (Hit hit : entry.getValue())
             {
-                sb.append("- **").append(hit.line).append(":** `") //$NON-NLS-1$ //$NON-NLS-2$
+                sb.append("- **").append(hit.line); //$NON-NLS-1$
+                if (hit.endLine > hit.line)
+                {
+                    sb.append('-').append(hit.endLine);
+                }
+                sb.append(":** `") //$NON-NLS-1$
                     .append(hit.text.replace("`", "'")).append("`\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             }
             sb.append("\n"); //$NON-NLS-1$
@@ -207,19 +258,28 @@ public class DcsSearchTool implements IMcpTool
         return displayPath;
     }
 
-    private static final class Hit
+    /** One hit: the lines it spans and the fragment shown. */
+    static final class Hit
     {
         final int line;
+        final int endLine;
         final String text;
 
-        Hit(int line, String text)
+        /**
+         * @param line the line the match starts on, from 1
+         * @param endLine the line the match ends on
+         * @param text the fragment shown
+         */
+        Hit(int line, int endLine, String text)
         {
             this.line = line;
+            this.endLine = endLine;
             this.text = text;
         }
     }
 
-    private static final class Collector implements IResourceVisitor
+    /** The walk over a project's schemas: what it read, what it could not, and what matched. */
+    static class Collector implements IResourceVisitor
     {
         private final Pattern pattern;
         private final String pathFilter;
@@ -229,7 +289,14 @@ public class DcsSearchTool implements IMcpTool
         int totalMatches = 0;
         int shownMatches = 0;
         int scannedFiles = 0;
+        int unreadableFiles = 0;
+        final List<String> unreadable = new ArrayList<>();
 
+        /**
+         * @param pattern the compiled query
+         * @param pathFilter the path substring a schema must carry, or <code>null</code>
+         * @param maxResults how many hits to keep
+         */
         Collector(Pattern pattern, String pathFilter, int maxResults)
         {
             this.pattern = pattern;
@@ -259,46 +326,187 @@ public class DcsSearchTool implements IMcpTool
             {
                 return false;
             }
-            scannedFiles++;
+            String content;
             try
             {
-                searchInFile((IFile)resource, displayPath);
+                content = readText((IFile)resource);
             }
             catch (Exception e)
             {
-                Activator.logWarning("dcs_search failed on " + displayPath + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+                unreadable(displayPath, e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                return false;
+            }
+            try
+            {
+                search(content, displayPath);
+                scannedFiles++;
+            }
+            catch (RuntimeException | StackOverflowError e)
+            {
+                // A pattern that recurses per character can run out of stack over a whole schema.
+                unreadable(displayPath, "search failed: " + e.getClass().getSimpleName()); //$NON-NLS-1$
             }
             return false;
         }
 
-        private void searchInFile(IFile file, String displayPath) throws Exception
+        /**
+         * Counts a schema that was not searched through, and names it while the list has room.
+         *
+         * @param displayPath the schema path
+         * @param reason why it was not searched
+         */
+        private void unreadable(String displayPath, String reason)
         {
-            String content = BslModuleAccess.readFileText(file);
-            if (!pattern.matcher(content).find())
+            unreadableFiles++;
+            if (unreadable.size() < UNREADABLE_LISTED)
+            {
+                unreadable.add(displayPath + ": " + reason); //$NON-NLS-1$
+            }
+            Activator.logWarning("dcs_search failed on " + displayPath + ": " + reason); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        /**
+         * Reads a schema's text.
+         *
+         * @param file the schema file
+         * @return its text
+         * @throws Exception when the file cannot be read
+         */
+        String readText(IFile file) throws Exception
+        {
+            return BslModuleAccess.readFileText(file);
+        }
+
+        /**
+         * Searches one schema's text as a whole, so a match may span lines.
+         * <p>
+         * A hit is counted once per line it starts on, as the search counted lines before a
+         * match could span them; whitespace that opens a match across a line break is not where
+         * it starts (see {@link #startOfContent}). Trailing line breaks are dropped first: an
+         * empty last line is not a line of the schema, and {@code .*} would match it; a schema of
+         * line breaks alone has no lines. A match made only of whitespace runs across line breaks
+         * and counts once, and {@code \A} and {@code \z} mark the ends of the schema.
+         * </p>
+         *
+         * @param content the schema text
+         * @param displayPath the schema path the hits are filed under
+         */
+        void search(String content, String displayPath)
+        {
+            String text = content.replace("\r\n", "\n").replace("\r", "\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            int length = text.length();
+            while (length > 0 && text.charAt(length - 1) == '\n')
+            {
+                length--;
+            }
+            if (length == 0)
             {
                 return;
             }
-            // split() (no -1) drops trailing empty lines so a final newline does
-            // not create a spurious empty last line that a '.*' regex would match.
-            String[] lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            for (int i = 0; i < lines.length; i++)
+            text = text.substring(0, length);
+            Matcher m = pattern.matcher(text);
+            int line = 1;
+            int counted = 0;
+            int lastLine = 0;
+            while (m.find())
             {
-                if (pattern.matcher(lines[i]).find())
+                int start = startOfContent(text, m.start(), m.end());
+                line += countBreaks(text, counted, start);
+                counted = start;
+                if (line == lastLine)
                 {
-                    totalMatches++;
-                    if (shownMatches < maxResults)
-                    {
-                        String text = lines[i].trim();
-                        if (text.length() > 200)
-                        {
-                            text = text.substring(0, 200) + "..."; //$NON-NLS-1$
-                        }
-                        matchesByFile.computeIfAbsent(displayPath, k -> new ArrayList<>())
-                            .add(new Hit(i + 1, text));
-                        shownMatches++;
-                    }
+                    continue;
+                }
+                lastLine = line;
+                totalMatches++;
+                if (shownMatches < maxResults)
+                {
+                    int endLine = line + countBreaks(text, start, Math.max(start, m.end() - 1));
+                    matchesByFile.computeIfAbsent(displayPath, k -> new ArrayList<>())
+                        .add(new Hit(line, endLine, fragment(text, start, m.end())));
+                    shownMatches++;
                 }
             }
+        }
+
+        /**
+         * Where a match starts for the line it is filed under.
+         * <p>
+         * A match that opens with whitespace running across a line break - {@code \s*ВЫБРАТЬ}
+         * matched from the end of the line above - starts after the last of those breaks. A
+         * match made only of whitespace and ending on a line break keeps its start, the line
+         * that break ends.
+         * </p>
+         *
+         * @param text the schema text
+         * @param start where the match starts
+         * @param end where the match ends
+         * @return the offset the match's line is read from
+         */
+        static int startOfContent(String text, int start, int end)
+        {
+            int from = start;
+            for (int i = start; i < end && Character.isWhitespace(text.charAt(i)); i++)
+            {
+                if (text.charAt(i) == '\n' && i + 1 < end)
+                {
+                    from = i + 1;
+                }
+            }
+            return from;
+        }
+
+        /**
+         * Counts the line breaks in a range of text.
+         *
+         * @param text the text
+         * @param from the first offset, inclusive
+         * @param to the last offset, exclusive
+         * @return how many line breaks lie in the range
+         */
+        private static int countBreaks(String text, int from, int to)
+        {
+            int breaks = 0;
+            for (int i = from; i < to; i++)
+            {
+                if (text.charAt(i) == '\n')
+                {
+                    breaks++;
+                }
+            }
+            return breaks;
+        }
+
+        /**
+         * The fragment a hit shows: the lines from the start of the match to its end, each
+         * trimmed, joined with a literal {@code \n}, cut at {@link #FRAGMENT_LIMIT} characters.
+         *
+         * @param text the schema text
+         * @param start where the match starts
+         * @param end where the match ends
+         * @return the fragment
+         */
+        private static String fragment(String text, int start, int end)
+        {
+            int from = text.lastIndexOf('\n', start - 1) + 1;
+            int to = text.indexOf('\n', Math.max(start, end - 1));
+            if (to < 0)
+            {
+                to = text.length();
+            }
+            List<String> lines = new ArrayList<>();
+            for (String piece : text.substring(from, to).split("\n", -1)) //$NON-NLS-1$
+            {
+                lines.add(piece.trim());
+            }
+            String shown = String.join(" \\n ", lines); //$NON-NLS-1$
+            if (shown.length() <= FRAGMENT_LIMIT)
+            {
+                return shown;
+            }
+            int cut = Character.isHighSurrogate(shown.charAt(FRAGMENT_LIMIT - 1)) ? FRAGMENT_LIMIT - 1
+                : FRAGMENT_LIMIT;
+            return shown.substring(0, cut) + "..."; //$NON-NLS-1$
         }
     }
 }
