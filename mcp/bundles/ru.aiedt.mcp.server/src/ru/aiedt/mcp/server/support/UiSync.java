@@ -24,9 +24,13 @@ import org.eclipse.swt.widgets.Display;
  * needs. If the UI thread is wedged - a modal dialog is open, another operation is stuck - a plain
  * {@code syncExec} would block that tool forever, and a burst of such calls would exhaust the request
  * pool and take the whole server down with it. Instead this waits a bounded time and then gives up with
- * a {@link UiBusyException}. The work stays queued and may still run later; that is harmless for the
- * read-only model access this is used for. For work with side effects, the caller must accept that a
- * timed-out operation may still apply.
+ * a {@link UiBusyException}.
+ *
+ * <p><b>What a given-up call leaves behind.</b> Work the waiter abandoned before it started is marked
+ * abandoned, and the queued runnable exits without running it - a write the caller already read as
+ * refused must not land on the form a minute later. Work that had already started when the wait ran
+ * out cannot be taken back, so the caller waits for its real outcome instead of answering a refusal
+ * the write may contradict.
  */
 public final class UiSync
 {
@@ -57,7 +61,9 @@ public final class UiSync
      * @param work the work to run; must not be <code>null</code>
      * @param timeoutMs how long to wait for the UI thread, in milliseconds
      * @return the work's result
-     * @throws UiBusyException if the UI thread does not run the work in time, or the wait is interrupted
+     * @throws UiBusyException if the UI thread did not start the work in time (the work never
+     *             runs), or the wait was interrupted - once the work has started, the caller waits
+     *             for its outcome instead
      */
     public static <T> T call(Supplier<T> work, long timeoutMs)
     {
@@ -77,7 +83,16 @@ public final class UiSync
         // null answer instead of the failure it was.
         AtomicReference<Throwable> failure = new AtomicReference<>();
         CountDownLatch done = new CountDownLatch(1);
+        // The border between a runnable the queue may still run and one it may not. The runnable
+        // claims the work by PENDING -> STARTED; a waiter that stopped waiting claims it by
+        // PENDING -> ABANDONED. Exactly one compareAndSet wins, so work the caller read as
+        // refused never starts, while work that did start is waited for below.
+        AtomicReference<QueueState> state = new AtomicReference<>(QueueState.PENDING);
         display.asyncExec(() -> {
+            if (!state.compareAndSet(QueueState.PENDING, QueueState.STARTED))
+            {
+                return;
+            }
             try
             {
                 result.set(carried.get());
@@ -99,12 +114,31 @@ public final class UiSync
         catch (InterruptedException e)
         {
             Thread.currentThread().interrupt();
-            throw new UiBusyException("Interrupted while waiting for the EDT UI thread"); //$NON-NLS-1$
+            throw abandonedByInterrupt(state);
+        }
+        if (!finished && state.compareAndSet(QueueState.PENDING, QueueState.ABANDONED))
+        {
+            // Nothing was changed: the queue still holds the runnable, but it exits before the
+            // work, and the work is what writes.
+            throw new UiBusyException("The EDT UI thread did not respond within " + timeoutMs //$NON-NLS-1$
+                + " ms (it is busy, or a modal dialog is open); nothing was changed"); //$NON-NLS-1$
         }
         if (!finished)
         {
-            throw new UiBusyException("The EDT UI thread did not respond within " + timeoutMs //$NON-NLS-1$
-                + " ms (it is busy, or a modal dialog is open)"); //$NON-NLS-1$
+            // The work is already running, so its effects land whether this caller waits or not.
+            // Answering "UI busy, retry" here could double a write the caller retries, so the
+            // call stays for the real outcome. An interrupt can still break the wait - it says
+            // so, because by then the work may apply.
+            try
+            {
+                done.await();
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                throw new UiBusyException("Interrupted while the work was already running on the " //$NON-NLS-1$
+                    + "EDT UI thread; it may still apply"); //$NON-NLS-1$
+            }
         }
         Throwable f = failure.get();
         if (f instanceof RuntimeException)
@@ -122,6 +156,45 @@ public final class UiSync
             throw new RuntimeException(f);
         }
         return result.get();
+    }
+
+    /**
+     * Tells a queued runnable from one the waiter stopped waiting for, and a started one from both.
+     * <p>
+     * The state moves exactly once out of {@code PENDING}, by whichever side wins the
+     * compareAndSet: the runnable starting the work, or the waiter giving the work up. The loser
+     * reads the winner's state and acts on it - the runnable exits without running, the waiter
+     * either answers a refusal that is true (nothing runs) or waits for the outcome.
+     * </p>
+     */
+    private enum QueueState
+    {
+        /** In the UI thread's queue; the waiter is still waiting for it. */
+        PENDING,
+
+        /** Running on the UI thread right now; its effects will land. */
+        STARTED,
+
+        /** The waiter gave the work up before it started; the runnable must not run it. */
+        ABANDONED
+    }
+
+    /**
+     * Takes the queued work out of the queue on behalf of an interrupted waiter, and answers the
+     * refusal that matches what was actually left behind.
+     *
+     * @param state the queue state of the call the interrupt broke
+     * @return the refusal for the interrupted wait; its text says whether the work can still apply
+     */
+    private static UiBusyException abandonedByInterrupt(AtomicReference<QueueState> state)
+    {
+        if (state.compareAndSet(QueueState.PENDING, QueueState.ABANDONED))
+        {
+            return new UiBusyException("Interrupted while waiting for the EDT UI thread; " //$NON-NLS-1$
+                + "nothing was changed"); //$NON-NLS-1$
+        }
+        return new UiBusyException("Interrupted while the work was already running on the " //$NON-NLS-1$
+            + "EDT UI thread; it may still apply"); //$NON-NLS-1$
     }
 
     /** Signals that the UI thread was unavailable within the allotted time. */
