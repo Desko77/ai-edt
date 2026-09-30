@@ -11,6 +11,7 @@ import org.eclipse.core.commands.ExecutionException;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.window.Window;
 
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.folders.model.Cluster;
 import ru.aiedt.mcp.server.folders.model.ClusterStore;
@@ -42,10 +43,11 @@ public class RenameClusterCommand
             name -> validateName(service, project, cluster, name));
         if (dialog.open() == Window.OK)
         {
-            if (!service.updateCluster(project, cluster.getFullPath(), dialog.getClusterName(),
-                dialog.getClusterDescription()))
+            ClusterWriteOutcome updated = service.updateCluster(project, cluster.getFullPath(),
+                dialog.getClusterName(), dialog.getClusterDescription());
+            if (updated.isRefused())
             {
-                showSaveFailure(selection.shell, project);
+                showSaveFailure(selection.shell, project, updated);
             }
         }
         return null;

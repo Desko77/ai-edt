@@ -7,7 +7,6 @@
 package ru.aiedt.mcp.server.folders.internal;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -17,9 +16,11 @@ import org.junit.Before;
 import org.junit.Test;
 
 import ru.aiedt.mcp.server.folders.ClusterWorkspaceProbe;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterChangeObserver;
 import ru.aiedt.mcp.server.folders.model.Cluster;
 import ru.aiedt.mcp.server.folders.model.ClusterStore;
+import ru.aiedt.mcp.server.folders.repository.ClusterSaveOutcome;
 import ru.aiedt.mcp.server.folders.repository.IClusterStore;
 
 /**
@@ -76,13 +77,15 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
     @Test
     public void aMoveThatCannotBeSavedIsRefusedAndNotAnnounced() throws Exception
     {
-        assertNotNull(manager.createCluster(probe.project, "Shelf", "Catalogs", null)); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.A", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull(manager.createCluster(probe.project, "Shelf", "Catalogs", null).getCluster()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.A", "Catalogs/Shelf").succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(manager.holdsObjectOrDescendant(probe.project, "Catalog")); //$NON-NLS-1$
         manager.addClusterChangeListener(noticed());
         store.refuseSaves = true;
 
-        assertFalse(manager.addObjectToCluster(probe.project, "Catalog.B", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+        ClusterWriteOutcome refused = manager.addObjectToCluster(probe.project, "Catalog.B", "Catalogs/Shelf"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refused.isRefused());
+        assertEquals(ClusterSaveOutcome.WRITE_FAILED, refused.getCode());
         assertTrue(manager.findClusterForObject(probe.project, "Catalog.A") != null); //$NON-NLS-1$
         assertNull(manager.findClusterForObject(probe.project, "Catalog.B")); //$NON-NLS-1$
         assertTrue(notices == 0);
@@ -96,12 +99,15 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
     @Test
     public void aClusterThatCannotBeSavedIsRefusedAndNotAnnounced() throws Exception
     {
-        Cluster first = manager.createCluster(probe.project, "Shelf", "Catalogs", null); //$NON-NLS-1$ //$NON-NLS-2$
+        Cluster first = manager.createCluster(probe.project, "Shelf", "Catalogs", null).getCluster(); //$NON-NLS-1$ //$NON-NLS-2$
         assertNotNull(first);
         manager.addClusterChangeListener(noticed());
         store.refuseSaves = true;
 
-        assertNull(manager.createCluster(probe.project, "Other", "Catalogs", null)); //$NON-NLS-1$ //$NON-NLS-2$
+        ClusterWriteOutcome refused = manager.createCluster(probe.project, "Other", "Catalogs", null); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(refused.getCluster());
+        assertTrue(refused.isRefused());
+        assertEquals(ClusterSaveOutcome.WRITE_FAILED, refused.getCode());
         assertNull(manager.getClusterStorage(probe.project).getClusterByFullPath("Catalogs/Other")); //$NON-NLS-1$
         assertTrue(notices == 0);
     }
@@ -116,7 +122,9 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
         store.refuseLoads = true;
 
         assertTrue(manager.getClusterStorage(probe.project).isEmpty());
-        assertFalse(manager.addObjectToCluster(probe.project, "Catalog.A", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+        ClusterWriteOutcome refused = manager.addObjectToCluster(probe.project, "Catalog.A", "Catalogs/Shelf"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refused.isRefused());
+        assertEquals(ClusterSaveOutcome.READ_FAILED, refused.getCode());
         assertTrue(store.saveCalls == 0);
 
         store.refuseLoads = false;
@@ -172,15 +180,15 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
         }
 
         @Override
-        public boolean save(org.eclipse.core.resources.IProject project, ClusterStore storage)
+        public ClusterSaveOutcome save(org.eclipse.core.resources.IProject project, ClusterStore storage)
         {
             saveCalls++;
             if (refuseSaves)
             {
-                return false;
+                return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, "refused"); //$NON-NLS-1$
             }
             saved = copy(storage);
-            return true;
+            return ClusterSaveOutcome.ok();
         }
 
         @Override

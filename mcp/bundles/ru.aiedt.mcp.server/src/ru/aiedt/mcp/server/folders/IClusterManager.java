@@ -13,6 +13,7 @@ import org.eclipse.core.resources.IProject;
 
 import ru.aiedt.mcp.server.folders.model.Cluster;
 import ru.aiedt.mcp.server.folders.model.ClusterStore;
+import ru.aiedt.mcp.server.folders.repository.ClusterSaveOutcome;
 
 /**
  * The one seam through which everything - the Navigator content, the filter, the handlers and the
@@ -20,9 +21,10 @@ import ru.aiedt.mcp.server.folders.model.ClusterStore;
  * <p>
  * The service keeps a per-project cache of the clusters, backed by the file on disk, and tells its
  * listeners whenever a project's clusters change. Every method takes the project first. No method
- * throws a checked exception: a failure to read or write the file is logged and turned into an empty
- * result, because the callers run on the display thread and inside refactoring and have nowhere
- * useful to put an exception.
+ * throws a checked exception: a failure to read or write the file is logged and returned as a
+ * {@link ClusterWriteOutcome} that names the reason, because the callers run on the display thread
+ * and inside refactoring and have nowhere useful to put an exception. A reason is only that
+ * returned value; the service does not keep a last refusal.
  * </p>
  * <p>
  * Callers are written to tolerate there being no service at all - see
@@ -68,10 +70,11 @@ public interface IClusterManager
      * @param name the cluster name
      * @param path the collection path; may be <code>null</code> for a root cluster
      * @param description the description; may be <code>null</code>
-     * @return the created cluster, or <code>null</code> if the path is occupied or the file could not
-     *         be loaded or saved
+     * @return the outcome. A successful one carries the created cluster. An occupied path is
+     *         {@link ClusterWriteOutcome#CLUSTER_EXISTS}. A file that could not be read or written
+     *         carries that save code.
      */
-    Cluster createCluster(IProject project, String name, String path, String description);
+    ClusterWriteOutcome createCluster(IProject project, String name, String path, String description);
 
     /**
      * Renames a cluster, changing only its name.
@@ -79,10 +82,11 @@ public interface IClusterManager
      * @param project the project
      * @param oldFullPath the full path of the cluster to rename
      * @param newName the new name
-     * @return <code>true</code> if the cluster was found, renamed and saved; <code>false</code> when
-     *         it was absent or the file could not be loaded or saved
+     * @return the outcome. {@link ClusterWriteOutcome#CLUSTER_NOT_FOUND} when the cluster is absent,
+     *         {@link ClusterWriteOutcome#NAME_TAKEN} when another cluster already has the new name,
+     *         {@link ClusterSaveOutcome#NO_CHANGE} when the name is already the one asked for
      */
-    boolean renameCluster(IProject project, String oldFullPath, String newName);
+    ClusterWriteOutcome renameCluster(IProject project, String oldFullPath, String newName);
 
     /**
      * Renames a cluster and sets its description. This is what the Rename dialog performs.
@@ -91,10 +95,13 @@ public interface IClusterManager
      * @param oldFullPath the full path of the cluster to update
      * @param newName the new name
      * @param description the new description; may be <code>null</code>
-     * @return <code>true</code> if the cluster was found, updated and saved; <code>false</code> when
-     *         it was absent or the file could not be loaded or saved
+     * @return the outcome. {@link ClusterWriteOutcome#CLUSTER_NOT_FOUND} when the cluster is absent,
+     *         {@link ClusterWriteOutcome#NAME_TAKEN} when another cluster already has the new name,
+     *         {@link ClusterSaveOutcome#NO_CHANGE} when the name and description are already those
+     *         asked for
      */
-    boolean updateCluster(IProject project, String oldFullPath, String newName, String description);
+    ClusterWriteOutcome updateCluster(IProject project, String oldFullPath, String newName,
+        String description);
 
     /**
      * Deletes a cluster and any clusters nested under it. Objects those clusters held return to
@@ -102,10 +109,9 @@ public interface IClusterManager
      *
      * @param project the project
      * @param fullPath the full path of the cluster to delete
-     * @return <code>true</code> if a cluster was removed and the result was saved; <code>false</code>
-     *         when it was absent or the file could not be loaded or saved
+     * @return the outcome. {@link ClusterWriteOutcome#CLUSTER_NOT_FOUND} when the cluster is absent
      */
-    boolean deleteCluster(IProject project, String fullPath);
+    ClusterWriteOutcome deleteCluster(IProject project, String fullPath);
 
     /**
      * Moves an object into a cluster, taking it out of any cluster it is in now.
@@ -113,20 +119,19 @@ public interface IClusterManager
      * @param project the project
      * @param objectFqn the fully qualified name of the object
      * @param clusterFullPath the full path of the target cluster
-     * @return <code>true</code> only if the target exists, the object was not already one of its
-     *         children, and the result was saved; <code>false</code> also reports a load or save failure
+     * @return the outcome. {@link ClusterWriteOutcome#CLUSTER_NOT_FOUND} when the target is absent,
+     *         {@link ClusterSaveOutcome#NO_CHANGE} when the object is already in that cluster
      */
-    boolean addObjectToCluster(IProject project, String objectFqn, String clusterFullPath);
+    ClusterWriteOutcome addObjectToCluster(IProject project, String objectFqn, String clusterFullPath);
 
     /**
      * Removes an object from every cluster holding it, returning it to its normal place.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return <code>true</code> if it was in at least one cluster and the result was saved;
-     *         <code>false</code> also reports a load or save failure
+     * @return the outcome. {@link ClusterSaveOutcome#NO_CHANGE} when the object is not in a cluster
      */
-    boolean removeObjectFromCluster(IProject project, String objectFqn);
+    ClusterWriteOutcome removeObjectFromCluster(IProject project, String objectFqn);
 
     /**
      * Finds the first cluster holding an object.
@@ -182,20 +187,18 @@ public interface IClusterManager
      * @param project the project
      * @param oldFqn the current fully qualified name
      * @param newFqn the fully qualified name to give it
-     * @return <code>true</code> if at least one matching name was changed and saved;
-     *         <code>false</code> also reports a load or save failure
+     * @return the outcome. {@link ClusterSaveOutcome#NO_CHANGE} when no cluster holds that name
      */
-    boolean renameObject(IProject project, String oldFqn, String newFqn);
+    ClusterWriteOutcome renameObject(IProject project, String oldFqn, String newFqn);
 
     /**
      * Removes an object from every cluster naming it. Refactoring support for a deleted object.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return <code>true</code> if it was in at least one cluster and the result was saved;
-     *         <code>false</code> also reports a load or save failure
+     * @return the outcome. {@link ClusterSaveOutcome#NO_CHANGE} when the object is not in a cluster
      */
-    boolean removeObject(IProject project, String objectFqn);
+    ClusterWriteOutcome removeObject(IProject project, String objectFqn);
 
     /**
      * Registers a listener to be told when any project's clusters change.

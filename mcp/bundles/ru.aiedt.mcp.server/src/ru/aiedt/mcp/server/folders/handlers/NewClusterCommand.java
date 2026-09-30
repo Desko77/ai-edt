@@ -19,6 +19,7 @@ import org.eclipse.ui.ISources;
 import org.eclipse.ui.handlers.HandlerUtil;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.folders.model.ClusterStore;
 import ru.aiedt.mcp.server.folders.ui.CollectionAdapters;
@@ -65,10 +66,11 @@ public class NewClusterCommand
         ClusterEditDialog dialog = new ClusterEditDialog(shell, name -> validateName(service, project, path, name));
         if (dialog.open() == Window.OK)
         {
-            if (service.createCluster(project, dialog.getClusterName(), path,
-                dialog.getClusterDescription()) == null)
+            ClusterWriteOutcome created = service.createCluster(project, dialog.getClusterName(), path,
+                dialog.getClusterDescription());
+            if (created.isRefused())
             {
-                ClusterCommandHandler.showSaveFailure(shell, project);
+                ClusterCommandHandler.showSaveFailure(shell, project, created);
             }
         }
         return null;

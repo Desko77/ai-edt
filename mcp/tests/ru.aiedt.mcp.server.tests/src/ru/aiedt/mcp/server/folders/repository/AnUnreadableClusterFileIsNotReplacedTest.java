@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.folders.repository;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -16,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
 import org.junit.After;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -81,7 +83,10 @@ public class AnUnreadableClusterFileIsNotReplacedTest
 
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(store.save(probe.project, replacement));
+        ClusterSaveOutcome refused = store.save(probe.project, replacement);
+        assertEquals(ClusterSaveOutcome.UNREADABLE_FILE, refused.getCode());
+        assertTrue(refused.isRefused());
+        assertTrue(refused.getDetail().endsWith(ClusterKeys.CLUSTERS_FILE + ".bak")); //$NON-NLS-1$
 
         assertArrayEquals(CONFLICT, Files.readAllBytes(probe.clustersFile()));
         assertArrayEquals(CONFLICT, Files.readAllBytes(
@@ -125,7 +130,7 @@ public class AnUnreadableClusterFileIsNotReplacedTest
         ClusterStore storage = new ClusterStore();
         storage.addCluster(cluster);
 
-        assertTrue(store.save(probe.project, storage));
+        assertTrue(store.save(probe.project, storage).isOk());
 
         ClusterStore loaded = store.load(probe.project);
         assertEquals(1, loaded.getClusterCount());
@@ -148,7 +153,8 @@ public class AnUnreadableClusterFileIsNotReplacedTest
         assertNull(store.load(probe.project));
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(store.save(probe.project, replacement));
+        ClusterSaveOutcome refused = store.save(probe.project, replacement);
+        assertEquals(ClusterSaveOutcome.UNREADABLE_FILE, refused.getCode());
         assertArrayEquals(malformed, Files.readAllBytes(probe.clustersFile()));
     }
 
@@ -166,7 +172,8 @@ public class AnUnreadableClusterFileIsNotReplacedTest
 
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(store.save(probe.project, replacement));
+        ClusterSaveOutcome refused = store.save(probe.project, replacement);
+        assertEquals(ClusterSaveOutcome.UNREADABLE_FILE, refused.getCode());
         assertArrayEquals(CONFLICT, Files.readAllBytes(probe.clustersFile()));
     }
 
@@ -182,16 +189,97 @@ public class AnUnreadableClusterFileIsNotReplacedTest
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
 
-        assertFalse(store.save(probe.project, replacement));
+        ClusterSaveOutcome firstRefusal = store.save(probe.project, replacement);
+        assertEquals(ClusterSaveOutcome.UNREADABLE_FILE, firstRefusal.getCode());
         java.nio.file.Path backup = probe.clustersFile()
             .resolveSibling(ClusterKeys.CLUSTERS_FILE + ".bak"); //$NON-NLS-1$
         assertArrayEquals(CONFLICT, Files.readAllBytes(backup));
 
         byte[] laterConflict = "not: [valid".getBytes(StandardCharsets.UTF_8); //$NON-NLS-1$
         probe.writeClusters(laterConflict);
-        assertFalse(store.save(probe.project, replacement));
+        ClusterSaveOutcome secondRefusal = store.save(probe.project, replacement);
+        assertEquals(ClusterSaveOutcome.UNREADABLE_FILE, secondRefusal.getCode());
 
         assertArrayEquals(CONFLICT, Files.readAllBytes(backup));
         assertArrayEquals(laterConflict, Files.readAllBytes(probe.clustersFile()));
+    }
+
+    /**
+     * A directory standing where the clusters file should be cannot be read, so the save names that.
+     *
+     * @throws Exception when the directory cannot be created
+     */
+    @Test
+    public void aDirectoryInPlaceOfTheFileIsReadFailed() throws Exception
+    {
+        java.nio.file.Path file = probe.clustersFile();
+        Files.createDirectories(file);
+        ClusterStore replacement = new ClusterStore();
+        replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        ClusterSaveOutcome outcome = store.save(probe.project, replacement);
+
+        assertEquals(ClusterSaveOutcome.READ_FAILED, outcome.getCode());
+        assertTrue(outcome.isRefused());
+        assertNotNull(outcome.getDetail());
+        assertFalse(outcome.getDetail().isEmpty());
+        assertTrue(outcome.explanation().contains(outcome.getDetail()));
+    }
+
+    /**
+     * A settings path that is a file, not a folder, makes the write fail and keeps the exception text.
+     *
+     * @throws Exception when the stand-in file cannot be written
+     */
+    @Test
+    public void aSettingsPathThatIsAFileIsWriteFailed() throws Exception
+    {
+        java.nio.file.Path settings = probe.project.getLocation().toFile().toPath()
+            .resolve(ClusterKeys.SETTINGS_FOLDER);
+        Files.writeString(settings, "not a folder"); //$NON-NLS-1$
+        ClusterStore storage = new ClusterStore();
+        storage.addCluster(new Cluster("Shelf", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        ClusterSaveOutcome outcome = store.save(probe.project, storage);
+
+        assertEquals(ClusterSaveOutcome.WRITE_FAILED, outcome.getCode());
+        assertTrue(outcome.isRefused());
+        assertNotNull(outcome.getDetail());
+        assertFalse(outcome.getDetail().isEmpty());
+        assertTrue(outcome.explanation().contains(outcome.getDetail()));
+    }
+
+    /**
+     * A read-only clusters file is refused as access denied and left unchanged.
+     *
+     * @throws Exception when the file cannot be written
+     */
+    @Test
+    public void aReadOnlyFileIsAccessDenied() throws Exception
+    {
+        java.nio.file.Path projectDir = probe.project.getLocation().toFile().toPath();
+        Assume.assumeTrue(Files.getFileStore(projectDir).supportsFileAttributeView("dos")); //$NON-NLS-1$
+        String original = "groups:\n" //$NON-NLS-1$
+            + "- children:\n" //$NON-NLS-1$
+            + "  - Catalog.A\n" //$NON-NLS-1$
+            + "  name: Shelf\n" //$NON-NLS-1$
+            + "  order: 0\n" //$NON-NLS-1$
+            + "  path: Catalogs\n"; //$NON-NLS-1$
+        probe.writeClusters(original.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        ClusterStore loaded = store.load(probe.project);
+        loaded.getGroups().get(0).setName("Renamed"); //$NON-NLS-1$
+        java.nio.file.Path file = probe.clustersFile();
+        Files.setAttribute(file, "dos:readonly", Boolean.TRUE); //$NON-NLS-1$
+        try
+        {
+            ClusterSaveOutcome outcome = store.save(probe.project, loaded);
+            assertEquals(ClusterSaveOutcome.ACCESS_DENIED, outcome.getCode());
+            assertTrue(outcome.isRefused());
+            assertTrue(Files.readString(file).contains("name: Shelf")); //$NON-NLS-1$
+        }
+        finally
+        {
+            Files.setAttribute(file, "dos:readonly", Boolean.FALSE); //$NON-NLS-1$
+        }
     }
 }

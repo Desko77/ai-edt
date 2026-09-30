@@ -134,8 +134,9 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
 
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse("a file nobody read must not be written over", //$NON-NLS-1$
-            store.save(probe.project, replacement));
+        ClusterSaveOutcome refused = store.save(probe.project, replacement);
+        assertTrue("a file nobody read must not be written over", refused.isRefused()); //$NON-NLS-1$
+        assertEquals(ClusterSaveOutcome.CHANGED_ON_DISK, refused.getCode());
 
         assertArrayEquals(TWO_CLUSTERS.getBytes(StandardCharsets.UTF_8),
             Files.readAllBytes(probe.clustersFile()));
@@ -159,14 +160,16 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
         probe.writeClusters(rewritten.getBytes(StandardCharsets.UTF_8));
 
         loaded.getGroups().get(0).addChild("Catalog.New"); //$NON-NLS-1$
-        assertFalse("the file changed under the set that was read", //$NON-NLS-1$
-            store.save(probe.project, loaded));
+        ClusterSaveOutcome refused = store.save(probe.project, loaded);
+        assertTrue("the file changed under the set that was read", refused.isRefused()); //$NON-NLS-1$
+        assertEquals(ClusterSaveOutcome.CHANGED_ON_DISK, refused.getCode());
         assertArrayEquals(rewritten.getBytes(StandardCharsets.UTF_8),
             Files.readAllBytes(probe.clustersFile()));
 
         ClusterStore reread = store.load(probe.project);
         assertEquals("the file that is there reads as it stands", 3, reread.getClusterCount()); //$NON-NLS-1$
-        assertTrue("and the set read from it is saved", store.save(probe.project, reread)); //$NON-NLS-1$
+        assertTrue("and the set read from it is saved", //$NON-NLS-1$
+            store.save(probe.project, reread).succeeded());
     }
 
     /**
@@ -180,13 +183,13 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
         ClusterStore first = new ClusterStore();
         first.addCluster(new Cluster("Shelf", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("a set saved where no file was ever read creates one", //$NON-NLS-1$
-            store.save(probe.project, first));
+            store.save(probe.project, first).isOk());
 
         ClusterStore read = store.load(probe.project);
         assertEquals(1, read.getClusterCount());
         read.getGroups().get(0).addChild("Catalog.A"); //$NON-NLS-1$
         assertTrue("a change to a set read from the file is written", //$NON-NLS-1$
-            store.save(probe.project, read));
+            store.save(probe.project, read).isOk());
 
         ClusterStore again = store.load(probe.project);
         assertEquals(1, again.getClusterCount());
@@ -207,7 +210,7 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
 
         loaded.setGroups(new ArrayList<>());
         assertTrue("an empty set removes a file that has not changed since the read", //$NON-NLS-1$
-            store.save(probe.project, loaded));
+            store.save(probe.project, loaded).isOk());
         assertFalse(Files.exists(probe.clustersFile()));
     }
 
@@ -224,8 +227,75 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
 
         ClusterStore replacement = new ClusterStore();
         replacement.addCluster(new Cluster("Only", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(store.save(probe.project, replacement));
+        ClusterSaveOutcome refused = store.save(probe.project, replacement);
+        assertEquals(ClusterSaveOutcome.NOT_READ_BY_THIS_STORE, refused.getCode());
+        assertTrue(refused.isRefused());
         assertArrayEquals(TWO_CLUSTERS.getBytes(StandardCharsets.UTF_8),
             Files.readAllBytes(probe.clustersFile()));
+    }
+
+    /**
+     * Saving the bytes already written changes nothing and is not a refusal.
+     *
+     * @throws Exception when the file cannot be written
+     */
+    @Test
+    public void savingTheSameBytesIsNoChange() throws Exception
+    {
+        ClusterStore storage = new ClusterStore();
+        storage.addCluster(new Cluster("Shelf", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(store.save(probe.project, storage).isOk());
+        byte[] written = Files.readAllBytes(probe.clustersFile());
+
+        ClusterSaveOutcome again = store.save(probe.project, storage);
+
+        assertTrue(again.isNoChange());
+        assertTrue(again.succeeded());
+        assertFalse(again.isRefused());
+        assertEquals(ClusterSaveOutcome.NO_CHANGE, again.getCode());
+        assertArrayEquals(written, Files.readAllBytes(probe.clustersFile()));
+    }
+
+    /**
+     * Saving an empty set when the project has no clusters file is nothing to change.
+     *
+     * @throws Exception when the project cannot be inspected
+     */
+    @Test
+    public void savingNothingWhenThereIsNoFileIsNoChange() throws Exception
+    {
+        ClusterSaveOutcome outcome = store.save(probe.project, new ClusterStore());
+
+        assertTrue(outcome.isNoChange());
+        assertFalse(outcome.isRefused());
+        assertFalse(Files.exists(probe.clustersFile()));
+    }
+
+    /**
+     * A file changed by someone else after this store wrote it is refused on the next save.
+     *
+     * @throws Exception when the file cannot be written or read back
+     */
+    @Test
+    public void aFileChangedAfterOurWriteIsRefusedAsChangedOnDisk() throws Exception
+    {
+        ClusterStore storage = new ClusterStore();
+        storage.addCluster(new Cluster("Shelf", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(store.save(probe.project, storage).isOk());
+
+        String foreign = "groups:\n" //$NON-NLS-1$
+            + "- children:\n" //$NON-NLS-1$
+            + "  - Catalog.Foreign\n" //$NON-NLS-1$
+            + "  name: Foreign\n" //$NON-NLS-1$
+            + "  order: 0\n" //$NON-NLS-1$
+            + "  path: Catalogs\n"; //$NON-NLS-1$
+        probe.writeClusters(foreign.getBytes(StandardCharsets.UTF_8));
+        storage.getGroups().get(0).addChild("Catalog.A"); //$NON-NLS-1$
+
+        ClusterSaveOutcome outcome = store.save(probe.project, storage);
+
+        assertEquals(ClusterSaveOutcome.CHANGED_ON_DISK, outcome.getCode());
+        assertTrue(outcome.isRefused());
+        assertEquals(foreign, Files.readString(probe.clustersFile()));
     }
 }

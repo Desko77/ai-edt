@@ -20,6 +20,7 @@ import com._1c.g5.v8.dt.refactoring.core.RefactoringSettings;
 import com._1c.g5.v8.dt.refactoring.core.RefactoringStatus;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
@@ -94,7 +95,12 @@ public class ClusterDeleteRefactorHook
             IClusterManager service = Activator.getClusterServiceStatic();
             if (service != null)
             {
-                service.removeObject(project, fqn);
+                ClusterWriteOutcome outcome = service.removeObject(project, fqn);
+                if (outcome.isRefused())
+                {
+                    Activator.logWarning("Cluster membership for " + fqn //$NON-NLS-1$
+                        + " was not removed: " + outcome.explanation()); //$NON-NLS-1$
+                }
             }
         }
     }
