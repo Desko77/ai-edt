@@ -210,6 +210,7 @@ public final class BorrowedSyncWriter
             }
             return;
         }
+        List<TypeWrite> ownerOutcomes = new ArrayList<>();
         for (Row row : rows)
         {
             String error = failedById.get(Long.valueOf(row.targetId));
@@ -225,8 +226,9 @@ public final class BorrowedSyncWriter
             {
                 outcome.error = error;
             }
-            outcomes.add(outcome);
+            ownerOutcomes.add(outcome);
         }
+        outcomes.addAll(ownerOutcomes);
         if (written.isEmpty() || written.stream().anyMatch(one -> one.error != null))
         {
             return;
@@ -235,7 +237,7 @@ public final class BorrowedSyncWriter
             BmExportHelper.forceExportAndWait(manager, extension, ownerFqn);
         if (exported == null || !exported.isOk())
         {
-            for (TypeWrite outcome : outcomes)
+            for (TypeWrite outcome : ownerOutcomes)
             {
                 outcome.flushNote = "written in the model, but the .mdo is not saved yet - read " //$NON-NLS-1$
                     + "it after the workspace settles"; //$NON-NLS-1$
@@ -243,7 +245,7 @@ public final class BorrowedSyncWriter
         }
         else if (exported.syncFlushPending)
         {
-            for (TypeWrite outcome : outcomes)
+            for (TypeWrite outcome : ownerOutcomes)
             {
                 outcome.flushNote = "written and the save is running, but it did not confirm " //$NON-NLS-1$
                     + "within the wait"; //$NON-NLS-1$
@@ -323,14 +325,7 @@ public final class BorrowedSyncWriter
         ObjectExtension block, Version version, TypePlan plan)
     {
         TypeDescriptionExtension composition = MdExtensionTypeUtil.newTypeDescriptionExtension();
-        for (Object entry : currentComposition(block).getTypes())
-        {
-            if (entry instanceof TypeExtension
-                && ((TypeExtension)entry).getState() == MdPropertyState.EXTENDED)
-            {
-                composition.getTypes().add((TypeExtension)entry);
-            }
-        }
+        composition.getTypes().addAll(extendedEntries(currentComposition(block)));
         if (plan == TypePlan.ANY_REF)
         {
             composition.getTypes().add(MdExtensionTypeUtil.newTypeExtension(
@@ -359,6 +354,31 @@ public final class BorrowedSyncWriter
             composition.setBinaryQualifiers(EcoreUtil.copy(base.getBinaryQualifiers()));
         }
         return composition.getTypes().isEmpty() ? null : composition;
+    }
+
+    /**
+     * The extension's own entries of a composition, as copies.
+     * <p>
+     * Copies, because the entries are contained by the composition: adding one to another
+     * composition moves it out of this one, which shrinks the list being walked, so the entry after
+     * it is skipped and lost once the old composition is replaced.
+     * </p>
+     *
+     * @param current the composition the attribute carries
+     * @return copies of its entries in the EXTENDED state, in order
+     */
+    static List<TypeExtension> extendedEntries(TypeDescriptionExtension current)
+    {
+        List<TypeExtension> entries = new ArrayList<>();
+        for (Object entry : current.getTypes())
+        {
+            if (entry instanceof TypeExtension
+                && ((TypeExtension)entry).getState() == MdPropertyState.EXTENDED)
+            {
+                entries.add(EcoreUtil.copy((TypeExtension)entry));
+            }
+        }
+        return entries;
     }
 
     /**

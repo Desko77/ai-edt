@@ -249,12 +249,15 @@ public final class BorrowedSyncReader
      * @param extObject the adopted shell
      * @param ownerFqn its address
      */
-    private static void markChildrenGone(Report report, MdObject extObject, String ownerFqn)
+    static void markChildrenGone(Report report, MdObject extObject, String ownerFqn)
     {
         markCollectionGone(report, children(extObject, "getAttributes"), ownerFqn, "Attribute"); //$NON-NLS-1$ //$NON-NLS-2$
         for (EObject section : children(extObject, "getTabularSections")) //$NON-NLS-1$
         {
-            if (!(section instanceof MdObject))
+            // A section the extension added itself borrowed nothing, so a gone base breaks nothing
+            // in it - the same rule markCollectionGone applies to attributes and forms.
+            if (!(section instanceof MdObject)
+                || ((MdObject)section).getExtendedConfigurationObject() == null)
             {
                 continue;
             }

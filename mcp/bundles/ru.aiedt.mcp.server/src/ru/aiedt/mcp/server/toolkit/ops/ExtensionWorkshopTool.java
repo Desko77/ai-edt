@@ -916,6 +916,12 @@ public class ExtensionWorkshopTool implements IMcpTool
             review.notChecked.add(entry);
             return;
         }
+        // The scan stops at its cap, as list_interceptors reports: past it a signature break is
+        // unseen, so the review is not complete.
+        if (scan.hits.size() >= max)
+        {
+            review.truncated = true;
+        }
         for (Map<String, Object> hit : scan.hits)
         {
             if (review.rows.size() >= UPDATE_BORROWED_ROW_CAP)
