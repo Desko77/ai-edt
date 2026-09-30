@@ -333,6 +333,9 @@ public final class InfobaseOutsideChange
         if (fingerprint != null)
         {
             pairs.setProperty(CONTENT_KEY, fingerprint);
+        }
+        if (records != UNKNOWN_RECORDS)
+        {
             pairs.setProperty(RECORDS_KEY, String.valueOf(records));
         }
         if (replacedBy != null)
