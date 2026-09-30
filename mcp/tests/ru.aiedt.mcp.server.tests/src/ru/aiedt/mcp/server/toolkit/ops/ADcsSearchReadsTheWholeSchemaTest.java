@@ -196,6 +196,58 @@ public class ADcsSearchReadsTheWholeSchemaTest
         assertEquals(5, c.matchesByFile.get(PATH).get(0).line);
     }
 
+    /** A schema of line breaks alone has no lines, so nothing matches in it. */
+    @Test
+    public void aSchemaOfLineBreaksAloneHasNoLines()
+    {
+        DcsSearchTool.Collector c =
+            new DcsSearchTool.Collector(DcsSearchTool.compile(".*", true, false), null, 100); //$NON-NLS-1$
+        c.search("\r\n\r\n", PATH); //$NON-NLS-1$
+        assertEquals(0, c.totalMatches);
+    }
+
+    /** A fragment cut at its limit keeps a character made of two chars whole. */
+    @Test
+    public void aCutFragmentKeepsASurrogatePairWhole()
+    {
+        StringBuilder line = new StringBuilder();
+        for (int i = 0; i < 199; i++)
+        {
+            line.append('x');
+        }
+        line.appendCodePoint(0x1F600).append("tail"); //$NON-NLS-1$
+        DcsSearchTool.Collector c =
+            new DcsSearchTool.Collector(DcsSearchTool.compile("tail", false, false), null, 100); //$NON-NLS-1$
+        c.search(line.toString(), PATH);
+        String text = c.matchesByFile.get(PATH).get(0).text;
+        assertTrue(text, text.endsWith("...")); //$NON-NLS-1$
+        assertTrue(text, !Character.isHighSurrogate(text.charAt(text.length() - 4)));
+    }
+
+    /** A search that fails on one schema names it and goes on with the rest. */
+    @Test
+    public void aSearchThatFailsOnOneSchemaNamesIt() throws Exception
+    {
+        DcsSearchTool.Collector walk =
+            new DcsSearchTool.Collector(DcsSearchTool.compile("Товары", false, false), null, 100) //$NON-NLS-1$
+            {
+                @Override
+                void search(String content, String displayPath)
+                {
+                    if (displayPath.contains("/Broken/")) //$NON-NLS-1$
+                    {
+                        throw new StackOverflowError();
+                    }
+                    super.search(content, displayPath);
+                }
+            };
+        project.getFolder("src").accept(walk); //$NON-NLS-1$
+        assertEquals(1, walk.scannedFiles);
+        assertEquals(1, walk.unreadableFiles);
+        assertTrue(walk.unreadable.get(0), walk.unreadable.get(0).contains("StackOverflowError")); //$NON-NLS-1$
+        assertEquals(2, walk.totalMatches);
+    }
+
     /** A schema that could not be read is named, and is not counted as searched. */
     @Test
     public void anUnreadableSchemaIsNamed() throws Exception

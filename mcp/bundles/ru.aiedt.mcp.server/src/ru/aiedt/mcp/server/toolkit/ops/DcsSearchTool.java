@@ -333,18 +333,36 @@ public class DcsSearchTool implements IMcpTool
             }
             catch (Exception e)
             {
-                String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-                unreadableFiles++;
-                if (unreadable.size() < UNREADABLE_LISTED)
-                {
-                    unreadable.add(displayPath + ": " + reason); //$NON-NLS-1$
-                }
-                Activator.logWarning("dcs_search failed on " + displayPath + ": " + reason); //$NON-NLS-1$ //$NON-NLS-2$
+                unreadable(displayPath, e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 return false;
             }
-            scannedFiles++;
-            search(content, displayPath);
+            try
+            {
+                search(content, displayPath);
+                scannedFiles++;
+            }
+            catch (RuntimeException | StackOverflowError e)
+            {
+                // A pattern that recurses per character can run out of stack over a whole schema.
+                unreadable(displayPath, "search failed: " + e.getClass().getSimpleName()); //$NON-NLS-1$
+            }
             return false;
+        }
+
+        /**
+         * Counts a schema that was not searched through, and names it while the list has room.
+         *
+         * @param displayPath the schema path
+         * @param reason why it was not searched
+         */
+        private void unreadable(String displayPath, String reason)
+        {
+            unreadableFiles++;
+            if (unreadable.size() < UNREADABLE_LISTED)
+            {
+                unreadable.add(displayPath + ": " + reason); //$NON-NLS-1$
+            }
+            Activator.logWarning("dcs_search failed on " + displayPath + ": " + reason); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         /**
@@ -365,7 +383,9 @@ public class DcsSearchTool implements IMcpTool
          * A hit is counted once per line it starts on, as the search counted lines before a
          * match could span them; whitespace that opens a match across a line break is not where
          * it starts (see {@link #startOfContent}). Trailing line breaks are dropped first: an
-         * empty last line is not a line of the schema, and {@code .*} would match it.
+         * empty last line is not a line of the schema, and {@code .*} would match it; a schema of
+         * line breaks alone has no lines. A match made only of whitespace runs across line breaks
+         * and counts once, and {@code \A} and {@code \z} mark the ends of the schema.
          * </p>
          *
          * @param content the schema text
@@ -378,6 +398,10 @@ public class DcsSearchTool implements IMcpTool
             while (length > 0 && text.charAt(length - 1) == '\n')
             {
                 length--;
+            }
+            if (length == 0)
+            {
+                return;
             }
             text = text.substring(0, length);
             Matcher m = pattern.matcher(text);
@@ -476,7 +500,13 @@ public class DcsSearchTool implements IMcpTool
                 lines.add(piece.trim());
             }
             String shown = String.join(" \\n ", lines); //$NON-NLS-1$
-            return shown.length() > FRAGMENT_LIMIT ? shown.substring(0, FRAGMENT_LIMIT) + "..." : shown; //$NON-NLS-1$
+            if (shown.length() <= FRAGMENT_LIMIT)
+            {
+                return shown;
+            }
+            int cut = Character.isHighSurrogate(shown.charAt(FRAGMENT_LIMIT - 1)) ? FRAGMENT_LIMIT - 1
+                : FRAGMENT_LIMIT;
+            return shown.substring(0, cut) + "..."; //$NON-NLS-1$
         }
     }
 }
