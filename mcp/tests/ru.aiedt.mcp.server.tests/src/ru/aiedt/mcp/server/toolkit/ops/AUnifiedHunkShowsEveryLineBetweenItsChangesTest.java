@@ -138,6 +138,17 @@ public class AUnifiedHunkShowsEveryLineBetweenItsChangesTest
         assertContiguous(hunks.get(0), "edges"); //$NON-NLS-1$
     }
 
+    /** A context wider than the module shows the whole module in one hunk. */
+    @Test
+    public void aContextPastTheModuleShowsTheWholeModule()
+    {
+        List<List<DiffLine>> hunks = DiffModuleTool.groupHunks(
+            DiffModuleTool.computeDiff(module(7, false), module(7, true)), Integer.MAX_VALUE);
+        assertEquals(1, hunks.size());
+        assertEquals(4 + 7 + 4, equalLines(hunks.get(0)));
+        assertContiguous(hunks.get(0), "whole module"); //$NON-NLS-1$
+    }
+
     /** Equal texts give no hunk. */
     @Test
     public void equalTextsGiveNoHunk()

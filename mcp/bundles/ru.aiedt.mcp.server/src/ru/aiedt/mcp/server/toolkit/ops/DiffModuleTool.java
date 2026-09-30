@@ -823,12 +823,13 @@ public class DiffModuleTool implements IMcpTool
      * </p>
      *
      * @param diffLines the whole diff, in order
-     * @param contextLines how many equal lines to show around a change; a negative value reads as 0
+     * @param contextLines how many equal lines to show around a change; a negative value reads as 0,
+     *        and a value past the diff's length as that length
      * @return the hunks, in order
      */
     static List<List<DiffLine>> groupHunks(List<DiffLine> diffLines, int contextLines)
     {
-        int context = Math.max(0, contextLines);
+        int context = Math.min(Math.max(0, contextLines), diffLines.size());
         List<List<DiffLine>> hunks = new ArrayList<>();
         int start = -1;
         int lastChange = -1;
