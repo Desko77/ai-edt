@@ -97,19 +97,47 @@ public final class DebugSessionStarter implements IMcpTool
     private static final long LAUNCH_RESUME_WAIT_MS = 30_000L;
 
     /**
-     * The launches handed to a {@code runKey} that have not settled yet, by the application they
+     * The launches handed to a {@code runKey} that have not returned yet, by the application they
      * start.
      * <p>
      * A handed-over launch keeps running after the call that made it has returned its Pending
      * envelope, and {@link #LAUNCH_LOCK} goes with that call. Without this reservation the
      * already-running check sees no target - the first client has not registered one yet - and a
      * second launch of the same application starts a second client, so answering the dialog that
-     * held the first open starts two. The reservation leaves with the launch it names, not with
-     * the call that started it.
+     * held the first open starts two. The reservation leaves when the launch call returns, not with
+     * the call that started it and not with the registry's tracking of the run: a cancelled run
+     * loses that tracking while its launch is still parked on a question, and the launch is what a
+     * second client would race.
      * </p>
      */
-    private static final Map<String, String> LAUNCHES_IN_FLIGHT =
+    private static final Map<String, InFlightLaunch> LAUNCHES_IN_FLIGHT =
         new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * A handed-over launch reserved by the application it starts.
+     * <p>
+     * The launch itself is kept, not only the key: liveness is read off the launch call's return,
+     * which outlives every registry state the run can be in.
+     * </p>
+     */
+    static final class InFlightLaunch
+    {
+        /** The key the Pending envelope carried. */
+        final String runKey;
+
+        /** The launch that has not settled; its return is what releases the reservation. */
+        final LaunchUnderWay launch;
+
+        /**
+         * @param runKey the key the caller polls
+         * @param launch the launch still under way
+         */
+        InFlightLaunch(String runKey, LaunchUnderWay launch)
+        {
+            this.runKey = runKey;
+            this.launch = launch;
+        }
+    }
 
     @Override
     public String getName()
@@ -1674,7 +1702,9 @@ public final class DebugSessionStarter implements IMcpTool
      * <p>
      * The application is reserved as in flight BEFORE the run is dispatched, and the reservation
      * leaves in the run body's own {@code finally}: the body can settle before this method returns,
-     * and a reservation written after that would never be released.
+     * and a reservation written after that would never be released. The reservation names the
+     * launch, so a read of it can tell a launch that has returned from one still under way whatever
+     * became of the run's registry entry.
      * </p>
      *
      * @param launch the launch that has not returned
@@ -1693,9 +1723,10 @@ public final class DebugSessionStarter implements IMcpTool
         String runKey = PendingWorkRegistry.computeRunKey(NAME,
             String.valueOf(System.nanoTime()));
         boolean reserveApplication = applicationId != null && !applicationId.isEmpty();
-        if (reserveApplication)
+        InFlightLaunch reservation = reserveApplication ? new InFlightLaunch(runKey, launch) : null;
+        if (reservation != null)
         {
-            LAUNCHES_IN_FLIGHT.put(applicationId, runKey);
+            LAUNCHES_IN_FLIGHT.put(applicationId, reservation);
         }
         PendingWorkRegistry.PendingEntry entry =
             PendingWorkRegistry.DEBUG_LAUNCH.getOrStart(runKey,
@@ -1707,9 +1738,9 @@ public final class DebugSessionStarter implements IMcpTool
                     }
                     finally
                     {
-                        if (reserveApplication)
+                        if (reservation != null)
                         {
-                            LAUNCHES_IN_FLIGHT.remove(applicationId, runKey);
+                            LAUNCHES_IN_FLIGHT.remove(applicationId, reservation);
                         }
                     }
                 });
@@ -1767,11 +1798,11 @@ public final class DebugSessionStarter implements IMcpTool
     /**
      * The {@code runKey} of the launch still in flight for an application, when there is one.
      * <p>
-     * A reservation whose run no longer answers is swept here rather than left to leak: the
-     * registry drops a cancelled run's tracking, and judging liveness at the read keeps the
-     * refusal below honest without a background cleaner. A cancelled run whose body still parks on
-     * a person reads as settled here - the caller asked for the run to stop, and the body's own
-     * exit releases the reservation for good when it comes.
+     * In flight means the launch call has not returned. A reservation whose launch has returned is
+     * swept here rather than left to leak, and judging liveness off the launch itself keeps the
+     * refusal below honest whatever became of the run's registry entry: a cancelled run loses that
+     * entry while its launch still parks on a question, and the launch - not the tracking of it -
+     * is what a second client of the same application would race.
      * </p>
      *
      * @param applicationId the application a new launch is being considered for
@@ -1784,17 +1815,16 @@ public final class DebugSessionStarter implements IMcpTool
         {
             return null;
         }
-        String runKey = LAUNCHES_IN_FLIGHT.get(applicationId);
-        if (runKey == null)
+        InFlightLaunch inFlight = LAUNCHES_IN_FLIGHT.get(applicationId);
+        if (inFlight == null)
         {
             return null;
         }
-        PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.DEBUG_LAUNCH.get(runKey);
-        if (entry != null && !entry.isDone())
+        if (!inFlight.launch.hasReturned())
         {
-            return runKey;
+            return inFlight.runKey;
         }
-        LAUNCHES_IN_FLIGHT.remove(applicationId, runKey);
+        LAUNCHES_IN_FLIGHT.remove(applicationId, inFlight);
         return null;
     }
 

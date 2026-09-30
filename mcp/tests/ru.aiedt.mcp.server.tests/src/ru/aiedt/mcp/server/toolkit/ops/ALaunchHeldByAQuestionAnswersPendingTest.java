@@ -210,6 +210,69 @@ public class ALaunchHeldByAQuestionAnswersPendingTest
     }
 
     @Test
+    public void aCancelledRunStillHoldsItsApplicationUntilTheLaunchReturns() throws Exception
+    {
+        CountDownLatch returned = new CountDownLatch(1);
+        CountDownLatch bodyEntered = new CountDownLatch(1);
+        ILaunch[] launched = {aLaunchThatTerminatedAtOnce()};
+        DebugSessionStarter.LaunchUnderWay underWay = new DebugSessionStarter.LaunchUnderWay()
+        {
+            @Override
+            public boolean hasReturned()
+            {
+                return returned.getCount() == 0;
+            }
+
+            @Override
+            public ILaunch launch()
+            {
+                return launched[0];
+            }
+
+            @Override
+            public String error()
+            {
+                return null;
+            }
+
+            @Override
+            public void awaitReturn() throws InterruptedException
+            {
+                bodyEntered.countDown();
+                returned.await();
+            }
+        };
+
+        JsonObject pending = FakeDebugToolCalls.json(
+            DebugSessionStarter.pendingLaunchAnswer(underWay, false, List.of(), "app-under-test", //$NON-NLS-1$
+                THE_CALLS_ANSWER));
+        String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
+
+        // The cancel has to meet the run with its body already parked on the launch: cancelling a
+        // run that has not begun stops the run itself, and that is a different, honest answer.
+        assertTrue("the run's body parked on the launch", bodyEntered.await(10, //$NON-NLS-1$
+            java.util.concurrent.TimeUnit.SECONDS));
+
+        // The cancel reaches the registry's tracking of the run; the launch itself, parked on a
+        // question nobody has answered, keeps running - and the honest answer says so.
+        assertEquals(PendingWorkRegistry.StopOutcome.STILL_RUNNING,
+            PendingWorkRegistry.DEBUG_LAUNCH.cancelAndStop(runKey));
+
+        assertEquals("a cancelled run whose launch has not returned still holds the application",
+            runKey, DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        returned.countDown();
+        long deadline = System.currentTimeMillis() + 10_000L;
+        while (DebugSessionStarter.inFlightLaunchRunKey("app-under-test") != null //$NON-NLS-1$
+            && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(50L);
+        }
+        assertEquals("the reservation leaves once the launch has returned", null, //$NON-NLS-1$
+            DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$
+    }
+
+    @Test
     public void theInFlightRefusalNamesTheKeyToPoll()
     {
         JsonObject answer = FakeDebugToolCalls.json(
