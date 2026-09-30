@@ -12,6 +12,7 @@ import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -57,6 +58,18 @@ public class DependencyGraphTool implements IMcpTool
 {
     public static final String NAME = "dependency_graph"; //$NON-NLS-1$
 
+    /** The values {@code scope} accepts. */
+    static final List<String> SCOPES = List.of("project", "subsystem", "object", "module"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+    /** The largest {@code maxNodes} a walk takes; a larger value is cut to it. */
+    static final int MAX_NODES = 2000;
+
+    /** The largest {@code maxEdges} a walk takes; a larger value is cut to it. */
+    static final int MAX_EDGES = 5000;
+
+    /** The tag of the refusal given when the root the scope names is absent from the project. */
+    static final String ROOT_NOT_FOUND = "rootNotFound"; //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -70,7 +83,7 @@ public class DependencyGraphTool implements IMcpTool
             + "Build a dependency graph between metadata objects and / or BSL modules. " //$NON-NLS-1$
             + "Levels: metadata / modules / mixed. " //$NON-NLS-1$
             + "Formats: json (structured nodes/edges/cycles), mermaid, plantuml, dot. " //$NON-NLS-1$
-            + "Caps: maxNodes (default 200), maxEdges (default 500). " //$NON-NLS-1$
+            + "Caps: maxNodes (default 200, at most 2000), maxEdges (default 500, at most 5000). " //$NON-NLS-1$
             + "When BFS hits a cap or BM watchdog cancels, returns partial graph " //$NON-NLS-1$
             + "with truncated=true."; //$NON-NLS-1$
     }
@@ -93,8 +106,8 @@ public class DependencyGraphTool implements IMcpTool
             .stringProperty("edgeKinds", //$NON-NLS-1$
                 "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
                     + "Omit to keep every kind.") //$NON-NLS-1$
-            .integerProperty("maxNodes", "Cap for BFS (default 200)") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("maxEdges", "Cap for edges (default 500)") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("maxNodes", "Node cap, default 200, at most 2000") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("maxEdges", "Edge cap, default 500, at most 5000") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
 
@@ -127,8 +140,8 @@ public class DependencyGraphTool implements IMcpTool
         String directionStr = orDefault(JsonUtils.extractStringArgument(params, "direction"), //$NON-NLS-1$
             "both"); //$NON-NLS-1$
         int depth = clamp(parseInt(params, "depth", 2), 1, 5); //$NON-NLS-1$
-        int maxNodes = Math.max(1, parseInt(params, "maxNodes", 200)); //$NON-NLS-1$
-        int maxEdges = Math.max(1, parseInt(params, "maxEdges", 500)); //$NON-NLS-1$
+        int maxNodes = nodeCap(params);
+        int maxEdges = edgeCap(params);
         List<String> edgeKinds = understoodEdgeKinds(params);
 
         Level level = parseLevel(levelStr);
@@ -148,6 +161,11 @@ public class DependencyGraphTool implements IMcpTool
         {
             return ToolResult.error(TextSuggest.invalidValue("format", formatStr, //$NON-NLS-1$
                 java.util.Arrays.asList("json", "mermaid", "plantuml", "dot"))).toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        }
+        String scopeRefusal = scopeRefusal(scopeStr, params);
+        if (scopeRefusal != null)
+        {
+            return ToolResult.error(scopeRefusal).toJson();
         }
 
         try
@@ -199,6 +217,7 @@ public class DependencyGraphTool implements IMcpTool
 
         AtomicReference<BmReferencesHelper.BfsResult> bfsRef = new AtomicReference<>();
         AtomicReference<Exception> errRef = new AtomicReference<>();
+        AtomicReference<String> notFoundRef = new AtomicReference<>();
         // Started outside the task: WatchForCancel reads the call scope, which belongs
         // to this thread, and the task body runs on the BM one.
         WatchForCancel watch = WatchForCancel.begin();
@@ -211,7 +230,12 @@ public class DependencyGraphTool implements IMcpTool
                 {
                     Collection<IBmObject> roots = resolveRoots(level, scopeStr, params,
                         configuration, tx);
-                    if (roots == null || roots.isEmpty())
+                    if (roots == null)
+                    {
+                        notFoundRef.set(rootNotFound(scopeStr, params, configuration));
+                        return null;
+                    }
+                    if (roots.isEmpty())
                     {
                         bfsRef.set(new BmReferencesHelper.BfsResult());
                         return null;
@@ -243,6 +267,10 @@ public class DependencyGraphTool implements IMcpTool
         if (errRef.get() != null)
         {
             throw errRef.get();
+        }
+        if (notFoundRef.get() != null)
+        {
+            return ToolResult.error(notFoundRef.get()).put("tag", ROOT_NOT_FOUND).toJson(); //$NON-NLS-1$
         }
         BmReferencesHelper.BfsResult bfs = bfsRef.get();
         if (bfs == null)
@@ -577,7 +605,8 @@ public class DependencyGraphTool implements IMcpTool
      * @param params the call arguments
      * @param configuration the project configuration
      * @param tx the live transaction
-     * @return the roots, or <code>null</code> when the scope names nothing
+     * @return the roots, possibly empty when the named root has no content, or <code>null</code>
+     *         when the root the scope names is absent from the project
      */
     private Collection<IBmObject> resolveRoots(Level level, String scopeStr,
         Map<String, String> params, Configuration configuration, IBmTransaction tx)
@@ -641,10 +670,11 @@ public class DependencyGraphTool implements IMcpTool
                     return null;
                 }
                 MdObject obj = MetadataTypeCatalog.findObject(configuration, parts[0], parts[1]);
-                if (obj instanceof IBmObject)
+                if (!(obj instanceof IBmObject))
                 {
-                    roots.add((IBmObject) obj);
+                    return null;
                 }
+                roots.add((IBmObject) obj);
                 return roots;
             }
             case "module": //$NON-NLS-1$
@@ -655,10 +685,11 @@ public class DependencyGraphTool implements IMcpTool
                     return null;
                 }
                 Object top = tx.getTopObjectByFqn(fqn);
-                if (top instanceof IBmObject)
+                if (!(top instanceof IBmObject))
                 {
-                    roots.add((IBmObject) top);
+                    return null;
                 }
+                roots.add((IBmObject) top);
                 return roots;
             }
             default:
@@ -768,6 +799,133 @@ public class DependencyGraphTool implements IMcpTool
             // best-effort
         }
         return null;
+    }
+
+    /**
+     * The refusal a call gets for its scope before any walk: an unknown scope, or a scope without
+     * the argument that names its root.
+     * <p>
+     * Does not look the root up; {@link #rootNotFound} answers for a root the project lacks.
+     * </p>
+     *
+     * @param scopeStr the scope asked for, never <code>null</code>
+     * @param params the call arguments
+     * @return the refusal text, or <code>null</code> when the scope and its argument are given
+     */
+    static String scopeRefusal(String scopeStr, Map<String, String> params)
+    {
+        String scope = scopeStr.toLowerCase(Locale.ROOT);
+        if (!SCOPES.contains(scope))
+        {
+            return TextSuggest.invalidValue("scope", scopeStr, SCOPES); //$NON-NLS-1$
+        }
+        String argument = rootArgument(scope);
+        if (argument == null)
+        {
+            return null;
+        }
+        String value = JsonUtils.extractStringArgument(params, argument);
+        if (value != null && !value.isBlank())
+        {
+            return null;
+        }
+        String example = "subsystemName".equals(argument) ? "'Sales'" : "'Catalog.Products'"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return TextSuggest.missingParam(argument, example) + " It names the root when scope=" + scope + "."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The refusal a call gets when the root its scope names is absent from the project.
+     *
+     * @param scopeStr the scope asked for, one of {@link #SCOPES}
+     * @param params the call arguments
+     * @param configuration the project configuration, read for close names
+     * @return the refusal text naming the argument, its value and the close names found
+     */
+    static String rootNotFound(String scopeStr, Map<String, String> params, Configuration configuration)
+    {
+        String scope = scopeStr.toLowerCase(Locale.ROOT);
+        String argument = rootArgument(scope);
+        if (argument == null)
+        {
+            return "scope=" + scope + " names no root."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String value = JsonUtils.extractStringArgument(params, argument);
+        if ("subsystemName".equals(argument)) //$NON-NLS-1$
+        {
+            return argument + " '" + value + "' names no top-level subsystem of the project." //$NON-NLS-1$ //$NON-NLS-2$
+                + closeNames("Subsystem", MetadataTypeCatalog.findSimilarObjects(configuration, //$NON-NLS-1$
+                    "Subsystem", value, 5)); //$NON-NLS-1$
+        }
+        String fqn = MetadataTypeCatalog.normalizeFqn(value);
+        int dot = fqn.indexOf('.');
+        if (dot <= 0 || dot == fqn.length() - 1)
+        {
+            return argument + " '" + value + "' is not an FQN of the form Type.Name."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String type = fqn.substring(0, dot);
+        return argument + " '" + value + "' names no object of the project." //$NON-NLS-1$ //$NON-NLS-2$
+            + closeNames(type, MetadataTypeCatalog.findSimilarObjects(configuration, type,
+                fqn.substring(dot + 1), 5));
+    }
+
+    /**
+     * The argument that names the root of a scope.
+     *
+     * @param scope the scope in lower case
+     * @return the argument name, or <code>null</code> for the project scope
+     */
+    private static String rootArgument(String scope)
+    {
+        switch (scope)
+        {
+            case "subsystem": return "subsystemName"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "object": return "objectFqn"; //$NON-NLS-1$ //$NON-NLS-2$
+            case "module": return "moduleFqn"; //$NON-NLS-1$ //$NON-NLS-2$
+            default: return null;
+        }
+    }
+
+    /**
+     * The close names of a refusal, as a sentence.
+     *
+     * @param type the type prefix to put before each name
+     * @param names the close names, possibly empty
+     * @return the sentence with a leading space, or an empty string when there are none
+     */
+    private static String closeNames(String type, List<String> names)
+    {
+        if (names.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        List<String> qualified = new ArrayList<>(names.size());
+        for (String name : names)
+        {
+            qualified.add(type + "." + name); //$NON-NLS-1$
+        }
+        return " Close names: " + String.join(", ", qualified) + "."; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * The node cap of a walk: {@code maxNodes}, default 200, cut to 1..{@link #MAX_NODES}.
+     *
+     * @param params the call arguments
+     * @return the cap
+     */
+    static int nodeCap(Map<String, String> params)
+    {
+        return clamp(parseInt(params, "maxNodes", 200), 1, MAX_NODES); //$NON-NLS-1$
+    }
+
+    /**
+     * The edge cap of a walk: {@code maxEdges}, default 500, cut to 1..{@link #MAX_EDGES}.
+     *
+     * @param params the call arguments
+     * @return the cap
+     */
+    static int edgeCap(Map<String, String> params)
+    {
+        return clamp(parseInt(params, "maxEdges", 500), 1, MAX_EDGES); //$NON-NLS-1$
     }
 
     // ---- helpers -----------------------------------------------------------
