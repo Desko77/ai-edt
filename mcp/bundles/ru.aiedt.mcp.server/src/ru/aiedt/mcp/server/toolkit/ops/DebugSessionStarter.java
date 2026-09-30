@@ -97,17 +97,19 @@ public final class DebugSessionStarter implements IMcpTool
     private static final long LAUNCH_RESUME_WAIT_MS = 30_000L;
 
     /**
-     * The launches handed to a {@code runKey} that have not returned yet, by the application they
-     * start.
+     * The launches handed to a {@code runKey} whose continuation has not finished yet, by the
+     * application they start.
      * <p>
      * A handed-over launch keeps running after the call that made it has returned its Pending
      * envelope, and {@link #LAUNCH_LOCK} goes with that call. Without this reservation the
      * already-running check sees no target - the first client has not registered one yet - and a
      * second launch of the same application starts a second client, so answering the dialog that
-     * held the first open starts two. The reservation leaves when the launch call returns, not with
-     * the call that started it and not with the registry's tracking of the run: a cancelled run
-     * loses that tracking while its launch is still parked on a question, and the launch is what a
-     * second client would race.
+     * held the first open starts two. The reservation's life is the continuation's: it is placed
+     * before the run is dispatched and leaves in the run body's own {@code finally} - after the
+     * launch has returned, after the wait for the debug target's registration is over and after
+     * the caller's answer was built. Nothing else releases it: not the launch call's return, which
+     * the continuation outlives while it waits on the target, and not the registry's tracking of
+     * the run, which a cancel drops while the launch is still parked on a question.
      * </p>
      */
     private static final Map<String, InFlightLaunch> LAUNCHES_IN_FLIGHT =
@@ -116,8 +118,10 @@ public final class DebugSessionStarter implements IMcpTool
     /**
      * A handed-over launch reserved by the application it starts.
      * <p>
-     * The launch itself is kept, not only the key: liveness is read off the launch call's return,
-     * which outlives every registry state the run can be in.
+     * The launch itself is kept, not only the key: a run cancelled before its body claimed its
+     * start never enters the body's {@code finally}, so that reservation is released by a reader
+     * once the launch it would have waited on has returned - the only liveness signal left when no
+     * continuation ran.
      * </p>
      */
     static final class InFlightLaunch
@@ -125,8 +129,14 @@ public final class DebugSessionStarter implements IMcpTool
         /** The key the Pending envelope carried. */
         final String runKey;
 
-        /** The launch that has not settled; its return is what releases the reservation. */
+        /** The launch the reservation was placed for. */
         final LaunchUnderWay launch;
+
+        /**
+         * Whether the run's body never ran, so no {@code finally} will release the reservation.
+         * Written by the work-exit door when it settles with the reservation still held.
+         */
+        volatile boolean bodyNeverRan;
 
         /**
          * @param runKey the key the caller polls
@@ -454,7 +464,7 @@ public final class DebugSessionStarter implements IMcpTool
             String inFlightRunKey = inFlightLaunchRunKey(effectiveAppId);
             if (inFlightRunKey != null)
             {
-                return launchInFlightAnswer(effectiveAppId, inFlightRunKey);
+                return launchInFlightRefusal(effectiveAppId, inFlightRunKey);
             }
 
             // The external object is resolved BEFORE the already-running check: a running session
@@ -747,7 +757,7 @@ public final class DebugSessionStarter implements IMcpTool
             String inFlightRunKey = inFlightLaunchRunKey(applicationId);
             if (inFlightRunKey != null)
             {
-                return launchInFlightAnswer(applicationId, inFlightRunKey);
+                return launchInFlightRefusal(applicationId, inFlightRunKey);
             }
 
             // Before the update, not after: an object that cannot be resolved is a typo, and a typo
@@ -1702,9 +1712,12 @@ public final class DebugSessionStarter implements IMcpTool
      * <p>
      * The application is reserved as in flight BEFORE the run is dispatched, and the reservation
      * leaves in the run body's own {@code finally}: the body can settle before this method returns,
-     * and a reservation written after that would never be released. The reservation names the
-     * launch, so a read of it can tell a launch that has returned from one still under way whatever
-     * became of the run's registry entry.
+     * and a reservation written after that would never be released. That finally runs after the
+     * launch has returned, after the wait for the debug target's registration is over and after
+     * the caller's answer was built - the reservation covers the whole continuation, not only the
+     * launch call. A run cancelled before its body claimed its start never enters that finally,
+     * so the work-exit door marks such a reservation instead, and a reader releases it once the
+     * launch it would have waited on has returned.
      * </p>
      *
      * @param launch the launch that has not returned
@@ -1744,6 +1757,20 @@ public final class DebugSessionStarter implements IMcpTool
                         }
                     }
                 });
+        if (reservation != null)
+        {
+            // The body's own finally runs before this door settles, so a reservation still held
+            // here means the body never ran: the run was cancelled before it claimed its start.
+            // The launch it was to wait on may still be parked on a question, and the reservation
+            // holds until that launch has returned - the liveness a reader then sweeps on.
+            entry.attachWorkExit(() ->
+            {
+                if (LAUNCHES_IN_FLIGHT.get(applicationId) == reservation)
+                {
+                    reservation.bodyNeverRan = true;
+                }
+            });
+        }
         if (entry.startedBy == null)
         {
             entry.startedBy = NAME;
@@ -1798,15 +1825,19 @@ public final class DebugSessionStarter implements IMcpTool
     /**
      * The {@code runKey} of the launch still in flight for an application, when there is one.
      * <p>
-     * In flight means the launch call has not returned. A reservation whose launch has returned is
-     * swept here rather than left to leak, and judging liveness off the launch itself keeps the
-     * refusal below honest whatever became of the run's registry entry: a cancelled run loses that
-     * entry while its launch still parks on a question, and the launch - not the tracking of it -
-     * is what a second client of the same application would race.
+     * In flight means the run's continuation has not finished. The launch it waits on may already
+     * have returned - the continuation then waits on the debug target's registration, and the
+     * reservation holds through that wait, so a launch call's return releases nothing here. The
+     * one reservation a reader releases is an orphaned one: its run was cancelled before the body
+     * claimed its start, no continuation will wait on anything, and once that launch has returned
+     * there is nothing left the reservation protects. Whether the key can still be polled is a
+     * separate question, answered where the refusal is built: a cancelled run loses its registry
+     * entry while its launch is still parked, and a key nothing tracks answers
+     * {@code runKey not found}.
      * </p>
      *
      * @param applicationId the application a new launch is being considered for
-     * @return the runKey the caller can poll, or <code>null</code> when no launch of it is in
+     * @return the runKey of the in-flight launch, or <code>null</code> when no launch of it is in
      *         flight
      */
     static String inFlightLaunchRunKey(String applicationId)
@@ -1820,12 +1851,47 @@ public final class DebugSessionStarter implements IMcpTool
         {
             return null;
         }
-        if (!inFlight.launch.hasReturned())
+        if (inFlight.bodyNeverRan && inFlight.launch.hasReturned())
         {
-            return inFlight.runKey;
+            LAUNCHES_IN_FLIGHT.remove(applicationId, inFlight);
+            return null;
         }
-        LAUNCHES_IN_FLIGHT.remove(applicationId, inFlight);
-        return null;
+        return inFlight.runKey;
+    }
+
+    /**
+     * The refusal a launch call gets while an earlier launch of the same application is still in
+     * flight, saying what the caller can actually do next.
+     * <p>
+     * Whether the key can be polled is read at refusal time, not remembered from when the run was
+     * started: a cancelled run loses its registry entry while its launch is still parked on a
+     * question, and sending the caller to poll a key nothing holds answers {@code runKey not
+     * found} forever. With the entry still tracked the refusal names the key; without it the
+     * refusal says the launch is still going and to retry once it has settled.
+     * </p>
+     *
+     * @param applicationId the application the in-flight launch starts
+     * @param runKey the key the in-flight run was started under
+     * @return the refusal, ready to return
+     */
+    static String launchInFlightRefusal(String applicationId, String runKey)
+    {
+        if (runKey != null && PendingWorkRegistry.DEBUG_LAUNCH.get(runKey) != null)
+        {
+            return launchInFlightAnswer(applicationId, runKey);
+        }
+        return ToolResult
+            .error("A launch of this application is still in flight: an earlier call handed it " //$NON-NLS-1$
+                + "to a run while a modal question or the wait window held it open, and that run " //$NON-NLS-1$
+                + "is no longer tracked, so there is no runKey to poll. The launch itself is " //$NON-NLS-1$
+                + "still going - answer the question it waits on in EDT or wait for it to " //$NON-NLS-1$
+                + "settle, then launch again. Nothing was launched.") //$NON-NLS-1$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("launchInFlight", true) //$NON-NLS-1$
+            .put("hint", "Answer the dialog the launch waits on in EDT or wait for it to settle, " //$NON-NLS-1$
+                + "then call this tool again.") //$NON-NLS-1$
+            .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+            .toJson();
     }
 
     /**

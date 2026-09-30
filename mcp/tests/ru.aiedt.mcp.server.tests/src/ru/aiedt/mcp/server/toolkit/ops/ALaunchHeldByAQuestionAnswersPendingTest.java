@@ -253,6 +253,11 @@ public class ALaunchHeldByAQuestionAnswersPendingTest
         assertTrue("the run's body parked on the launch", bodyEntered.await(10, //$NON-NLS-1$
             java.util.concurrent.TimeUnit.SECONDS));
 
+        JsonObject trackedRefusal = FakeDebugToolCalls.json(
+            DebugSessionStarter.launchInFlightRefusal("app-under-test", runKey)); //$NON-NLS-1$
+        assertEquals("a tracked run's refusal names the key to poll", runKey, //$NON-NLS-1$
+            trackedRefusal.get("runKey").getAsString()); //$NON-NLS-1$
+
         // The cancel reaches the registry's tracking of the run; the launch itself, parked on a
         // question nobody has answered, keeps running - and the honest answer says so.
         assertEquals(PendingWorkRegistry.StopOutcome.STILL_RUNNING,
@@ -261,6 +266,15 @@ public class ALaunchHeldByAQuestionAnswersPendingTest
         assertEquals("a cancelled run whose launch has not returned still holds the application",
             runKey, DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$ //$NON-NLS-2$
 
+        JsonObject detachedRefusal = FakeDebugToolCalls.json(
+            DebugSessionStarter.launchInFlightRefusal("app-under-test", runKey)); //$NON-NLS-1$
+        assertEquals(false, detachedRefusal.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(true, detachedRefusal.get("launchInFlight").getAsBoolean()); //$NON-NLS-1$
+        assertFalse("a detached run's refusal names no key - polling it answers runKey not found: " //$NON-NLS-1$
+            + detachedRefusal, detachedRefusal.has("runKey")); //$NON-NLS-1$
+        assertTrue("the refusal says the launch is still going: " + detachedRefusal, //$NON-NLS-1$
+            detachedRefusal.get("error").getAsString().contains("still going")); //$NON-NLS-1$ //$NON-NLS-2$
+
         returned.countDown();
         long deadline = System.currentTimeMillis() + 10_000L;
         while (DebugSessionStarter.inFlightLaunchRunKey("app-under-test") != null //$NON-NLS-1$
@@ -268,8 +282,67 @@ public class ALaunchHeldByAQuestionAnswersPendingTest
         {
             Thread.sleep(50L);
         }
-        assertEquals("the reservation leaves once the launch has returned", null, //$NON-NLS-1$
+        assertEquals("the reservation leaves once the continuation has left", null, //$NON-NLS-1$
             DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aReturnedLaunchIsHeldUntilTheContinuationLeaves() throws Exception
+    {
+        CountDownLatch returned = new CountDownLatch(1);
+        CountDownLatch watchEntered = new CountDownLatch(1);
+        // The launch is back, but no debug target ever registers: the continuation spends the
+        // whole target wait inside the watch, and the reservation has to cover that window.
+        ILaunch[] launched = {(ILaunch)Proxy.newProxyInstance(
+            ALaunchHeldByAQuestionAnswersPendingTest.class.getClassLoader(),
+            new Class<?>[] { ILaunch.class }, (proxy, method, args) ->
+            {
+                switch (method.getName())
+                {
+                case "isTerminated": //$NON-NLS-1$
+                    return Boolean.FALSE;
+                case "getDebugTargets": //$NON-NLS-1$
+                    watchEntered.countDown();
+                    return new IDebugTarget[0];
+                case "toString": //$NON-NLS-1$
+                    return "a launch whose target never registers"; //$NON-NLS-1$
+                default:
+                    return zeroOf(method.getReturnType());
+                }
+            })};
+        DebugSessionStarter.LaunchUnderWay underWay = aLaunchUnderWay(launched, returned);
+
+        JsonObject pending = FakeDebugToolCalls.json(
+            DebugSessionStarter.pendingLaunchAnswer(underWay, false, List.of(), "app-under-test", //$NON-NLS-1$
+                THE_CALLS_ANSWER));
+        String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
+
+        returned.countDown();
+        assertTrue("the continuation reached the target wait", watchEntered.await(10, //$NON-NLS-1$
+            java.util.concurrent.TimeUnit.SECONDS));
+
+        assertEquals("the launch call's return releases nothing while the continuation waits on " //$NON-NLS-1$
+            + "the target", runKey, DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject refusal = FakeDebugToolCalls.json(
+            DebugSessionStarter.launchInFlightRefusal("app-under-test", runKey)); //$NON-NLS-1$
+        assertEquals(true, refusal.get("launchInFlight").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("the refusal during the wait names the key to poll", runKey, //$NON-NLS-1$
+            refusal.get("runKey").getAsString()); //$NON-NLS-1$
+
+        long deadline = System.currentTimeMillis() + 30_000L;
+        while (DebugSessionStarter.inFlightLaunchRunKey("app-under-test") != null //$NON-NLS-1$
+            && System.currentTimeMillis() < deadline)
+        {
+            Thread.sleep(50L);
+        }
+        assertEquals("the reservation leaves once the continuation's wait is over", null, //$NON-NLS-1$
+            DebugSessionStarter.inFlightLaunchRunKey("app-under-test")); //$NON-NLS-1$
+
+        JsonObject collected = FakeDebugToolCalls.json(new DebugSessionStarter()
+            .execute(Map.of("runKey", runKey))); //$NON-NLS-1$
+        assertEquals(false, collected.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue("the collected answer is the watch's outcome: " + collected, //$NON-NLS-1$
+            collected.get("error").getAsString().contains("no debug target appeared")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     @Test

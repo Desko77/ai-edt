@@ -1666,7 +1666,7 @@ public final class PendingWorkRegistry
          *
          * @param release what returns the permit; runs immediately when the work already left
          */
-        void attachWorkExit(Runnable release)
+        public void attachWorkExit(Runnable release)
         {
             boolean settled;
             synchronized (workLife)
