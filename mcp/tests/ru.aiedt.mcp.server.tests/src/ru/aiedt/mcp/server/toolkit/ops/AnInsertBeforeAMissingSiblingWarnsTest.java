@@ -115,4 +115,25 @@ public class AnInsertBeforeAMissingSiblingWarnsTest
         assertEquals("Button", form.getItems().get(0).eClass().getName()); //$NON-NLS-1$
         assertEquals("Первый", ((FormField)form.getItems().get(1)).getName()); //$NON-NLS-1$
     }
+
+    /**
+     * A sibling named in another case is the same sibling: 1C element names are identifiers and
+     * carry no case, so the anchor has to match them the same way the container lookup does - in
+     * front of the sibling, not appended at the end with a warning about a name that did match.
+     *
+     * @throws Exception when the model refuses the button
+     */
+    @Test
+    public void aButtonBeforeASiblingInAnotherCaseLandsBeforeItWithoutAWarning() throws Exception
+    {
+        Form form = formWithSibling("Товары"); //$NON-NLS-1$
+
+        String answer = new EditFormTool().executeAddButton(helper(), form, null,
+            "КнопкаОк", null, null, "товары", null, null, null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertFalse("a name differing only in case did match", answer.contains("warning:")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Button", form.getItems().get(0).eClass().getName()); //$NON-NLS-1$
+        assertEquals("Товары", ((FormField)form.getItems().get(1)).getName()); //$NON-NLS-1$
+    }
 }

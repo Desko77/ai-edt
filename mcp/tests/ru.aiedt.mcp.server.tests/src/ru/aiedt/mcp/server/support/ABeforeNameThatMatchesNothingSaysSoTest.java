@@ -80,6 +80,25 @@ public class ABeforeNameThatMatchesNothingSaysSoTest
     }
 
     /**
+     * A name that differs from the sibling's only in case still matches it: 1C element names are
+     * identifiers and carry no case, so the anchor lookup reads them the same way.
+     *
+     * @throws Exception when the list cannot be read
+     */
+    @Test
+    public void aNameInAnotherCaseStillPlacesTheItemBeforeTheSibling() throws Exception
+    {
+        Form form = FormFactory.eINSTANCE.createForm();
+        form.getItems().add(namedField("Товары")); //$NON-NLS-1$
+        FormField added = namedField("Новый"); //$NON-NLS-1$
+
+        assertTrue("a name differing only in case names the same element", //$NON-NLS-1$
+            helper.addToContainerBefore(form, added, "товары")); //$NON-NLS-1$
+
+        assertSame(added, form.getItems().get(0));
+    }
+
+    /**
      * A move that names a missing sibling still moves the item, and its description says the
      * sibling was not found.
      *
@@ -100,6 +119,29 @@ public class ABeforeNameThatMatchesNothingSaysSoTest
         assertTrue(description, description.contains("Warning")); //$NON-NLS-1$
         assertEquals("the item still moved into the target", 1, target.getItems().size()); //$NON-NLS-1$
         assertEquals("only the group remains at the root", 1, form.getItems().size()); //$NON-NLS-1$
+    }
+
+    /**
+     * A reorder inside the container the item already sits in owes the same warning a move between
+     * containers owes: a missing sibling put the item at the end, and the answer has to say so
+     * instead of reading as the asked position being taken.
+     *
+     * @throws Exception when the model refuses the move
+     */
+    @Test
+    public void aReorderBeforeAMissingSiblingSaysSo() throws Exception
+    {
+        Form form = FormFactory.eINSTANCE.createForm();
+        form.getItems().add(namedField("Второй")); //$NON-NLS-1$
+        form.getItems().add(namedField("Первый")); //$NON-NLS-1$
+
+        String description = helper.moveItemToContainer(form, "Второй", null, "НетТакого"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue(description, description.contains("Warning")); //$NON-NLS-1$
+        assertTrue(description, description.contains("НетТакого")); //$NON-NLS-1$
+        assertEquals("the item stays in its container", 2, form.getItems().size()); //$NON-NLS-1$
+        assertEquals("a missing sibling puts the item at the end", //$NON-NLS-1$
+            "Второй", ((FormField)form.getItems().get(1)).getName()); //$NON-NLS-1$
     }
 
     /**

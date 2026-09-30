@@ -3211,7 +3211,8 @@ public class BmFormHelper
      * Adds an item to a container before the element with the specified name. When no element
      * carries that name, the item is added to the end and the answer says so: the caller asked
      * for a position, and a silent fall-through to the end reads back as the position being
-     * taken.
+     * taken. The name is matched ignoring case, the way 1C reads element names - the rest of the
+     * name-based lookups on this route already do.
      *
      * @param container the container
      * @param item the item to add
@@ -3223,6 +3224,21 @@ public class BmFormHelper
     public boolean addToContainerBefore(Object container, Object item, String beforeName) throws Exception
     {
         Object items = containerIface.getMethod("getItems").invoke(container); //$NON-NLS-1$
+        return insertBeforeNamed(items, item, beforeName);
+    }
+
+    /**
+     * Walks an item list and inserts the new item in front of the element whose name equals
+     * {@code beforeName} ignoring case, or at the end when no element carries that name.
+     *
+     * @param items the container's item list
+     * @param item the item to insert
+     * @param beforeName the name of the element to insert before
+     * @return true when a named sibling was found; false when the item went to the end
+     * @throws Exception if the list cannot be read
+     */
+    private boolean insertBeforeNamed(Object items, Object item, String beforeName) throws Exception
+    {
         int size = (Integer) items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
         int insertIndex = size; // Default: end of list
         boolean siblingFound = false;
@@ -3233,7 +3249,7 @@ public class BmFormHelper
             try
             {
                 String existingName = (String) namedIface.getMethod("getName").invoke(existing); //$NON-NLS-1$
-                if (beforeName.equals(existingName))
+                if (existingName != null && beforeName.equalsIgnoreCase(existingName))
                 {
                     insertIndex = i;
                     siblingFound = true;
@@ -3312,8 +3328,12 @@ public class BmFormHelper
             // through the list's own move: a containment list holds no duplicates, so indexed add
             // throws on an element it already has and plain add quietly does nothing - which would
             // report a reorder that never happened.
-            reorderWithin(items, item, currentIndex, beforeName);
-            return "moved '" + itemName + "' within " + from; //$NON-NLS-1$ //$NON-NLS-2$
+            String description = "moved '" + itemName + "' within " + from; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!reorderWithin(items, item, currentIndex, beforeName))
+            {
+                description += missedSiblingWarning(beforeName);
+            }
+            return description;
         }
         String description = "moved '" + itemName + "' from " + from + " to " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             + (toRoot ? "the form root" : "'" + targetName + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -3321,8 +3341,7 @@ public class BmFormHelper
         {
             if (!addToContainerBefore(target, item, beforeName))
             {
-                description += "\nWarning: element '" + beforeName + "' is not in the target " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "container, so the item was placed at its end."; //$NON-NLS-1$
+                description += missedSiblingWarning(beforeName);
             }
         }
         else
@@ -3333,6 +3352,20 @@ public class BmFormHelper
     }
 
     /**
+     * The warning a move answer carries when {@code beforeName} matched no element in the
+     * destination and the item went to its end - the same line for a move between containers and
+     * for a reorder inside one, so the caller cannot tell the two apart by what they disclose.
+     *
+     * @param beforeName the sibling name the caller asked for
+     * @return the warning line, never <code>null</code>
+     */
+    private static String missedSiblingWarning(String beforeName)
+    {
+        return "\nWarning: element '" + beforeName + "' is not in the target " //$NON-NLS-1$ //$NON-NLS-2$
+            + "container, so the item was placed at its end."; //$NON-NLS-1$
+    }
+
+    /**
      * Reorders an item that already sits in this list, placing it in front of a
      * named sibling or at the end.
      *
@@ -3340,25 +3373,35 @@ public class BmFormHelper
      * @param item         the item to reposition
      * @param currentIndex where the item sits now
      * @param beforeName   the sibling to land in front of, or {@code null} for the end
+     * @return true when no sibling was asked for or the asked one was found; false when the
+     *         name matched nothing and the item went to the end
      * @throws Exception if the list refuses the move
      */
-    private void reorderWithin(Object items, Object item, int currentIndex, String beforeName)
+    private boolean reorderWithin(Object items, Object item, int currentIndex, String beforeName)
         throws Exception
     {
         int size = (Integer)items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
-        int wanted = size - 1;
-        if (beforeName != null && !beforeName.isEmpty())
+        boolean askedForSibling = beforeName != null && !beforeName.isEmpty();
+        boolean siblingFound = true;
+        // The end is a position in its own right - the last slot as it stands - and NOT the
+        // slot in front of a sibling: passing size - 1 through reorderTargetIndex would land
+        // the item one place before the end whenever it travels forwards.
+        int targetIndex = size - 1;
+        if (askedForSibling)
         {
             int siblingIndex = indexOfNamed(items, beforeName, size);
-            wanted = siblingIndex >= 0 ? siblingIndex : size - 1;
+            siblingFound = siblingIndex >= 0;
+            if (siblingFound)
+            {
+                targetIndex = reorderTargetIndex(currentIndex, siblingIndex);
+            }
         }
-        int targetIndex = reorderTargetIndex(currentIndex, wanted);
-        if (targetIndex == currentIndex)
+        if (targetIndex != currentIndex)
         {
-            return;
+            items.getClass().getMethod("move", Integer.TYPE, Object.class) //$NON-NLS-1$
+                .invoke(items, targetIndex, item);
         }
-        items.getClass().getMethod("move", Integer.TYPE, Object.class) //$NON-NLS-1$
-            .invoke(items, targetIndex, item);
+        return siblingFound;
     }
 
     /**
@@ -3377,7 +3420,8 @@ public class BmFormHelper
     }
 
     /**
-     * Finds the position of a named element in a container's item list.
+     * Finds the position of a named element in a container's item list, matching the name
+     * ignoring case the way 1C reads element names.
      *
      * @param items the item list
      * @param name  the element name to look for
@@ -3392,7 +3436,8 @@ public class BmFormHelper
             Object existing = items.getClass().getMethod("get", Integer.TYPE).invoke(items, i); //$NON-NLS-1$
             try
             {
-                if (name.equals(namedIface.getMethod("getName").invoke(existing))) //$NON-NLS-1$
+                String existingName = (String)namedIface.getMethod("getName").invoke(existing); //$NON-NLS-1$
+                if (existingName != null && name.equalsIgnoreCase(existingName))
                 {
                     return i;
                 }
