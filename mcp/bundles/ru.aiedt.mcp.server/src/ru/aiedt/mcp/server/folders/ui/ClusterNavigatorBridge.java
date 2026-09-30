@@ -416,21 +416,56 @@ public class ClusterNavigatorBridge
      * Whether one of the names this cluster holds resolves to an object of the model.
      * <p>
      * The node's children show only the names that resolve, so a cluster whose every name has gone
-     * stale shows no object. Stops at the first name that resolves.
+     * stale shows no object.
      * </p>
      *
      * @return whether a held name resolves
      */
     public boolean holdsAResolvableObject()
     {
-        for (String fqn : cluster.getChildren())
+        return anyResolves(new ArrayList<>(cluster.getChildren()));
+    }
+
+    /**
+     * Whether one of the names resolves to an object of the model, looked up in one read
+     * transaction that stops at the first name that resolves.
+     * <p>
+     * The navigator asks this of every visible cluster node on each refresh, on the UI thread, so
+     * the names share one transaction rather than taking one each.
+     * </p>
+     *
+     * @param names the fully qualified names
+     * @return whether one of them resolves; {@code false} when the model is not available
+     */
+    boolean anyResolves(List<String> names)
+    {
+        if (names.isEmpty())
         {
-            if (resolveFqnToEObject(fqn) != null)
-            {
-                return true;
-            }
+            return false;
         }
-        return false;
+        Activator activator = Activator.getDefault();
+        IBmModelManager modelManager = activator == null ? null : activator.getBmModelManager();
+        IBmModel model = modelManager == null ? null : modelManager.getModel(project);
+        if (model == null)
+        {
+            return false;
+        }
+        Boolean found = model.executeReadonlyTask(new AbstractBmTask<Boolean>(RESOLVE_TASK_NAME)
+        {
+            @Override
+            public Boolean execute(IBmTransaction transaction, IProgressMonitor monitor)
+            {
+                for (String fqn : names)
+                {
+                    if (resolveInTransaction(transaction, fqn) != null)
+                    {
+                        return Boolean.TRUE;
+                    }
+                }
+                return Boolean.FALSE;
+            }
+        });
+        return Boolean.TRUE.equals(found);
     }
 
     /**

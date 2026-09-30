@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.util.Arrays;
+import java.util.List;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -105,6 +106,12 @@ public class AClusterNodeKeepsTheUsersChoiceTest
         {
             return fqn.equals(resolvable) ? EcoreFactory.eINSTANCE.createEObject() : null;
         }
+
+        @Override
+        boolean anyResolves(List<String> names)
+        {
+            return names.contains(resolvable);
+        }
     }
 
     /**
@@ -164,6 +171,17 @@ public class AClusterNodeKeepsTheUsersChoiceTest
         helper.selectionChanged(selecting(EcoreFactory.eINSTANCE.createEObject()));
         helper.selectionChanged(selecting(new ClusterNavigatorBridge(new Cluster("Sales", ""), PROJECT, null))); //$NON-NLS-1$ //$NON-NLS-2$
         helper.selectionChanged(selecting("a collection folder")); //$NON-NLS-1$
+        assertEquals(0, helper.restores);
+    }
+
+    /** A choice the user made after the object ends the window: the project node is kept. */
+    @Test
+    public void aChoiceAfterTheObjectEndsTheWindow()
+    {
+        Counting helper = new Counting();
+        helper.selectionChanged(selecting(EcoreFactory.eINSTANCE.createEObject()));
+        helper.selectionChanged(selecting(new ClusterNavigatorBridge(new Cluster("Sales", ""), PROJECT, null))); //$NON-NLS-1$ //$NON-NLS-2$
+        helper.selectionChanged(selecting(PROJECT));
         assertEquals(0, helper.restores);
     }
 

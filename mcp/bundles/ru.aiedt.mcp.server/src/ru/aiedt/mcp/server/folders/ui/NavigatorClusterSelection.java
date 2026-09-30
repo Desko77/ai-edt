@@ -90,7 +90,14 @@ public class NavigatorClusterSelection
             lastSelectionTime = System.currentTimeMillis();
             return;
         }
-        if (isSlip(first) && lastSelectedObject != null
+        if (!isSlip(first))
+        {
+            // A choice the user made ends the window: what the tree selects after it is not
+            // undone back to the object chosen before.
+            lastSelectedObject = null;
+            return;
+        }
+        if (lastSelectedObject != null
             && System.currentTimeMillis() - lastSelectionTime <= RESTORE_WINDOW_MILLIS)
         {
             restoreSelection(lastSelectedObject);
