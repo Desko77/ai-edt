@@ -210,3 +210,4 @@ com.e1c.g5.v8.dt.form.extension.IFormExtensionManagementService adoptObject
 com._1c.g5.v8.dt.form.service.datasourceinfo.IDataSourceInfoAssociationService isPathResolved
 com._1c.g5.v8.dt.form.service.extension.IFormExtensionService isExtensionBelongingObject,shouldSkipForExport
 com.e1c.g5.v8.dt.internal.form.extension.FormExtensionPlugin getDefault,getInjector
+com.e1c.g5.dt.applications.wst.IServerApplication
