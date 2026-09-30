@@ -103,7 +103,7 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "Without topic - lists actions.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", "EDT project name (most actions).") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("applicationId", "Application identifier from infobase_admin operation=get_applications.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("applicationId", "Id from infobase_admin operation=get_applications.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
                 "launch: exact name of an EDT debug launch configuration (runtime client or Attach). " //$NON-NLS-1$
                     + "Use for Attach configurations (server-side debug: HTTP services, background jobs, " //$NON-NLS-1$
