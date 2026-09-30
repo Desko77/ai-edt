@@ -51,6 +51,31 @@ final class PredefinedOps
         }
     }
 
+    /**
+     * Finds the predefined item a name already denotes.
+     * <p>
+     * 1C identifiers do not distinguish case, so an item named in another case is the same item:
+     * the answer is its stored name, and the caller treats the request as already done instead of
+     * adding a second item the platform refuses as a duplicate.
+     * </p>
+     *
+     * @param items the predefined items, each exposing {@code getName()}
+     * @param name the requested name
+     * @return the stored name of the matching item, or {@code null} when none matches
+     */
+    static String existingItemName(List<?> items, String name)
+    {
+        for (Object item : items)
+        {
+            Object stored = reflectNoArg(item, "getName"); //$NON-NLS-1$
+            if (stored instanceof String && name.equalsIgnoreCase((String) stored))
+            {
+                return (String) stored;
+            }
+        }
+        return null;
+    }
+
     /** Metadata types exposing a {@code getPredefined()} predefined-data container. */
     private static final Set<String> PREDEFINED_OWNERS = Set.of(
         "Catalog", "ChartOfCharacteristicTypes", "ChartOfAccounts", "ChartOfCalculationTypes"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
@@ -157,13 +182,11 @@ final class PredefinedOps
                 }
                 @SuppressWarnings("unchecked")
                 EList<Object> items = (EList<Object>) itemsObj;
-                for (Object it : items)
+                String existing = existingItemName(items, name);
+                if (existing != null)
                 {
-                    if (name.equals(reflectNoArg(it, "getName"))) //$NON-NLS-1$
-                    {
-                        idempotentSkip[0] = true;
-                        return name;
-                    }
+                    idempotentSkip[0] = true;
+                    return existing;
                 }
                 Object item = BmObjectHelper.createMdClassEObject(ec + "PredefinedItem"); //$NON-NLS-1$
                 if (item == null)

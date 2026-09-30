@@ -633,10 +633,15 @@ final class ObjectOps
             String cfInnerFormFqn = "CommonForm." + name + ".Form"; //$NON-NLS-1$ //$NON-NLS-2$
             ok.put("innerFormFqn", cfInnerFormFqn); //$NON-NLS-1$
             boolean cfSerialized = false;
+            String cfExportFailure = null;
             try
             {
                 IBmModelManager cfBmm = Activator.getDefault().getBmModelManager();
-                if (cfBmm != null)
+                if (cfBmm == null)
+                {
+                    cfExportFailure = "the BM model manager is unavailable"; //$NON-NLS-1$
+                }
+                else
                 {
                     ru.aiedt.mcp.server.support.BmExportHelper.Result cfExp =
                         ru.aiedt.mcp.server.support.BmExportHelper.forceExportAndWait(
@@ -647,6 +652,11 @@ final class ObjectOps
                     // the serialized form (see below). Only surface the pending
                     // state for transparency (Row 42).
                     cfSerialized = cfExp != null && cfExp.isOk();
+                    if (!cfSerialized)
+                    {
+                        cfExportFailure = cfExp == null ? "the export returned no result" //$NON-NLS-1$
+                            : "the export did not confirm the form"; //$NON-NLS-1$
+                    }
                     if (cfExp != null && cfExp.syncFlushPending)
                     {
                         ok.put("diskFlushPending", Boolean.TRUE); //$NON-NLS-1$
@@ -657,6 +667,8 @@ final class ObjectOps
             {
                 Activator.logWarning("create_object CommonForm forceExport(" //$NON-NLS-1$
                     + cfInnerFormFqn + "): " + cfExpEx.getMessage()); //$NON-NLS-1$
+                cfExportFailure = cfExpEx.getMessage() != null ? cfExpEx.getMessage()
+                    : cfExpEx.getClass().getSimpleName();
             }
             if (cfSerialized)
             {
@@ -677,6 +689,9 @@ final class ObjectOps
                 // the form at least exists on disk for follow-up edits.
                 String resErr = BmFormResourceHelper.writeEmptyFormResources(
                     project, "CommonForm." + name, name); //$NON-NLS-1$
+                ok.put("emptyFormStubWritten", "The form " + cfInnerFormFqn //$NON-NLS-1$ //$NON-NLS-2$
+                    + " could not be exported (" + cfExportFailure + "); an empty form was written " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "to disk instead of the content built for it. Fill the form before using it."); //$NON-NLS-1$
                 if (resErr != null)
                 {
                     Activator.logWarning("create_object CommonForm resource init for " //$NON-NLS-1$
@@ -781,6 +796,14 @@ final class ObjectOps
             return ToolResult.error(propertyName + " requires propertyValue as a JSON array, e.g. " //$NON-NLS-1$
                 + (isChoiceLinks ? "[{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]" //$NON-NLS-1$
                     : "[{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}]")).toJson(); //$NON-NLS-1$
+        }
+        if (isChoiceParams || isChoiceLinks)
+        {
+            String partial = partialStructArrayRefusal(propertyName, propertyValue, choiceItems.size());
+            if (partial != null)
+            {
+                return ToolResult.error(partial).toJson();
+            }
         }
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, topFqn, dryRun,
@@ -1868,8 +1891,52 @@ final class ObjectOps
         return autoBorrow ? null : "auto_borrow=false"; //$NON-NLS-1$
     }
 
+    /**
+     * Reads the tabular section a column operation names.
+     * <p>
+     * The schema documents {@code tabularSection} as an alias of {@code tabularSectionName}; the
+     * long form wins when both are given. Adding and removing a column read it here, so the alias
+     * works the same way for both.
+     * </p>
+     *
+     * @param params the call arguments
+     * @return the tabular section name, or {@code null} when neither argument is given
+     */
+    static String tabularSectionNameOf(Map<String, String> params)
+    {
+        String longForm = JsonUtils.extractStringArgument(params, "tabularSectionName"); //$NON-NLS-1$
+        return (longForm != null && !longForm.isEmpty())
+            ? longForm
+            : JsonUtils.extractStringArgument(params, "tabularSection"); //$NON-NLS-1$
+    }
+
+    /**
+     * Refuses a list-valued property whose JSON array was only partly read as objects.
+     * <p>
+     * {@link EditMetadataTool#parseStructArray} stops at the first element that is not an object
+     * and returns what it read before it; written as it stands, that prefix would be applied with
+     * a success answer while the rest of the list was dropped.
+     * </p>
+     *
+     * @param propertyName the property being written, named in the refusal
+     * @param raw the JSON array the caller gave
+     * @param parsedCount how many elements were read as objects
+     * @return the refusal text, or {@code null} when every element was read
+     */
+    static String partialStructArrayRefusal(String propertyName, String raw, int parsedCount)
+    {
+        int declared = EditMetadataTool.jsonArrayLength(raw);
+        if (declared <= parsedCount)
+        {
+            return null;
+        }
+        return propertyName + " was given " + declared + " elements, and only the first " //$NON-NLS-1$ //$NON-NLS-2$
+            + parsedCount + " of them were read as objects: every element must be an object, e.g. " //$NON-NLS-1$
+            + "{\"name\":\"...\",\"value\":\"...\"}. Nothing was changed."; //$NON-NLS-1$
+    }
+
     /** Maps ONE reference-type token ({@code CatalogRef.X}) to its object FQN ({@code Catalog.X}), else null. */
-    private String refFqnForSegment(String t)
+    static String refFqnForSegment(String t)
     {
         if (t == null || t.isEmpty())
         {
@@ -1890,7 +1957,7 @@ final class ObjectOps
         {
             case "CatalogRef": return "Catalog." + name; //$NON-NLS-1$ //$NON-NLS-2$
             case "DocumentRef": return "Document." + name; //$NON-NLS-1$ //$NON-NLS-2$
-            case "EnumRef": return "Enumeration." + name; //$NON-NLS-1$ //$NON-NLS-2$
+            case "EnumRef": return "Enum." + name; //$NON-NLS-1$ //$NON-NLS-2$
             case "ChartOfAccountsRef": return "ChartOfAccounts." + name; //$NON-NLS-1$ //$NON-NLS-2$
             case "ChartOfCalculationTypesRef": //$NON-NLS-1$
                 return "ChartOfCalculationTypes." + name; //$NON-NLS-1$
@@ -2108,13 +2175,7 @@ final class ObjectOps
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
-        // 1.42.4 BUG-T6: schema documents `tabularSection` as alias of
-        // `tabularSectionName`, but runtime previously read only the long
-        // form. Accept both names.
-        String tcNameRaw = JsonUtils.extractStringArgument(params, "tabularSectionName"); //$NON-NLS-1$
-        final String tcName = (tcNameRaw != null && !tcNameRaw.isEmpty())
-            ? tcNameRaw
-            : JsonUtils.extractStringArgument(params, "tabularSection"); //$NON-NLS-1$
+        final String tcName = tabularSectionNameOf(params);
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         final String type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
         String tcSynonymArg = JsonUtils.extractStringArgument(params, "synonym"); //$NON-NLS-1$
@@ -2354,7 +2415,7 @@ final class ObjectOps
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
-        String tcName = JsonUtils.extractStringArgument(params, "tabularSectionName"); //$NON-NLS-1$
+        String tcName = tabularSectionNameOf(params);
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         boolean cascadeForms = JsonUtils.extractBooleanArgument(params, "cascadeForms", false); //$NON-NLS-1$
