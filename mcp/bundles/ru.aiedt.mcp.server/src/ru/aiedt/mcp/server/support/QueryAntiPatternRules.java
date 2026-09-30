@@ -210,18 +210,7 @@ public final class QueryAntiPatternRules
 
     private static void checkNestedDepth(String queryText, List<Issue> issues)
     {
-        int depth = 0;
-        int maxDepth = 0;
-        Matcher m = SUBQUERY_PATTERN.matcher(queryText);
-        // Approximate: count opening "(SELECT" tokens
-        while (m.find())
-        {
-            depth++;
-            if (depth > maxDepth)
-            {
-                maxDepth = depth;
-            }
-        }
+        int maxDepth = deepestSubqueryNesting(queryText);
         if (maxDepth >= 3)
         {
             issues.add(new Issue("NESTED_QUERY_DEPTH", Severity.WARNING, //$NON-NLS-1$
@@ -229,6 +218,136 @@ public final class QueryAntiPatternRules
                     + ". Рассмотрите рефакторинг через временные таблицы.", //$NON-NLS-1$
                 1));
         }
+    }
+
+    /**
+     * The deepest nesting of subqueries in a query text, over every query of a batch.
+     * <p>
+     * A subquery's depth is the number of subqueries it stands inside, plus one: three subqueries
+     * side by side are each of depth 1. The batch is split at {@code ;} outside string literals
+     * and comments, and each query is measured on its own.
+     * </p>
+     *
+     * @param queryText the query text, possibly a batch
+     * @return the deepest subquery nesting; 0 when there is no subquery
+     */
+    public static int deepestSubqueryNesting(String queryText)
+    {
+        int deepest = 0;
+        for (String query : splitBatch(queryText))
+        {
+            deepest = Math.max(deepest, subqueryNesting(query));
+        }
+        return deepest;
+    }
+
+    /**
+     * Splits a batch into its queries at the {@code ;} that stand outside string literals and
+     * comments.
+     *
+     * @param text the batch
+     * @return the queries, in order
+     */
+    public static List<String> splitBatch(String text)
+    {
+        List<String> queries = new ArrayList<>();
+        int start = 0;
+        int i = 0;
+        while (i < text.length())
+        {
+            int skipped = skipLiteralOrComment(text, i);
+            if (skipped > i)
+            {
+                i = skipped;
+                continue;
+            }
+            if (text.charAt(i) == ';')
+            {
+                queries.add(text.substring(start, i));
+                start = i + 1;
+            }
+            i++;
+        }
+        queries.add(text.substring(start));
+        return queries;
+    }
+
+    /**
+     * The deepest nesting of subqueries inside one query.
+     *
+     * @param query one query of a batch
+     * @return the deepest nesting; 0 when there is no subquery
+     */
+    private static int subqueryNesting(String query)
+    {
+        java.util.Deque<Boolean> open = new java.util.ArrayDeque<>();
+        int depth = 0;
+        int deepest = 0;
+        Matcher subquery = SUBQUERY_PATTERN.matcher(query);
+        int i = 0;
+        while (i < query.length())
+        {
+            int skipped = skipLiteralOrComment(query, i);
+            if (skipped > i)
+            {
+                i = skipped;
+                continue;
+            }
+            char c = query.charAt(i);
+            if (c == '(')
+            {
+                boolean opensSubquery = subquery.region(i, query.length()).lookingAt();
+                open.push(Boolean.valueOf(opensSubquery));
+                if (opensSubquery)
+                {
+                    depth++;
+                    deepest = Math.max(deepest, depth);
+                }
+            }
+            else if (c == ')' && !open.isEmpty() && open.pop().booleanValue())
+            {
+                depth--;
+            }
+            i++;
+        }
+        return deepest;
+    }
+
+    /**
+     * Steps over a string literal or a line comment that starts at a position.
+     *
+     * @param text the text
+     * @param at the position
+     * @return the position after the literal or comment, or {@code at} when none starts there
+     */
+    private static int skipLiteralOrComment(String text, int at)
+    {
+        char c = text.charAt(at);
+        if (c == '"')
+        {
+            int i = at + 1;
+            while (i < text.length())
+            {
+                if (text.charAt(i) == '"')
+                {
+                    // A doubled quote is a quote inside the literal.
+                    if (i + 1 < text.length() && text.charAt(i + 1) == '"')
+                    {
+                        i += 2;
+                        continue;
+                    }
+                    return i + 1;
+                }
+                i++;
+            }
+            return text.length();
+        }
+        if (c == '/' && at + 1 < text.length() && text.charAt(at + 1) == '/')
+        {
+            int end = text.indexOf('\n', at);
+            return end < 0 ? text.length() : end + 1;
+        }
+        return at;
     }
 
     private static void checkSubqueryInSelect(String queryText, List<Issue> issues)
