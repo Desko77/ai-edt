@@ -1639,6 +1639,60 @@ final class FormItemsOps
      */
     String opListPictures(Map<String, String> params)
     {
+        return opListPictures(params, PLATFORM_READS);
+    }
+
+    /**
+     * The reads a picture listing performs by the project's name: the stock list of the project's
+     * platform version, and the common pictures of the project's configuration. A seam the answer
+     * route reads through, so a caller that stands in for the platform can see which spelling of
+     * the name each read received.
+     */
+    interface PictureReads
+    {
+        /**
+         * Reads the stock and extended stock pictures of a platform version.
+         *
+         * @param projectName the project whose version decides the list
+         * @return the entries the version registers
+         */
+        java.util.List<StockPictures.Entry> stock(String projectName);
+
+        /**
+         * Reads the common pictures of a project's configuration.
+         *
+         * @param projectName the project whose configuration is read
+         * @param filter the name filter, or <code>null</code> for every picture
+         * @return the common picture names
+         */
+        java.util.List<String> common(String projectName, String filter);
+    }
+
+    /** The reads the platform itself answers with. */
+    private static final PictureReads PLATFORM_READS = new PictureReads()
+    {
+        @Override
+        public java.util.List<StockPictures.Entry> stock(String projectName)
+        {
+            return StockPictures.read(StockPictures.versionOf(projectName));
+        }
+
+        @Override
+        public java.util.List<String> common(String projectName, String filter)
+        {
+            return listCommonPictures(projectName, filter);
+        }
+    };
+
+    /**
+     * Lists the pictures a form element or command can take, reading them through the given reads.
+     *
+     * @param params projectName (optional; its platform version, the newest without it) and filter
+     * @param reads where the stock list and the common pictures come from
+     * @return the JSON answer
+     */
+    static String opListPictures(Map<String, String> params, PictureReads reads)
+    {
         String filter = JsonUtils.extractStringArgument(params, "filter"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         // A project the caller named has to exist: the stock list follows the project's
@@ -1659,8 +1713,8 @@ final class FormItemsOps
             // pictures for a name that only differs in case.
             projectName = project.getName();
         }
-        java.util.List<StockPictures.Entry> all = StockPictures.read(StockPictures.versionOf(projectName));
-        java.util.List<String> common = listCommonPictures(projectName, filter);
+        java.util.List<StockPictures.Entry> all = reads.stock(projectName);
+        java.util.List<String> common = reads.common(projectName, filter);
         if (all.isEmpty())
         {
             return ToolResult.error("This EDT registers no stock pictures for the platform version, " //$NON-NLS-1$
