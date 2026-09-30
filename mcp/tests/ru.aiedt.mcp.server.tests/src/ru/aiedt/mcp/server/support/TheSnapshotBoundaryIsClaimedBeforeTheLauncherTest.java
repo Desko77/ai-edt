@@ -313,6 +313,59 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
     }
 
     /**
+     * A cancel that prevents a load's restore call after its backup call already ran is not
+     * answered as prevented: the backup's platform process started and left its file, so the
+     * stopper reports the run as still running rather than as a run that never launched.
+     */
+    @Test
+    public void aCancelAfterTheBackupRanIsNotAnsweredAsPrevented() throws Exception
+    {
+        LauncherFixture fixture = new LauncherFixture(work);
+        Path source = work.resolve("source.dt"); //$NON-NLS-1$
+        Files.write(source, new byte[] { 1, 2, 3 });
+        Path backup = work.resolve("backup.dt"); //$NON-NLS-1$
+        AtomicReference<String> runKey = new AtomicReference<>();
+        AtomicReference<String> answer = new AtomicReference<>();
+
+        Thread run = startTheLoad(fixture, runKey, answer, source, backup);
+        if (!fixture.entered.await(PATIENCE_MS, TimeUnit.MILLISECONDS))
+        {
+            run.join(5_000L);
+            throw new AssertionError("the backup call did not start; the run answered: " //$NON-NLS-1$
+                + answer.get() + ", calls " + fixture.calls + ", run alive " + run.isAlive()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        fixture.release.set(true); // the backup call returns
+        fixture.lock.lock(); // taken back once the backup's handshake gives it up
+        try
+        {
+            if (!aWorkerIsWaitingFor(fixture.lock))
+            {
+                run.join(5_000L);
+                throw new AssertionError("the restore's worker did not reach the infobase lock; " //$NON-NLS-1$
+                    + "the run answered: " + answer.get() + ", calls " + fixture.calls //$NON-NLS-1$
+                    + ", run alive " + run.isAlive()); //$NON-NLS-1$
+            }
+
+            assertEquals("a run whose backup already launched is not answered as prevented", //$NON-NLS-1$
+                PendingWorkRegistry.StopOutcome.STILL_RUNNING,
+                DtSnapshotRunner.stopTheRun(runKey.get()));
+        }
+        finally
+        {
+            fixture.lock.unlock();
+        }
+        run.join(PATIENCE_MS);
+        assertFalse("the run answered", run.isAlive()); //$NON-NLS-1$
+
+        assertEquals("the restore's launcher call never happened", 1, fixture.calls.size()); //$NON-NLS-1$
+        JsonObject failed = parsed(answer.get());
+        assertTrue(failed.toString(), failed.get("cancelled").getAsBoolean()); //$NON-NLS-1$
+        assertTrue("the answer still names the backup the run wrote: " + failed, //$NON-NLS-1$
+            failed.has("backup")); //$NON-NLS-1$
+        assertTrue("the backup file the first call left is still there", Files.exists(backup)); //$NON-NLS-1$
+    }
+
+    /**
      * Starts one dump on a thread of its own, so the test can act while the run is inside it.
      *
      * @param fixture the launcher the run goes through
@@ -537,15 +590,18 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
         }
 
         /**
-         * @return the launcher whose dump records that it was called, waits to be let return, and
-         *         writes nothing of its own
+         * @return the launcher whose call records that it was called, waits to be let return -
+         *         interrupting it does not end it, the way a platform process is not pulled back -
+         *         and leaves a byte in the file it was pointed at, the way a platform process that
+         *         finished leaves a written file
          */
         private IThickClientLauncher heldLauncher()
         {
             return (IThickClientLauncher)Proxy.newProxyInstance(
                 IThickClientLauncher.class.getClassLoader(),
                 new Class<?>[] { IThickClientLauncher.class }, (proxy, method, args) -> {
-                    if (!method.getName().equals("exportDtFromInfobase")) //$NON-NLS-1$
+                    if (!method.getName().equals("exportDtFromInfobase") //$NON-NLS-1$
+                        && !method.getName().equals("importDtToInfobase")) //$NON-NLS-1$
                     {
                         return null;
                     }
@@ -561,6 +617,10 @@ public class TheSnapshotBoundaryIsClaimedBeforeTheLauncherTest
                         {
                             // a platform process is not pulled back by an interrupt
                         }
+                    }
+                    if (args[args.length - 1] instanceof Path)
+                    {
+                        Files.write((Path)args[args.length - 1], new byte[] { 1 });
                     }
                     return null;
                 });

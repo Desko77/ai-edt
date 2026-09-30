@@ -266,6 +266,13 @@ public final class DtSnapshotRunner
          */
         volatile LaunchBoundary launchBoundary;
 
+        /**
+         * Set once a launcher call of this run crossed its boundary, so a stop that prevents a
+         * later call of the same run - a load's restore after its backup - is not reported as a
+         * run that never launched a platform process.
+         */
+        final AtomicBoolean aLauncherCallRan = new AtomicBoolean();
+
         /** Counted down by the stopper; the run's wait polls it. */
         final CountDownLatch stopped = new CountDownLatch(1);
     }
@@ -284,7 +291,8 @@ public final class DtSnapshotRunner
      * @param runKey the run's key
      * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live,
      *         {@link PendingWorkRegistry.StopOutcome#PREVENTED} when the stop side holds the
-     *         boundary, otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
+     *         boundary and no earlier launcher call of this run started a platform process,
+     *         otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
      */
     static PendingWorkRegistry.StopOutcome stopTheRun(String runKey)
     {
@@ -299,7 +307,13 @@ public final class DtSnapshotRunner
             boundary.claimStop();
         }
         live.stopped.countDown();
-        return InfobaseObjectsExporter.outcomeOnceDecided(live.launchDecision);
+        PendingWorkRegistry.StopOutcome outcome =
+            InfobaseObjectsExporter.outcomeOnceDecided(live.launchDecision);
+        if (outcome == PendingWorkRegistry.StopOutcome.PREVENTED && live.aLauncherCallRan.get())
+        {
+            return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        }
+        return outcome;
     }
 
     /**
@@ -1275,9 +1289,14 @@ public final class DtSnapshotRunner
                             call::run);
                         return "ok"; //$NON-NLS-1$
                     }, launchClaim, watch);
+                live.aLauncherCallRan.set(true);
             }
             catch (DumpInfoRebuilder.Abandoned abandoned)
             {
+                if (!abandoned.launchPrevented())
+                {
+                    live.aLauncherCallRan.set(true);
+                }
                 decision.complete(Boolean.valueOf(abandoned.launchPrevented()));
                 throw abandoned;
             }
