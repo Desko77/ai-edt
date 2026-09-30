@@ -102,6 +102,48 @@ public class EachCategoryKeepsItsOwnBudgetTest
         assertEquals(Boolean.FALSE, field(outcome(harvester), "capped")); //$NON-NLS-1$
     }
 
+    /**
+     * A category fed by a phase that stopped at its collection cap says its count is a floor; one
+     * that did not reach the cap prints a plain count.
+     */
+    @Test
+    public void aCappedCategorySaysItsCountIsAFloor() throws Exception
+    {
+        Object harvester = harvester(LIMIT, null, false, false);
+        addMetadata(harvester, "back", LIMIT * 10); //$NON-NLS-1$
+        addCode(harvester, 12);
+
+        String report = format(harvester);
+
+        assertTrue(report, report.contains("### Metadata references (at least " + (LIMIT * 10) //$NON-NLS-1$
+            + " found, collection capped; " + LIMIT + " shown)")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(report, report.contains("### BSL code references (12 found, " + LIMIT + " shown)")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A sister project without a model is named among the projects not searched. */
+    @Test
+    public void aSisterWithoutAModelIsNamedAsNotSearched() throws Exception
+    {
+        Class<?> sinkType = Class.forName("ru.aiedt.mcp.server.toolkit.ops.ReferenceLocator$Sink"); //$NON-NLS-1$
+        Constructor<?> constructor = sinkType.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        Object sink = constructor.newInstance();
+        Field count = sinkType.getDeclaredField("count"); //$NON-NLS-1$
+        count.setAccessible(true);
+        count.setInt(sink, 3);
+        Field projects = sinkType.getDeclaredField("projectsNotSearched"); //$NON-NLS-1$
+        projects.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        List<String> names = (List<String>)projects.get(sink);
+        names.add(ReferenceLocator.notSearchedForNoModel("ProbeExtension")); //$NON-NLS-1$
+        Method toResult = sinkType.getDeclaredMethod("toResult", String.class); //$NON-NLS-1$
+        toResult.setAccessible(true);
+        ReferenceLocator.Result result = (ReferenceLocator.Result)toResult.invoke(sink, ""); //$NON-NLS-1$
+
+        String why = result.whyNotExact();
+        assertTrue(why, why.contains("ProbeExtension (its model is not built)")); //$NON-NLS-1$
+    }
+
     /** Zero and below are refused before a project is opened. */
     @Test
     public void aNonPositiveLimitIsRefusedBeforeAnySearch() throws Exception

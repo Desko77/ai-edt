@@ -752,6 +752,12 @@ public class ReferenceLocator implements IMcpTool
                 IBmModel sisterBm = bmModelManager.getModel(sister);
                 if (sisterBm == null)
                 {
+                    // A sister with no model was not searched, and the count is a floor for it just as
+                    // for a sister whose walk failed.
+                    if (sink != null)
+                    {
+                        sink.projectsNotSearched.add(notSearchedForNoModel(sister.getName()));
+                    }
                     continue;
                 }
                 BmReferenceHarvester sisterCollector =
@@ -1073,8 +1079,11 @@ public class ReferenceLocator implements IMcpTool
             return out.toString();
         }
 
-        appendCategory(out, "BSL code references", bslRows, limit); //$NON-NLS-1$
-        appendCategory(out, "Metadata references", metadataRows, limit); //$NON-NLS-1$
+        appendCategory(out, "BSL code references", bslRows, limit, //$NON-NLS-1$
+            collector.phaseFull(PHASE_BSL));
+        appendCategory(out, "Metadata references", metadataRows, limit, //$NON-NLS-1$
+            collector.phaseFull(PHASE_BACK) || collector.phaseFull(PHASE_PRODUCED)
+                || collector.phaseFull(PHASE_PREDEFINED) || collector.phaseFull(PHASE_FIELDS));
         return out.toString();
     }
 
@@ -1149,15 +1158,32 @@ public class ReferenceLocator implements IMcpTool
     }
 
     /**
+     * Names a sister project that was skipped because EDT has no model for it.
+     *
+     * @param projectName the sister project
+     * @return the entry for the list of projects not searched
+     */
+    static String notSearchedForNoModel(String projectName)
+    {
+        return projectName + " (its model is not built)"; //$NON-NLS-1$
+    }
+
+    /**
      * Appends one category: its own found and shown counts, at most {@code limit} rows, and the
      * number of rows that did not fit.
+     * <p>
+     * When a phase feeding the category stopped at its collection cap, what was found is a floor,
+     * and the heading says so instead of printing the cap as a total.
+     * </p>
      *
      * @param out the report being built
      * @param heading the section title
      * @param rows the rows, already in display order
      * @param limit how many rows this category may show
+     * @param capped whether a phase feeding the category stopped at its collection cap
      */
-    private static void appendCategory(StringBuilder out, String heading, List<String> rows, int limit)
+    static void appendCategory(StringBuilder out, String heading, List<String> rows, int limit,
+        boolean capped)
     {
         if (rows.isEmpty())
         {
@@ -1165,8 +1191,9 @@ public class ReferenceLocator implements IMcpTool
         }
         int shown = Math.min(Math.max(limit, 0), rows.size());
         int omitted = rows.size() - shown;
-        out.append("\n\n### ").append(heading) //$NON-NLS-1$
-            .append(" (").append(rows.size()).append(" found, ") //$NON-NLS-1$ //$NON-NLS-2$
+        out.append("\n\n### ").append(heading).append(" (") //$NON-NLS-1$ //$NON-NLS-2$
+            .append(capped ? "at least " : "").append(rows.size()) //$NON-NLS-1$ //$NON-NLS-2$
+            .append(capped ? " found, collection capped; " : " found, ") //$NON-NLS-1$ //$NON-NLS-2$
             .append(shown).append(" shown)\n"); //$NON-NLS-1$
         for (int index = 0; index < shown; index++)
         {
