@@ -540,6 +540,21 @@ public class ADiffAgainstTheContainerRevisionTest
         assertTrue(unified, unified.contains("+	Возврат 2;")); //$NON-NLS-1$
     }
 
+    /**
+     * A module that changed only outside its methods has changes in the methods mode too, and the
+     * answer says where they are.
+     */
+    @Test
+    public void aChangeOutsideTheMethodsIsAChange() throws Exception
+    {
+        writeWorking(PLAIN, "Перем Счетчик;\n" + OLD_MODULE); //$NON-NLS-1$
+
+        String methods = diff(PLAIN, "methods"); //$NON-NLS-1$
+        assertTrue(methods, methods.contains("hasChanges: true")); //$NON-NLS-1$
+        assertTrue(methods, methods.contains("Changes detected outside of methods")); //$NON-NLS-1$
+        assertFalse(methods, methods.contains("No method-level changes detected.")); //$NON-NLS-1$
+    }
+
     // -- No repository is not a new file --
 
     /**
