@@ -13,6 +13,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -82,6 +85,9 @@ public final class ClientDialogReader
 
     /** Name prefix of the temporary snapshot directory a read falls back to. */
     private static final String TEMPORARY_DIR_PREFIX = "blocking-windows-"; //$NON-NLS-1$
+
+    /** How long a temporary snapshot directory of an earlier read is kept. */
+    private static final Duration TEMPORARY_DIR_RETENTION = Duration.ofHours(24);
 
     private static final String NO_JSON = "The dialog reader returned no JSON."; //$NON-NLS-1$
 
@@ -529,9 +535,15 @@ public final class ClientDialogReader
             {
                 createdDirectory = !Files.exists(imageDirectory);
                 Files.createDirectories(imageDirectory);
+                if (isTemporaryDirectory(imageDirectory))
+                {
+                    sweepStaleTemporaryDirectories(imageDirectory.getParent(), imageDirectory,
+                        Instant.now().minus(TEMPORARY_DIR_RETENTION));
+                }
             }
             resultFile = Files.createTempFile("aiedt-client-dialogs-", ".json"); //$NON-NLS-1$ //$NON-NLS-2$
-            List<String> command = readerCommand(shell, scriptFile, joined, imageDirectory, resultFile);
+            List<String> command = readerCommand(shell, scriptFile, joined, imageDirectory, resultFile,
+                UUID.randomUUID().toString());
             String failure = runner.run(command, SCRIPT_TIMEOUT_SEC);
             if (failure != null)
             {
@@ -567,10 +579,12 @@ public final class ClientDialogReader
      * @param imageDirectory where the PNGs are written, or {@code null} to report the windows
      *            without a picture
      * @param resultFile where the JSON is written
+     * @param label the mark this read puts into its snapshot names, so that two reads writing into
+     *            one directory at the same time do not overwrite each other's pictures
      * @return the command, one element per argument
      */
     private static List<String> readerCommand(Path shell, Path script, String pids,
-        Path imageDirectory, Path resultFile)
+        Path imageDirectory, Path resultFile, String label)
     {
         List<String> command = new ArrayList<>();
         command.add(shell.toString());
@@ -588,6 +602,8 @@ public final class ClientDialogReader
             // Left out rather than sent empty: the script declares this argument as a path.
             command.add("-ImageDir"); //$NON-NLS-1$
             command.add(imageDirectory.toString());
+            command.add("-Label"); //$NON-NLS-1$
+            command.add(label);
         }
         command.add("-ResultPath"); //$NON-NLS-1$
         command.add(resultFile.toString());
@@ -1078,8 +1094,7 @@ public final class ClientDialogReader
      */
     private static void discardTemporaryDirectory(Path directory, boolean createdByThisRead)
     {
-        if (!createdByThisRead || directory == null || directory.getFileName() == null
-            || !directory.getFileName().toString().startsWith(TEMPORARY_DIR_PREFIX))
+        if (!createdByThisRead || !isTemporaryDirectory(directory))
         {
             return;
         }
@@ -1103,6 +1118,72 @@ public final class ClientDialogReader
         {
             // Something landed in it between the listing and the delete. It stays.
         }
+    }
+
+    /**
+     * Whether a snapshot directory is a temporary one of a single read, rather than a receipt
+     * directory.
+     *
+     * @param directory the directory, or {@code null}
+     * @return {@code true} for a temporary snapshot directory
+     */
+    private static boolean isTemporaryDirectory(Path directory)
+    {
+        return directory != null && directory.getFileName() != null
+            && directory.getFileName().toString().startsWith(TEMPORARY_DIR_PREFIX);
+    }
+
+    /**
+     * Removes the temporary snapshot directories earlier reads left, once they are older than the
+     * cutoff.
+     * <p>
+     * A read keeps its own snapshot, because the answer names that file. What the reads before it
+     * kept is removed here, so the snapshots do not pile up under the plugin state location. Only
+     * directories named as temporary snapshot directories are touched; a directory or file that
+     * cannot be removed stays.
+     * </p>
+     *
+     * @param parent the directory holding the temporary snapshot directories, or {@code null}
+     * @param current the directory of the read in progress, never removed
+     * @param cutoff directories last modified before this are removed
+     * @return how many directories were removed
+     */
+    static int sweepStaleTemporaryDirectories(Path parent, Path current, Instant cutoff)
+    {
+        if (parent == null || !Files.isDirectory(parent))
+        {
+            return 0;
+        }
+        int removed = 0;
+        try (Stream<Path> siblings = Files.list(parent))
+        {
+            for (Path sibling : (Iterable<Path>)siblings::iterator)
+            {
+                if (sibling.equals(current) || !isTemporaryDirectory(sibling) || !Files.isDirectory(sibling))
+                {
+                    continue;
+                }
+                FileTime modified = Files.getLastModifiedTime(sibling);
+                if (!modified.toInstant().isBefore(cutoff))
+                {
+                    continue;
+                }
+                try (Stream<Path> files = Files.list(sibling))
+                {
+                    for (Path file : (Iterable<Path>)files::iterator)
+                    {
+                        Files.deleteIfExists(file);
+                    }
+                }
+                Files.deleteIfExists(sibling);
+                removed++;
+            }
+        }
+        catch (IOException | RuntimeException notRemoved)
+        {
+            // What could not be listed or removed stays for a later read to try again.
+        }
+        return removed;
     }
 
     /**

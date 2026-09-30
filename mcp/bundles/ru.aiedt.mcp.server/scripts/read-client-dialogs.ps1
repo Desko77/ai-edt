@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Pids,
     [Parameter(Mandatory = $false)][string]$ImageDir = '',
-    [Parameter(Mandatory = $true)][string]$ResultPath
+    [Parameter(Mandatory = $true)][string]$ResultPath,
+    [Parameter(Mandatory = $false)][string]$Label = ''
 )
 
 # Reads the 1C windows that are holding the named processes: title, message texts, buttons,
@@ -12,6 +13,10 @@ param(
 # would turn Cyrillic titles into a different string on the way out.
 
 $ErrorActionPreference = 'Stop'
+
+# Label marks the snapshot names of this read. Two reads writing into one directory at the same
+# time get different names; a caller that gives none gets a fresh one.
+if ([string]::IsNullOrWhiteSpace($Label)) { $Label = [guid]::NewGuid().ToString('N') }
 
 function Escape-JsonText([string]$value) {
     if ($null -eq $value) { return '' }
@@ -178,9 +183,11 @@ public class AiedtClientDialogNative {
                 $width = $rect.Right - $rect.Left
                 $height = $rect.Bottom - $rect.Top
                 if ($gotRect -and $width -gt 0 -and $height -gt 0) {
-                    $bitmap = New-Object System.Drawing.Bitmap $width, $height
-                    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                    $bitmap = $null
+                    $graphics = $null
                     try {
+                        $bitmap = New-Object System.Drawing.Bitmap $width, $height
+                        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
                         $deviceContext = $graphics.GetHdc()
                         try {
                             # PrintWindow draws the window itself, so an application covering it
@@ -190,12 +197,12 @@ public class AiedtClientDialogNative {
                             $graphics.ReleaseHdc($deviceContext)
                         }
                         if ($drawn) {
-                            $imageFile = [System.IO.Path]::GetFullPath((Join-Path $ImageDir ("blocking-{0}-{1}.png" -f $processId, $index)))
+                            $imageFile = [System.IO.Path]::GetFullPath((Join-Path $ImageDir ("blocking-{0}-{1}-{2}.png" -f $Label, $processId, $index)))
                             $bitmap.Save($imageFile, [System.Drawing.Imaging.ImageFormat]::Png)
                         }
                     } finally {
-                        $graphics.Dispose()
-                        $bitmap.Dispose()
+                        if ($null -ne $graphics) { $graphics.Dispose() }
+                        if ($null -ne $bitmap) { $bitmap.Dispose() }
                     }
                 }
             }
