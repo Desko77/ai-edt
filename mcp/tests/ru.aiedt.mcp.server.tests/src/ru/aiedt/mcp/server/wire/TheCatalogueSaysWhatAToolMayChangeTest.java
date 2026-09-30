@@ -83,6 +83,21 @@ public class TheCatalogueSaysWhatAToolMayChangeTest
     }
 
     /**
+     * The class of a tool is read off its capability id, not its wire name: a writer renamed on
+     * the wire stays a writer, and a reader that took a writer's old name is not a writer for it.
+     */
+    @Test
+    public void theCapabilityIdDecidesNotTheWireName()
+    {
+        McpToolCatalog registry = McpToolCatalog.getInstance();
+        IMcpTool writerUnderANewName = new CapabilityProbe("module_source_pen", "write_module_source"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(ToolAnnotations.of(writerUnderANewName, registry).get("readOnlyHint")); //$NON-NLS-1$
+
+        IMcpTool readerUnderAnOldName = new CapabilityProbe("write_module_source", "module_source_pen"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(Boolean.TRUE, ToolAnnotations.of(readerUnderAnOldName, registry).get("readOnlyHint")); //$NON-NLS-1$
+    }
+
+    /**
      * A read that lives in a group the preset takes off wholesale is still published as a read.
      */
     @Test
@@ -138,5 +153,49 @@ public class TheCatalogueSaysWhatAToolMayChangeTest
             .map(e -> e.getAsJsonObject()).toList();
         assertTrue(tools.get(0).getAsJsonObject("annotations").get("readOnlyHint").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse(tools.get(1).has("annotations")); //$NON-NLS-1$
+    }
+
+    /** The least a tool whose frozen capability id is not its wire name can be. */
+    private static final class CapabilityProbe implements IMcpTool
+    {
+        private final String name;
+
+        private final String capabilityId;
+
+        CapabilityProbe(String name, String capabilityId)
+        {
+            this.name = name;
+            this.capabilityId = capabilityId;
+        }
+
+        @Override
+        public String getName()
+        {
+            return name;
+        }
+
+        @Override
+        public String getCapabilityId()
+        {
+            return capabilityId;
+        }
+
+        @Override
+        public String getDescription()
+        {
+            return "a probe"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String getInputSchema()
+        {
+            return "{}"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String execute(Map<String, String> params)
+        {
+            return ""; //$NON-NLS-1$
+        }
     }
 }

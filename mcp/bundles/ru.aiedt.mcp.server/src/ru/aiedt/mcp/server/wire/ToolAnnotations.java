@@ -31,6 +31,10 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * and a reader once every one of them is off, so the hint follows the preset the workspace is
  * on.</p>
  *
+ * <p>A tool another bundle published is classed by its own declared word, which the whiteboard
+ * keeps in the catalogue: the presets name only this server's own tools, so without that flag an
+ * external writer would be published as a read.</p>
+ *
  * <p>A writer is published with the spec's default {@code destructiveHint}: the server does not
  * tell an additive write from one that removes, so it does not claim to.</p>
  */
@@ -96,15 +100,29 @@ public final class ToolAnnotations
     /**
      * Whether a tool can change something right now.
      *
+     * <p>The decision keys on the capability id, the identity the presets are written in, so a
+     * renamed wire name does not move a tool out of its class. A tool from another bundle is
+     * classed by the write flag its bundle declared to the whiteboard: the presets name only
+     * this server's own tools, so an external writer would otherwise pass for a reader.</p>
+     *
      * @param tool the tool
      * @param registry the registry that says which gated write doors are enabled
      * @return {@code true} for a writer
      */
     static boolean writes(IMcpTool tool, McpToolCatalog registry)
     {
-        String name = tool.getName();
+        String capabilityId = tool.getCapabilityId();
+        if (capabilityId == null || capabilityId.isEmpty())
+        {
+            capabilityId = tool.getName();
+        }
+        Boolean externalWrites = registry.externalWritesDeclared(capabilityId);
+        if (externalWrites != null)
+        {
+            return externalWrites.booleanValue();
+        }
         Set<String> writers = ToolProfile.READ_ONLY.getDisabledTools();
-        if (writers.contains(name) && !READS_INSIDE_WRITE_GROUPS.contains(name))
+        if (writers.contains(capabilityId) && !READS_INSIDE_WRITE_GROUPS.contains(capabilityId))
         {
             return true;
         }
