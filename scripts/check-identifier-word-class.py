@@ -21,7 +21,8 @@ A pattern does not have to be built by Pattern.compile to be wrong: String.repla
 matches and split compile their first argument the same way, and there is no flags argument to pass -
 the only place to declare the semantics is an inline group inside the pattern text itself, `(?U)` for
 the word classes and `(?u)` for case. So those calls are weighed too, and the inline group counts as
-the declaration. What follows the first argument is the replacement or the limit, never a pattern, and
+the declaration. The same inline group turns case folding on: `(?i)` without `u` folds only ASCII,
+exactly as a CASE_INSENSITIVE argument without UNICODE_CASE does, and is weighed the same way. What follows the first argument is the replacement or the limit, never a pattern, and
 is not read as one.
 
 Usage:
@@ -142,6 +143,9 @@ def violations_in(path: pathlib.Path):
                           "without UNICODE_CHARACTER_CLASS"))
         elif "CASE_INSENSITIVE" in flags and not has_case:
             found.append((line, regex, "folds case over Cyrillic without UNICODE_CASE"))
+        elif "i" in inline and not has_case:
+            found.append((line, regex, "folds case over Cyrillic with an inline (?i) "
+                                       "and no UNICODE_CASE"))
     return found
 
 

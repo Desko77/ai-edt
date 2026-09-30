@@ -82,6 +82,16 @@ class PatternsReadingCyrillicAreNamed(unittest.TestCase):
         self.assertEqual(1, len(found))
         self.assertIn("UNICODE_CASE", found[0][2])
 
+    def test_case_folded_over_cyrillic_by_an_inline_group(self):
+        # No flags argument to read: the fold is declared inside the pattern text itself.
+        _, compiled = weigh_source(
+            body('Pattern.compile("(?i)^\\\\s*(?:Процедура|Функция)\\\\s+");'))
+        _, replaced = weigh_source(
+            body('text.replaceAll("(?im)^КонецПроцедуры$", "");'))
+        self.assertEqual(1, len(compiled))
+        self.assertIn("UNICODE_CASE", compiled[0][2])
+        self.assertEqual(1, len(replaced))
+
     def test_the_split_and_matches_calls_are_weighed_too(self):
         _, split = weigh_source(body('text.split("\\\\bГДЕ\\\\b");'))
         _, matches = weigh_source(body('text.matches("\\\\w+Процедура");'))
@@ -100,6 +110,11 @@ class DeclaredSemanticsAreLeftAlone(unittest.TestCase):
     def test_a_flag_argument_on_compile(self):
         _, found = weigh_source(
             body('Pattern.compile("\\\\b(ГДЕ|WHERE)\\\\b", Pattern.UNICODE_CHARACTER_CLASS);'))
+        self.assertEqual([], found)
+
+    def test_an_inline_case_fold_with_its_unicode_group(self):
+        _, found = weigh_source(
+            body('text.replaceAll("(?iu)^КонецПроцедуры$", "");'))
         self.assertEqual([], found)
 
     def test_a_case_fold_with_its_unicode_flag(self):

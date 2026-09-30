@@ -174,7 +174,7 @@ public class ListInterceptorsTool implements IMcpTool
         body.put("projectName", projectName); //$NON-NLS-1$
         body.put("filesScanned", scan.filesScanned); //$NON-NLS-1$
         body.put("interceptorsFound", scan.hits.size()); //$NON-NLS-1$
-        body.put("truncated", scan.hits.size() >= maxResults); //$NON-NLS-1$
+        body.put("truncated", scan.truncated); //$NON-NLS-1$
         summarise(body, baseProject == null ? null : baseProjectName, scan.hits);
         body.put("interceptors", scan.hits); //$NON-NLS-1$
         body.put("hint", "kind=before/after/around/changeAndValidate maps to Russian " //$NON-NLS-1$ //$NON-NLS-2$
@@ -193,6 +193,9 @@ public class ListInterceptorsTool implements IMcpTool
 
         /** Why the walk stopped early. Null when it ran to the end. */
         public String error;
+
+        /** Whether more entries were found than the cap; those past it are not in the hits. */
+        public boolean truncated;
     }
 
     /**
@@ -207,13 +210,15 @@ public class ListInterceptorsTool implements IMcpTool
      * @param project the extension project to scan
      * @param baseProject the base to validate against, or null for no validation
      * @param allowedKinds the kinds to keep, or null for all of them
-     * @param maxResults the cap on entries, already defaulted by the caller
+     * @param maxResults the cap on entries, already defaulted by the caller; one entry past it is
+     *        looked for, so that {@link Scan#truncated} says whether there are more
      * @return the scan's answer
      */
     public static Scan scan(IProject project, IProject baseProject, List<String> allowedKinds,
         int maxResults)
     {
         Scan scan = new Scan();
+        int lookFor = maxResults < Integer.MAX_VALUE ? maxResults + 1 : maxResults;
         try
         {
             project.accept(new IResourceVisitor()
@@ -221,7 +226,7 @@ public class ListInterceptorsTool implements IMcpTool
                 @Override
                 public boolean visit(IResource resource)
                 {
-                    if (scan.hits.size() >= maxResults)
+                    if (scan.hits.size() >= lookFor)
                     {
                         return false;
                     }
@@ -229,7 +234,7 @@ public class ListInterceptorsTool implements IMcpTool
                         && "bsl".equalsIgnoreCase(resource.getFileExtension())) //$NON-NLS-1$
                     {
                         scan.filesScanned++;
-                        scanFile((IFile) resource, allowedKinds, scan.hits, maxResults,
+                        scanFile((IFile) resource, allowedKinds, scan.hits, lookFor,
                             baseProject);
                     }
                     return true;
@@ -239,6 +244,11 @@ public class ListInterceptorsTool implements IMcpTool
         catch (Exception e)
         {
             scan.error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        }
+        if (scan.hits.size() > maxResults)
+        {
+            scan.hits.subList(maxResults, scan.hits.size()).clear();
+            scan.truncated = true;
         }
         return scan;
     }
@@ -458,17 +468,18 @@ public class ListInterceptorsTool implements IMcpTool
      * @param methodName the method.
      * @return the lines between the declaration and its end, or <code>null</code> when not found
      */
-    private static String bodyOf(String source, String methodName)
+    static String bodyOf(String source, String methodName)
     {
         if (source == null || methodName == null || methodName.isEmpty())
         {
             return null;
         }
         String[] lines = source.split("\r?\n", -1); //$NON-NLS-1$
-        Pattern start = Pattern.compile("(?i)^\\s*(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
-            + Pattern.quote(methodName) + "\\s*\\("); //$NON-NLS-1$
+        Pattern start = Pattern.compile("^\\s*(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
+            + Pattern.quote(methodName) + "\\s*\\(", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE); //$NON-NLS-1$
         Pattern end = Pattern.compile(
-            "(?i)^\\s*(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)\\s*$"); //$NON-NLS-1$
+            "^\\s*(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)\\s*$", //$NON-NLS-1$
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         int from = -1;
         for (int i = 0; i < lines.length; i++)
         {
@@ -559,19 +570,25 @@ public class ListInterceptorsTool implements IMcpTool
     }
 
     /**
-     * True when {@code src} declares a {@code Процедура/Функция/Procedure/Function}
-     * named exactly {@code method} (case-insensitive on the keyword, exact on the name).
+     * True when {@code src} declares a {@code Процедура/Функция/Procedure/Function} named
+     * {@code method}. Both the keyword and the name are compared without case, Cyrillic included,
+     * as 1C reads them.
+     *
+     * @param src the module text
+     * @param method the method name
+     * @return whether the module declares the method
      */
-    private static boolean methodDeclared(String src, String method)
+    static boolean methodDeclared(String src, String method)
     {
         if (src == null || method == null || method.isEmpty())
         {
             return false;
         }
         Pattern p = Pattern.compile(
-            "(?im)^\\s*(?:&[^\\n]*\\r?\\n\\s*)*" //$NON-NLS-1$
+            "^\\s*(?:&[^\\n]*\\r?\\n\\s*)*" //$NON-NLS-1$
                 + "(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
-                + Pattern.quote(method) + "\\s*\\("); //$NON-NLS-1$
+                + Pattern.quote(method) + "\\s*\\(", //$NON-NLS-1$
+            Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         return p.matcher(src).find();
     }
 
