@@ -480,6 +480,53 @@ public final class BreakpointAccess
     }
 
     /**
+     * Removes every breakpoint attached to a resource and reports the lines the line-bound ones sat
+     * on.
+     * <p>
+     * The same removal as {@link #removeAllBreakpointsInResource(IResource)}, for a caller that has
+     * to be able to put back what went: a batch that replaces a module's whole set answers with the
+     * removed places when none of its new breakpoints could be armed, and a module name without the
+     * lines names nothing a caller can re-arm. Breakpoints that carry no line - an exception one,
+     * a run-to-line leftover - are removed all the same and are not in the list, because a line is
+     * not their address.
+     * </p>
+     *
+     * @param resource the module file; null removes nothing
+     * @return the line numbers of the removed line breakpoints, in the manager's order; empty when
+     *         there was nothing to remove
+     * @throws Exception if the platform refuses a removal or refuses to read a line
+     */
+    public static java.util.List<Integer> removeAllBreakpointsReportingLines(IResource resource)
+        throws Exception
+    {
+        java.util.List<Integer> lines = new java.util.ArrayList<>();
+        if (resource == null)
+        {
+            return lines;
+        }
+        IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
+        for (IBreakpoint breakpoint : manager.getBreakpoints())
+        {
+            IMarker marker = breakpoint.getMarker();
+            if (marker == null || !resource.equals(marker.getResource()))
+            {
+                continue;
+            }
+            int line = -1;
+            if (breakpoint instanceof ILineBreakpoint)
+            {
+                line = ((ILineBreakpoint)breakpoint).getLineNumber();
+            }
+            manager.removeBreakpoint(breakpoint, true);
+            if (line > 0)
+            {
+                lines.add(Integer.valueOf(line));
+            }
+        }
+        return lines;
+    }
+
+    /**
      * Removes every registered breakpoint the manager is holding, regardless of model.
      * <p>
      * Best-effort per item: one uncooperative breakpoint does not spare the rest.

@@ -41,6 +41,9 @@ public final class BreakpointStateSetter implements IMcpTool
 
     private static final String KEY_BREAKPOINT_ID = "breakpointId"; //$NON-NLS-1$
 
+    /** Why a call that named none of an argument this action insists on is refused. */
+    static final String REASON_MISSING_ARGUMENT = "missingArgument"; //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -84,6 +87,8 @@ public final class BreakpointStateSetter implements IMcpTool
             return ToolResult.error("breakpointEnabled is required: pass true to enable the breakpoint " //$NON-NLS-1$
                 + "or false to switch it off without removing it.")
                 .put("outcome", "error") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("reason", REASON_MISSING_ARGUMENT)
+                .put("argument", KEY_BREAKPOINT_ENABLED)
                 .toJson();
         }
 
@@ -91,11 +96,16 @@ public final class BreakpointStateSetter implements IMcpTool
         long breakpointId = parseId(rawId);
         if (breakpointId < 0)
         {
-            return ToolResult.error(rawId == null || rawId.isBlank()
+            ToolResult refusal = ToolResult.error(rawId == null || rawId.isBlank()
                 ? "breakpointId must be provided: call list_breakpoints to see the breakpoints and their ids." //$NON-NLS-1$
                 : "breakpointId must be the numeric id a breakpoint was reported with, not '" + rawId + "'.") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("outcome", "error") //$NON-NLS-1$ //$NON-NLS-2$
-                .toJson();
+                .put("outcome", "error"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (rawId == null || rawId.isBlank())
+            {
+                refusal.put("reason", REASON_MISSING_ARGUMENT)
+                    .put("argument", KEY_BREAKPOINT_ID);
+            }
+            return refusal.toJson();
         }
 
         try
