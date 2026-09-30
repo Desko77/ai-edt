@@ -2041,7 +2041,8 @@ public class SyncControlTool implements IMcpTool
         }
         else if (outcome == PendingWorkRegistry.StopOutcome.STOPPED)
         {
-            note = "Stopped tracking this pull. It had not reached the platform call."; //$NON-NLS-1$
+            note = "Stopped tracking this pull. Its work is no longer executing: either the " //$NON-NLS-1$
+                + "flag kept the launch from starting, or the platform call returned."; //$NON-NLS-1$
         }
         else
         {
