@@ -8,6 +8,8 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.HashMap;
@@ -77,6 +79,38 @@ public class ObjectCopierTest
         {
             assertTrue("the schema should expose " + field, schema.contains(field)); //$NON-NLS-1$
         }
+    }
+
+    @Test
+    public void aChildFqnIsRefusedBeforeAnySearch()
+    {
+        // The refusal answers before a project or the model is asked, so a plain call reaches it:
+        // copying the parent under the part's address would hand back a success that names an
+        // object part as its source.
+        String refused = tool.execute(params("sourceProjectName", "Source", //$NON-NLS-1$ //$NON-NLS-2$
+            "objectFqn", "Catalog.Goods.Command.Print", //$NON-NLS-1$ //$NON-NLS-2$
+            "targetProjectName", "Target")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refused, refused.contains("only top-level objects are copied")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("Catalog.Goods.Command.Print")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aNestedSubsystemFqnIsRefusedBeforeAnySearch()
+    {
+        String refused = tool.execute(params("sourceProjectName", "Source", //$NON-NLS-1$ //$NON-NLS-2$
+            "objectFqn", "Subsystem.A.Subsystem.B", //$NON-NLS-1$ //$NON-NLS-2$
+            "targetProjectName", "Target")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refused, refused.contains("only top-level objects are copied")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("Subsystem.A.Subsystem.B")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aTopLevelFqnPassesTheShapeCheck()
+    {
+        assertNull(ObjectCopier.topLevelOnlyProblem("Document.SalesOrder")); //$NON-NLS-1$
+        assertNull(ObjectCopier.topLevelOnlyProblem("Документ.Заказ")); //$NON-NLS-1$
+        assertNotNull(ObjectCopier.topLevelOnlyProblem("Catalog.Goods.Command.Print")); //$NON-NLS-1$
+        assertNotNull(ObjectCopier.topLevelOnlyProblem("Subsystem.A.Subsystem.B")); //$NON-NLS-1$
     }
 
     @Test
