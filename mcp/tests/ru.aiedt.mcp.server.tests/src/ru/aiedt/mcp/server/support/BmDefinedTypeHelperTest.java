@@ -111,7 +111,7 @@ public class BmDefinedTypeHelperTest
     @Test
     public void everythingElsePassesThroughUnchanged()
     {
-        // Reference and defined types are dotted and must never be touched.
+        // A reference prefix is not a metadata type name, so a dotted reference stays.
         assertEquals("CatalogRef.Валюты", //$NON-NLS-1$
             BmDefinedTypeHelper.normalizePrimitiveFqn("CatalogRef.Валюты")); //$NON-NLS-1$
         assertEquals("НеизвестныйТип", //$NON-NLS-1$
@@ -243,5 +243,30 @@ public class BmDefinedTypeHelperTest
         assertEquals(Arrays.asList(
             "length - Number,Date (use precision for the total digit count)"), //$NON-NLS-1$
             stringLength.ignoredFor("Number, Date")); //$NON-NLS-1$
+    }
+
+    /**
+     * The acceptance check and the type builder both read the token this method returns.
+     * <p>
+     * {@code ОпределяемыйТип} is the Russian name of the metadata type {@code DefinedType}, so the
+     * catalogue's own translation makes the two spellings one token. A produced-type prefix such as
+     * {@code СправочникСсылка} is not a metadata type name, and the catalogue leaves it as written.
+     * </p>
+     */
+    @Test
+    public void aRussianDefinedTypeNamesTheSameTokenAsTheEnglishOne()
+    {
+        assertEquals("DefinedType.X", //$NON-NLS-1$
+            BmDefinedTypeHelper.normalizePrimitiveFqn("DefinedType.X")); //$NON-NLS-1$
+        assertEquals(BmDefinedTypeHelper.normalizePrimitiveFqn("DefinedType.X"), //$NON-NLS-1$
+            BmDefinedTypeHelper.normalizePrimitiveFqn("ОпределяемыйТип.X")); //$NON-NLS-1$
+        assertEquals("DefinedType.X", //$NON-NLS-1$
+            BmDefinedTypeHelper.normalizePrimitiveFqn("определяемыйтип.X")); //$NON-NLS-1$
+        assertEquals("DefinedType.MyType", //$NON-NLS-1$
+            BmDefinedTypeHelper.normalizePrimitiveFqn("ОПРЕДЕЛЯЕМЫЙТИП.MyType")); //$NON-NLS-1$
+        assertEquals("СправочникСсылка.Валюты", //$NON-NLS-1$
+            BmDefinedTypeHelper.normalizePrimitiveFqn("СправочникСсылка.Валюты")); //$NON-NLS-1$
+        assertEquals("CatalogRef.Валюты", //$NON-NLS-1$
+            BmDefinedTypeHelper.normalizePrimitiveFqn("CatalogRef.Валюты")); //$NON-NLS-1$
     }
 }
