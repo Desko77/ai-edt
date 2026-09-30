@@ -26,6 +26,8 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BorrowedSyncClassification;
+import ru.aiedt.mcp.server.support.BorrowedSyncReader;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
@@ -194,11 +196,23 @@ public class ExtensionDiffTool implements IMcpTool
         diff.put("extensionCount", extByName.size()); //$NON-NLS-1$
         diff.put("baseCount", baseByName.size()); //$NON-NLS-1$
 
-        if (compareTypes && !common.isEmpty())
+        if (compareTypes)
         {
             List<Map<String, Object>> typeDifferences = new ArrayList<>();
+            // First, by uuid: a borrowed attribute's pair is the attribute with the same uuid,
+            // which the name lists above know nothing about when either side was renamed.
+            addBorrowedTypeChanges(typeDifferences, extKids, baseKids);
             for (String name : new TreeSet<>(common))
             {
+                EObject extChild = extByName.get(name);
+                if (isBorrowed(extChild))
+                {
+                    // A borrowed attribute keeps its type in the extension block, not in the
+                    // ordinary type property, and is matched by uuid above: the name-based
+                    // comparison below would compare nothing on one side and cry wolf on the
+                    // other.
+                    continue;
+                }
                 String extType = stringifyType(extByName.get(name));
                 String baseType = stringifyType(baseByName.get(name));
                 if (extType != null && baseType != null && !extType.equals(baseType))
@@ -213,6 +227,93 @@ public class ExtensionDiffTool implements IMcpTool
             diff.put("typeChanges", typeDifferences); //$NON-NLS-1$
         }
         return diff;
+    }
+
+    /**
+     * Adds a typeChanges row for every borrowed attribute whose controlled type drifted.
+     * <p>
+     * A borrowed attribute answers {@code getType()} with nothing - its type lives in the
+     * extension block's {@code typeExtension} - and the base side of the pair is the attribute
+     * with the same uuid, whatever either is named now. Compared by name the pair never met;
+     * compared through the ordinary type property the extension side always read empty. Both
+     * halves are read here into the plain values the drift rules decide on, qualifiers included,
+     * so a length that moved shows as a length and not as silence.
+     * </p>
+     *
+     * @param typeDifferences the list being built
+     * @param extKids the extension's children
+     * @param baseKids the base's children
+     */
+    static void addBorrowedTypeChanges(List<Map<String, Object>> typeDifferences,
+        List<? extends EObject> extKids, List<? extends EObject> baseKids)
+    {
+        for (EObject extChild : extKids)
+        {
+            if (!(extChild instanceof MdObject) || !isBorrowed(extChild))
+            {
+                continue;
+            }
+            java.util.UUID link = ((MdObject)extChild).getExtendedConfigurationObject();
+            EObject baseChild = findByUuid(baseKids, link);
+            if (baseChild == null)
+            {
+                continue;
+            }
+            BorrowedSyncReader.SideRead controlled =
+                BorrowedSyncReader.readControlledSide(extChild);
+            BorrowedSyncReader.SideRead base = BorrowedSyncReader.readBaseSide(baseChild);
+            if (controlled.side == null || base.side == null)
+            {
+                continue;
+            }
+            String extType = BorrowedSyncClassification.render(controlled.side);
+            String baseType = BorrowedSyncClassification.render(base.side);
+            if (extType.equals(baseType))
+            {
+                continue;
+            }
+            Map<String, Object> td = new LinkedHashMap<>();
+            td.put("name", invokeNameGetter(extChild)); //$NON-NLS-1$
+            td.put("matchedBy", "uuid"); //$NON-NLS-1$ //$NON-NLS-2$
+            td.put("extensionType", extType); //$NON-NLS-1$
+            td.put("baseType", baseType); //$NON-NLS-1$
+            typeDifferences.add(td);
+        }
+    }
+
+    /**
+     * Finds a child by the uuid a borrowed link carries.
+     *
+     * @param kids the children to search
+     * @param uuid the uuid the extension links to
+     * @return the child, or null
+     */
+    private static EObject findByUuid(List<? extends EObject> kids, java.util.UUID uuid)
+    {
+        if (uuid == null)
+        {
+            return null;
+        }
+        for (EObject kid : kids)
+        {
+            if (kid instanceof MdObject && uuid.equals(((MdObject)kid).getUuid()))
+            {
+                return kid;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Whether a child is one the extension borrowed.
+     *
+     * @param child the child
+     * @return true when it carries the uuid link of a borrowed one
+     */
+    private static boolean isBorrowed(EObject child)
+    {
+        return child instanceof MdObject
+            && ((MdObject)child).getExtendedConfigurationObject() != null;
     }
 
     private static List<? extends EObject> invokeListGetter(MdObject obj, String getterName)

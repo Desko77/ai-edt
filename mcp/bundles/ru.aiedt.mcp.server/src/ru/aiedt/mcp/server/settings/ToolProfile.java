@@ -434,6 +434,10 @@ public enum ToolProfile
         names.add("write_module_source"); //$NON-NLS-1$
         names.add("generate_event_handlers"); //$NON-NLS-1$
         names.add("extension_lifecycle"); //$NON-NLS-1$
+        // The constructors group this facade lives in is the half Code Review keeps on - a
+        // preset that promises no writes has to name the facade itself or borrow_object and
+        // update_borrowed apply=true keep writing through the group it left open.
+        names.add("extension_workshop"); //$NON-NLS-1$
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$

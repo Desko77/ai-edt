@@ -1375,7 +1375,7 @@ public final class BmExtensionHelper
      * reflectively on the already-resolved extension-project object. Returns null when
      * the parent cannot be determined (caller then asks for an explicit baseProjectName).
      */
-    private static IProject deriveParentProject(Object extProject)
+    static IProject deriveParentProject(Object extProject)
     {
         if (extProject == null)
         {
@@ -1408,7 +1408,7 @@ public final class BmExtensionHelper
      * {@code IAdaptable} target for {@code IExtensionProject}. The right
      * accessor lives on {@code IV8ProjectManager}.
      */
-    private static Object resolveExtensionProject(IProject project)
+    static Object resolveExtensionProject(IProject project)
     {
         try
         {
