@@ -109,8 +109,9 @@ public class SyncControlTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Back-compat alias of `infobase_admin` `operation=sync_control` (pass the inner action in " //$NON-NLS-1$
-            + "`syncOperation`); prefer the facade for new prompts. " //$NON-NLS-1$
+        return "Back-compat alias of `infobase_admin` `operation=sync_control`; prefer the facade for new " //$NON-NLS-1$
+            + "prompts. Through the facade the inner action goes in `syncOperation`; called directly, " //$NON-NLS-1$
+            + "this tool takes it in `operation`. " //$NON-NLS-1$
             + "Inspect and control EDT<->infobase synchronization (full-reload vs incremental). " //$NON-NLS-1$
             + "operation=status (read-only): predicts whether the next 'Update infobase' will be a FULL " //$NON-NLS-1$
             + "configuration reload or incremental, by comparing the project's Configuration UUID with the " //$NON-NLS-1$

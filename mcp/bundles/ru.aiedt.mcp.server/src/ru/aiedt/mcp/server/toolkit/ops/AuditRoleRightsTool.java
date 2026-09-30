@@ -435,13 +435,25 @@ public class AuditRoleRightsTool implements IMcpTool
             .toJson();
     }
 
-    private static String renderRightsMarkdown(RoleRightsAnalyzer.RightsTable table,
+    /**
+     * Renders a role's rights as a table, one column per right the role states for some object.
+     * <p>
+     * A right no object of the table allows or denies has no column: it would be empty in every
+     * row.
+     * </p>
+     *
+     * @param table the role's rights
+     * @param includeRls whether to add the column that says an object carries a restriction
+     * @return the markdown
+     */
+    static String renderRightsMarkdown(RoleRightsAnalyzer.RightsTable table,
         boolean includeRls)
     {
+        List<String> stated = statedRights(table);
         StringBuilder sb = new StringBuilder("# Rights for role ").append(table.roleName) //$NON-NLS-1$
             .append("\n\n"); //$NON-NLS-1$
         sb.append("| Object | "); //$NON-NLS-1$
-        for (String right : RoleRightsAnalyzer.STANDARD_RIGHTS)
+        for (String right : stated)
         {
             sb.append(right).append(" | "); //$NON-NLS-1$
         }
@@ -450,7 +462,7 @@ public class AuditRoleRightsTool implements IMcpTool
             sb.append("RLS | "); //$NON-NLS-1$
         }
         sb.append("\n|---"); //$NON-NLS-1$
-        for (int i = 0; i < RoleRightsAnalyzer.STANDARD_RIGHTS.size(); i++)
+        for (int i = 0; i < stated.size(); i++)
         {
             sb.append("|---"); //$NON-NLS-1$
         }
@@ -463,7 +475,7 @@ public class AuditRoleRightsTool implements IMcpTool
             .entrySet())
         {
             sb.append("| ").append(entry.getKey()).append(" |"); //$NON-NLS-1$ //$NON-NLS-2$
-            for (String right : RoleRightsAnalyzer.STANDARD_RIGHTS)
+            for (String right : stated)
             {
                 RoleRightsAnalyzer.Verdict v = entry.getValue().get(right);
                 sb.append(" ").append(v != null ? abbreviate(v) : " ").append(" |"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -477,6 +489,30 @@ public class AuditRoleRightsTool implements IMcpTool
             sb.append("\n"); //$NON-NLS-1$
         }
         return sb.toString();
+    }
+
+    /**
+     * The standard rights some object of the table allows or denies, in the standard order.
+     *
+     * @param table the role's rights
+     * @return the rights that have a column
+     */
+    private static List<String> statedRights(RoleRightsAnalyzer.RightsTable table)
+    {
+        List<String> stated = new ArrayList<>();
+        for (String right : RoleRightsAnalyzer.STANDARD_RIGHTS)
+        {
+            for (Map<String, RoleRightsAnalyzer.Verdict> row : table.rights.values())
+            {
+                RoleRightsAnalyzer.Verdict v = row.get(right);
+                if (v == RoleRightsAnalyzer.Verdict.ALLOW || v == RoleRightsAnalyzer.Verdict.DENY)
+                {
+                    stated.add(right);
+                    break;
+                }
+            }
+        }
+        return stated;
     }
 
     private static String abbreviate(RoleRightsAnalyzer.Verdict v)

@@ -220,9 +220,9 @@ public final class BmSupportRegistryHelper
         /**
          * How many dependents have no name of their own.
          * <p>
-         * Counted apart from the unreadable ones below, and both are counted apart from the rest.
-         * They used to share one outcome - a null quietly added to the list - so a failure to read
-         * an object looked exactly like an object without a name, and neither was visible.
+         * Counted apart from the unreadable ones below, and both are counted apart from the rest:
+         * a failure to read an object and an object without a name are different outcomes, and
+         * each is visible on its own.
          * </p>
          */
         public int dependentsUnnamed;
@@ -474,8 +474,8 @@ public final class BmSupportRegistryHelper
                 : java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), //$NON-NLS-1$
                     projectName + "-modes.tsv"); //$NON-NLS-1$
             String name = beside.getFileName().toString();
-            // Numbered, because the second restore from one snapshot used to overwrite the only
-            // record of what the first one replaced - and that record is the sole way back.
+            // Numbered, so a second restore from one snapshot keeps the record of what the first
+            // one replaced - that record is the sole way back.
             java.nio.file.Path undo = beside.resolveSibling(name + ".before-restore.tsv"); //$NON-NLS-1$
             for (int attempt = 2; java.nio.file.Files.exists(undo) && attempt < 1000; attempt++)
             {
@@ -595,10 +595,9 @@ public final class BmSupportRegistryHelper
                 if (recorded.getValue() == null)
                 {
                     // The snapshot recorded no mode - the model default - and the project now
-                    // holds an explicit one. That IS drift, compare() reports it as such, and this
-                    // used to skip it: an apply=true restore answered "0 restored" and left the
-                    // changed mode standing. Named as refused rather than silently counted done,
-                    // because putting a mode back to "no mode" is not something this writes.
+                    // holds an explicit one. That is drift, and compare() reports it as such.
+                    // Named as refused rather than counted done, because putting a mode back to
+                    // "no mode" is not something this writes.
                     refuse(restore, name(objects.get(recorded.getKey()), recorded.getKey())
                         + ": the snapshot recorded no mode (the model default) and the " //$NON-NLS-1$
                         + "project now holds '" + held + "'. Clearing a mode back to the " //$NON-NLS-1$
@@ -1566,9 +1565,9 @@ public final class BmSupportRegistryHelper
     /**
      * Names every entity of the configuration, top-level objects and what lives under them.
      * <p>
-     * <b>It used to stop at the top level, and two thirds of a support registry went unnamed.</b>
-     * Measured on a real configuration: 3823 top-level objects against 10 843 registry entries, so
-     * 7239 entries had an identity and nothing else. The registry records a mode for attributes,
+     * <b>The top level alone names a third of a support registry.</b>
+     * Measured: 3823 top-level objects against 10 843 registry entries, so 7239 entries are
+     * entities under an object. The registry records a mode for attributes,
      * tabular sections, forms, templates and commands as readily as for the objects that own them.
      * </p>
      * <p>
@@ -2049,9 +2048,9 @@ public final class BmSupportRegistryHelper
     /**
      * The address of a child, through the object that holds it.
      * <p>
-     * A dependent used to be named by its class and its own name, so CatalogAttribute.Автор stood
-     * for the attribute of any of dozens of catalogs and named none of them. What comes back now is
-     * the address the same tool takes back: Catalog.Товары.Attribute.Автор.
+     * A dependent is named through its owner: CatalogAttribute.Автор would stand for the attribute
+     * of any of dozens of catalogs and name none of them. What comes back is the address the same
+     * tool takes back: Catalog.Товары.Attribute.Автор.
      * </p>
      * <p>
      * The child kind is the child class name with the owner class name taken off its front -
