@@ -1508,7 +1508,7 @@ public final class BmInfobaseExtensionHelper
     /** What the designer log of an install run vouches for about a requested database update. */
     enum DatabaseUpdateOutcome
     {
-        /** A success line naming the database is present and no failure line is. */
+        /** A success line about the database update is present and no failure line is. */
         CONFIRMED,
         /** The log says nothing either way (or there is no log). */
         UNVERIFIED,
@@ -1523,10 +1523,13 @@ public final class BmInfobaseExtensionHelper
      * The platform speaks the language the IDE runs in, so both English and Russian
      * wordings are matched; a failure line anywhere wins over every success line, and a
      * summary that counts zero errors ("errors: 0" / its Russian twin) is not a failure
-     * report. Only a success line that names the database confirms the update: the same
-     * run loads the extension first, and its "Загрузка конфигурации успешно завершена"
-     * vouches for the load alone. Measured: a load and update run of an unchanged
-     * extension leaves that load line as the whole log. Package-visible: the matching turns on prose and is exactly the kind that
+     * report. An explicit "not completed" wording counts as a failure even though it
+     * carries the word "completed". Only a success line that is about the update of the
+     * database - naming the database, the update and a successful completion together -
+     * confirms the update: the same run loads the extension first, and its
+     * "Загрузка конфигурации успешно завершена" vouches for the load alone. Measured: a
+     * load and update run of an unchanged extension leaves that load line as the whole
+     * log. Package-visible: the matching turns on prose and is exactly the kind that
      * stops working without anyone noticing, so a test reads it directly.
      * </p>
      *
@@ -1552,16 +1555,22 @@ public final class BmInfobaseExtensionHelper
                 || line.contains("ошибок: 0"); //$NON-NLS-1$
             if (!zeroCount && (line.contains("error") || line.contains("failed") //$NON-NLS-1$ //$NON-NLS-2$
                 || line.contains("failure") || line.contains("exception") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("not completed") // the "did not finish" wording //$NON-NLS-1$
+                || line.contains("не завершено") // its Russian twin //$NON-NLS-1$
                 || line.contains("ошибк") // the Russian error word, any case ending //$NON-NLS-1$
                 || line.contains("не удалось"))) // the Russian "could not" wording //$NON-NLS-1$
             {
                 failed = true;
             }
             boolean success = line.contains("successfully") || line.contains("completed") //$NON-NLS-1$ //$NON-NLS-2$
-                || line.contains("успешно"); // the Russian "successfully" wording //$NON-NLS-1$
+                || line.contains("успешно") // the Russian "successfully" wording //$NON-NLS-1$
+                || line.contains("завершено"); // the Russian "completed" wording //$NON-NLS-1$
             boolean namesTheDatabase = line.contains("database") //$NON-NLS-1$
-                || line.contains("базы данных"); // the Russian "of the database" wording //$NON-NLS-1$
-            if (success && namesTheDatabase)
+                || line.contains("базы данных") // the Russian "of the database" wording //$NON-NLS-1$
+                || line.contains("информационной базы"); // the Russian "of the infobase" wording //$NON-NLS-1$
+            boolean aboutTheUpdate = line.contains("update") //$NON-NLS-1$
+                || line.contains("обновлени"); // the Russian "update" word, any ending //$NON-NLS-1$
+            if (success && namesTheDatabase && aboutTheUpdate)
             {
                 confirmed = true;
             }
