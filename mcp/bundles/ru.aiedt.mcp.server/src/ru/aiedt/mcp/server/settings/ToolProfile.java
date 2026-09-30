@@ -351,6 +351,13 @@ public enum ToolProfile
             "get_bookmarks", //$NON-NLS-1$
             "get_tasks", //$NON-NLS-1$
 
+            // cluster_admin covers these
+            "create_cluster", //$NON-NLS-1$
+            "update_cluster", //$NON-NLS-1$
+            "delete_cluster", //$NON-NLS-1$
+            "add_to_cluster", //$NON-NLS-1$
+            "remove_from_cluster", //$NON-NLS-1$
+
             // docs_lookup covers these
             "get_platform_documentation", //$NON-NLS-1$
             "get_object_help", //$NON-NLS-1$
@@ -437,6 +444,14 @@ public enum ToolProfile
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$
+        // The five write doors of the cluster facade sit in the tags-and-marks group, which every
+        // write-blocking preset keeps enabled because its reads belong there: each door is named
+        // here, or the preset writes through the one group it left open.
+        names.add("create_cluster"); //$NON-NLS-1$
+        names.add("update_cluster"); //$NON-NLS-1$
+        names.add("delete_cluster"); //$NON-NLS-1$
+        names.add("add_to_cluster"); //$NON-NLS-1$
+        names.add("remove_from_cluster"); //$NON-NLS-1$
         // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
         // send a question and whatever Naparnik's tools read to that service. A preset that blocks
         // writing switches the whole name off.

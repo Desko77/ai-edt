@@ -155,7 +155,10 @@ public class ToolCategoryTest
         // breakpoint off without removing it.
         // On 2026-09-29 git_revert_file joined VCS (+1 -> 139): putting one file back is a write
         // a read-only preset switches off by that name.
-        assertEquals(139, ToolCategory.getTotalToolCount());
+        // On 2026-09-30 cluster_admin and its five write doors joined TAGS (+6 -> 145): the
+        // clusters of the Navigator are read and written through their own facade, and each write
+        // is a door a read-only preset switches off by name.
+        assertEquals(145, ToolCategory.getTotalToolCount());
     }
 
     @Test

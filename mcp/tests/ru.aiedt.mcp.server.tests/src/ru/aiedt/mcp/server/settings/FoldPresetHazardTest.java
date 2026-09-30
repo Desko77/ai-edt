@@ -55,7 +55,10 @@ public class FoldPresetHazardTest
         "launch_debugger", //$NON-NLS-1$
         List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
             "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
-            "terminate_launch", "run_to_line", "set_exception_breakpoint", "start_profiling", "get_profiling_results")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            "terminate_launch", "run_to_line", "set_exception_breakpoint", "start_profiling", "get_profiling_results"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "cluster_admin", //$NON-NLS-1$
+        List.of("create_cluster", "update_cluster", "delete_cluster", "add_to_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "remove_from_cluster")); //$NON-NLS-1$
 
     /**
      * The (facade, standalone) fold pairs whose delegated handler is gate-checked. edit_metadata and
@@ -75,6 +78,11 @@ public class FoldPresetHazardTest
      * is gate-checked by that name before a file is staged, the work tree is switched, or a file
      * is overwritten.
      * </p>
+     * <p>
+     * The five {@code cluster_admin/<door>} pairs are the same arrangement: the facade reads under
+     * every preset, its writes edit {@code .settings/aiedt-clusters.yaml}, and the doors sit in the
+     * tags-and-marks group that no write-blocking preset takes off wholesale.
+     * </p>
      */
     private static final Set<String> GATED = Set.of(
         "edit_metadata/delete_metadata_object", "edit_metadata/rename_metadata_object", //$NON-NLS-1$ //$NON-NLS-2$
@@ -85,7 +93,9 @@ public class FoldPresetHazardTest
         "yaxunit_tests/debug_yaxunit_tests", //$NON-NLS-1$
         "config_io/unpack_external_binary", //$NON-NLS-1$
         "config_io/import_configuration_from_binary", //$NON-NLS-1$
-        "git/git_commit", "git/git_checkout", "git/git_revert_file"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "git/git_commit", "git/git_checkout", "git/git_revert_file", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "cluster_admin/create_cluster", "cluster_admin/update_cluster", "cluster_admin/delete_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "cluster_admin/add_to_cluster", "cluster_admin/remove_from_cluster"); //$NON-NLS-1$ //$NON-NLS-2$
 
     @Test
     public void everyCrossPresetFoldHazardIsGateChecked()

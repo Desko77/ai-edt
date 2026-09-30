@@ -10,6 +10,12 @@
 | `BranchInfobaseTool` | `current` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string` | passed in as locals |
 | `BranchInfobaseTool` | `list` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string` | passed in as locals |
 | `BranchInfobaseTool` | `unbind` | `action:string`, `applicationId:string`, `branch:string`, `projectName:string` | passed in as locals |
+| `ClusterAdminFacadeTool` | `add_to_cluster` | `clusterPath:string`, `collectionPath:string`, `description:string`, `dryRun:boolean`, `name:string`, `newName:string`, `objectFqn:string`, `parentClusterPath:string`, `projectName:string` | read in place |
+| `ClusterAdminFacadeTool` | `create_cluster` | `clusterPath:string`, `collectionPath:string`, `description:string`, `dryRun:boolean`, `name:string`, `newName:string`, `objectFqn:string`, `parentClusterPath:string`, `projectName:string` | read in place |
+| `ClusterAdminFacadeTool` | `delete_cluster` | `clusterPath:string`, `collectionPath:string`, `description:string`, `dryRun:boolean`, `name:string`, `newName:string`, `objectFqn:string`, `parentClusterPath:string`, `projectName:string` | read in place |
+| `ClusterAdminFacadeTool` | `get_clusters` | `clusterPath:string`, `collectionPath:string`, `description:string`, `dryRun:boolean`, `name:string`, `newName:string`, `objectFqn:string`, `parentClusterPath:string`, `projectName:string` | read in place |
+| `ClusterAdminFacadeTool` | `remove_from_cluster` | `clusterPath:string`, `collectionPath:string`, `description:string`, `dryRun:boolean`, `name:string`, `newName:string`, `objectFqn:string`, `parentClusterPath:string`, `projectName:string` | read in place |
+| `ClusterAdminFacadeTool` | `update_cluster` | `clusterPath:string`, `collectionPath:string`, `description:string`, `dryRun:boolean`, `name:string`, `newName:string`, `objectFqn:string`, `parentClusterPath:string`, `projectName:string` | read in place |
 | `CodeSearchTool` | `call_hierarchy` | `depth:?`, `direction:string`, `limit:integer`, `methodName:string`, `modulePath:string`, `projectName:string` | delegate CallHierarchyReader through rewriteForCallHierarchy |
 | `CodeSearchTool` | `content_assist` | `column:integer`, `contains:string`, `extendedDocumentation:boolean`, `filePath:string`, `limit:integer`, `line:integer`, `offset:integer`, `positions:array`, `projectName:string` | delegate ContentAssistReader |
 | `CodeSearchTool` | `help` | `find:string`, `topic:string` | read in place |

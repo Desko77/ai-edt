@@ -258,6 +258,13 @@ public class CanonicalSurfaceContractTest
         // literally the standalone names they replace, plus help.
         m.put("docs_lookup", Set.of("get_platform_documentation", "get_object_help", "help"));
 
+        // cluster_admin (ClusterAdminFacadeTool.execute + its OPS catalog): six operations plus
+        // help. The five write doors it gates by name are reached under their own literal names -
+        // the operation and its door are the same word.
+        m.put("cluster_admin", Set.of(
+            "get_clusters", "create_cluster", "update_cluster", "delete_cluster",
+            "add_to_cluster", "remove_from_cluster", "help"));
+
         return m;
     }
 
@@ -347,13 +354,14 @@ public class CanonicalSurfaceContractTest
         // On 2026-09-29 pause_thread and set_breakpoint_state joined the launch_debugger coverage
         // (+2 -> 90).
         // On 2026-09-29 git_revert_file joined the git coverage (+1 -> 91).
-        assertEquals(91, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-09-30 the five cluster write doors joined the cluster_admin coverage (+5 -> 96).
+        assertEquals(96, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,
         // project_admin, infobase_admin, config_io, insights, security_audit, workspace_marks,
-        // docs_lookup, git.
-        assertEquals(14, FACADE_OPERATIONS.size());
+        // docs_lookup, git, cluster_admin.
+        assertEquals(15, FACADE_OPERATIONS.size());
 
         // Tripwire 3: a floor, not an exact count - the union is far larger in practice (action
         // aliases, help, and edit_metadata's own ~150-operation registry inflate it well past 80).

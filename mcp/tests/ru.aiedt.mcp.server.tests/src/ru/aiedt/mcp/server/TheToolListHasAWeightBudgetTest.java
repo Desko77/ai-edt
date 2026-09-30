@@ -156,8 +156,13 @@ public class TheToolListHasAWeightBudgetTest
      * The hidden update_database alias is not in tools/list, so the document moves by this facade
      * only. Measured 29.09: 183217.
      * </p>
+     * <p>
+     * Raised from 183217 to 186245 for cluster_admin: the cluster facade and its schema joined the
+     * list (measured 30.09: 3028). Its five write doors are hidden under Canonical and weigh
+     * nothing here.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 183217;
+    private static final int DOCUMENT_BUDGET = 186245;
 
     private LiveServer server;
 
@@ -349,6 +354,10 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
+        // First weigh of cluster_admin: six operations, the tree the read answers, the two places
+        // a create hangs a cluster, the move's model check, and the dry run that passes the same
+        // door as the delete itself.
+        BUDGETS.put("cluster_admin", Integer.valueOf(3028)); //$NON-NLS-1$
         BUDGETS.put("external_data_source_workshop", Integer.valueOf(2954)); //$NON-NLS-1$
         BUDGETS.put("support_registry", Integer.valueOf(2831)); //$NON-NLS-1$
         BUDGETS.put("xdto_workshop", Integer.valueOf(2742)); //$NON-NLS-1$
