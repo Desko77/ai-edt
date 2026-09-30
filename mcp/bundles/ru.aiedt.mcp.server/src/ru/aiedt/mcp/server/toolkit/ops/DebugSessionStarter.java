@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
@@ -569,65 +570,75 @@ public final class DebugSessionStarter implements IMcpTool
                     : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
             }
 
-            LaunchOutcome outcome = performLaunch(toLaunch, isAttach, effectiveAppId);
+            // Copies for the answer below: it runs a second time, on the run's own thread, when
+            // the launch is handed over and settles after the call has answered Pending.
+            final ClientLaunchMode decidedMode = mode;
+            final String appliedFlagState = flagState;
+            final IApplication resolvedApplication = application;
+            final String openedObjectName = openedObject;
+            final ApplicationUpdater.Result updateDone = databaseUpdate;
+            Function<LaunchOutcome, String> settledAnswer = settled ->
+            {
+                if (!settled.started)
+                {
+                    return refusalFor(settled, "Could not launch the debug session").toJson(); //$NON-NLS-1$
+                }
+                ToolResult result = ToolResult.success()
+                    .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                    .put("configurationType", typeId) //$NON-NLS-1$
+                    .put("attach", isAttach) //$NON-NLS-1$
+                    .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (updateDone != null)
+                {
+                    result.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
+                }
+                if (decidedMode != null)
+                {
+                    describeClient(result, decidedMode, appliedFlagState, resolvedApplication);
+                }
+                if (debugServerPort > 0)
+                {
+                    result.put("debugServerPort", isAttach ? null : Integer.valueOf(debugServerPort)); //$NON-NLS-1$
+                    if (isAttach)
+                    {
+                        result.put("debugServerPortNote", //$NON-NLS-1$
+                            "An Attach configuration starts no debug server, so debugServerPort was not " //$NON-NLS-1$
+                                + "applied. It connects to the debug server named by the configuration."); //$NON-NLS-1$
+                    }
+                }
+                if (openedObjectName != null)
+                {
+                    result.put("externalObjectOpened", openedObjectName); //$NON-NLS-1$
+                }
+                if (startupOption != null)
+                {
+                    result.put("startupOption", startupOption); //$NON-NLS-1$
+                }
+                String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, result);
+                if (endpointNote != null)
+                {
+                    return endpointNote;
+                }
+                result.put("message", isAttach //$NON-NLS-1$
+                    ? "Attach debug session started - use debug_status to check on it, "
+                        + "or wait_for_break to block until a breakpoint fires."
+                    : "Debug session is now running");
+                if (configProject != null && !configProject.isEmpty())
+                {
+                    result.put("project", configProject); //$NON-NLS-1$
+                }
+                if (effectiveAppId != null)
+                {
+                    result.put("applicationId", effectiveAppId); //$NON-NLS-1$
+                }
+                return result.toJson();
+            };
+            LaunchOutcome outcome = performLaunch(toLaunch, isAttach, effectiveAppId, settledAnswer);
             if (outcome.pendingAnswer != null)
             {
                 return outcome.pendingAnswer;
             }
-            if (!outcome.started)
-            {
-                return refusalFor(outcome, "Could not launch the debug session").toJson(); //$NON-NLS-1$
-            }
-
-            ToolResult result = ToolResult.success()
-                .put("launchConfiguration", config.getName()) //$NON-NLS-1$
-                .put("configurationType", typeId) //$NON-NLS-1$
-                .put("attach", isAttach) //$NON-NLS-1$
-                .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
-            if (databaseUpdate != null)
-            {
-                result.put("databaseUpdate", databaseUpdate.outcome.toString()); //$NON-NLS-1$
-            }
-            if (mode != null)
-            {
-                describeClient(result, mode, flagState, application);
-            }
-            if (debugServerPort > 0)
-            {
-                result.put("debugServerPort", isAttach ? null : Integer.valueOf(debugServerPort)); //$NON-NLS-1$
-                if (isAttach)
-                {
-                    result.put("debugServerPortNote", //$NON-NLS-1$
-                        "An Attach configuration starts no debug server, so debugServerPort was not " //$NON-NLS-1$
-                            + "applied. It connects to the debug server named by the configuration."); //$NON-NLS-1$
-                }
-            }
-            if (openedObject != null)
-            {
-                result.put("externalObjectOpened", openedObject); //$NON-NLS-1$
-            }
-            if (startupOption != null)
-            {
-                result.put("startupOption", startupOption); //$NON-NLS-1$
-            }
-            String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, result);
-            if (endpointNote != null)
-            {
-                return endpointNote;
-            }
-            result.put("message", isAttach //$NON-NLS-1$
-                ? "Attach debug session started - use debug_status to check on it, "
-                    + "or wait_for_break to block until a breakpoint fires."
-                : "Debug session is now running");
-            if (configProject != null && !configProject.isEmpty())
-            {
-                result.put("project", configProject); //$NON-NLS-1$
-            }
-            if (effectiveAppId != null)
-            {
-                result.put("applicationId", effectiveAppId); //$NON-NLS-1$
-            }
-            return result.toJson();
+            return settledAnswer.apply(outcome);
         }
         catch (Exception e)
         {
@@ -887,45 +898,55 @@ public final class DebugSessionStarter implements IMcpTool
             String flagState = application == null ? "not applied: the application was not resolved" //$NON-NLS-1$
                 : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
 
-            LaunchOutcome outcome = performLaunch(matchingConfig, false, applicationId);
+            // Copies for the answer below: it runs a second time, on the run's own thread, when
+            // the launch is handed over and settles after the call has answered Pending.
+            final String launchedConfigTypeId = LaunchConfigAccess.getConfigTypeId(matchingConfig);
+            final boolean createdConfig = autoCreatedConfig;
+            final String openedObjectName = openedObject;
+            final ApplicationUpdater.Result updateDone = databaseUpdate;
+            final IApplication resolvedApplication = application;
+            Function<LaunchOutcome, String> settledAnswer = settled ->
+            {
+                if (!settled.started)
+                {
+                    return refusalFor(settled, "Debug session launch failed") //$NON-NLS-1$
+                        .put("project", projectName) //$NON-NLS-1$
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("launchConfiguration", configName) //$NON-NLS-1$
+                        .toJson();
+                }
+                ToolResult successResult = ToolResult.success()
+                    .put("project", projectName) //$NON-NLS-1$
+                    .put("applicationId", applicationId) //$NON-NLS-1$
+                    .put("launchConfiguration", configName) //$NON-NLS-1$
+                    .put("configurationType", launchedConfigTypeId) //$NON-NLS-1$
+                    .put("autoCreatedConfiguration", createdConfig) //$NON-NLS-1$
+                    .put("attach", false) //$NON-NLS-1$
+                    .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("externalObjectOpened", openedObjectName) //$NON-NLS-1$
+                    .put("startupOption", startupOption) //$NON-NLS-1$
+                    .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
+                    .put("message", createdConfig //$NON-NLS-1$
+                        ? "Debug session is now running (a launch configuration was auto-created for it)"
+                        : "Debug session is now running");
+                if (updateDone != null)
+                {
+                    successResult.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
+                }
+                describeClient(successResult, mode, flagState, resolvedApplication);
+                String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
+                if (endpointNote != null)
+                {
+                    return endpointNote;
+                }
+                return successResult.toJson();
+            };
+            LaunchOutcome outcome = performLaunch(matchingConfig, false, applicationId, settledAnswer);
             if (outcome.pendingAnswer != null)
             {
                 return outcome.pendingAnswer;
             }
-            if (!outcome.started)
-            {
-                return refusalFor(outcome, "Debug session launch failed") //$NON-NLS-1$
-                    .put("project", projectName) //$NON-NLS-1$
-                    .put("applicationId", applicationId) //$NON-NLS-1$
-                    .put("launchConfiguration", configName) //$NON-NLS-1$
-                    .toJson();
-            }
-
-            ToolResult successResult = ToolResult.success()
-                .put("project", projectName) //$NON-NLS-1$
-                .put("applicationId", applicationId) //$NON-NLS-1$
-                .put("launchConfiguration", configName) //$NON-NLS-1$
-                .put("configurationType", LaunchConfigAccess.getConfigTypeId(matchingConfig)) //$NON-NLS-1$
-                .put("autoCreatedConfiguration", autoCreatedConfig) //$NON-NLS-1$
-                .put("attach", false) //$NON-NLS-1$
-                .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("externalObjectOpened", openedObject) //$NON-NLS-1$
-                .put("startupOption", startupOption) //$NON-NLS-1$
-                .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
-                .put("message", autoCreatedConfig //$NON-NLS-1$
-                    ? "Debug session is now running (a launch configuration was auto-created for it)"
-                    : "Debug session is now running");
-            if (databaseUpdate != null)
-            {
-                successResult.put("databaseUpdate", databaseUpdate.outcome.toString()); //$NON-NLS-1$
-            }
-            describeClient(successResult, mode, flagState, application);
-            String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
-            if (endpointNote != null)
-            {
-                return endpointNote;
-            }
-            return successResult.toJson();
+            return settledAnswer.apply(outcome);
         }
         catch (Exception e)
         {
@@ -1344,11 +1365,13 @@ public final class DebugSessionStarter implements IMcpTool
      * @param isAttach whether it attaches rather than starts a client.
      * @param applicationId the application the launch starts, held as an in-flight reservation
      *            when the launch is handed over; may be <code>null</code> when unknown
+     * @param answer how the call answers a settled launch, started or refused; a launch that
+     *            outlives the wait runs the same answer from its continuation
      * @return the outcome; {@link LaunchOutcome#started} false carries the refusal, and a
      *         non-null {@link LaunchOutcome#pendingAnswer} carries the whole answer to return
      */
     private LaunchOutcome performLaunch(ILaunchConfiguration config, boolean isAttach,
-        String applicationId)
+        String applicationId, Function<LaunchOutcome, String> answer)
     {
         List<Map<String, Object>> dialogsBefore = ModalDialogWatch.current().getDialogs();
         LaunchUnderWay launch = startLaunch(config);
@@ -1365,8 +1388,8 @@ public final class DebugSessionStarter implements IMcpTool
                 return outcomeOfLaunch(launch, isAttach, dialogsBefore);
             case ANSWER_BLOCKED_BY_DIALOG:
             case ANSWER_PENDING:
-                return LaunchOutcome.handOver(
-                    pendingLaunchAnswer(launch, isAttach, dialogsBefore, applicationId));
+                return LaunchOutcome.handOver(pendingLaunchAnswer(launch, isAttach, dialogsBefore,
+                    applicationId, answer));
             default:
                 break;
             }
@@ -1659,10 +1682,13 @@ public final class DebugSessionStarter implements IMcpTool
      * @param dialogsBefore what was open before the launch
      * @param applicationId the application the launch starts, held as in flight until it settles;
      *            <code>null</code> or empty reserves nothing
+     * @param answer how the original call answers a settled launch, started or refused; the run
+     *            body runs it once the launch returns
      * @return the Pending answer for the caller
      */
     static String pendingLaunchAnswer(LaunchUnderWay launch, boolean isAttach,
-        List<Map<String, Object>> dialogsBefore, String applicationId)
+        List<Map<String, Object>> dialogsBefore, String applicationId,
+        Function<LaunchOutcome, String> answer)
     {
         String runKey = PendingWorkRegistry.computeRunKey(NAME,
             String.valueOf(System.nanoTime()));
@@ -1677,7 +1703,7 @@ public final class DebugSessionStarter implements IMcpTool
                 {
                     try
                     {
-                        return awaitLaunchOutcome(launch, isAttach, dialogsBefore);
+                        return awaitLaunchOutcome(launch, isAttach, dialogsBefore, answer);
                     }
                     finally
                     {
@@ -1708,14 +1734,21 @@ public final class DebugSessionStarter implements IMcpTool
 
     /**
      * What a handed-over launch came to, rendered for the caller that polls its {@code runKey}.
+     * <p>
+     * The answer is the one the original call would have given, handed in as a function: the
+     * continuation runs the same response and the same readiness logic - the endpoint wait
+     * included - so a caller that asked for {@code waitForEndpoint} is not told the operation is
+     * done while the endpoint it named has yet to answer.
+     * </p>
      *
      * @param launch the launch that has not returned
      * @param isAttach whether the configuration attaches rather than starts a client
      * @param dialogsBefore what was open before the launch
+     * @param answer how the original call answers a settled launch, started or refused
      * @return the answer of what the launch came to
      */
     static String awaitLaunchOutcome(LaunchUnderWay launch, boolean isAttach,
-        List<Map<String, Object>> dialogsBefore)
+        List<Map<String, Object>> dialogsBefore, Function<LaunchOutcome, String> answer)
     {
         try
         {
@@ -1728,19 +1761,7 @@ public final class DebugSessionStarter implements IMcpTool
                 .put("operation", NAME) //$NON-NLS-1$
                 .toJson();
         }
-        LaunchOutcome outcome = outcomeOfLaunch(launch, isAttach, dialogsBefore);
-        if (outcome.started)
-        {
-            return ToolResult.success()
-                .put("operation", NAME) //$NON-NLS-1$
-                .put("status", "done") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("observed", outcome.observed) //$NON-NLS-1$
-                .put("message", "The launch completed after the wait. What the original call " //$NON-NLS-1$
-                    + "would have answered beside the launch itself was not derived here - call " //$NON-NLS-1$
-                    + "debug_status to see the session.")
-                .toJson();
-        }
-        return refusalFor(outcome, "Could not launch the debug session").toJson(); //$NON-NLS-1$
+        return answer.apply(outcomeOfLaunch(launch, isAttach, dialogsBefore));
     }
 
     /**
