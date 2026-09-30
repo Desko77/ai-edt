@@ -12,6 +12,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.Test;
 
@@ -141,6 +142,72 @@ public class AnExitThatNeedsNoRunKeyTest
 
             assertEquals("nothing tagged it, so nothing addresses it this way", 0, //$NON-NLS-1$
                 registry.stopTrackingFor(SUBJECT + "-k4")); //$NON-NLS-1$
+        }
+        finally
+        {
+            release.countDown();
+        }
+    }
+
+    /**
+     * A run that stopped being tracked holds its key until its body leaves, so the platform call
+     * nobody stopped cannot be joined by a second copy started under the same arguments.
+     */
+    @Test
+    public void aStoppedTrackingRunHoldsItsKeyUntilItsBodyLeaves() throws Exception
+    {
+        PendingWorkRegistry registry = aRegistry("hold-the-key"); //$NON-NLS-1$
+        String runKey = "exit-test-k5"; //$NON-NLS-1$
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger runs = new AtomicInteger();
+        try
+        {
+            PendingWorkRegistry.PendingEntry entry = registry.getOrStart(runKey, () -> {
+                runs.incrementAndGet();
+                started.countDown();
+                try
+                {
+                    release.await(20, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException interrupted)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return "done"; //$NON-NLS-1$
+            });
+            entry.subject = SUBJECT + "-k5"; //$NON-NLS-1$
+            assertTrue("the work has to be running before it can be detached", //$NON-NLS-1$
+                started.await(20, TimeUnit.SECONDS));
+
+            assertEquals("one run stops being tracked", 1, //$NON-NLS-1$
+                registry.stopTrackingFor(SUBJECT + "-k5")); //$NON-NLS-1$
+
+            PendingWorkRegistry.PendingEntry again = registry.getOrStart(runKey, () -> {
+                runs.incrementAndGet();
+                return "second"; //$NON-NLS-1$
+            });
+            String answer = again.await(1000);
+            assertTrue("the repeat under the held key is refused: " + answer, //$NON-NLS-1$
+                answer.contains("\"stillStopping\":true")); //$NON-NLS-1$
+            assertTrue("and the refusal names how long the body has been running", //$NON-NLS-1$
+                answer.contains("\"bodyRunningMs\":")); //$NON-NLS-1$
+            assertEquals("the platform call still executes, so nothing joined it", 1, //$NON-NLS-1$
+                runs.get());
+
+            release.countDown();
+            long end = System.currentTimeMillis() + 10_000L;
+            PendingWorkRegistry.PendingEntry fresh = null;
+            while (runs.get() < 2 && System.currentTimeMillis() < end)
+            {
+                fresh = registry.getOrStart(runKey, () -> {
+                    runs.incrementAndGet();
+                    return "second"; //$NON-NLS-1$
+                });
+                Thread.sleep(20);
+            }
+            assertEquals("a call after the body left starts a run", 2, runs.get()); //$NON-NLS-1$
+            assertEquals("second", fresh.await(20_000)); //$NON-NLS-1$
         }
         finally
         {

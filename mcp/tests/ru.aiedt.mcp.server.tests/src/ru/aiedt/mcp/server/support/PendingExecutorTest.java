@@ -17,9 +17,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 
 import org.junit.Test;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * Verifies the canonical Pending wrapper: immediate work returns its result, slow
@@ -390,6 +395,183 @@ public class PendingExecutorTest
     public void collectingAResultDropsThatRunAndNotWhateverTookItsKey() throws Exception
     {
         assertThatCollectingKeepsTheRunThatTookTheKey(false);
+    }
+
+    /**
+     * The eviction of a not-begun entry and the claim of its start are one critical section, from
+     * both sides of it.
+     * <p>
+     * A claim that lands between the TTL match and the eviction decision - through the gate, on
+     * the pruner's own thread, the exact interleaving - keeps the entry: the run began, it is not
+     * the abandoned run the TTL answers for, and it finishes tracked. An entry the decision wins
+     * over is evicted, and its body never runs: the settle that decided the eviction is the same
+     * critical section as the claim, so the supplier that resumes afterwards observes the
+     * settlement and leaves without running.
+     * </p>
+     */
+    @Test
+    public void anAbandonedEvictionAndTheStartClaimAreOneSection() throws Exception
+    {
+        String rkRacing = key("evict-racing-the-claim"); //$NON-NLS-1$
+        CountDownLatch racingEntered = new CountDownLatch(1);
+        CountDownLatch racingRelease = new CountDownLatch(1);
+        AtomicInteger racingRuns = new AtomicInteger();
+        AtomicBoolean claimWon = new AtomicBoolean();
+        try
+        {
+            PendingWorkRegistry.beforeWorkClaim = job -> {
+                racingEntered.countDown();
+                try
+                {
+                    racingRelease.await(20, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            };
+            PendingWorkRegistry.PendingEntry racing = REG.getOrStart(rkRacing, () -> {
+                racingRuns.incrementAndGet();
+                return "{\"began\":true}"; //$NON-NLS-1$
+            });
+            assertTrue("the supplier entered without the claim", //$NON-NLS-1$
+                racingEntered.await(10, TimeUnit.SECONDS));
+            // Past the abandoned TTL while the body has not claimed its start.
+            racing.startedAt = System.currentTimeMillis() - REG.abandonedTtlMs() - 1000L;
+            PendingWorkRegistry.beforeAbandonedEviction = doomed -> {
+                if (doomed == racing)
+                {
+                    claimWon.set(racing.claimWorkStart());
+                }
+            };
+
+            REG.pruneExpired();
+
+            assertTrue("the claim in the window landed", claimWon.get()); //$NON-NLS-1$
+            assertNotNull("a run that began keeps its entry past the abandoned TTL", //$NON-NLS-1$
+                REG.get(rkRacing));
+
+            racingRelease.countDown();
+            String result = PendingExecutor.resume(REG, "update_database", rkRacing, 10_000L, null); //$NON-NLS-1$
+            assertTrue("the run finishes tracked and its result is collectable", //$NON-NLS-1$
+                result.contains("\"began\":true")); //$NON-NLS-1$
+            assertEquals("one body", 1, racingRuns.get()); //$NON-NLS-1$
+        }
+        finally
+        {
+            racingRelease.countDown();
+            PendingWorkRegistry.beforeWorkClaim = null;
+            PendingWorkRegistry.beforeAbandonedEviction = null;
+            REG.remove(rkRacing);
+        }
+
+        String rkEvicted = key("evict-not-begun"); //$NON-NLS-1$
+        CountDownLatch evictedEntered = new CountDownLatch(1);
+        CountDownLatch evictedRelease = new CountDownLatch(1);
+        AtomicInteger evictedRuns = new AtomicInteger();
+        try
+        {
+            PendingWorkRegistry.beforeWorkClaim = job -> {
+                evictedEntered.countDown();
+                try
+                {
+                    evictedRelease.await(20, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            };
+            PendingWorkRegistry.PendingEntry evicted = REG.getOrStart(rkEvicted, () -> {
+                evictedRuns.incrementAndGet();
+                return "{\"began\":true}"; //$NON-NLS-1$
+            });
+            assertTrue("the supplier entered without the claim", //$NON-NLS-1$
+                evictedEntered.await(10, TimeUnit.SECONDS));
+            evicted.startedAt = System.currentTimeMillis() - REG.abandonedTtlMs() - 1000L;
+
+            REG.pruneExpired();
+
+            assertNull("the abandoned entry is evicted", REG.get(rkEvicted)); //$NON-NLS-1$
+            evictedRelease.countDown();
+            Thread.sleep(300L);
+            assertEquals("an evicted not-begun run never runs its body", 0, evictedRuns.get()); //$NON-NLS-1$
+        }
+        finally
+        {
+            evictedRelease.countDown();
+            PendingWorkRegistry.beforeWorkClaim = null;
+            REG.remove(rkEvicted);
+        }
+    }
+
+    /**
+     * A Pending answer names how long the body itself has been executing - what a repeat caller
+     * wants to know about a key whose body is holding it - and zero while the run is still
+     * queued.
+     */
+    @Test
+    public void pendingNamesHowLongTheBodyHasBeenRunning() throws Exception
+    {
+        String rkRunning = key("body-running"); //$NON-NLS-1$
+        CountDownLatch began = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        try
+        {
+            REG.getOrStart(rkRunning, () -> {
+                began.countDown();
+                try
+                {
+                    release.await(20, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return "{\"done\":true}"; //$NON-NLS-1$
+            });
+            assertTrue("the body is executing", began.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
+            String pending = PendingExecutor.resume(REG, "update_database", rkRunning, 100L, null); //$NON-NLS-1$
+            JsonObject body = JsonParser.parseString(pending).getAsJsonObject();
+            assertEquals("Pending", body.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+            long running = body.get("bodyRunningMs").getAsLong(); //$NON-NLS-1$
+            assertTrue("the answer names the body's own running time: " + running, running >= 50L); //$NON-NLS-1$
+        }
+        finally
+        {
+            release.countDown();
+            REG.remove(rkRunning);
+        }
+
+        String rkQueued = key("body-queued"); //$NON-NLS-1$
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch letGo = new CountDownLatch(1);
+        try
+        {
+            PendingWorkRegistry.beforeWorkClaim = job -> {
+                entered.countDown();
+                try
+                {
+                    letGo.await(20, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                }
+            };
+            String pending = PendingExecutor.start(REG, "update_database", rkQueued, 100L, //$NON-NLS-1$
+                () -> "{\"done\":true}", null); //$NON-NLS-1$
+            JsonObject body = JsonParser.parseString(pending).getAsJsonObject();
+            assertEquals("Pending", body.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("nothing has begun, so the body time is zero", 0L, //$NON-NLS-1$
+                body.get("bodyRunningMs").getAsLong()); //$NON-NLS-1$
+        }
+        finally
+        {
+            letGo.countDown();
+            PendingWorkRegistry.beforeWorkClaim = null;
+            REG.remove(rkQueued);
+        }
     }
 
     /** The same for a poll: a resume drops the run it read, not a newer one under the same key. */
