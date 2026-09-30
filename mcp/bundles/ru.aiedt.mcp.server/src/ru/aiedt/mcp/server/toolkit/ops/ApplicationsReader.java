@@ -202,15 +202,25 @@ public class ApplicationsReader
      * The operations whose code accepts only an infobase application, as facade and operation.
      * <p>
      * Each one resolves the application as an {@code IInfobaseApplication} and refuses any other:
-     * extension management reads the infobase the extension goes into, the credentials write the
-     * infobase's user, and {@code sync_control} binds its baseline to the infobase's uuid.
+     * the ones that start the platform against the infobase go through the launcher context of
+     * {@code ThickClientLaunch}, the event log and the credentials belong to the infobase, and
+     * {@code sync_control} binds its baseline to the infobase's uuid.
      * </p>
      */
     static final List<String> INFOBASE_ONLY_OPERATIONS = List.of(
-        "extension_workshop install_extension", //$NON-NLS-1$
-        "extension_workshop uninstall_extension", //$NON-NLS-1$
-        "extension_workshop list_extension", //$NON-NLS-1$
+        "config_io export_configuration_to_cf", //$NON-NLS-1$
+        "config_io export_database_configuration", //$NON-NLS-1$
+        "config_io export_database_extension", //$NON-NLS-1$
+        "config_io export_infobase_objects", //$NON-NLS-1$
+        "config_io unpack_external_binary", //$NON-NLS-1$
         "extension_workshop export_extension", //$NON-NLS-1$
+        "extension_workshop install_extension", //$NON-NLS-1$
+        "extension_workshop list_extension", //$NON-NLS-1$
+        "extension_workshop uninstall_extension", //$NON-NLS-1$
+        "external_object_workshop import_external_object", //$NON-NLS-1$
+        "infobase_admin export_database_snapshot", //$NON-NLS-1$
+        "infobase_admin read_event_log", //$NON-NLS-1$
+        "infobase_admin restore_database_snapshot", //$NON-NLS-1$
         "infobase_admin set_infobase_credentials", //$NON-NLS-1$
         "infobase_admin sync_control"); //$NON-NLS-1$
 

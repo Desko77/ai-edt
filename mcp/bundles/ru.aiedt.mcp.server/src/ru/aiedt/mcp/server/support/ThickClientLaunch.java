@@ -253,8 +253,8 @@ public final class ThickClientLaunch
             }
             if (!(app instanceof IInfobaseApplication))
             {
-                ctx.error = "Application is not an infobase application; extension management " //$NON-NLS-1$
-                    + "applies only to infobases."; //$NON-NLS-1$
+                ctx.error = "Application is not an infobase application; this operation runs the " //$NON-NLS-1$
+                    + "platform against an infobase and applies only to infobases."; //$NON-NLS-1$
                 ctx.failureKind = ErrorTags.NOT_INFOBASE.wire();
                 return null;
             }

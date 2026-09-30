@@ -237,9 +237,8 @@ public enum ErrorTags
      * applications, or the infobase reference is missing. */
     RESOLVE_FAILED("resolveFailed"), //$NON-NLS-1$
 
-    /** install/export/list/uninstall extension: the resolved application is
-     * not an infobase application (extension management applies only to
-     * infobases). */
+    /** An operation that runs the platform against an infobase: the resolved
+     * application is not an infobase application. */
     NOT_INFOBASE("notInfobase"), //$NON-NLS-1$
 
     /** extension thick-client ops: the .cfe/operation requires a platform

@@ -101,6 +101,8 @@ public class AnApplicationSaysWhatItIsAndWhatReachesItTest
         JsonArray refused = json.getAsJsonArray("operationsNotAvailable"); //$NON-NLS-1$
         assertEquals(ApplicationsReader.INFOBASE_ONLY_OPERATIONS.size(), refused.size());
         assertTrue(refused.toString().contains("extension_workshop install_extension")); //$NON-NLS-1$
+        assertTrue(refused.toString().contains("infobase_admin read_event_log")); //$NON-NLS-1$
+        assertTrue(refused.toString().contains("config_io export_database_configuration")); //$NON-NLS-1$
         assertEquals("sync_control is not suggested to an application that refuses it", //$NON-NLS-1$
             "infobase_admin operation=update_database applicationId=srv-1", //$NON-NLS-1$
             json.get("updateNextStep").getAsString()); //$NON-NLS-1$
