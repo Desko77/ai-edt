@@ -5,19 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 138 | a test class named after it |
-| exercised | 211 | reached by some other test |
-| tool-sweep | 46 | declaration checked by the registry-wide contract sweep |
+| direct | 139 | a test class named after it |
+| exercised | 214 | reached by some other test |
+| tool-sweep | 44 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 41 | needs a display or an extension point |
-| workspace-bound | 22 | drives a live EDT project or debug session |
+| workspace-bound | 21 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **458** | across 562 test classes |
+| **total** | **459** | across 565 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (22)
+## workspace-bound (21)
 
 **folders**
 - IClusterManager
@@ -39,7 +39,6 @@ _none_
 - BmExtensionProjectHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
-- BmXdtoHelper
 - BreakpointAccess
 - BslCallGraphHelper
 - BslSignatureReader
@@ -118,7 +117,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (46)
+## tool-sweep (44)
 
 **toolkit/ops**
 - ApplicationsReader
@@ -127,7 +126,6 @@ _none_
 - BreakpointRemover
 - BreakpointsLister
 - CodeTemplateTool
-- CommonPictureExporter
 - ConfigurationInfoReader
 - ConfigurationXmlExporter
 - DcsSearchTool
@@ -166,9 +164,8 @@ _none_
 - TaggedObjectsReader
 - TagsReader
 - UninstallExtensionTool
-- XdtoWorkshopTool
 
-## exercised (211)
+## exercised (214)
 
 **(root)**
 - Activator
@@ -241,6 +238,7 @@ _none_
 - BmSubsystemHelper
 - BmSupportRegistryHelper
 - BmTemplateHelper
+- BmXdtoHelper
 - ChildBorrow
 - ClientLaunchMode
 - ConfigurationListProperties
@@ -326,6 +324,7 @@ _none_
 - CheckDocReader
 - CodeSearchTool
 - CodeTextSearcher
+- CommonPictureExporter
 - CompareConfigurationsTool
 - ConfigIoFacadeTool
 - ContentAssistReader
@@ -403,6 +402,7 @@ _none_
 - ValidateForExportTool
 - VanessaTool
 - WorkspaceMarksFacadeTool
+- XdtoWorkshopTool
 - YaxunitDebugRunner
 - YaxunitTestsTool
 
@@ -419,7 +419,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (138)
+## direct (139)
 
 **(root)**
 - BrowserOrigin
@@ -455,6 +455,7 @@ _none_
 - BranchInfobaseBook
 - BslCommentParseHelper
 - ClientDialogReader
+- CollectionMemberPath
 - ComparisonSessions
 - ControlledFragment
 - DbViewSurvey
@@ -600,12 +601,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 13 |
 | 5-8 | 43 |
-| 9-16 | 58 |
+| 9-16 | 59 |
 | 17+ | 22 |
 
-4534 test methods across 562 test classes; 138 classes have a test of their own, median 10 methods each.
+4561 test methods across 565 test classes; 139 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 138 of 458 classes have one: 46 are covered by the registry-wide contract sweep and 22 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 139 of 459 classes have one: 44 are covered by the registry-wide contract sweep and 21 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

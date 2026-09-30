@@ -28,6 +28,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.CollectionMemberPath;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
@@ -154,8 +155,15 @@ public class CommonPictureExporter implements IMcpTool
         {
             dirName = "CommonPictures"; //$NON-NLS-1$
         }
-        Path pictureDir = project.getLocation().toFile().toPath()
-            .resolve("src").resolve(dirName).resolve(name); //$NON-NLS-1$
+        // Checked before the directory is touched, so a name that leaves the collection is a
+        // refusal rather than a statement about some other directory.
+        Path collection = project.getLocation().toFile().toPath().resolve("src").resolve(dirName); //$NON-NLS-1$
+        CollectionMemberPath.Place place = CollectionMemberPath.member(collection, "name", name); //$NON-NLS-1$
+        if (place.refusal() != null)
+        {
+            return ToolResult.error(place.refusal()).toJson();
+        }
+        Path pictureDir = place.path();
         if (!Files.isDirectory(pictureDir))
         {
             return ToolResult.error("CommonPicture." + name + " not found in project '" //$NON-NLS-1$ //$NON-NLS-2$
