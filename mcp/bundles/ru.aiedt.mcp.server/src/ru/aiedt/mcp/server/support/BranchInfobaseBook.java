@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.eclipse.core.resources.IProject;
 import org.yaml.snakeyaml.DumperOptions;
@@ -50,15 +51,16 @@ public final class BranchInfobaseBook
     private static final String ROOT = "bindings"; //$NON-NLS-1$
 
     /**
-     * Files that exist but could not be read, remembered from the last read of each.
+     * Files that exist but could not be read fully, mapped to why, from the last read of each.
      * <p>
-     * A set rather than a return value because {@link #all} is called from places that want the
-     * bindings and nothing else. What it buys is the distinction between "no rules" and "rules that
-     * cannot be read", which a guard in front of a destructive operation must not confuse.
+     * Kept on the side rather than as a return value because {@link #all} is called from places
+     * that want the bindings and nothing else. What it buys is the distinction between "no rules"
+     * and "rules that cannot be read", which a guard in front of a destructive operation must not
+     * confuse - and which a write must not erase, because writing over such a file keeps the one
+     * new binding and loses every other.
      * </p>
      */
-    private static final java.util.Set<String> UNREADABLE =
-        java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private static final Map<String, String> UNREADABLE = new ConcurrentHashMap<>();
 
     private BranchInfobaseBook()
     {
@@ -101,7 +103,26 @@ public final class BranchInfobaseBook
             return true;
         }
         all(project);
-        return !UNREADABLE.contains(file.toString());
+        return !UNREADABLE.containsKey(file.toString());
+    }
+
+    /**
+     * Why a project's bindings could not be read, when they could not be.
+     *
+     * @param project the project.
+     * @return the file and the reason it failed to read, or {@code null} when the bindings are
+     *         readable or the file is absent
+     */
+    public static String unreadableReason(IProject project)
+    {
+        Path file = fileOf(project);
+        if (file == null)
+        {
+            return null;
+        }
+        all(project);
+        String reason = UNREADABLE.get(file.toString());
+        return reason == null ? null : file + " (" + reason + ")"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -161,6 +182,14 @@ public final class BranchInfobaseBook
         }
         Path file = projectDirectory.resolve(SETTINGS).resolve(FILE);
         Map<String, String> bindings = read(file);
+        String unreadable = UNREADABLE.get(file.toString());
+        if (unreadable != null)
+        {
+            // Writing here would keep this one binding and silently drop every other the file
+            // holds, so the refusal names the file for a repair by hand instead.
+            return "the bindings file " + file + " could not be read (" + unreadable //$NON-NLS-1$ //$NON-NLS-2$
+                + "), so nothing was written; fix or remove the file first"; //$NON-NLS-1$
+        }
         bindings.put(branch, applicationId);
         return write(file, bindings);
     }
@@ -196,6 +225,14 @@ public final class BranchInfobaseBook
         }
         Path file = projectDirectory.resolve(SETTINGS).resolve(FILE);
         Map<String, String> bindings = read(file);
+        String unreadable = UNREADABLE.get(file.toString());
+        if (unreadable != null)
+        {
+            // Same refusal as bind: removing from a file that cannot be read means rewriting it
+            // with only what could be salvaged, which is the bindings it did hold, forgotten.
+            return "the bindings file " + file + " could not be read (" + unreadable //$NON-NLS-1$ //$NON-NLS-2$
+                + "), so nothing was removed; fix or remove the file first"; //$NON-NLS-1$
+        }
         if (bindings.remove(branch) == null)
         {
             return null;
@@ -226,43 +263,87 @@ public final class BranchInfobaseBook
     private static Map<String, String> read(Path file)
     {
         Map<String, String> bindings = new TreeMap<>();
-        if (file == null || !Files.isRegularFile(file))
+        if (file == null)
         {
+            return bindings;
+        }
+        if (!Files.isRegularFile(file))
+        {
+            // An absent file is a writable state: whatever a previous read could not parse is gone.
+            UNREADABLE.remove(file.toString());
             return bindings;
         }
         try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8))
         {
             Object loaded = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
+            if (loaded == null)
+            {
+                UNREADABLE.remove(file.toString());
+                return bindings;
+            }
             if (!(loaded instanceof Map))
             {
-                return bindings;
+                return unreadable(file, "the document is not a mapping", bindings); //$NON-NLS-1$
             }
             Object root = ((Map<String, Object>)loaded).get(ROOT);
-            if (!(root instanceof Map))
+            if (root == null)
             {
+                UNREADABLE.remove(file.toString());
                 return bindings;
             }
+            if (!(root instanceof Map))
+            {
+                return unreadable(file, "'" + ROOT + "' is not a mapping", bindings); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            int dropped = 0;
             for (Map.Entry<Object, Object> entry : ((Map<Object, Object>)root).entrySet())
             {
                 // Both halves must be text. String.valueOf on a nested map or a list produces a
-                // key nothing can ever match, which is a binding that silently never fires.
+                // key nothing can ever match, which is a binding that silently never fires - and a
+                // binding that is not read whole must not be lost to a rewrite either.
                 if (entry.getKey() instanceof String && entry.getValue() instanceof String)
                 {
                     bindings.put((String)entry.getKey(), (String)entry.getValue());
                 }
+                else
+                {
+                    dropped++;
+                }
+            }
+            if (dropped > 0)
+            {
+                return unreadable(file, dropped + (dropped == 1 ? " binding has" : " bindings have") //$NON-NLS-1$ //$NON-NLS-2$
+                    + " a non-text branch or applicationId", bindings); //$NON-NLS-1$
             }
         }
         catch (IOException | RuntimeException e)
         {
-            // Remembered, not swallowed. An unreadable file and an absent one used to be the same
-            // answer - no bindings - which turned "somebody's notes got mangled" into "this project
-            // has no rules", and switched the guard off at exactly the moment its state was least
-            // trustworthy. The caller decides what to do; see readable().
-            Activator.logWarning("Could not read " + FILE + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
-            UNREADABLE.add(file.toString());
-            return bindings;
+            String message = e.getMessage();
+            return unreadable(file, message != null ? message : e.getClass().getSimpleName(), bindings);
         }
         UNREADABLE.remove(file.toString());
+        return bindings;
+    }
+
+    /**
+     * Remembers that a file could not be read fully, and answers what was salvaged from it.
+     * <p>
+     * Remembered, not swallowed. An unreadable file and an absent one used to be the same answer -
+     * no bindings - which turned "somebody's notes got mangled" into "this project has no rules",
+     * and switched the guard off at exactly the moment its state was least trustworthy. The caller
+     * decides what to do; see {@link #readable}.
+     * </p>
+     *
+     * @param file the file in question.
+     * @param reason why it could not be read fully.
+     * @param bindings the bindings read before the trouble, possibly empty.
+     * @return the same bindings
+     */
+    private static Map<String, String> unreadable(Path file, String reason,
+        Map<String, String> bindings)
+    {
+        Activator.logWarning("Could not read " + file + ": " + reason); //$NON-NLS-1$ //$NON-NLS-2$
+        UNREADABLE.put(file.toString(), reason);
         return bindings;
     }
 
