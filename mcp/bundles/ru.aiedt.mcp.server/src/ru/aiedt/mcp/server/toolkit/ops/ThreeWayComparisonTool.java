@@ -638,7 +638,31 @@ public class ThreeWayComparisonTool
                 .put("status", outcome.status), mergeRestorePoint) //$NON-NLS-1$
                 .toJson();
         }
-        return noteRestorePoint(ToolResult.success()
+        return answer(outcome, params, mergeRestorePoint);
+    }
+
+    /**
+     * Assembles the answer from what the comparison found.
+     * <p>
+     * A merge that was asked for and did not run is an error, not a success carrying a note:
+     * {@code mergeRefused} already says why, and a caller that reads only the success flag would
+     * otherwise take the refusal for a merge that happened. Every field the successful answer
+     * carries is kept, so the state the refusal was decided from still reaches the caller.
+     * </p>
+     *
+     * @param outcome what the comparison found
+     * @param params the call, for the report that may have been asked for
+     * @param mergeRestorePoint the point taken before this comparison, or {@code null} when none
+     *            was taken
+     * @return the answer JSON
+     */
+    static String answer(BmComparisonHelper.Outcome outcome, Map<String, String> params,
+        String mergeRestorePoint)
+    {
+        ToolResult result = outcome.mergeRefused == null
+            ? ToolResult.success()
+            : ToolResult.error(outcome.mergeRefused);
+        return noteRestorePoint(result
             .put("threeWay", outcome.threeWay) //$NON-NLS-1$
             .put("status", outcome.status) //$NON-NLS-1$
             // A reporting comparison stays open under this key, so the next page costs nothing;
@@ -647,9 +671,9 @@ public class ThreeWayComparisonTool
             // describes it, and holding it open leaves a transaction on the comparison store that
             // the environment waits for when somebody closes EDT.
             //
-            // These two used to sit in the refusal above, where a session key is of no use to
-            // anybody - a comparison that failed has nothing to page through. The whole suite was
-            // green and every live answer came back without a key.
+            // These two used to sit in the cannotTell refusal, where a session key is of no use
+            // to anybody - a comparison that failed has nothing to page through. The whole suite
+            // was green and every live answer came back without a key.
             .put("sessionKey", outcome.sessionKey) //$NON-NLS-1$
             .put("sessionReused", outcome.sessionReused) //$NON-NLS-1$
             // What the sides turned out to be, read from the configurations themselves. A caller
