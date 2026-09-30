@@ -61,7 +61,8 @@ public class ExtensionDiffTool implements IMcpTool
             + "Shallow diff of an adopted metadata object between an extension and its base " //$NON-NLS-1$
             + "configuration. Compares attributes, tabular sections, forms, commands and templates " //$NON-NLS-1$
             + "by name (attributes also by type). Use to see what an extension actually overrides " //$NON-NLS-1$
-            + "without reading .mdo files. For BSL diffs use diff_module; for form layout " //$NON-NLS-1$
+            + "without reading .mdo files. Children under missingFromExtension are not adopted and " //$NON-NLS-1$
+            + "are inherited from the base unchanged. For BSL diffs use diff_module; for form layout " //$NON-NLS-1$
             + "differences use get_form_structure on both sides."; //$NON-NLS-1$
     }
 
@@ -157,15 +158,34 @@ public class ExtensionDiffTool implements IMcpTool
             return ToolResult.success().put("extensionDiff", body).toJson(); //$NON-NLS-1$
         }
 
+        compare(body, extObj, baseObj);
+        return ToolResult.success().put("extensionDiff", body).toJson(); //$NON-NLS-1$
+    }
+
+    /**
+     * Compares an adopted object with its base object, child collection by child collection.
+     * <p>
+     * An adopted object carries only the children the extension adopted; the rest stay in the
+     * base and reach the running extension from there. The answer says so next to the lists,
+     * because a child under missingFromExtension reads as one the extension lost.
+     * </p>
+     *
+     * @param body the answer being built
+     * @param extObj the object in the extension
+     * @param baseObj the same object in the base configuration
+     */
+    static void compare(Map<String, Object> body, MdObject extObj, MdObject baseObj)
+    {
         body.put("status", "compared"); //$NON-NLS-1$ //$NON-NLS-2$
         body.put("attributes", diffChildren(extObj, baseObj, "getAttributes", true)); //$NON-NLS-1$ //$NON-NLS-2$
         body.put("tabularSections", diffChildren(extObj, baseObj, "getTabularSections", false)); //$NON-NLS-1$ //$NON-NLS-2$
         body.put("forms", diffChildren(extObj, baseObj, "getForms", false)); //$NON-NLS-1$ //$NON-NLS-2$
         body.put("commands", diffChildren(extObj, baseObj, "getCommands", false)); //$NON-NLS-1$ //$NON-NLS-2$
         body.put("templates", diffChildren(extObj, baseObj, "getTemplates", false)); //$NON-NLS-1$ //$NON-NLS-2$
+        body.put("missingFromExtensionNote", "Children under missingFromExtension are not " //$NON-NLS-1$ //$NON-NLS-2$
+            + "adopted: the extension inherits them from the base configuration unchanged."); //$NON-NLS-1$
         body.put("hint", "Shallow comparison only. For BSL diffs use diff_module; for form layouts " //$NON-NLS-1$ //$NON-NLS-2$
             + "use get_form_structure on both projects and compare the JSON trees.");
-        return ToolResult.success().put("extensionDiff", body).toJson(); //$NON-NLS-1$
     }
 
     @SuppressWarnings("unchecked")

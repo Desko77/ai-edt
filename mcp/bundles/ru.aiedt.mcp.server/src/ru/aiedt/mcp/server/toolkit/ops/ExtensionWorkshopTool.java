@@ -918,7 +918,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         }
         // The scan stops at its cap, as list_interceptors reports: past it a signature break is
         // unseen, so the review is not complete.
-        if (scan.hits.size() >= max)
+        if (scan.truncated)
         {
             review.truncated = true;
         }
@@ -1431,7 +1431,9 @@ public class ExtensionWorkshopTool implements IMcpTool
             sb.append("- export_extension - extract a named extension to a .cfe (outputPath)\n"); //$NON-NLS-1$
             sb.append("Inspection:\n"); //$NON-NLS-1$
             sb.append("- extension_lifecycle - guided probe / adopt / generate / revalidate\n"); //$NON-NLS-1$
-            sb.append("- extension_diff - what an extension changes vs the base configuration\n"); //$NON-NLS-1$
+            sb.append("- extension_diff - what an extension changes vs the base configuration; " //$NON-NLS-1$
+                + "children under missingFromExtension are not adopted and are inherited from the " //$NON-NLS-1$
+                + "base unchanged\n"); //$NON-NLS-1$
             sb.append("- list_interceptors - method interceptors declared by extensions\n\n"); //$NON-NLS-1$
             sb.append("- check_release_fitness - what a new delivery breaks in an extension: an " //$NON-NLS-1$
                 + "adopted object gone, a borrowed field gone, a field whose type moved. Needs " //$NON-NLS-1$

@@ -22,6 +22,7 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.ToolGate;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 
 /**
  * 1.40.x: Extension-lifecycle workflow helper. Combines several existing
@@ -54,6 +55,13 @@ import com.google.gson.JsonElement;
 public class ExtensionLifecycleTool implements IMcpTool
 {
     public static final String NAME = "extension_lifecycle"; //$NON-NLS-1$
+
+    /**
+     * How long the adopt step waits once more for an adopt that answered Pending, in seconds.
+     * The wait edit_metadata applies to a call that names none, so the step waits at most twice
+     * what a single adopt call does.
+     */
+    private static final int ADOPT_POLL_SECONDS = 25;
 
     @Override
     public String getName()
@@ -165,6 +173,7 @@ public class ExtensionLifecycleTool implements IMcpTool
         // ---- Step 2: adopt (borrow) ----
         Map<String, Object> adoptStep = new LinkedHashMap<>();
         adoptStep.put("step", "adopt");
+        String adoptRunKey = null;
         try
         {
             Map<String, String> p = new LinkedHashMap<>();
@@ -176,13 +185,31 @@ public class ExtensionLifecycleTool implements IMcpTool
                 p.put("dryRun", "true");
             }
             String body = invokeAdopt(p);
+            adoptRunKey = pendingRunKey(body);
+            if (adoptRunKey != null)
+            {
+                Map<String, String> poll = new LinkedHashMap<>(p);
+                poll.put("runKey", adoptRunKey); //$NON-NLS-1$
+                poll.put("timeoutSeconds", String.valueOf(ADOPT_POLL_SECONDS)); //$NON-NLS-1$
+                body = invokeAdopt(poll);
+                adoptRunKey = pendingRunKey(body);
+            }
             adoptStep.put("response", parseJsonOrRaw(body));
-            adoptStep.put("ok", looksOk(body));
+            adoptStep.put("ok", adoptRunKey == null && looksOk(body));
         }
         catch (Exception e)
         {
             adoptStep.put("ok", false);
-            adoptStep.put("error", e.getMessage());
+            // A key already issued means the adopt was started: the failure is the wait's, and the
+            // work it waited on may still be running under that key.
+            adoptStep.put(adoptRunKey != null ? "pollError" : "error", e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (adoptRunKey != null)
+        {
+            adoptStep.put("status", "Pending"); //$NON-NLS-1$ //$NON-NLS-2$
+            adoptStep.put("runKey", adoptRunKey); //$NON-NLS-1$
+            steps.add(adoptStep);
+            return finishAdoptPending(steps, stepsOk, start, mode, adoptRunKey);
         }
         steps.add(adoptStep);
         if (Boolean.TRUE.equals(adoptStep.get("ok")))
@@ -207,9 +234,9 @@ public class ExtensionLifecycleTool implements IMcpTool
             {
                 Map<String, String> p = new LinkedHashMap<>();
                 p.put("projectName", projectName);
-                p.put("targetFqn", targetFqn);
-                p.put("eventName", eventName);
-                String body = new GenerateEventHandlersTool().execute(p);
+                p.put("objectFqn", targetFqn);
+                p.put("events", eventName);
+                String body = invokeGenerateHandler(p);
                 handlerStep.put("response", parseJsonOrRaw(body));
                 handlerStep.put("ok", looksOk(body));
             }
@@ -256,18 +283,127 @@ public class ExtensionLifecycleTool implements IMcpTool
     }
 
     /**
-     * 1.40 EditMetadataTool routes adoptObject through edit_metadata; we
-     * use that path so the lifecycle helper doesn't need its own probe.
+     * Runs adopt_object through edit_metadata, so the lifecycle helper needs no probe of its own.
+     *
+     * @param p the step's arguments; a poll for a Pending adopt adds runKey and timeoutSeconds
+     * @return edit_metadata's answer, a Pending one included
      */
-    private String invokeAdopt(Map<String, String> p)
+    String invokeAdopt(Map<String, String> p)
     {
         Map<String, String> forwarded = new LinkedHashMap<>(p);
         forwarded.put("operation", "adopt_object");
         return new EditMetadataTool().execute(forwarded);
     }
 
+    /**
+     * Runs generate_event_handlers for the handler step.
+     *
+     * @param p the step's arguments, under the names that tool reads
+     * @return the tool's answer
+     */
+    String invokeGenerateHandler(Map<String, String> p)
+    {
+        return new GenerateEventHandlersTool().execute(p);
+    }
+
+    /**
+     * Reads the key out of a Pending answer.
+     * <p>
+     * edit_metadata answers Pending, as a success, when the work outlives its wait, and the work
+     * goes on behind the key. So the answer is read by its status and key rather than by its
+     * success, which a Pending answer shares with a finished one.
+     * </p>
+     *
+     * @param json a step's answer
+     * @return the key when the answer is Pending, otherwise <code>null</code>
+     */
+    static String pendingRunKey(String json)
+    {
+        if (json == null)
+        {
+            return null;
+        }
+        JsonElement tree;
+        try
+        {
+            tree = GsonHolder.fromJson(json.trim(), JsonElement.class);
+        }
+        catch (RuntimeException notJson)
+        {
+            return null;
+        }
+        if (tree == null || !tree.isJsonObject())
+        {
+            return null;
+        }
+        JsonObject body = tree.getAsJsonObject();
+        JsonElement status = body.get("status"); //$NON-NLS-1$
+        JsonElement runKey = body.get("runKey"); //$NON-NLS-1$
+        if (status == null || !status.isJsonPrimitive()
+            || !"Pending".equals(status.getAsString()) //$NON-NLS-1$
+            || runKey == null || !runKey.isJsonPrimitive() || runKey.getAsString().isEmpty())
+        {
+            return null;
+        }
+        return runKey.getAsString();
+    }
+
+    /**
+     * Answers a workflow stopped at an adopt that is still running.
+     * <p>
+     * The adopt step is not counted and no step after it runs: they act on the borrowed object,
+     * which does not exist until the adopt finishes. The answer carries the key the adopt's
+     * result is collected by.
+     * </p>
+     *
+     * @param steps the steps run so far, the adopt step last
+     * @param stepsOk how many of them finished
+     * @param start when the workflow started, in milliseconds
+     * @param mode the workflow mode
+     * @param runKey the key the adopt's result is collected by
+     * @return the answer
+     */
+    private String finishAdoptPending(List<Map<String, Object>> steps, int stepsOk, long start,
+        String mode, String runKey)
+    {
+        return summary(steps, stepsOk, start, mode,
+            "The adopt step is still running; the steps after it were not run.") //$NON-NLS-1$
+            .put("pendingStep", "adopt") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("hint", "Collect the adopt result with edit_metadata operation=adopt_object " //$NON-NLS-1$ //$NON-NLS-2$
+                + "and this runKey, then call extension_lifecycle again: the adopt is idempotent " //$NON-NLS-1$
+                + "and the remaining steps run once it has finished.") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Answers the workflow.
+     *
+     * @param steps the steps run
+     * @param stepsOk how many of them finished
+     * @param start when the workflow started, in milliseconds
+     * @param mode the workflow mode
+     * @param earlyAbort why the workflow stopped early, or <code>null</code>
+     * @return the answer
+     */
     private String finish(List<Map<String, Object>> steps, int stepsOk, long start, String mode,
         String earlyAbort)
+    {
+        return summary(steps, stepsOk, start, mode, earlyAbort).toJson();
+    }
+
+    /**
+     * Builds the workflow's answer: the steps, the counts and a hint.
+     *
+     * @param steps the steps run
+     * @param stepsOk how many of them finished
+     * @param start when the workflow started, in milliseconds
+     * @param mode the workflow mode
+     * @param earlyAbort why the workflow stopped early, or <code>null</code>
+     * @return the answer, still open to more members
+     */
+    private ToolResult summary(List<Map<String, Object>> steps, int stepsOk, long start,
+        String mode, String earlyAbort)
     {
         ToolResult tr = ToolResult.success()
             .put("operation", NAME)
@@ -291,7 +427,7 @@ public class ExtensionLifecycleTool implements IMcpTool
                 + "tool's error and re-run individually with edit_metadata / generate_event_handlers / "
                 + "revalidate_objects.");
         }
-        return tr.toJson();
+        return tr;
     }
 
     private boolean looksOk(String json)
