@@ -240,6 +240,34 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
     }
 
     @Test
+    public void theSameModuleUnderTwoProjectsIsResolvedForEachProject()
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("One", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(moduleItem("Two", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> unresolvable = BreakpointSetter.unresolvableModules(items, (project, module) ->
+            "One".equals(project)); //$NON-NLS-1$
+
+        assertEquals("the copy under the second project does not resolve, and the batch has to be " //$NON-NLS-1$
+            + "refused rather than clear the first project's module: " + unresolvable, //$NON-NLS-1$
+            List.of("CommonModules/Shared/Module.bsl"), unresolvable); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theReverseOrderStillNamesTheModuleThatDoesNotResolve()
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("Two", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(moduleItem("One", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> unresolvable = BreakpointSetter.unresolvableModules(items, (project, module) ->
+            "One".equals(project)); //$NON-NLS-1$
+
+        assertEquals(List.of("CommonModules/Shared/Module.bsl"), unresolvable); //$NON-NLS-1$
+    }
+
+    @Test
     public void aReplacingBatchThatArmedNothingAnswersWhatItRemoved()
     {
         List<Map<String, Object>> results = new ArrayList<>();

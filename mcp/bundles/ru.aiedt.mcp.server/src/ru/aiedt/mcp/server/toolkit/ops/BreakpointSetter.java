@@ -412,6 +412,12 @@ public class BreakpointSetter
     /**
      * The modules of a batch that name no file the workspace holds, distinct and in the order the
      * batch wrote them.
+     * <p>
+     * The address being resolved is the pair (project, module): one relative path is a different
+     * file in every project that holds it, so the first project's copy says nothing about the
+     * second's. The reported name is the module alone - the fix for one copy of the path is the fix
+     * for every copy of it.
+     * </p>
      *
      * @param items the batch items, already normalized; a malformed one is <code>null</code> and
      *            names nothing
@@ -430,11 +436,17 @@ public class BreakpointSetter
                 continue;
             }
             String module = item.get(KEY_MODULE);
-            if (module == null || module.isEmpty() || !seen.add(module))
+            if (module == null || module.isEmpty())
             {
                 continue;
             }
-            if (!resolvable.apply(item.get(KEY_PROJECT_NAME), module).booleanValue())
+            String project = item.get(KEY_PROJECT_NAME);
+            String address = (project == null ? "" : project) + "|" + module; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!seen.add(address))
+            {
+                continue;
+            }
+            if (!resolvable.apply(project, module).booleanValue() && !unresolvable.contains(module))
             {
                 unresolvable.add(module);
             }
