@@ -1392,6 +1392,7 @@ final class FormItemsOps
         List<String> adopted = null;
         List<String> notPerformed = null;
         String warning = null;
+        String tag = null;
         String body = markdown;
         // Parse a leading YamlFrontMatter block: "---\n" <lines> "---\n" <body>.
         // Strip a leading UTF-8 BOM defensively (YamlFrontMatter.build() never emits
@@ -1439,6 +1440,13 @@ final class FormItemsOps
                         // caution read as a write with nothing left to do.
                         warning = unquoteYamlScalar(line.substring(colon + 1).trim());
                     }
+                    else if ("tag".equals(key)) //$NON-NLS-1$
+                    {
+                        // A refusal's machine-readable condition (uiBusy and its kin) has to
+                        // survive the conversion, or the facade caller cannot tell a retryable
+                        // busy answer from a failed write.
+                        tag = unquoteYamlScalar(line.substring(colon + 1).trim());
+                    }
                 }
             }
             if (closeIdx >= 0)
@@ -1470,9 +1478,13 @@ final class FormItemsOps
         }
         if (isError)
         {
-            return ToolResult.error(message)
-                .put("operation", op) //$NON-NLS-1$
-                .toJson();
+            ToolResult error = ToolResult.error(message)
+                .put("operation", op); //$NON-NLS-1$
+            if (tag != null && !tag.isEmpty())
+            {
+                error.put("tag", tag); //$NON-NLS-1$
+            }
+            return error.toJson();
         }
         ToolResult ok = ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
@@ -1641,6 +1653,11 @@ final class FormItemsOps
                 return ProjectResolver.notFound(projectName)
                     .put(ErrorTags.PROJECT_NOT_FOUND.wire(), true).toJson();
             }
+            // Read by the resolved project's own spelling from here on: the resolve above is
+            // case-insensitive, while the version read and the common-picture read below look
+            // the name up case-sensitively and would quietly answer the newest version and no
+            // pictures for a name that only differs in case.
+            projectName = project.getName();
         }
         java.util.List<StockPictures.Entry> all = StockPictures.read(StockPictures.versionOf(projectName));
         java.util.List<String> common = listCommonPictures(projectName, filter);
