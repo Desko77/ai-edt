@@ -413,6 +413,27 @@ public class ClusterNavigatorBridge
 
 
     /**
+     * Whether one of the names this cluster holds resolves to an object of the model.
+     * <p>
+     * The node's children show only the names that resolve, so a cluster whose every name has gone
+     * stale shows no object. Stops at the first name that resolves.
+     * </p>
+     *
+     * @return whether a held name resolves
+     */
+    public boolean holdsAResolvableObject()
+    {
+        for (String fqn : cluster.getChildren())
+        {
+            if (resolveFqnToEObject(fqn) != null)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
 
      * Resolves a fully qualified name to the object it names, in a read transaction.
 
@@ -424,7 +445,7 @@ public class ClusterNavigatorBridge
 
      */
 
-    private EObject resolveFqnToEObject(String fqn)
+    EObject resolveFqnToEObject(String fqn)
 
     {
 

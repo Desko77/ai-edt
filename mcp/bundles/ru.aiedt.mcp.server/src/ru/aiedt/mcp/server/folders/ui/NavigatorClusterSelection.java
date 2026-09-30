@@ -32,6 +32,8 @@ import ru.aiedt.mcp.server.labels.MarkerHelpers;
  * <p>
  * Only a selection whose first element is a metadata object is remembered. That guard is what keeps
  * the helper from latching onto the transient re-selection of the project node and fighting the user.
+ * Only an empty selection or the project node is undone: a cluster node or a collection chosen
+ * within the window is the user's choice and stays.
  * </p>
  */
 public class NavigatorClusterSelection
@@ -88,7 +90,7 @@ public class NavigatorClusterSelection
             lastSelectionTime = System.currentTimeMillis();
             return;
         }
-        if (lastSelectedObject != null
+        if (isSlip(first) && lastSelectedObject != null
             && System.currentTimeMillis() - lastSelectionTime <= RESTORE_WINDOW_MILLIS)
         {
             restoreSelection(lastSelectedObject);
@@ -96,11 +98,26 @@ public class NavigatorClusterSelection
     }
 
     /**
+     * Whether a selection that is not a metadata object is the slip a rebuilding tree makes.
+     * <p>
+     * As a search clears, the rebuilt tree selects nothing or falls back to the project node.
+     * Any other element is one the user picked.
+     * </p>
+     *
+     * @param first the first element of the new selection, or {@code null} when nothing is selected
+     * @return whether the selection is to be undone
+     */
+    static boolean isSlip(Object first)
+    {
+        return first == null || first instanceof IProject;
+    }
+
+    /**
      * Re-selects an object along a path through the cluster that holds it.
      *
      * @param eObject the object to re-select
      */
-    private void restoreSelection(EObject eObject)
+    void restoreSelection(EObject eObject)
     {
         IProject project = MarkerHelpers.extractProject(eObject);
         String fqn = MarkerHelpers.extractFqn(eObject);

@@ -106,7 +106,7 @@ public class ClusterTreeContent
             {
                 return true;
             }
-            return !cluster.isEmpty();
+            return node.holdsAResolvableObject();
         }
         if (CollectionAdapters.isCollectionAdapter(element))
         {
