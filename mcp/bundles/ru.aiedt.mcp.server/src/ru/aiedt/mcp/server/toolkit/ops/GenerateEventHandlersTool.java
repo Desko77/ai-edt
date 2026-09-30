@@ -94,6 +94,12 @@ public class GenerateEventHandlersTool implements IMcpTool
         {
             return UiSync.call(() -> generate(project, objectFqn, params));
         }
+        catch (UiSync.UiBusyException e)
+        {
+            // This tool writes: the tag is how the caller tells a safe retry (nothing ran) from
+            // an interrupted started write whose outcome is unknown.
+            return ToolResult.error(e.getMessage()).put("tag", e.tag()).toJson(); //$NON-NLS-1$
+        }
         catch (Exception e)
         {
             Activator.logError("generate_event_handlers error", e); //$NON-NLS-1$

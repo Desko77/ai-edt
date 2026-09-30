@@ -30,7 +30,9 @@ import org.eclipse.swt.widgets.Display;
  * abandoned, and the queued runnable exits without running it - a write the caller already read as
  * refused must not land on the form a minute later. Work that had already started when the wait ran
  * out cannot be taken back, so the caller waits for its real outcome instead of answering a refusal
- * the write may contradict.
+ * the write may contradict. An interrupt can still break that wait; what it earns is a
+ * {@link UiOutcomeUnknownException}, tagged apart so a caller does not read it as a retryable
+ * busy condition - the started work may still apply.
  */
 public final class UiSync
 {
@@ -62,8 +64,9 @@ public final class UiSync
      * @param timeoutMs how long to wait for the UI thread, in milliseconds
      * @return the work's result
      * @throws UiBusyException if the UI thread did not start the work in time (the work never
-     *             runs), or the wait was interrupted - once the work has started, the caller waits
-     *             for its outcome instead
+     *             runs), or the wait was interrupted before the work started
+     * @throws UiOutcomeUnknownException if the wait was interrupted after the work had started -
+     *             the work may still apply, so the outcome is unknown and a blind retry is unsafe
      */
     public static <T> T call(Supplier<T> work, long timeoutMs)
     {
@@ -127,8 +130,8 @@ public final class UiSync
         {
             // The work is already running, so its effects land whether this caller waits or not.
             // Answering "UI busy, retry" here could double a write the caller retries, so the
-            // call stays for the real outcome. An interrupt can still break the wait - it says
-            // so, because by then the work may apply.
+            // call stays for the real outcome. An interrupt can still break the wait - it answers
+            // the outcome-unknown condition, because by then the work may apply.
             try
             {
                 done.await();
@@ -136,7 +139,7 @@ public final class UiSync
             catch (InterruptedException e)
             {
                 Thread.currentThread().interrupt();
-                throw new UiBusyException("Interrupted while the work was already running on the " //$NON-NLS-1$
+                throw new UiOutcomeUnknownException("Interrupted while the work was already running on the " //$NON-NLS-1$
                     + "EDT UI thread; it may still apply"); //$NON-NLS-1$
             }
         }
@@ -184,7 +187,7 @@ public final class UiSync
      * refusal that matches what was actually left behind.
      *
      * @param state the queue state of the call the interrupt broke
-     * @return the refusal for the interrupted wait; its text says whether the work can still apply
+     * @return the refusal for the interrupted wait; its kind says whether the work can still apply
      */
     private static UiBusyException abandonedByInterrupt(AtomicReference<QueueState> state)
     {
@@ -193,12 +196,19 @@ public final class UiSync
             return new UiBusyException("Interrupted while waiting for the EDT UI thread; " //$NON-NLS-1$
                 + "nothing was changed"); //$NON-NLS-1$
         }
-        return new UiBusyException("Interrupted while the work was already running on the " //$NON-NLS-1$
+        return new UiOutcomeUnknownException("Interrupted while the work was already running on the " //$NON-NLS-1$
             + "EDT UI thread; it may still apply"); //$NON-NLS-1$
     }
 
-    /** Signals that the UI thread was unavailable within the allotted time. */
-    public static final class UiBusyException
+    /**
+     * Signals that the UI thread was unavailable within the allotted time, or the wait for it was
+     * interrupted before the work started - nothing was changed, and a retry is safe.
+     * <p>
+     * Not final: {@link UiOutcomeUnknownException} extends it, so a catcher written for the busy
+     * condition also catches the outcome-unknown one and only has to read {@link #tag()} apart.
+     * </p>
+     */
+    public static class UiBusyException
         extends RuntimeException
     {
         private static final long serialVersionUID = 1L;
@@ -217,6 +227,37 @@ public final class UiSync
         public String tag()
         {
             return ErrorTags.UI_BUSY.wire();
+        }
+    }
+
+    /**
+     * Signals that the wait was broken after the work had already started on the UI thread, so
+     * whether the work's effects landed is unknown.
+     * <p>
+     * A subclass of {@link UiBusyException}, so a catcher written for the busy condition still
+     * catches this one; what differs is the tag. {@code uiBusy} reads as "nothing was changed,
+     * retry", which a started work may contradict - a retried add/remove would race the write
+     * already running or repeat it. This one tags {@code outcomeUnknown}: not retryable, read
+     * the target's state first.
+     * </p>
+     */
+    public static final class UiOutcomeUnknownException
+        extends UiBusyException
+    {
+        private static final long serialVersionUID = 1L;
+
+        /**
+         * @param message what happened
+         */
+        public UiOutcomeUnknownException(String message)
+        {
+            super(message);
+        }
+
+        @Override
+        public String tag()
+        {
+            return ErrorTags.OUTCOME_UNKNOWN.wire();
         }
     }
 }

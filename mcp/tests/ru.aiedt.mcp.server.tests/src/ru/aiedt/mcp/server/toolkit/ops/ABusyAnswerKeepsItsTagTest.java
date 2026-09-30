@@ -47,6 +47,23 @@ public class ABusyAnswerKeepsItsTagTest
     }
 
     /**
+     * A write whose wait broke after the work had started answers {@code outcomeUnknown}, not the
+     * retryable {@code uiBusy}, and sends the caller to read the form before any retry.
+     */
+    @Test
+    public void aStartedWriteInterruptedAnswersOutcomeUnknown()
+    {
+        String answer = EditFormTool.outcomeUnknownAnswer(new UiSync.UiOutcomeUnknownException(
+            "Interrupted while the work was already running on the EDT UI thread; it may still apply")); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: error")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("tag: outcomeUnknown")); //$NON-NLS-1$
+        assertFalse("a retryable tag here would invite a second write racing the first", //$NON-NLS-1$
+            answer.contains("tag: uiBusy")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("get_form_structure")); //$NON-NLS-1$
+    }
+
+    /**
      * The facade conversion carries the tag of a tagged refusal into its JSON error, the way it
      * already carries the warning of a successful write.
      */

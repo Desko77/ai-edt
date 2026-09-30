@@ -201,6 +201,13 @@ public class EditFormTool implements IMcpTool
         {
             return UiSync.call(() -> executeInternal(projectName, formFqn, operation, params));
         }
+        catch (UiSync.UiOutcomeUnknownException e)
+        {
+            // The work had already started when the wait broke, so the write may have landed.
+            // The retryable busy answer would be a lie here: a repeated add/remove would race
+            // the write already running or repeat it. Answered apart, ahead of the busy catch.
+            return outcomeUnknownAnswer(e);
+        }
         catch (UiSync.UiBusyException e)
         {
             // Tagged the way every other busy answer is: the caller has to see this is a
@@ -1665,6 +1672,25 @@ public class EditFormTool implements IMcpTool
             .put("status", "error") //$NON-NLS-1$ //$NON-NLS-2$
             .put("tag", busy.tag()) //$NON-NLS-1$
             .wrapContent(TextSuggest.safeMessage(busy));
+    }
+
+    /**
+     * The answer a broken wait earns when the work had already started on the UI thread: the write
+     * may have landed, so unlike a busy refusal this one is tagged {@code outcomeUnknown} - not
+     * retryable - and sends the caller to read the form before deciding what is still missing.
+     *
+     * @param unknown the raised condition; carries the message and the tag
+     * @return the front-matter error answer, never <code>null</code>
+     */
+    static String outcomeUnknownAnswer(UiSync.UiOutcomeUnknownException unknown)
+    {
+        return YamlFrontMatter.create()
+            .put("tool", NAME) //$NON-NLS-1$
+            .put("status", "error") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("tag", unknown.tag()) //$NON-NLS-1$
+            .wrapContent(TextSuggest.safeMessage(unknown)
+                + " Do not retry the operation: it may have applied. Read the form with " //$NON-NLS-1$
+                + "get_form_structure first and retry only what the read shows as missing."); //$NON-NLS-1$
     }
 
     /**

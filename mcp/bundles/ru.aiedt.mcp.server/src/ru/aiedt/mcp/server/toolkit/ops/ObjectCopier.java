@@ -134,6 +134,12 @@ public class ObjectCopier
         {
             return UiSync.call(() -> copy(sourceProjectName, objectFqn, targetProjectName, allowMissing));
         }
+        catch (UiSync.UiBusyException e)
+        {
+            // This tool writes: the tag is how the caller tells a safe retry (nothing ran) from
+            // an interrupted started copy whose outcome is unknown.
+            return ToolResult.error(e.getMessage()).put("tag", e.tag()).toJson(); //$NON-NLS-1$
+        }
         catch (Exception e)
         {
             return ToolResult.error("Error: " + TextSuggest.safeMessage(e)).toJson(); //$NON-NLS-1$
