@@ -391,6 +391,9 @@ Create `.cursor/mcp.json` in the project root and enable **Plain text mode** in 
 A step-by-step guide in Russian - connection, the Cursor skill and rule, sample tasks and
 troubleshooting: [docs/cursor.md](docs/cursor.md).
 
+**Install and set everything up with one prompt to the Cursor agent** - the agent recipe is
+[docs/cursor-agent-setup.md](docs/cursor-agent-setup.md), with a ready prompt at its top.
+
 #### VS Code / GitHub Copilot
 
 Create `.vscode/mcp.json`:
