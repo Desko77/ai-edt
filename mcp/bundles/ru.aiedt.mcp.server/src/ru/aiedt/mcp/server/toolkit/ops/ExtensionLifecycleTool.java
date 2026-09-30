@@ -200,7 +200,9 @@ public class ExtensionLifecycleTool implements IMcpTool
         catch (Exception e)
         {
             adoptStep.put("ok", false);
-            adoptStep.put("error", e.getMessage());
+            // A key already issued means the adopt was started: the failure is the wait's, and the
+            // work it waited on may still be running under that key.
+            adoptStep.put(adoptRunKey != null ? "pollError" : "error", e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
         }
         if (adoptRunKey != null)
         {

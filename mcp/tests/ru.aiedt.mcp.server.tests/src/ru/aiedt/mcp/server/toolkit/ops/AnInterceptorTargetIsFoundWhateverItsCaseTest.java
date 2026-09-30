@@ -10,6 +10,8 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.util.regex.Matcher;
+
 import org.junit.Test;
 
 /**
@@ -38,6 +40,18 @@ public class AnInterceptorTargetIsFoundWhateverItsCaseTest
         assertTrue(ListInterceptorsTool.methodDeclared(BASE, "передзаписью")); //$NON-NLS-1$
         assertFalse(ListInterceptorsTool.methodDeclared(BASE, "ПередЗапис")); //$NON-NLS-1$
         assertFalse(ListInterceptorsTool.methodDeclared(BASE, "ПослеЗаписи")); //$NON-NLS-1$
+    }
+
+    /** An interceptor written in lower case is found, with its kind, target and handler. */
+    @Test
+    public void anInterceptorInLowerCaseIsFound()
+    {
+        Matcher m = ListInterceptorsTool.ANNOTATION_PATTERN.matcher(
+            "&перед(\"ПередЗаписью\")\r\nпроцедура Расш_ПередЗаписью(Отказ)\r\n"); //$NON-NLS-1$
+        assertTrue(m.find());
+        assertEquals("перед", m.group(1)); //$NON-NLS-1$
+        assertEquals("ПередЗаписью", m.group(2)); //$NON-NLS-1$
+        assertEquals("Расш_ПередЗаписью", m.group(3)); //$NON-NLS-1$
     }
 
     /** The body between a declaration and its end is found whatever the case of either. */

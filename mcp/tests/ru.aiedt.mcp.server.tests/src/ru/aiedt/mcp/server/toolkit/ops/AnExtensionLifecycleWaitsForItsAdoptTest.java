@@ -46,6 +46,9 @@ public class AnExtensionLifecycleWaitsForItsAdoptTest
 
     private static final String DONE = "{\"success\":true,\"operation\":\"adopt_object\"}"; //$NON-NLS-1$
 
+    /** Scripted in place of an answer: the call throws. */
+    private static final String FAILS = "<throws>"; //$NON-NLS-1$
+
     private static IProject project;
 
     /**
@@ -71,7 +74,12 @@ public class AnExtensionLifecycleWaitsForItsAdoptTest
         String invokeAdopt(Map<String, String> p)
         {
             adoptCalls.add(new LinkedHashMap<>(p));
-            return adoptAnswers.poll();
+            String next = adoptAnswers.poll();
+            if (FAILS.equals(next))
+            {
+                throw new IllegalStateException("wait failed"); //$NON-NLS-1$
+            }
+            return next;
         }
 
         @Override
@@ -178,6 +186,32 @@ public class AnExtensionLifecycleWaitsForItsAdoptTest
         JsonObject adopt = result.getAsJsonArray("steps").get(1).getAsJsonObject(); //$NON-NLS-1$
         assertFalse(adopt.get("ok").getAsBoolean()); //$NON-NLS-1$
         assertEquals("Pending", adopt.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A wait that fails hands back the key of the adopt it waited on, as a failure of the wait. */
+    @Test
+    public void aFailedWaitNamesItselfAndKeepsTheKey()
+    {
+        Scripted tool = new Scripted(pending("k-3"), FAILS); //$NON-NLS-1$
+        JsonObject result = answer(tool.execute(dryRun()));
+        assertEquals("k-3", result.get("runKey").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject adopt = result.getAsJsonArray("steps").get(1).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals("wait failed", adopt.get("pollError").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(adopt.has("error")); //$NON-NLS-1$
+        assertEquals("Pending", adopt.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(tool.handlerCall);
+    }
+
+    /** An adopt call that fails before any key is issued is the step's error. */
+    @Test
+    public void aFailedAdoptIsTheStepsError()
+    {
+        Scripted tool = new Scripted(FAILS);
+        JsonObject result = answer(tool.execute(dryRun()));
+        JsonObject adopt = result.getAsJsonArray("steps").get(1).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals("wait failed", adopt.get("error").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(adopt.has("pollError")); //$NON-NLS-1$
+        assertFalse(result.has("runKey")); //$NON-NLS-1$
     }
 
     /** An adopt that finishes on the second wait counts, and the workflow goes on. */

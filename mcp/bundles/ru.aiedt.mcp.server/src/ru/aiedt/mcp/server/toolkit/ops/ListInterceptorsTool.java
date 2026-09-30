@@ -61,7 +61,7 @@ public class ListInterceptorsTool implements IMcpTool
      */
     static final String CHANGE_AND_VALIDATE = "changeAndValidate"; //$NON-NLS-1$
 
-    private static final Pattern ANNOTATION_PATTERN = Pattern.compile(
+    static final Pattern ANNOTATION_PATTERN = Pattern.compile(
         // &Перед / &После / &Вместо / &ИзменениеИКонтроль / English equivalents
         "&\\s*(Перед|После|Вместо" //$NON-NLS-1$
             + "|ИзменениеИКонтроль" //$NON-NLS-1$
@@ -71,8 +71,10 @@ public class ListInterceptorsTool implements IMcpTool
             + "|Procedure|Function)\\s+(\\w+)", //$NON-NLS-1$
         // UNICODE_CHARACTER_CLASS is not optional here: without it Java's \w is ASCII-only, so the
         // handler name - Cyrillic in every real 1C codebase - matches nothing and the whole pattern
-        // fails. The tool then walks every file and reports zero interceptors.
-        Pattern.MULTILINE | Pattern.UNICODE_CHARACTER_CLASS);
+        // fails. The tool then walks every file and reports zero interceptors. 1C reads the
+        // annotation and the keyword without case, Cyrillic included, hence UNICODE_CASE.
+        Pattern.MULTILINE | Pattern.UNICODE_CHARACTER_CLASS | Pattern.CASE_INSENSITIVE
+            | Pattern.UNICODE_CASE);
 
     @Override
     public String getName()
