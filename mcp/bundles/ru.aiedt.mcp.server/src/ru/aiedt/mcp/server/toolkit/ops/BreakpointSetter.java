@@ -523,9 +523,10 @@ public class BreakpointSetter
         return ToolResult.error(
             "None of the batch's breakpoints was set, and the modules' previous breakpoints were " //$NON-NLS-1$
                 + "already removed. clearedModules names each module with the lines its removed " //$NON-NLS-1$
-                + "breakpoints sat on, and breakpointResults names why every new breakpoint failed. " //$NON-NLS-1$
-                + "Re-arm the removed lines with add_breakpoint, or fix what the failures name and " //$NON-NLS-1$
-                + "send the batch again.")
+                + "line breakpoints sat on - removedCount also counts the ones that carry no line, " //$NON-NLS-1$
+                + "which no line can name - and breakpointResults names why every new breakpoint " //$NON-NLS-1$
+                + "failed. Re-arm the removed lines with add_breakpoint, or fix what the failures " //$NON-NLS-1$
+                + "name and send the batch again.")
             .put(KEY_BATCH, true)
             .put(KEY_OK, Integer.valueOf(0))
             .put(KEY_FAIL, Integer.valueOf(failCount))
@@ -553,18 +554,19 @@ public class BreakpointSetter
          * @param projectName the project the module belongs to; may be <code>null</code> for an
          *            absolute module path
          * @param module the module address as the batch item wrote it
-         * @return the lines the removed line breakpoints sat on, in the manager's order; a
-         *         breakpoint that carries no line is removed and is not in the list
+         * @return what the clearing removed: every breakpoint kind in {@link BreakpointAccess.Removal#count},
+         *         the line-bound ones by their lines in {@link BreakpointAccess.Removal#lines}
          * @throws Exception when the module cannot be resolved or the platform refuses a removal
          */
-        List<Integer> clear(String projectName, String module) throws Exception;
+        BreakpointAccess.Removal clear(String projectName, String module) throws Exception;
     }
 
     /** The live clearer: resolves the module file, then drops every breakpoint on it. */
     private static final ModuleClearer MODULE_CLEARER = (projectName, module) ->
     {
         IFile file = BreakpointAccess.resolveModuleFile(projectName, module);
-        return file == null ? List.of() : BreakpointAccess.removeAllBreakpointsReportingLines(file);
+        return file == null ? new BreakpointAccess.Removal(0, List.of())
+            : BreakpointAccess.removeAllBreakpointsReportingLines(file);
     };
 
     /**
@@ -575,8 +577,8 @@ public class BreakpointSetter
      * @param items the batch items, already normalized, in the order the caller wrote them; a
      *            malformed one is <code>null</code> and names nothing
      * @param clearer how to clear one module
-     * @return one entry per distinct module: its address, the lines its removed breakpoints sat on,
-     *         or why it could not be cleared
+     * @return one entry per distinct module: its address, how many breakpoints went and the lines
+     *         the line-bound ones sat on, or why it could not be cleared
      */
     static List<Map<String, Object>> clearModuleSet(List<Map<String, String>> items,
         ModuleClearer clearer)
@@ -609,9 +611,9 @@ public class BreakpointSetter
             }
             try
             {
-                List<Integer> lines = clearer.clear(project, module);
-                entry.put(KEY_REMOVED_COUNT, Integer.valueOf(lines.size()));
-                entry.put(KEY_REMOVED_LINES, lines);
+                BreakpointAccess.Removal removal = clearer.clear(project, module);
+                entry.put(KEY_REMOVED_COUNT, Integer.valueOf(removal.count));
+                entry.put(KEY_REMOVED_LINES, removal.lines);
             }
             catch (Exception e)
             {

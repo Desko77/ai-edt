@@ -480,30 +480,32 @@ public final class BreakpointAccess
     }
 
     /**
-     * Removes every breakpoint attached to a resource and reports the lines the line-bound ones sat
-     * on.
+     * Removes every breakpoint attached to a resource and reports both how many went and the lines
+     * the line-bound ones sat on.
      * <p>
      * The same removal as {@link #removeAllBreakpointsInResource(IResource)}, for a caller that has
      * to be able to put back what went: a batch that replaces a module's whole set answers with the
      * removed places when none of its new breakpoints could be armed, and a module name without the
      * lines names nothing a caller can re-arm. Breakpoints that carry no line - an exception one,
      * a run-to-line leftover - are removed all the same and are not in the list, because a line is
-     * not their address.
+     * not their address; the count still includes them, so it cannot be read off the list's length.
      * </p>
      *
      * @param resource the module file; null removes nothing
-     * @return the line numbers of the removed line breakpoints, in the manager's order; empty when
-     *         there was nothing to remove
+     * @return what the removal took: every removed breakpoint in {@link Removal#count}, the lines of
+     *         the removed line breakpoints in {@link Removal#lines}, in the manager's order; empty
+     *         when there was nothing to remove
      * @throws Exception if the platform refuses a removal or refuses to read a line
      */
-    public static java.util.List<Integer> removeAllBreakpointsReportingLines(IResource resource)
+    public static Removal removeAllBreakpointsReportingLines(IResource resource)
         throws Exception
     {
         java.util.List<Integer> lines = new java.util.ArrayList<>();
         if (resource == null)
         {
-            return lines;
+            return new Removal(0, lines);
         }
+        int removed = 0;
         IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
         for (IBreakpoint breakpoint : manager.getBreakpoints())
         {
@@ -518,12 +520,40 @@ public final class BreakpointAccess
                 line = ((ILineBreakpoint)breakpoint).getLineNumber();
             }
             manager.removeBreakpoint(breakpoint, true);
+            removed++;
             if (line > 0)
             {
                 lines.add(Integer.valueOf(line));
             }
         }
-        return lines;
+        return new Removal(removed, lines);
+    }
+
+    /**
+     * What removing every breakpoint of one resource took.
+     * <p>
+     * Two numbers rather than one collection: the count answers "how many went" for every
+     * breakpoint kind, while the lines are the addresses a caller can hand back to
+     * {@code add_breakpoint} - which a breakpoint without a line has none of.
+     * </p>
+     */
+    public static final class Removal
+    {
+        /** How many breakpoints were removed, of every kind. */
+        public final int count;
+
+        /** The lines the removed line breakpoints sat on; breakpoints without a line are not in it. */
+        public final java.util.List<Integer> lines;
+
+        /**
+         * @param count how many breakpoints were removed, of every kind
+         * @param lines the lines of the removed line breakpoints, in the manager's order
+         */
+        public Removal(int count, java.util.List<Integer> lines)
+        {
+            this.count = count;
+            this.lines = lines;
+        }
     }
 
     /**

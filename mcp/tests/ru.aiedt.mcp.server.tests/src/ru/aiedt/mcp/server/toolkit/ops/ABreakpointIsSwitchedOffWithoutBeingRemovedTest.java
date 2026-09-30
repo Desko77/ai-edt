@@ -26,6 +26,7 @@ import org.junit.Test;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.BreakpointAccess;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
@@ -135,7 +136,9 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
         List<Map<String, Object>> cleared = BreakpointSetter.clearModuleSet(items, (project, module) ->
         {
             calls.add(project + "|" + module); //$NON-NLS-1$ //$NON-NLS-2$
-            return module.endsWith("Второй") ? List.of(21, 22, 23, 24, 25) : List.of(11, 12, 13); //$NON-NLS-1$
+            return module.endsWith("Второй") //$NON-NLS-1$
+                ? new BreakpointAccess.Removal(5, List.of(21, 22, 23, 24, 25)) //$NON-NLS-1$
+                : new BreakpointAccess.Removal(3, List.of(11, 12, 13)); //$NON-NLS-1$
         });
 
         assertEquals("a module named twice is cleared once", 2, calls.size()); //$NON-NLS-1$
@@ -162,7 +165,7 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
             {
                 throw new IllegalStateException("module not found"); //$NON-NLS-1$
             }
-            return List.of(31, 32);
+            return new BreakpointAccess.Removal(2, List.of(31, 32)); //$NON-NLS-1$
         });
 
         assertEquals(2, cleared.size());
@@ -183,13 +186,29 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
         List<Map<String, Object>> cleared = BreakpointSetter.clearModuleSet(items, (project, module) ->
         {
             calls.add(module);
-            return List.of(41);
+            return new BreakpointAccess.Removal(1, List.of(41)); //$NON-NLS-1$
         });
 
         assertEquals("only the item with a module is cleared", 1, calls.size()); //$NON-NLS-1$
         assertEquals("CommonModule.Первый", calls.get(0)); //$NON-NLS-1$
         assertEquals(1, cleared.size());
         assertFalse("an item with no project does not name one", cleared.get(0).containsKey("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void clearingCountsBreakpointsThatCarryNoLine() throws Exception
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("MyProject", "CommonModules/Первый")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // Two line breakpoints and an exception one: three go, two lines can be named.
+        List<Map<String, Object>> cleared = BreakpointSetter.clearModuleSet(items, (project, module) ->
+            new BreakpointAccess.Removal(3, List.of(11, 12))); //$NON-NLS-1$
+
+        assertEquals("every removed breakpoint counts, also the one without a line", 3, //$NON-NLS-1$
+            ((Integer)cleared.get(0).get("removedCount")).intValue()); //$NON-NLS-1$
+        assertEquals("the lines still name only what a caller can re-arm", //$NON-NLS-1$
+            List.of(11, 12), cleared.get(0).get("removedLines")); //$NON-NLS-1$
     }
 
     @Test
