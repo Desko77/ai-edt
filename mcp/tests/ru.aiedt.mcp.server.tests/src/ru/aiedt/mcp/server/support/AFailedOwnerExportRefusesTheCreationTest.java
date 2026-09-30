@@ -51,6 +51,26 @@ public class AFailedOwnerExportRefusesTheCreationTest
         assertNotNull("the caller gets the tag too", r.tags.get("ownerExportFailed")); //$NON-NLS-1$
     }
 
+    /** Both the .dcs save and the owner export failed: the answer names both, and not a written file. */
+    @Test
+    public void aFailedSaveIsKeptBesideAFailedExport()
+    {
+        BmExportHelper.Result export = new BmExportHelper.Result();
+        export.forceExportOk = false;
+        export.error = "the project did not resolve"; //$NON-NLS-1$
+        BmDcsHelper.Result r = createdSchema();
+        r.ok = false;
+        r.error = "the schema was not written to disk"; //$NON-NLS-1$
+        BmDcsHelper.noteOwnerExport(r, export, "Report.R"); //$NON-NLS-1$
+
+        assertFalse(r.ok);
+        assertTrue("the save failure is kept", //$NON-NLS-1$
+            r.error.startsWith("the schema was not written to disk")); //$NON-NLS-1$
+        assertTrue("the export failure is added", r.error.contains("the project did not resolve")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("no claim that the file was written", //$NON-NLS-1$
+            r.error.contains(".dcs file were written")); //$NON-NLS-1$
+    }
+
     @Test
     public void anExportWithoutAnErrorTextStillRefuses()
     {

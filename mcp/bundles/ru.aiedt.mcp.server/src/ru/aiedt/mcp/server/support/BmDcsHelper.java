@@ -1949,11 +1949,15 @@ public final class BmDcsHelper
             info.put("owner", ownerFqn); //$NON-NLS-1$
             info.put("error", detail); //$NON-NLS-1$
             r.tags.put("ownerExportFailed", info); //$NON-NLS-1$
+            String ownerLine = "the owner .mdo export failed (" + detail + "), so the owner's " //$NON-NLS-1$ //$NON-NLS-2$
+                + "mainDataCompositionSchema reference did not reach disk. Re-run resync_to_disk on " //$NON-NLS-1$
+                + ownerFqn + " once EDT settles, then check the .mdo carries the schema reference."; //$NON-NLS-1$
+            // A refusal already set here is the .dcs save's own: the file did not reach disk
+            // either, so the owner line is added to it instead of claiming the file was written.
+            r.error = r.ok || r.error == null
+                ? "the schema template and the .dcs file were written, but " + ownerLine //$NON-NLS-1$
+                : r.error + " Also " + ownerLine; //$NON-NLS-1$
             r.ok = false;
-            r.error = "the schema template and the .dcs file were written, but the owner .mdo " //$NON-NLS-1$
-                + "export failed (" + detail + "), so the owner's mainDataCompositionSchema " //$NON-NLS-1$ //$NON-NLS-2$
-                + "reference did not reach disk. Re-run resync_to_disk on " + ownerFqn //$NON-NLS-1$
-                + " once EDT settles, then check the .mdo carries the schema reference."; //$NON-NLS-1$
             Activator.logWarning("create_schema: owner .mdo export failed for " //$NON-NLS-1$
                 + ownerFqn + " - <mainDataCompositionSchema> did not reach disk: " //$NON-NLS-1$
                 + detail);
