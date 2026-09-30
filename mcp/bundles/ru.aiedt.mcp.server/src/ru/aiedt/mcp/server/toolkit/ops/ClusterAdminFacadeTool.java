@@ -290,36 +290,66 @@ public class ClusterAdminFacadeTool
     }
 
     /**
-     * Why the object the call named cannot be moved into a cluster of that collection, or
-     * {@code null} when it can.
+     * What the model answers about the object the call named: the address the Navigator knows it
+     * by, or why it cannot be moved into a cluster of that collection.
      * <p>
-     * The object must exist in the project's configuration - a name that is not in the model would
-     * otherwise sit in the clusters file naming nothing - and its type must be the collection the
-     * cluster hangs under. A second seam for tests: the real answer asks the EDT model, which a
-     * unit test cannot stand up.
+     * A second seam for tests: the real answer asks the EDT model of the project, which a unit test
+     * cannot stand up. The rule itself is {@link #checkAgainst}, which a test runs on a
+     * configuration built in memory.
      * </p>
      *
      * @param project the project the object must exist in
      * @param objectFqn the fully qualified name as the caller wrote it
-     * @param collectionPath the collection the target cluster hangs under
-     * @return the refusal, or {@code null} when the object may be clustered
+     * @param collectionPath the collection the target cluster hangs under, or {@code null} when the
+     *            object may belong to any collection
+     * @return the address to store, or the refusal
      */
-    ToolResult objectModelRefusal(IProject project, String objectFqn, String collectionPath)
+    ObjectCheck checkObject(IProject project, String objectFqn, String collectionPath)
     {
-        String fqn = MetadataTypeCatalog.normalizeFqn(objectFqn == null ? "" : objectFqn.trim()); //$NON-NLS-1$
-        String[] segments = fqn.split("\\."); //$NON-NLS-1$
-        if (segments.length < 2 || segments[0].isEmpty() || segments[1].isEmpty())
-        {
-            return ToolResult.error("The object '" + objectFqn + "' is not a metadata address. " //$NON-NLS-1$ //$NON-NLS-2$
-                + "Expected 'Type.Name', for example 'Catalog.Products'.") //$NON-NLS-1$
-                .put("reason", REASON_OBJECT_NOT_FOUND); //$NON-NLS-1$
-        }
         Configuration configuration = configurationOf(project);
         if (configuration == null)
         {
-            return ToolResult.error("The configuration model of the project is not available, so " //$NON-NLS-1$
-                + "the object cannot be checked against it. Wait a moment and try again.") //$NON-NLS-1$
-                .put("reason", REASON_SERVICE_UNAVAILABLE); //$NON-NLS-1$
+            return ObjectCheck.refused(ToolResult.error("The configuration model of the project is " //$NON-NLS-1$
+                + "not available, so the object cannot be checked against it. Wait a moment and " //$NON-NLS-1$
+                + "try again.").put("reason", REASON_SERVICE_UNAVAILABLE)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return checkAgainst(configuration, objectFqn, collectionPath);
+    }
+
+    /**
+     * Checks an object address against a configuration and answers the address the Navigator
+     * builds for that object.
+     * <p>
+     * The object must exist - a name that is not in the model would otherwise sit in the clusters
+     * file naming nothing - it must be a top-level object, because a cluster holds the objects of
+     * one collection, and its type must be the collection the cluster hangs under. The answer is
+     * the English singular type and the object's own name: the clusters file and the Navigator
+     * compare addresses exactly, so a variant of case, a plural or a Russian type name stored as
+     * written would hide nothing in the Navigator and match nothing on a later move.
+     * </p>
+     *
+     * @param configuration the configuration the object must exist in
+     * @param objectFqn the fully qualified name as the caller wrote it
+     * @param collectionPath the collection the target cluster hangs under, or {@code null} when the
+     *            object may belong to any collection
+     * @return the address to store, or the refusal
+     */
+    static ObjectCheck checkAgainst(Configuration configuration, String objectFqn,
+        String collectionPath)
+    {
+        String fqn = MetadataTypeCatalog.normalizeFqn(objectFqn == null ? "" : objectFqn.trim()); //$NON-NLS-1$
+        String[] segments = fqn.split("\\."); //$NON-NLS-1$
+        if (segments.length > 2)
+        {
+            return ObjectCheck.refused(ToolResult.error("A cluster holds top-level objects, and '" //$NON-NLS-1$
+                + objectFqn + "' names a nested one. Expected 'Type.Name', for example " //$NON-NLS-1$
+                + "'Catalog.Products'.").put("reason", REASON_OBJECT_NOT_FOUND)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (segments.length < 2 || segments[0].isEmpty() || segments[1].isEmpty())
+        {
+            return ObjectCheck.refused(ToolResult.error("The object '" + objectFqn + "' is not a " //$NON-NLS-1$ //$NON-NLS-2$
+                + "metadata address. Expected 'Type.Name', for example 'Catalog.Products'.") //$NON-NLS-1$
+                .put("reason", REASON_OBJECT_NOT_FOUND)); //$NON-NLS-1$
         }
         MdObject top = MetadataTypeCatalog.findObject(configuration, segments[0], segments[1]);
         if (top == null)
@@ -337,15 +367,60 @@ public class ClusterAdminFacadeTool
                 }
                 message.append(" Did you mean " + String.join(", ", full) + "?"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             }
-            return ToolResult.error(message.toString()).put("reason", REASON_OBJECT_NOT_FOUND); //$NON-NLS-1$
+            return ObjectCheck.refused(ToolResult.error(message.toString())
+                .put("reason", REASON_OBJECT_NOT_FOUND)); //$NON-NLS-1$
         }
-        if (collectionPath != null && !segments[0].equalsIgnoreCase(collectionPath.trim()))
+        String type = top.eClass().getName();
+        String address = type + "." + top.getName(); //$NON-NLS-1$
+        if (collectionPath != null && !type.equalsIgnoreCase(collectionPath.trim()))
         {
-            return ToolResult.error("The cluster hangs under the collection '" + collectionPath //$NON-NLS-1$
-                + "' and cannot hold '" + segments[0] + "." + segments[1] + "'.") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                .put("reason", REASON_OUTSIDE_COLLECTION); //$NON-NLS-1$
+            return ObjectCheck.refused(ToolResult.error("The cluster hangs under the collection '" //$NON-NLS-1$
+                + collectionPath + "' and cannot hold '" + address + "'.") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("reason", REASON_OUTSIDE_COLLECTION)); //$NON-NLS-1$
         }
-        return null;
+        return ObjectCheck.of(address);
+    }
+
+    /** What the model answered about an object: the address to store, or why it cannot be. */
+    static final class ObjectCheck
+    {
+        /** The address the Navigator knows the object by; {@code null} when refused. */
+        final String fqn;
+
+        /** Why the object cannot be clustered; {@code null} when it can. */
+        final ToolResult refusal;
+
+        /**
+         * @param fqn the address, or {@code null}
+         * @param refusal the refusal, or {@code null}
+         */
+        private ObjectCheck(String fqn, ToolResult refusal)
+        {
+            this.fqn = fqn;
+            this.refusal = refusal;
+        }
+
+        /**
+         * An object the model knows under that address.
+         *
+         * @param fqn the address the Navigator builds for it
+         * @return the answer
+         */
+        static ObjectCheck of(String fqn)
+        {
+            return new ObjectCheck(fqn, null);
+        }
+
+        /**
+         * An object that cannot be clustered.
+         *
+         * @param refusal the refusal to answer the call with
+         * @return the answer
+         */
+        static ObjectCheck refused(ToolResult refusal)
+        {
+            return new ObjectCheck(null, refusal);
+        }
     }
 
     /**
@@ -466,11 +541,11 @@ public class ClusterAdminFacadeTool
      * @param slash whether the name carries a slash
      * @return the refusal
      */
-    private static ToolResult nameRefusal(String name, boolean slash)
+    private static ToolResult nameRefusal(String argument, String name, boolean slash)
     {
         String message = slash
-            ? "The cluster name must not contain a slash: '" + name + "'." //$NON-NLS-1$ //$NON-NLS-2$
-            : "The cluster name must not be empty."; //$NON-NLS-1$
+            ? argument + " must not contain a slash: '" + name + "'." //$NON-NLS-1$ //$NON-NLS-2$
+            : argument + " must not be empty."; //$NON-NLS-1$
         return ToolResult.error(message).put("reason", REASON_INVALID_NAME); //$NON-NLS-1$
     }
 
@@ -593,12 +668,12 @@ public class ClusterAdminFacadeTool
         String name = JsonUtils.extractStringArgument(params, "name"); //$NON-NLS-1$
         if (name == null || name.trim().isEmpty())
         {
-            return nameRefusal(name, false).toJson();
+            return nameRefusal("name", name, false).toJson(); //$NON-NLS-1$
         }
         name = name.trim();
         if (name.contains("/")) //$NON-NLS-1$
         {
-            return nameRefusal(name, true).toJson();
+            return nameRefusal("name", name, true).toJson(); //$NON-NLS-1$
         }
         String collectionPath = JsonUtils.extractStringArgument(params, "collectionPath"); //$NON-NLS-1$
         String parentClusterPath = JsonUtils.extractStringArgument(params, "parentClusterPath"); //$NON-NLS-1$
@@ -631,7 +706,7 @@ public class ClusterAdminFacadeTool
         }
         Cluster created = outcome.getCluster();
         return ToolResult.success()
-            .put("clusterPath", path) //$NON-NLS-1$
+            .put("clusterPath", created.getFullPath()) //$NON-NLS-1$
             .put("cluster", clusterSummary(created)) //$NON-NLS-1$
             .toJson();
     }
@@ -666,12 +741,12 @@ public class ClusterAdminFacadeTool
         String newName = JsonUtils.extractStringArgument(params, "newName"); //$NON-NLS-1$
         if (newName == null || newName.trim().isEmpty())
         {
-            return nameRefusal(newName, false).toJson();
+            return nameRefusal("newName", newName, false).toJson(); //$NON-NLS-1$
         }
         newName = newName.trim();
         if (newName.contains("/")) //$NON-NLS-1$
         {
-            return nameRefusal(newName, true).toJson();
+            return nameRefusal("newName", newName, true).toJson(); //$NON-NLS-1$
         }
         String description = JsonUtils.extractStringArgument(params, "description"); //$NON-NLS-1$
         ClusterWriteOutcome outcome = context.service.updateCluster(context.project, clusterPath,
@@ -718,12 +793,14 @@ public class ClusterAdminFacadeTool
                 .toJson();
         }
         clusterPath = clusterPath.trim();
-        List<Cluster> doomed = doomedClusters(context.service.getClusterStorage(context.project),
-            clusterPath);
-        if (doomed.isEmpty())
+        ClusterStore storage = context.service.getClusterStorage(context.project);
+        // A path that only prefixes clusters - a collection, say - names no cluster: the delete
+        // refuses it, so the dry run must too rather than count what a delete would never take.
+        if (storage.getClusterByFullPath(clusterPath) == null)
         {
             return clusterNotFound(clusterPath);
         }
+        List<Cluster> doomed = doomedClusters(storage, clusterPath);
         int objects = 0;
         for (Cluster cluster : doomed)
         {
@@ -814,12 +891,12 @@ public class ClusterAdminFacadeTool
         {
             return clusterNotFound(clusterPath);
         }
-        ToolResult modelRefusal = objectModelRefusal(context.project, objectFqn,
-            collectionOf(clusterPath));
-        if (modelRefusal != null)
+        ObjectCheck check = checkObject(context.project, objectFqn, collectionOf(clusterPath));
+        if (check.refusal != null)
         {
-            return modelRefusal.toJson();
+            return check.refusal.toJson();
         }
+        objectFqn = check.fqn;
         Cluster previous = context.service.getClusterStorage(context.project)
             .findClusterForObject(objectFqn);
         ClusterWriteOutcome outcome = context.service.addObjectToCluster(context.project, objectFqn,
@@ -835,6 +912,7 @@ public class ClusterAdminFacadeTool
         JsonObject payload = new JsonObject();
         payload.addProperty("success", true); //$NON-NLS-1$
         payload.addProperty("clusterPath", clusterPath); //$NON-NLS-1$
+        payload.addProperty("objectFqn", objectFqn); //$NON-NLS-1$
         payload.add("movedFrom", previous == null || outcome.isNoChange() ? JsonNull.INSTANCE //$NON-NLS-1$
             : new JsonPrimitive(previous.getFullPath()));
         if (outcome.isNoChange())
@@ -865,12 +943,27 @@ public class ClusterAdminFacadeTool
                 .toJson();
         }
         objectFqn = objectFqn.trim();
+        // The spelling given is kept beside the model's address: an object deleted from the
+        // model since it was clustered still sits in the file, and the model resolves it no more.
+        Set<String> spellings = new LinkedHashSet<>();
+        ObjectCheck check = checkObject(context.project, objectFqn, null);
+        if (check.refusal == null)
+        {
+            spellings.add(check.fqn);
+        }
+        spellings.add(objectFqn);
         List<String> holders = new ArrayList<>();
+        Set<String> held = new LinkedHashSet<>();
         for (Cluster cluster : context.service.getClusterStorage(context.project).getGroups())
         {
-            if (cluster.containsChild(objectFqn))
+            for (String spelling : spellings)
             {
-                holders.add(cluster.getFullPath());
+                if (cluster.containsChild(spelling))
+                {
+                    holders.add(cluster.getFullPath());
+                    held.add(spelling);
+                    break;
+                }
             }
         }
         if (holders.isEmpty())
@@ -878,11 +971,14 @@ public class ClusterAdminFacadeTool
             return ToolResult.error("The object '" + objectFqn + "' is not in any cluster.") //$NON-NLS-1$ //$NON-NLS-2$
                 .put("reason", REASON_NOT_CLUSTERED).toJson(); //$NON-NLS-1$
         }
-        ClusterWriteOutcome outcome = context.service.removeObjectFromCluster(context.project,
-            objectFqn);
-        if (outcome.isRefused())
+        for (String spelling : held)
         {
-            return refusalOf(outcome).toJson();
+            ClusterWriteOutcome outcome = context.service.removeObjectFromCluster(context.project,
+                spelling);
+            if (outcome.isRefused())
+            {
+                return refusalOf(outcome).toJson();
+            }
         }
         return ToolResult.success().put("removedFrom", holders).toJson(); //$NON-NLS-1$
     }

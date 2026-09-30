@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
@@ -56,6 +57,8 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
 
     private ToolResult modelRefusal;
 
+    private String canonical;
+
     /**
      * Opens a project and a facade wired to a recording manager; registers the five write doors so
      * the facade's gates find them enabled, as the live server registers them at startup.
@@ -68,6 +71,7 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
         probe = ClusterWorkspaceProbe.open("AiEdtClusterFacade"); //$NON-NLS-1$
         manager = new RecordingManager();
         modelRefusal = null;
+        canonical = null;
         facade = new ClusterAdminFacadeTool()
         {
             @Override
@@ -77,9 +81,13 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
             }
 
             @Override
-            ToolResult objectModelRefusal(IProject project, String objectFqn, String collectionPath)
+            ObjectCheck checkObject(IProject project, String objectFqn, String collectionPath)
             {
-                return modelRefusal;
+                if (modelRefusal != null)
+                {
+                    return ObjectCheck.refused(modelRefusal);
+                }
+                return ObjectCheck.of(canonical != null ? canonical : objectFqn.trim());
             }
         };
         McpToolCatalog catalog = McpToolCatalog.getInstance();
@@ -204,6 +212,7 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
         assertTrue(first.get("success").getAsBoolean()); //$NON-NLS-1$
         JsonObject cluster = first.getAsJsonObject("cluster"); //$NON-NLS-1$
         assertEquals("Catalog/Shelf", cluster.get("fullPath").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("Catalog/Shelf", first.get("clusterPath").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals(0, cluster.get("order").getAsInt()); //$NON-NLS-1$
 
         JsonObject second = create("Rack", "Catalog", false);
@@ -212,6 +221,7 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
         JsonObject nested = create("Sub", "Catalog/Shelf", true);
         assertEquals("Catalog/Shelf/Sub", nested.getAsJsonObject("cluster").get("fullPath") //$NON-NLS-1$ //$NON-NLS-2$
             .getAsString());
+        assertEquals("Catalog/Shelf/Sub", nested.get("clusterPath").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /** A taken path, a missing parent and an unusable name are each refused by their code. */
@@ -231,6 +241,7 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
         JsonObject blank = create("   ", "Catalog", false);
         assertFalse(blank.get("success").getAsBoolean()); //$NON-NLS-1$
         assertEquals("invalidName", blank.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(blank.get("error").getAsString().startsWith("name ")); //$NON-NLS-1$ //$NON-NLS-2$
 
         JsonObject slashed = create("A/B", "Catalog", false);
         assertEquals("invalidName", slashed.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -258,6 +269,11 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
         JsonObject missing = call("update_cluster", "clusterPath", "Catalog/Nowhere", //$NON-NLS-1$ //$NON-NLS-2$
             "newName", "Case"); //$NON-NLS-1$
         assertEquals("clusterNotFound", missing.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject slashed = call("update_cluster", "clusterPath", "Catalog/Rack", //$NON-NLS-1$ //$NON-NLS-2$
+            "newName", "A/B"); //$NON-NLS-1$
+        assertEquals("invalidName", slashed.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(slashed.get("error").getAsString().startsWith("newName ")); //$NON-NLS-1$ //$NON-NLS-2$
 
         // The same state again, description included: omitted description would mean "clear it",
         // which is a change, not the no change this asserts.
@@ -292,6 +308,64 @@ public class AClusterAdminFacadeAnswersItsOperationsTest
         assertEquals(1, deleted.get("nestedClusters").getAsInt()); //$NON-NLS-1$
         assertEquals(2, deleted.get("objects").getAsInt()); //$NON-NLS-1$
         assertEquals(0, manager.store.getGroups().size());
+    }
+
+    /** A dry run of a path that names no cluster, only prefixes one, is refused like the delete. */
+    @Test
+    public void aDryRunOfAPathThatNamesNoClusterIsRefused()
+    {
+        assertTrue(create("Shelf", "Catalog", false).get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject preview = call("delete_cluster", "clusterPath", "Catalog", "dryRun", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertFalse(preview.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("clusterNotFound", preview.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        JsonObject deleted = call("delete_cluster", "clusterPath", "Catalog"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("clusterNotFound", deleted.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull(manager.store.getClusterByFullPath("Catalog/Shelf")); //$NON-NLS-1$
+    }
+
+    /**
+     * A move stores the address the model answered, not the spelling given, so a second spelling of
+     * the same object is no change and a removal under a third spelling finds it.
+     */
+    @Test
+    public void aMoveStoresTheModelsAddress()
+    {
+        assertTrue(create("Shelf", "Catalog", false).get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        canonical = "Catalog.Products"; //$NON-NLS-1$
+
+        JsonObject moved = call("add_to_cluster", "objectFqn", "catalogs.products", //$NON-NLS-1$ //$NON-NLS-2$
+            "clusterPath", "Catalog/Shelf"); //$NON-NLS-1$
+        assertTrue(moved.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("Catalog.Products", moved.get("objectFqn").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull(manager.store.findClusterForObject("Catalog.Products")); //$NON-NLS-1$
+        assertNull(manager.store.findClusterForObject("catalogs.products")); //$NON-NLS-1$
+
+        JsonObject again = call("add_to_cluster", "objectFqn", "CATALOG.Products", //$NON-NLS-1$ //$NON-NLS-2$
+            "clusterPath", "Catalog/Shelf"); //$NON-NLS-1$
+        assertTrue(again.get("noChange").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(1, manager.store.getClusterByFullPath("Catalog/Shelf").getChildren().size()); //$NON-NLS-1$
+
+        JsonObject removed = call("remove_from_cluster", "objectFqn", "Catalogs.PRODUCTS"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(removed.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("Catalog/Shelf", removed.getAsJsonArray("removedFrom").get(0).getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNull(manager.store.findClusterForObject("Catalog.Products")); //$NON-NLS-1$
+    }
+
+    /** An object the model no longer has is still taken out under the spelling it was stored by. */
+    @Test
+    public void aRemovalFindsAnObjectTheModelNoLongerHas()
+    {
+        assertTrue(create("Shelf", "Catalog", false).get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(call("add_to_cluster", "objectFqn", "Catalog.Gone", //$NON-NLS-1$ //$NON-NLS-2$
+            "clusterPath", "Catalog/Shelf").get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        modelRefusal = ToolResult.error("No object 'Catalog.Gone' in the configuration.") //$NON-NLS-1$
+            .put("reason", "objectNotFound"); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject removed = call("remove_from_cluster", "objectFqn", "Catalog.Gone"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(removed.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertNull(manager.store.findClusterForObject("Catalog.Gone")); //$NON-NLS-1$
     }
 
     /** A move answers the cluster it came from, and a move onto the same cluster is no change. */

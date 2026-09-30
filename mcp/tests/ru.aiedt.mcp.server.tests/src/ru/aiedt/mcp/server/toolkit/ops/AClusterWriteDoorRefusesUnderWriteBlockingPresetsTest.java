@@ -35,7 +35,6 @@ import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
-import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
  * Every write-blocking preset refuses each cluster write by its door, before the clusters file is
@@ -80,13 +79,12 @@ public class AClusterWriteDoorRefusesUnderWriteBlockingPresetsTest
             }
 
             @Override
-            ToolResult objectModelRefusal(IProject project, String objectFqn,
-                String collectionPath)
+            ObjectCheck checkObject(IProject project, String objectFqn, String collectionPath)
             {
                 // The gate is asked before the model, so this is never reached under the presets;
                 // answered permissive for the case a gate fails open, which the byte comparison
                 // then catches.
-                return null;
+                return ObjectCheck.of(objectFqn.trim());
             }
         };
         McpToolCatalog catalog = McpToolCatalog.getInstance();
