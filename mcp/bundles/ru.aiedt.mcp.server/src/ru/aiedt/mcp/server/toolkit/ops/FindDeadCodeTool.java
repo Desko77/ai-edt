@@ -31,6 +31,7 @@ import com._1c.g5.v8.dt.bsl.model.Pragma;
 
 import ru.aiedt.mcp.server.support.BslCallGraphHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -214,7 +215,16 @@ public class FindDeadCodeTool
             return "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
         }
 
-        String pathPrefix = resolvePathPrefix(JsonUtils.extractStringArgument(params, "metadataType")); //$NON-NLS-1$
+        String metadataType = JsonUtils.extractStringArgument(params, "metadataType"); //$NON-NLS-1$
+        String family = familyOf(metadataType);
+        if (family == null)
+        {
+            return "Error: " + TextSuggest.invalidValue("metadataType", metadataType, FAMILIES); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String pathPrefix = ALL_FAMILIES.equals(family) ? null : family + "/"; //$NON-NLS-1$
+        Map<String, String> shown = new java.util.HashMap<>(params);
+        shown.put("metadataType", family); //$NON-NLS-1$
+        params = shown;
         String moduleFilter = JsonUtils.extractStringArgument(params, "moduleFilter"); //$NON-NLS-1$
         boolean includeForms = JsonUtils.extractBooleanArgument(params, "includeFormModules", false); //$NON-NLS-1$ //$NON-NLS-2$
         List<String> extraPatterns = parsePatterns(JsonUtils.extractStringArgument(params, "allowlistPatterns")); //$NON-NLS-1$
@@ -425,37 +435,62 @@ public class FindDeadCodeTool
     // Helpers
     // -- = --
 
+    /** The value of {@code metadataType} that restricts nothing. */
+    static final String ALL_FAMILIES = "all"; //$NON-NLS-1$
+
+    /** The module families {@code metadataType} selects, named as their directories under src/. */
+    static final List<String> FAMILIES = List.of("CommonModules", "Documents", "Catalogs", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "InformationRegisters", "AccumulationRegisters", "Reports", "DataProcessors", "ExchangePlans", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "BusinessProcesses", "Tasks", "Constants", "CommonCommands", "CommonForms", "WebServices", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        "HTTPServices"); //$NON-NLS-1$
+
+    /** Other spellings of a family: the singular English name and the Russian plural. */
+    private static final Map<String, String> FAMILY_ALIASES = Map.ofEntries(
+        Map.entry("commonmodule", "CommonModules"), Map.entry("общиемодули", "CommonModules"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("document", "Documents"), Map.entry("документы", "Documents"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("catalog", "Catalogs"), Map.entry("справочники", "Catalogs"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("informationregister", "InformationRegisters"), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("регистрысведений", "InformationRegisters"), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("accumulationregister", "AccumulationRegisters"), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("регистрынакопления", "AccumulationRegisters"), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("report", "Reports"), Map.entry("отчеты", "Reports"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("dataprocessor", "DataProcessors"), Map.entry("обработки", "DataProcessors"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("exchangeplan", "ExchangePlans"), Map.entry("планыобмена", "ExchangePlans"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("businessprocess", "BusinessProcesses"), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("бизнеспроцессы", "BusinessProcesses"), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("task", "Tasks"), Map.entry("задачи", "Tasks"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("constant", "Constants"), Map.entry("константы", "Constants"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("commoncommand", "CommonCommands"), Map.entry("общиекоманды", "CommonCommands"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("commonform", "CommonForms"), Map.entry("общиеформы", "CommonForms"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("webservice", "WebServices"), Map.entry("вебсервисы", "WebServices"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Map.entry("httpservice", "HTTPServices"), Map.entry("httpсервисы", "HTTPServices")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
     /**
-     * Maps a metadataType argument to the src-relative path prefix that selects its module family.
+     * Names the module family a {@code metadataType} argument selects.
+     * <p>
+     * Accepted: the family names of {@link #FAMILIES} in any case, their English singular (the
+     * form the semantic metadata search takes, such as {@code Catalog}) and their Russian plural.
+     * </p>
      *
      * @param metadataType the argument, or {@code null}/empty
-     * @return the prefix (e.g. "CommonModules/"), or {@code null} for all
+     * @return the family as its directory name, {@link #ALL_FAMILIES} when nothing is restricted,
+     *         or {@code null} when the value names no family
      */
-    private static String resolvePathPrefix(String metadataType)
+    static String familyOf(String metadataType)
     {
-        if (metadataType == null || metadataType.isEmpty() || "all".equalsIgnoreCase(metadataType)) //$NON-NLS-1$
+        if (metadataType == null || metadataType.isBlank() || ALL_FAMILIES.equalsIgnoreCase(metadataType.trim()))
         {
-            return null;
+            return ALL_FAMILIES;
         }
-        switch (metadataType.toLowerCase(Locale.ROOT))
+        String key = metadataType.trim().toLowerCase(Locale.ROOT);
+        for (String family : FAMILIES)
         {
-            case "commonmodules": return "CommonModules/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "documents": return "Documents/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "catalogs": return "Catalogs/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "informationregisters": return "InformationRegisters/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "accumulationregisters": return "AccumulationRegisters/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "reports": return "Reports/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "dataprocessors": return "DataProcessors/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "exchangeplans": return "ExchangePlans/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "businessprocesses": return "BusinessProcesses/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "tasks": return "Tasks/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "constants": return "Constants/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "commoncommands": return "CommonCommands/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "commonforms": return "CommonForms/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "webservice": case "webservices": return "WebServices/"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "httpservices": return "HTTPServices/"; //$NON-NLS-1$ //$NON-NLS-2$
-            default: return null;
+            if (family.toLowerCase(Locale.ROOT).equals(key))
+            {
+                return family;
+            }
         }
+        return FAMILY_ALIASES.get(key);
     }
 
     private static List<String> parsePatterns(String csv)

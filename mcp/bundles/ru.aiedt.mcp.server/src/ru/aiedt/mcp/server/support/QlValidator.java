@@ -81,6 +81,13 @@ public final class QlValidator
     /**
      * Severity-tagged validation issue.
      */
+    /** The alias the wrapper gives an expression it checks as a query. */
+    static final String EXPRESSION_PROBE_ALIAS = "__DcsExpressionProbe"; //$NON-NLS-1$
+
+    /** {@link #EXPRESSION_PROBE_ALIAS} in lower case, for the search in a diagnostic's text. */
+    private static final String EXPRESSION_PROBE_ALIAS_LOWER =
+        EXPRESSION_PROBE_ALIAS.toLowerCase(java.util.Locale.ROOT);
+
     public static final class QlIssue
     {
         public final String severity; // ERROR / WARNING / INFO
@@ -197,9 +204,15 @@ public final class QlValidator
             this.warningCount = w;
         }
 
+        /**
+         * Whether the text has an error: a diagnostic of severity ERROR, or a parse the parser
+         * objected to.
+         *
+         * @return {@code true} when a write guarded by this result must not go through
+         */
         public boolean hasErrors()
         {
-            return errorCount > 0;
+            return errorCount > 0 || parserObjected;
         }
 
         public static ValidationResult ok()
@@ -316,29 +329,42 @@ public final class QlValidator
         // Bare-expression entry: QL DCS mode accepts a SELECT list without FROM.
         // We surround with parentheses + alias so even malformed expressions
         // are syntactically wrapped.
-        String wrapped = "ВЫБРАТЬ (" + expression + ") КАК __DcsExpressionProbe"; //$NON-NLS-1$
+        String wrapped = "ВЫБРАТЬ (" + expression + ") КАК " + EXPRESSION_PROBE_ALIAS; //$NON-NLS-1$
         ValidationResult raw = settledAnswer(project, wrapped, true, true);
         if (!raw.available || raw.unconfirmed)
         {
             return raw;
         }
-        // Filter out wrapper-induced errors: only retain issues whose message
-        // text mentions "FROM" / "ИЗ" / "alias" only - and at least one issue
-        // attributable to the user expression (heuristic).
-        java.util.List<QlIssue> filtered = new java.util.ArrayList<>();
-        for (QlIssue i : raw.issues)
+        ValidationResult kept = ValidationResult.of(whatTheExpressionOwns(raw.issues));
+        kept.parserObjected = raw.parserObjected;
+        return kept;
+    }
+
+    /**
+     * Keeps the diagnostics that are about the expression rather than about the query wrapped
+     * around it.
+     * <p>
+     * A diagnostic naming the wrapper's alias {@link #EXPRESSION_PROBE_ALIAS} is about the wrapper
+     * and is dropped. The alias is this class's own identifier, so the test does not depend on the
+     * language the platform writes its messages in. Every other diagnostic is kept, with the ones
+     * this check cannot judge demoted by {@link #whatThisCannotJudge}.
+     * </p>
+     *
+     * @param issues the diagnostics of the wrapped query
+     * @return the diagnostics that belong to the expression
+     */
+    static List<QlIssue> whatTheExpressionOwns(List<QlIssue> issues)
+    {
+        List<QlIssue> kept = new ArrayList<>();
+        for (QlIssue issue : issues)
         {
-            String msg = i.message != null ? i.message.toLowerCase() : ""; //$NON-NLS-1$
-            // Skip wrapper-only issues (FROM clause expected, etc.)
-            if (msg.contains("from") || msg.contains(" из ") //$NON-NLS-1$ //$NON-NLS-2$
-                || msg.contains("__dcsexpressionprobe")) //$NON-NLS-1$
+            if (issue.message != null
+                && issue.message.toLowerCase(java.util.Locale.ROOT).contains(EXPRESSION_PROBE_ALIAS_LOWER))
             {
                 continue;
             }
-            filtered.add(whatThisCannotJudge(i));
+            kept.add(whatThisCannotJudge(issue));
         }
-        ValidationResult kept = ValidationResult.of(filtered);
-        kept.parserObjected = raw.parserObjected;
         return kept;
     }
 
