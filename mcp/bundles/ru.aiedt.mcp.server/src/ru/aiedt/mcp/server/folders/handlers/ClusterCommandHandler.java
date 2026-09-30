@@ -19,6 +19,7 @@ import org.eclipse.ui.handlers.HandlerUtil;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.folders.ClusterKeys;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.folders.model.Cluster;
 import ru.aiedt.mcp.server.folders.ui.ClusterNavigatorBridge;
@@ -74,26 +75,33 @@ public abstract class ClusterCommandHandler
     }
 
     /**
-     * Shows the common error reported when a cluster edit could not be persisted.
+     * Shows the error reported when a cluster edit was refused.
      *
      * @param shell the parent shell
-     * @param project the project whose cluster file rejected the edit
+     * @param project the project whose clusters were not saved
+     * @param outcome the refusal; its explanation is the reason the dialog names
      */
-    static void showSaveFailure(Shell shell, IProject project)
+    static void showSaveFailure(Shell shell, IProject project, ClusterWriteOutcome outcome)
     {
-        MessageDialog.openError(shell, "Clusters Not Saved", saveFailureMessage(project)); //$NON-NLS-1$
+        MessageDialog.openError(shell, "Clusters Not Saved", saveFailureMessage(project, outcome)); //$NON-NLS-1$
     }
 
     /**
-     * Builds the common save-failure message independently of the dialog.
+     * Builds the save-failure message independently of the dialog.
+     * <p>
+     * The first sentence is the outcome's explanation, so the dialog names the same reason the
+     * outcome carries.
+     * </p>
      *
-     * @param project the project whose cluster file rejected the edit
-     * @return an English message naming the file and project
+     * @param project the project whose clusters were not saved
+     * @param outcome the refusal
+     * @return an English message naming the reason, the file and the project
      */
-    static String saveFailureMessage(IProject project)
+    static String saveFailureMessage(IProject project, ClusterWriteOutcome outcome)
     {
         String projectName = project == null ? "<unknown>" : project.getName(); //$NON-NLS-1$
-        return "The cluster changes were not saved. Check " + ClusterKeys.CLUSTERS_PATH //$NON-NLS-1$
+        String reason = outcome == null ? "The clusters were not saved." : outcome.explanation(); //$NON-NLS-1$
+        return reason + " Check " + ClusterKeys.CLUSTERS_PATH //$NON-NLS-1$
             + " in project '" + projectName + "' and try again."; //$NON-NLS-1$ //$NON-NLS-2$
     }
 

@@ -10,6 +10,7 @@ import org.eclipse.core.commands.ExecutionEvent;
 import org.eclipse.core.commands.ExecutionException;
 import org.eclipse.jface.dialogs.MessageDialog;
 
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.folders.model.Cluster;
 
@@ -39,9 +40,10 @@ public class DeleteClusterCommand
                 + "'? Its objects will return to their normal location."); //$NON-NLS-1$
         if (confirmed)
         {
-            if (!service.deleteCluster(selection.project, cluster.getFullPath()))
+            ClusterWriteOutcome deleted = service.deleteCluster(selection.project, cluster.getFullPath());
+            if (deleted.isRefused())
             {
-                showSaveFailure(selection.shell, selection.project);
+                showSaveFailure(selection.shell, selection.project, deleted);
             }
         }
         return null;

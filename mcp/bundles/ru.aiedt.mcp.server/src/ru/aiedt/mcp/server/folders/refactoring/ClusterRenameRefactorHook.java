@@ -22,7 +22,9 @@ import com._1c.g5.v8.dt.refactoring.core.RefactoringSettings;
 import com._1c.g5.v8.dt.refactoring.core.RefactoringStatus;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
+import ru.aiedt.mcp.server.folders.repository.ClusterSaveOutcome;
 import ru.aiedt.mcp.server.folders.model.ClusterStore;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
@@ -149,11 +151,12 @@ public class ClusterRenameRefactorHook
         @Override
         public Change perform(IProgressMonitor monitor)
         {
-            if (!apply(Activator.getClusterServiceStatic(), project, oldFqn, newFqn))
+            ClusterWriteOutcome outcome = apply(Activator.getClusterServiceStatic(), project, oldFqn, newFqn);
+            if (outcome.isRefused())
             {
                 String projectName = project == null ? "<unknown>" : project.getName(); //$NON-NLS-1$
                 Activator.logWarning("Cluster membership for " + oldFqn + " was not saved after rename to " //$NON-NLS-1$ //$NON-NLS-2$
-                    + newFqn + " in project " + projectName); //$NON-NLS-1$
+                    + newFqn + " in project " + projectName + ": " + outcome.explanation()); //$NON-NLS-1$ //$NON-NLS-2$
             }
             return new ClusterFqnRenameChange(project, newFqn, oldFqn);
         }
@@ -169,14 +172,15 @@ public class ClusterRenameRefactorHook
          * @param project the project; <code>null</code> applies nothing
          * @param from the name to replace
          * @param to the name to give it
-         * @return whatever {@link IClusterManager#renameObject(IProject, String, String)} returned,
-         *         or <code>false</code> when there is no service or no project
+         * @return what {@link IClusterManager#renameObject(IProject, String, String)} returned,
+         *         or a refusal when there is no service or no project
          */
-        static boolean apply(IClusterManager service, IProject project, String from, String to)
+        static ClusterWriteOutcome apply(IClusterManager service, IProject project, String from, String to)
         {
             if (service == null || project == null || from == null || to == null)
             {
-                return false;
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED,
+                    "nothing to rename")); //$NON-NLS-1$
             }
             return service.renameObject(project, from, to);
         }
