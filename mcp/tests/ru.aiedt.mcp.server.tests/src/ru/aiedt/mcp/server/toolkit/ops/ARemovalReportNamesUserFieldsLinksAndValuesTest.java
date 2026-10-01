@@ -367,8 +367,10 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
      */
     private EObject firstParameterEntry()
     {
-        EList<EObject> items = BmDcsHelper.getEObjectList(
-            BmDcsHelper.getEObjectList(settings(), "getDataParameters"), "getItems"); //$NON-NLS-1$ //$NON-NLS-2$
+        EObject settings = settings();
+        Object container = settings.eGet(
+            settings.eClass().getEStructuralFeature("dataParameters")); //$NON-NLS-1$
+        EList<EObject> items = BmDcsHelper.getEObjectList(container, "getItems"); //$NON-NLS-1$
         return items == null || items.isEmpty() ? null : items.get(0);
     }
 }

@@ -108,7 +108,8 @@ public final class DcsSettingsImpact
         Collection<String> parameterNames, Collection<String> dataSetNames)
     {
         Probe probe = new Probe(fieldPaths, parameterNames, dataSetNames);
-        if (schema == null || (probe.fieldPaths.isEmpty() && probe.parameterNames.isEmpty()))
+        if (schema == null || (probe.fieldPaths.isEmpty() && probe.parameterNames.isEmpty()
+            && probe.dataSetNames.isEmpty()))
         {
             return probe.found;
         }
@@ -223,8 +224,9 @@ public final class DcsSettingsImpact
      * Reads the variant's user fields.
      * <p>
      * A user field is a reference to what was removed when its own data path is the removed
-     * path, or when its detail expression mentions the removed path - the expression is what
-     * the user field computes from, so a field gone from the dataset breaks it.
+     * path, when its detail or total expression mentions the removed identifier, or when the
+     * filter of one of its case variants selects by the removed identifier - the expression is
+     * what the user field computes from, so a field gone from the dataset breaks it.
      * </p>
      *
      * @param settings the variant's settings, possibly <code>null</code>
@@ -262,15 +264,16 @@ public final class DcsSettingsImpact
             {
                 probe.add(variant, USER_FIELDS, here + ".totalExpression", dataPath); //$NON-NLS-1$
             }
-            EList<EObject> cases = BmDcsHelper.getEObjectList(item, "getCases"); //$NON-NLS-1$
-            if (cases == null)
+            EList<EObject> variants = BmDcsHelper.getEObjectList(
+                read(item, "getVariants"), "getItems"); //$NON-NLS-1$ //$NON-NLS-2$
+            if (variants == null)
             {
                 continue;
             }
-            for (int c = 0; c < cases.size(); c++)
+            for (int c = 0; c < variants.size(); c++)
             {
-                readFilter(read(cases.get(c), "getFilter"), variant, USER_FIELDS, //$NON-NLS-1$ //$NON-NLS-2$
-                    here + ".cases[" + c + "].filter", probe); //$NON-NLS-1$ //$NON-NLS-2$
+                readFilter(read(variants.get(c), "getFilter"), variant, USER_FIELDS, //$NON-NLS-1$ //$NON-NLS-2$
+                    here + ".variants[" + c + "].filter", probe); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
     }
@@ -499,13 +502,12 @@ public final class DcsSettingsImpact
         }
         for (int v = 0; v < values.size(); v++)
         {
-            Object carrier = read(values.get(v), "getValue"); //$NON-NLS-1$
-            if (!(carrier instanceof EObject)
-                || !"DataCompositionField".equals(((EObject)carrier).eClass().getName())) //$NON-NLS-1$
+            EObject value = values.get(v);
+            if (!"DataCompositionField".equals(value.eClass().getName())) //$NON-NLS-1$
             {
                 continue;
             }
-            String text = textOf(read(carrier, "getValue")); //$NON-NLS-1$
+            String text = textOf(read(value, "getValue")); //$NON-NLS-1$
             if (text != null && probe.fieldMatches(text))
             {
                 probe.add(variant, section, path + ".values[" + v + "]", text); //$NON-NLS-1$ //$NON-NLS-2$
