@@ -170,7 +170,7 @@ public class TheToolListHasAWeightBudgetTest
      * And from 186245 to 186269 for the wording pass on audit_role_rights, the form-appearance
      * sentences of edit_metadata and config_io: each entry stayed inside its per-tool headroom and
      * the sum crossed the document. Measured 01.10: 186269. Both raises together land above either
-     * alone; the exact figure is measured on the merged tree.
+     * alone; the budget holds their sum with a small headroom.
      * </p>
      */
     private static final int DOCUMENT_BUDGET = 186420;
