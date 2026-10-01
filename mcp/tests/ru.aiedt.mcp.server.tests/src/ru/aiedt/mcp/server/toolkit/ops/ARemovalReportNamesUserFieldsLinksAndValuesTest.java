@@ -115,14 +115,6 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
     }
 
     /**
-     * Whether one of the hits sits in the given section and path.
-     *
-     * @param hits the report
-     * @param section the section to look for
-     * @param pathPart a part of the path to look for
-     * @return <code>true</code> when a hit matches
-     */
-    /**
      * The hit at a path, or <code>null</code> when there is none.
      *
      * @param hits the report
@@ -144,6 +136,14 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
         return null;
     }
 
+    /**
+     * Whether one of the hits sits in the given section and path.
+     *
+     * @param hits the report
+     * @param section the section to look for
+     * @param pathPart a part of the path to look for
+     * @return <code>true</code> when a hit matches
+     */
     private static boolean hasHit(List<Map<String, Object>> hits, String section, String pathPart)
     {
         for (Map<String, Object> hit : hits)
@@ -313,11 +313,6 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
             hasHit(hits, "dataSetLinks", "linkConditionExpression")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    /**
-     * A settings parameter whose value is the removed field is a reference to it.
-     *
-     * @throws Exception if a call refuses
-     */
     /**
      * A parameter value is a literal: however it spells, it is not a reference to the field of
      * that name, and the report leaves it alone.
