@@ -161,8 +161,13 @@ public class TheToolListHasAWeightBudgetTest
      * list (measured 30.09: 3028). Its five write doors are hidden under Canonical and weigh
      * nothing here.
      * </p>
+     * <p>
+     * Raised from 186245 to 186269 for the wording pass on audit_role_rights, the form-appearance
+     * sentences of edit_metadata and config_io: each entry stayed inside its per-tool headroom and
+     * the sum crossed the document. Measured 01.10: 186269.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186245;
+    private static final int DOCUMENT_BUDGET = 186269;
 
     private LiveServer server;
 

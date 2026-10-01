@@ -65,8 +65,8 @@ public class ApplicationsReader
             + "Lists a project's applications - the infobases it can run against. Returns each one's " //$NON-NLS-1$
             + "ID, name, type, and update state. The ID is what update_database and debug_launch need. " //$NON-NLS-1$
             + "Each entry also names its kind (infobase / server / other), where an infobase lives, the " //$NON-NLS-1$
-            + "operations that refuse a non-infobase application, the launch configurations bound to it, " //$NON-NLS-1$
-            + "and the next step when it is not up to date."; //$NON-NLS-1$
+            + "operations that refuse a non-infobase application, the capabilities it keeps, the launch " //$NON-NLS-1$
+            + "configurations bound to it, and the next step when it is not up to date."; //$NON-NLS-1$
     }
 
     @Override
@@ -500,6 +500,7 @@ public class ApplicationsReader
             JsonArray refused = new JsonArray();
             INFOBASE_ONLY_OPERATIONS.forEach(refused::add);
             object.add("operationsNotAvailable", refused); //$NON-NLS-1$
+            object.add("capabilities", capabilitiesOf(facts.kind)); //$NON-NLS-1$
         }
         JsonArray launches = new JsonArray();
         for (String[] launch : facts.launchConfigurations)
@@ -515,6 +516,43 @@ public class ApplicationsReader
             object.addProperty("launchConfigurationsError", facts.launchConfigurationsError); //$NON-NLS-1$
         }
         return object;
+    }
+
+    /**
+     * What an application that is not an infobase can still be asked to do.
+     * <p>
+     * A standalone (WST) server application goes through the generic manager calls -
+     * {@code IApplicationManager.start} and {@code update} accept any application, and the debug
+     * and test runners resolve it the same way - so launch, update, debug and test runs answer
+     * {@code true}. Extension management answers {@code false} for every other kind: those
+     * operations drive the platform Designer against an {@code InfobaseReference}, which only an
+     * infobase application holds. For an application of a type this reader does not know, what the
+     * generic calls do with it is the type's own business, so those read {@code unknown}.
+     * </p>
+     *
+     * @param kind the application kind: {@code server} or {@code other}
+     * @return the capabilities object
+     */
+    static JsonObject capabilitiesOf(String kind)
+    {
+        boolean server = "server".equals(kind); //$NON-NLS-1$
+        JsonObject capabilities = new JsonObject();
+        if (server)
+        {
+            capabilities.addProperty("launch", true); //$NON-NLS-1$
+            capabilities.addProperty("update", true); //$NON-NLS-1$
+            capabilities.addProperty("debug", true); //$NON-NLS-1$
+            capabilities.addProperty("testRuns", true); //$NON-NLS-1$
+        }
+        else
+        {
+            capabilities.addProperty("launch", "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
+            capabilities.addProperty("update", "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
+            capabilities.addProperty("debug", "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
+            capabilities.addProperty("testRuns", "unknown"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        capabilities.addProperty("extensionManagement", false); //$NON-NLS-1$
+        return capabilities;
     }
 
     /**
