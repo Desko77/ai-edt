@@ -31,7 +31,7 @@ import org.junit.Test;
 public class ErrorTagsContractTest
 {
     /** Total number of {@link ErrorTags} constants this test covers. */
-    private static final int EXPECTED_CONSTANT_COUNT = 64;
+    private static final int EXPECTED_CONSTANT_COUNT = 65;
 
     private static Map<String, String> goldenWireStrings()
     {
