@@ -17,9 +17,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Locale;
 
-import org.junit.Assume;
 import org.junit.Test;
 
 import com.google.gson.JsonObject;
@@ -27,6 +25,7 @@ import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.InfobaseOutsideChange;
+import ru.aiedt.mcp.server.support.UnwritableRecord;
 
 /**
  * An infobase changes without EDT, and the store's ConfigDumpInfo.xml is what an incremental update
@@ -398,22 +397,22 @@ public class InfobaseOutsideChangesTest
 
     /**
      * A mark that cannot be rewritten stays, and the reason is returned for the answer that names
-     * the record. On Windows a read-only record file cannot be replaced; elsewhere the replacing
-     * move is not stopped by it, so the test runs on Windows only.
+     * the record. {@link UnwritableRecord} stops the rewrite on Windows and on POSIX systems alike.
      */
     @Test
     public void aLoadMarkThatCannotBeRewrittenNamesTheReason() throws IOException
     {
-        Assume.assumeTrue(System.getProperty("os.name", "").toLowerCase(Locale.ROOT).startsWith("windows")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Path dir = Files.createTempDirectory("clear-load-fail-"); //$NON-NLS-1$
         Path record = dir.resolve(InfobaseOutsideChange.FILE_NAME);
         try
         {
             InfobaseOutsideChange.of(CURRENT_BASE, "content-then", 4) //$NON-NLS-1$
                 .withLoad("E:/snaps/before.dt", "2026-09-29T10:00:00Z").writeTo(record); //$NON-NLS-1$ //$NON-NLS-2$
-            Files.setAttribute(record, "dos:readonly", Boolean.TRUE); //$NON-NLS-1$
-
-            String reason = InfobaseOutsideChange.clearTheLoad(record);
+            String reason;
+            try (UnwritableRecord locked = UnwritableRecord.of(record))
+            {
+                reason = InfobaseOutsideChange.clearTheLoad(record);
+            }
 
             assertNotNull(reason);
             assertTrue(reason.length() > 0);
@@ -422,14 +421,6 @@ public class InfobaseOutsideChangesTest
         }
         finally
         {
-            try
-            {
-                Files.setAttribute(record, "dos:readonly", Boolean.FALSE); //$NON-NLS-1$
-            }
-            catch (IOException ignored)
-            {
-                // The directory is removed either way.
-            }
             deleteTree(dir);
         }
     }

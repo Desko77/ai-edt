@@ -1415,14 +1415,38 @@ public class DatabaseUpdater implements IMcpTool
         java.nio.file.Path stored =
             ru.aiedt.mcp.server.support.SyncBaseline.dumpInfoFile(infobaseProject,
                 infobase.getUuid().toString());
-        InfobaseOutsideChange copy =
-            InfobaseOutsideChange.copyOf(stored, InfobaseIdentity.of(infobase));
+        return recordTheCopy(stored, InfobaseIdentity.of(infobase));
+    }
+
+    /**
+     * Records the store's copy as it is after an update, and names which record stayed when that
+     * fails.
+     * <p>
+     * Two failures leave two different records behind. A copy that does not read has only a
+     * load mark to clear; when the clear fails, the mark stays and the next incremental update
+     * refuses on it. A copy that reads is written as the new record; when that fails, the answer
+     * names what the record left behind makes of the next incremental update.
+     * </p>
+     *
+     * @param stored the store's {@code ConfigDumpInfo.xml}
+     * @param identity the base the copy belongs to, or {@code null}
+     * @return the sentence naming the record that stayed and why, or {@code null} when there was
+     *         nothing to record or the record was written
+     */
+    static String recordTheCopy(java.nio.file.Path stored, String identity)
+    {
+        InfobaseOutsideChange copy = InfobaseOutsideChange.copyOf(stored, identity);
         if (!copy.known())
         {
             // A copy that does not read cannot be recorded as this update's. A load mark on the
             // record would still stop the next incremental update, so it is cleared; a record
             // with no mark is left as it was.
-            return InfobaseOutsideChange.clearTheLoad(InfobaseOutsideChange.recordFileOf(stored));
+            String notCleared =
+                InfobaseOutsideChange.clearTheLoad(InfobaseOutsideChange.recordFileOf(stored));
+            return notCleared == null ? null
+                : "the load mark on the stored dump-info record of this base could not be " //$NON-NLS-1$
+                    + "cleared after the update, so the next incremental update still refuses on " //$NON-NLS-1$
+                    + "it: " + notCleared; //$NON-NLS-1$
         }
         try
         {
@@ -1431,8 +1455,33 @@ public class DatabaseUpdater implements IMcpTool
         }
         catch (Exception | LinkageError cannotWrite)
         {
-            return cannotWrite.toString();
+            return "the stored dump-info copy of this base could not be recorded after the " //$NON-NLS-1$
+                + "update; " + whatTheRecordLeft( //$NON-NLS-1$
+                    InfobaseOutsideChange.read(InfobaseOutsideChange.recordFileOf(stored)))
+                + ": " + cannotWrite; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * What the record that stayed beside the copy makes of the next incremental update.
+     *
+     * @param left the record as it is on disk after the failed write
+     * @return the clause naming it
+     */
+    static String whatTheRecordLeft(InfobaseOutsideChange left)
+    {
+        if (left.replacedByLoad())
+        {
+            return "the record left behind still carries its load mark, so the next incremental " //$NON-NLS-1$
+                + "update refuses on it"; //$NON-NLS-1$
+        }
+        if (!left.known())
+        {
+            return "no recorded content is left, so the next update has nothing to compare the " //$NON-NLS-1$
+                + "copy with"; //$NON-NLS-1$
+        }
+        return "the record the previous update left stays, and the next update compares the " //$NON-NLS-1$
+            + "copy with it"; //$NON-NLS-1$
     }
 
     /**
@@ -1889,11 +1938,8 @@ public class DatabaseUpdater implements IMcpTool
             }
             if (recordFailure != null)
             {
-                // Said rather than passed over: the next update compares the copy against nothing
-                // and reports that, so a store that could not be recorded is a fact about this one.
-                result.put("infobaseChangeRecord", "the stored dump-info copy of this base could " //$NON-NLS-1$
-                    + "not be recorded after the update, so the next update has nothing to compare " //$NON-NLS-1$
-                    + "it against: " + recordFailure); //$NON-NLS-1$
+                // Said rather than passed over: the record that stayed shapes the next update.
+                result.put("infobaseChangeRecord", recordFailure); //$NON-NLS-1$
             }
 
             if (updateComplete)
