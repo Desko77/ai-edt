@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 142 | a test class named after it |
-| exercised | 230 | reached by some other test |
+| exercised | 233 | reached by some other test |
 | tool-sweep | 39 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 40 | needs a display or an extension point |
+| ui-bound | 37 | needs a display or an extension point |
 | workspace-bound | 20 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **471** | across 601 test classes |
+| **total** | **471** | across 602 test classes |
 
 ## untested (0)
 
@@ -51,7 +51,7 @@ _none_
 - CommandInterfaceOps
 - FormEventOps
 
-## ui-bound (40)
+## ui-bound (37)
 
 **(root)**
 - McpAutoStart
@@ -65,12 +65,9 @@ _none_
 
 **folders/ui**
 - ClusterEditDialog
-- ClusterNavigatorBridge
-- ClusterTreeContent
 - ClusterTreeLabels
 - ClusterViewFilter
 - CollectionAdapters
-- NavigatorClusterSelection
 
 **labels/handlers**
 - FilterByMarkerCommand
@@ -156,7 +153,7 @@ _none_
 - TagsReader
 - UninstallExtensionTool
 
-## exercised (230)
+## exercised (233)
 
 **(root)**
 - Activator
@@ -184,6 +181,11 @@ _none_
 - ClusterSaveOutcome
 - IClusterStore
 - YamlClusterStore
+
+**folders/ui**
+- ClusterNavigatorBridge
+- ClusterTreeContent
+- NavigatorClusterSelection
 
 **labels**
 - MarkerDecorationHelpers
@@ -614,7 +616,7 @@ closes.
 | 9-16 | 60 |
 | 17+ | 23 |
 
-4768 test methods across 601 test classes; 142 classes have a test of their own, median 10 methods each.
+4773 test methods across 602 test classes; 142 classes have a test of their own, median 10 methods each.
 
 Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 142 of 471 classes have one: 39 are covered by the registry-wide contract sweep and 20 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
