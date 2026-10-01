@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 142 | a test class named after it |
-| exercised | 230 | reached by some other test |
-| tool-sweep | 39 | declaration checked by the registry-wide contract sweep |
+| exercised | 231 | reached by some other test |
+| tool-sweep | 38 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 40 | needs a display or an extension point |
 | workspace-bound | 20 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **471** | across 596 test classes |
+| **total** | **471** | across 600 test classes |
 
 ## untested (0)
 
@@ -113,7 +113,7 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (39)
+## tool-sweep (38)
 
 **toolkit/ops**
 - AttributeAdder
@@ -143,7 +143,6 @@ _none_
 - LaunchConfigsLister
 - ListExtensionsTool
 - OutgoingStructuresReader
-- ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
 - ProjectCreator
@@ -156,7 +155,7 @@ _none_
 - TagsReader
 - UninstallExtensionTool
 
-## exercised (230)
+## exercised (231)
 
 **(root)**
 - Activator
@@ -389,6 +388,7 @@ _none_
 - PlatformDocReader
 - PredefinedOps
 - ProblemSummaryReader
+- ProfilingResultsReader
 - ProjectAdminFacadeTool
 - ProjectMetricsTool
 - ProjectProblemsReader
@@ -611,12 +611,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 15 |
 | 5-8 | 42 |
-| 9-16 | 60 |
-| 17+ | 23 |
+| 9-16 | 59 |
+| 17+ | 24 |
 
-4751 test methods across 596 test classes; 142 classes have a test of their own, median 10 methods each.
+4768 test methods across 600 test classes; 142 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 142 of 471 classes have one: 39 are covered by the registry-wide contract sweep and 20 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 142 of 471 classes have one: 38 are covered by the registry-wide contract sweep and 20 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 
