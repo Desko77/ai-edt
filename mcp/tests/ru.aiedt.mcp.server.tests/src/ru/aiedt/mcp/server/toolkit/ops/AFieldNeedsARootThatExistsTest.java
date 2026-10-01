@@ -10,7 +10,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
@@ -48,9 +47,8 @@ public class AFieldNeedsARootThatExistsTest
     @Test
     public void anUnknownRootIsRefusedWithTheAttributeListNotTheExtensionText() throws Exception
     {
-        EditFormTool tool = new EditFormTool();
         Form form = formWithBaseForm("Object"); //$NON-NLS-1$
-        injectHelper(tool, form);
+        BmFormHelper helper = helperBoundTo(form);
         // The form declares a base form, its project is a configuration one,
         // and the port would answer with the extension-export refusal.
         FormExtensionDataPathGuard.installProjectKind(f -> Boolean.FALSE);
@@ -80,7 +78,7 @@ public class AFieldNeedsARootThatExistsTest
             }
         });
 
-        String answer = addField(tool, form, DATA_PATH);
+        String answer = addField(helper, form, DATA_PATH);
 
         assertTrue("the write is refused: " + answer, answer.contains("status: error")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("the refusal names the path: " + answer, answer.contains(DATA_PATH)); //$NON-NLS-1$
@@ -101,9 +99,8 @@ public class AFieldNeedsARootThatExistsTest
     @Test
     public void aKnownRootIsWritten() throws Exception
     {
-        EditFormTool tool = new EditFormTool();
         Form form = formWithBaseForm("Object"); //$NON-NLS-1$
-        injectHelper(tool, form);
+        BmFormHelper helper = helperBoundTo(form);
         FormExtensionDataPathGuard.installProjectKind(f -> Boolean.FALSE);
         FormExtensionDataPathGuard.installPort(new FormExtensionDataPathGuard.Port()
         {
@@ -131,21 +128,31 @@ public class AFieldNeedsARootThatExistsTest
             }
         });
 
-        String answer = addField(tool, form, "Object.BBWeight"); //$NON-NLS-1$
+        String answer = addField(helper, form, "Object.BBWeight"); //$NON-NLS-1$
 
         assertTrue("the field is added: " + answer, answer.contains("status: success")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    private static String addField(EditFormTool tool, Form form, String dataPath) throws Exception
+    /**
+     * Calls the private add-field route with the helper the request would hold, the same way
+     * {@code executeInternal} hands its own helper over.
+     *
+     * @param helper the helper bound to the test form
+     * @param form the form the field is written to
+     * @param dataPath the binding the field is asked for
+     * @return the route's front-matter answer
+     * @throws Exception when reflection cannot reach the route
+     */
+    private static String addField(BmFormHelper helper, Form form, String dataPath) throws Exception
     {
         Method addField = EditFormTool.class.getDeclaredMethod("executeAddField", //$NON-NLS-1$
-            Object.class, Object.class, String.class, String.class, String.class, String.class,
-            String.class, String.class, boolean.class);
+            BmFormHelper.class, Object.class, Object.class, String.class, String.class,
+            String.class, String.class, String.class, String.class, boolean.class);
         addField.setAccessible(true);
         try
         {
-            return (String) addField.invoke(tool, form, new Object(), "ПолеВеса", null, //$NON-NLS-1$
-                "InputField", dataPath, null, null, false); //$NON-NLS-1$
+            return (String) addField.invoke(new EditFormTool(), helper, form, new Object(), //$NON-NLS-1$
+                "ПолеВеса", null, "InputField", dataPath, null, null, false); //$NON-NLS-1$ //$NON-NLS-2$
         }
         catch (InvocationTargetException e)
         {
@@ -158,15 +165,18 @@ public class AFieldNeedsARootThatExistsTest
         }
     }
 
-    private static void injectHelper(EditFormTool tool, Form form) throws Exception
+    /**
+     * @param form the form the request works on
+     * @return an initialized helper bound to that form
+     * @throws Exception when the form model classes cannot be resolved
+     */
+    private static BmFormHelper helperBoundTo(Form form) throws Exception
     {
         BmFormHelper helper = new BmFormHelper();
         assertTrue("the helper must resolve the form model for this to prove anything", //$NON-NLS-1$
             helper.init());
         helper.formForTest(form);
-        Field field = EditFormTool.class.getDeclaredField("helper"); //$NON-NLS-1$
-        field.setAccessible(true);
-        field.set(tool, helper);
+        return helper;
     }
 
     private static Form formWithBaseForm(String... attributes)

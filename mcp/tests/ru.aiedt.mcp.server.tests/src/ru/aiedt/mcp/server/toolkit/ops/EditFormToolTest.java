@@ -22,7 +22,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool.ResponseType;
  * parameter validation for required fields, help operation output.
  * <p>
  * Note: operations other than 'help' require Eclipse workspace and
- * PlatformUI (Display.syncExec, BM transactions), so only pre-dispatch
+ * PlatformUI (UiSync on the UI thread, BM transactions), so only pre-dispatch
  * validation and the help operation can be tested without Eclipse runtime.
  */
 public class EditFormToolTest
@@ -226,7 +226,7 @@ public class EditFormToolTest
     // -- Validation order --
     // help is checked BEFORE projectName/formFqn/operation validation.
     // Other operations require valid projectName, formFqn, and operation.
-    // Invalid operation and name-required checks happen inside Display.syncExec,
+    // Invalid operation and name-required checks happen on the UI thread through UiSync,
     // which requires Eclipse runtime - not testable here.
 
     @Test
@@ -321,5 +321,32 @@ public class EditFormToolTest
         assertFalse(warning.contains("\\")); //$NON-NLS-1$
         assertFalse(warning.contains("\n")); //$NON-NLS-1$
         assertTrue("the caller has to know what to do next", warning.contains("parentName")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The missed-sibling warning keeps that same shape whatever the caller sent as
+     * {@code beforeName}: the name is printed cleaned, so a quote, a backslash or a line break in
+     * the input cannot reach the front matter as an escape sequence or as a second line.
+     */
+    @Test
+    public void aDirtyBeforeNameLeavesTheWarningClean()
+    {
+        String warning = EditFormTool.beforeNameMissedWarning("Эл\"е\\мент\nвторой"); //$NON-NLS-1$
+
+        assertFalse(warning, warning.contains("\"")); //$NON-NLS-1$
+        assertFalse(warning, warning.contains("\\")); //$NON-NLS-1$
+        assertFalse(warning, warning.contains("\n")); //$NON-NLS-1$
+        assertTrue("the caller has to see which name missed", warning.contains("Эл е мент")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The cleaning drops nothing a matched name could have carried: a name that reaches the
+     * warning matched no element, and element names hold no quote, backslash or line break.
+     */
+    @Test
+    public void aCleanBeforeNamePassesThroughUnchanged()
+    {
+        assertEquals("ЭлементВторой", EditFormTool.identifiersOnly("ЭлементВторой")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("", EditFormTool.identifiersOnly(null)); //$NON-NLS-1$
     }
 }

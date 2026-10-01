@@ -57,6 +57,12 @@ public enum ErrorTags
      * was abandoned. */
     CLIENT_GONE("clientGone"), //$NON-NLS-1$
 
+    /** The wait for the UI thread was broken after the work had already
+     * started, so whether the work's effects landed is unknown. Not a
+     * retryable condition: a repeated write could double one that already
+     * applied, so the caller reads the target's state first. */
+    OUTCOME_UNKNOWN("outcomeUnknown"), //$NON-NLS-1$
+
     // -------------------------------------------------------------------
     // Folded set (2026-07 G2 pass) - MetadataGuards.ErrorTag / BM guards
     // -------------------------------------------------------------------

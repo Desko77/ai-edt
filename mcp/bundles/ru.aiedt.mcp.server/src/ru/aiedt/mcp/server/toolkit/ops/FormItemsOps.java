@@ -1392,6 +1392,7 @@ final class FormItemsOps
         List<String> adopted = null;
         List<String> notPerformed = null;
         String warning = null;
+        String tag = null;
         String body = markdown;
         // Parse a leading YamlFrontMatter block: "---\n" <lines> "---\n" <body>.
         // Strip a leading UTF-8 BOM defensively (YamlFrontMatter.build() never emits
@@ -1439,6 +1440,13 @@ final class FormItemsOps
                         // caution read as a write with nothing left to do.
                         warning = unquoteYamlScalar(line.substring(colon + 1).trim());
                     }
+                    else if ("tag".equals(key)) //$NON-NLS-1$
+                    {
+                        // A refusal's machine-readable condition (uiBusy and its kin) has to
+                        // survive the conversion, or the facade caller cannot tell a retryable
+                        // busy answer from a failed write.
+                        tag = unquoteYamlScalar(line.substring(colon + 1).trim());
+                    }
                 }
             }
             if (closeIdx >= 0)
@@ -1470,9 +1478,13 @@ final class FormItemsOps
         }
         if (isError)
         {
-            return ToolResult.error(message)
-                .put("operation", op) //$NON-NLS-1$
-                .toJson();
+            ToolResult error = ToolResult.error(message)
+                .put("operation", op); //$NON-NLS-1$
+            if (tag != null && !tag.isEmpty())
+            {
+                error.put("tag", tag); //$NON-NLS-1$
+            }
+            return error.toJson();
         }
         ToolResult ok = ToolResult.success()
             .put("operation", op) //$NON-NLS-1$
@@ -1616,16 +1628,40 @@ final class FormItemsOps
      * A runtime that registers no stock pictures answers with a refusal tagged
      * {@code serviceUnavailable} carrying the common pictures, not with an empty stock list.
      * </p>
+     * <p>
+     * A {@code projectName} that names no open project is refused with {@code projectNotFound}
+     * rather than answered with the newest version's pictures - an absent project is not the same
+     * question as a versionless listing.
+     * </p>
      *
      * @param params projectName (optional; its platform version, the newest without it) and filter
+     * @param reads where the stock list and the common pictures come from
      * @return the JSON answer
      */
-    String opListPictures(Map<String, String> params)
+    static String opListPictures(Map<String, String> params, PictureReads reads)
     {
         String filter = JsonUtils.extractStringArgument(params, "filter"); //$NON-NLS-1$
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        java.util.List<StockPictures.Entry> all = StockPictures.read(StockPictures.versionOf(projectName));
-        java.util.List<String> common = listCommonPictures(projectName, filter);
+        // A project the caller named has to exist: the stock list follows the project's
+        // platform version, and a name that resolves to nothing used to read as the newest
+        // version instead - the same answer a call without a project name gives, so the
+        // caller could not tell a typo from a deliberate versionless listing.
+        if (projectName != null && !projectName.isEmpty())
+        {
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project == null)
+            {
+                return ProjectResolver.notFound(projectName)
+                    .put(ErrorTags.PROJECT_NOT_FOUND.wire(), true).toJson();
+            }
+            // Read by the resolved project's own spelling from here on: the resolve above is
+            // case-insensitive, while the version read and the common-picture read below look
+            // the name up case-sensitively and would quietly answer the newest version and no
+            // pictures for a name that only differs in case.
+            projectName = project.getName();
+        }
+        java.util.List<StockPictures.Entry> all = reads.stock(projectName);
+        java.util.List<String> common = reads.common(projectName, filter);
         if (all.isEmpty())
         {
             return ToolResult.error("This EDT registers no stock pictures for the platform version, " //$NON-NLS-1$
@@ -1652,6 +1688,63 @@ final class FormItemsOps
             .toJson();
     }
 
+    /**
+     * Lists the pictures a form element or command can take, read from the platform itself.
+     * <p>
+     * The overload above carries the body and stays first in this file: the operation census
+     * ({@code scripts/check-operation-params.py}) reads the first method of a name, and this
+     * delegator alone reads no argument.
+     * </p>
+     *
+     * @param params projectName (optional; its platform version, the newest without it) and filter
+     * @return the JSON answer
+     */
+    String opListPictures(Map<String, String> params)
+    {
+        return opListPictures(params, PLATFORM_READS);
+    }
+
+    /**
+     * The reads a picture listing performs by the project's name: the stock list of the project's
+     * platform version, and the common pictures of the project's configuration. A seam the answer
+     * route reads through, so a caller that stands in for the platform can see which spelling of
+     * the name each read received.
+     */
+    interface PictureReads
+    {
+        /**
+         * Reads the stock and extended stock pictures of a platform version.
+         *
+         * @param projectName the project whose version decides the list
+         * @return the entries the version registers
+         */
+        java.util.List<StockPictures.Entry> stock(String projectName);
+
+        /**
+         * Reads the common pictures of a project's configuration.
+         *
+         * @param projectName the project whose configuration is read
+         * @param filter the name filter, or <code>null</code> for every picture
+         * @return the common picture names
+         */
+        java.util.List<String> common(String projectName, String filter);
+    }
+
+    /** The reads the platform itself answers with. */
+    private static final PictureReads PLATFORM_READS = new PictureReads()
+    {
+        @Override
+        public java.util.List<StockPictures.Entry> stock(String projectName)
+        {
+            return StockPictures.read(StockPictures.versionOf(projectName));
+        }
+
+        @Override
+        public java.util.List<String> common(String projectName, String filter)
+        {
+            return listCommonPictures(projectName, filter);
+        }
+    };
 
     private static java.util.List<String> listCommonPictures(String projectName, String filter)
     {
