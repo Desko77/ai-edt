@@ -24,8 +24,8 @@ import ru.aiedt.mcp.server.support.LaunchConfigAccess;
  * What {@code get_applications} says about one application.
  * <p>
  * Besides its id and update state, an application names what it is, where its infobase lives, which
- * operations refuse it when it is not an infobase, the launch configurations bound to it, and the
- * next call when it is not up to date.
+ * operations refuse it when it is not an infobase and what it still answers to, the launch
+ * configurations bound to it, and the next call when it is not up to date.
  * </p>
  */
 public class AnApplicationSaysWhatItIsAndWhatReachesItTest
@@ -77,6 +77,7 @@ public class AnApplicationSaysWhatItIsAndWhatReachesItTest
         assertEquals("file", infobase.get("location").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("C:/bases/demo", infobase.get("path").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertFalse("an infobase refuses none of them", json.has("operationsNotAvailable")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("an infobase answers to everything", json.has("capabilities")); //$NON-NLS-1$ //$NON-NLS-2$
         JsonArray launches = json.getAsJsonArray("launchConfigurations"); //$NON-NLS-1$
         assertEquals(1, launches.size());
         assertEquals("Demo thin", launches.get(0).getAsJsonObject().get("name").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -106,6 +107,41 @@ public class AnApplicationSaysWhatItIsAndWhatReachesItTest
         assertEquals("sync_control is not suggested to an application that refuses it", //$NON-NLS-1$
             "infobase_admin operation=update_database applicationId=srv-1", //$NON-NLS-1$
             json.get("updateNextStep").getAsString()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aServerApplicationStillLaunchesUpdatesAndRunsTests()
+    {
+        ApplicationsReader.ApplicationFacts facts = new ApplicationsReader.ApplicationFacts();
+        facts.id = "srv-2"; //$NON-NLS-1$
+        facts.name = "Standalone"; //$NON-NLS-1$
+        facts.kind = "server"; //$NON-NLS-1$
+
+        JsonObject capabilities = ApplicationsReader.render(facts).getAsJsonObject("capabilities"); //$NON-NLS-1$
+
+        assertTrue(capabilities.get("launch").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(capabilities.get("update").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(capabilities.get("debug").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(capabilities.get("testRuns").getAsBoolean()); //$NON-NLS-1$
+        assertFalse("extension management drives the Designer of an infobase it does not hold", //$NON-NLS-1$
+            capabilities.get("extensionManagement").getAsBoolean()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anApplicationOfAnUnknownTypeAnswersUnknownButForExtensions()
+    {
+        ApplicationsReader.ApplicationFacts facts = new ApplicationsReader.ApplicationFacts();
+        facts.id = "ext-1"; //$NON-NLS-1$
+        facts.name = "Something else"; //$NON-NLS-1$
+        facts.kind = "other"; //$NON-NLS-1$
+
+        JsonObject capabilities = ApplicationsReader.render(facts).getAsJsonObject("capabilities"); //$NON-NLS-1$
+
+        assertEquals("unknown", capabilities.get("launch").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("unknown", capabilities.get("update").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("unknown", capabilities.get("debug").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("unknown", capabilities.get("testRuns").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(capabilities.get("extensionManagement").getAsBoolean()); //$NON-NLS-1$
     }
 
     @Test

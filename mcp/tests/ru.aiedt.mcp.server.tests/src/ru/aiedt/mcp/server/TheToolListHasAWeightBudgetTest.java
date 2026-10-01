@@ -166,8 +166,14 @@ public class TheToolListHasAWeightBudgetTest
      * question answers Pending with a key to collect what it came to, and the schema is where a
      * client learns the key exists. Measured 30.09: 186359.
      * </p>
+     * <p>
+     * And from 186245 to 186269 for the wording pass on audit_role_rights, the form-appearance
+     * sentences of edit_metadata and config_io: each entry stayed inside its per-tool headroom and
+     * the sum crossed the document. Measured 01.10: 186269. Both raises together land above either
+     * alone; the exact figure is measured on the merged tree.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186359;
+    private static final int DOCUMENT_BUDGET = 186420;
 
     private LiveServer server;
 
