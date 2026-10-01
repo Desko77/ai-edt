@@ -623,6 +623,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And for cluster_admin joining the list with the prose of its six operations' arguments.
      * Measured 30.09: 103340.
      * </p>
+     * <p>
+     * And for the itemPath of dcs_workshop remove_settings_item, which now documents
+     * addressing an item by its name beside the number. Measured 01.10: 103553.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 103340;
+    private static final int DOCUMENT_PROSE = 103640;
 }

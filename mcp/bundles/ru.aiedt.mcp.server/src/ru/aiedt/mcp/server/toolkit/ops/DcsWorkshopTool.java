@@ -305,12 +305,10 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("groupingType", //$NON-NLS-1$
                 "add_grouping: grouping type (default Items).") //$NON-NLS-1$
             .stringProperty("itemPath", //$NON-NLS-1$
-                "remove_settings_item: dot-separated path of the settings item to remove. Each " //$NON-NLS-1$
-                    + "step names a settings collection and carries the item to take out of it " //$NON-NLS-1$
-                    + "in brackets, by number (Structure[0].Filter[1]) or by name " //$NON-NLS-1$
-                    + "(DataParameters[Период], Selection[Сумма], Filter[Сумма], " //$NON-NLS-1$
-                    + "UserFields[Итог]). A name matches the item's name, dataPath, field, " //$NON-NLS-1$
-                    + "parameter, or filter left value - whichever it carries - ignoring case.") //$NON-NLS-1$
+                "remove_settings_item: dot-separated path of the item to remove. Each step " //$NON-NLS-1$
+                    + "names a collection with the item in brackets, by number (Structure[0]." //$NON-NLS-1$
+                    + "Filter[Сумма]) or by name; a name matches the item's name, dataPath, " //$NON-NLS-1$
+                    + "field, parameter or filter left value, ignoring case.") //$NON-NLS-1$
             .stringProperty("orderType", //$NON-NLS-1$
                 "add_order: Asc / Desc (default Asc; alias of direction).") //$NON-NLS-1$
             .stringProperty("presentation", //$NON-NLS-1$

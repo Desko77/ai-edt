@@ -172,8 +172,13 @@ public class TheToolListHasAWeightBudgetTest
      * the sum crossed the document. Measured 01.10: 186269. Both raises together land above either
      * alone; the budget holds their sum with a small headroom.
      * </p>
+     * <p>
+     * And from 186420 to 186760 for the itemPath of dcs_workshop remove_settings_item, which
+     * now documents addressing an item by its name beside the number: a form the operation
+     * accepts and the schema has to say. Measured 01.10: 186596.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186420;
+    private static final int DOCUMENT_BUDGET = 186760;
 
     private LiveServer server;
 
