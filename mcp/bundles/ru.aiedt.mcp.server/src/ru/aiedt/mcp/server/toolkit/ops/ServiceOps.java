@@ -31,6 +31,7 @@ import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.bm.integration.IBmTask;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
+import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -115,6 +116,8 @@ final class ServiceOps
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 String ecName = owner.eClass().getName();
@@ -145,7 +148,8 @@ final class ServiceOps
                 }
                 // EDT 2026.1: HTTPService.UrlTemplate is just URLTemplate (no
                 // owner-prefixed factory method exists).
-                MdObject newTemplate = BmObjectHelper.createGenericObject("URLTemplate"); //$NON-NLS-1$
+                MdObject newTemplate = BmObjectHelper.createChildObject("URLTemplate", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (newTemplate == null)
                 {
                     throw new RuntimeException("Cannot create URL template: " //$NON-NLS-1$
@@ -157,6 +161,10 @@ final class ServiceOps
                 templates.add(newTemplate);
                 return name + " (" + template + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             });
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
+        }
         return EditMetadataTool.formatResult(r, "add_url_template"); //$NON-NLS-1$
     }
 
@@ -198,6 +206,8 @@ final class ServiceOps
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 String ecName2 = owner.eClass().getName();
@@ -235,7 +245,8 @@ final class ServiceOps
                 }
                 // EDT 2026.1: HTTPService URLTemplate.Method is plain Method
                 // (createMethod()), no HTTPService-prefixed factory method.
-                MdObject method = BmObjectHelper.createGenericObject("Method"); //$NON-NLS-1$
+                MdObject method = BmObjectHelper.createChildObject("Method", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (method == null)
                 {
                     throw new RuntimeException("Cannot create HTTP service method: " //$NON-NLS-1$
@@ -287,6 +298,10 @@ final class ServiceOps
                         + "Standard signature: " //$NON-NLS-1$
                         + "Функция " + resolvedHandler + "(Запрос) Возврат Новый HTTPСервисОтвет(200); КонецФункции"); //$NON-NLS-1$ //$NON-NLS-2$
             }
+        }
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
         }
         return EditMetadataTool.formatResult(r, "add_url_template_method"); //$NON-NLS-1$
     }
@@ -472,6 +487,8 @@ final class ServiceOps
         final String fOperationName = operationName;
         final Boolean fTransactional = transactional;
 
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         StringBuilder finalErr = new StringBuilder();
         try
         {
@@ -481,7 +498,8 @@ final class ServiceOps
                 @Override
                 public Void execute(IBmTransaction tx, IProgressMonitor pm)
                 {
-                    MdObject service = BmObjectHelper.createGenericObject("WebService"); //$NON-NLS-1$
+                    MdObject service = BmObjectHelper.createChildObject("WebService", v8Project, //$NON-NLS-1$
+                        lost -> defaultsLost[0] = lost);
                     if (service == null)
                     {
                         finalErr.append("Cannot create WebService - " //$NON-NLS-1$
@@ -507,11 +525,13 @@ final class ServiceOps
                         @SuppressWarnings("unchecked")
                         EList<MdObject> ops = (EList<MdObject>) service.getClass()
                             .getMethod("getOperations").invoke(service); //$NON-NLS-1$
-                        MdObject op = BmObjectHelper.createGenericObject("WebServiceOperation"); //$NON-NLS-1$
+                        MdObject op = BmObjectHelper.createChildObject("WebServiceOperation", v8Project, //$NON-NLS-1$
+                            lost -> defaultsLost[0] = lost);
                         if (op == null)
                         {
                             // Older EDT may use shorter type name; fall back to it.
-                            op = BmObjectHelper.createGenericObject("Operation"); //$NON-NLS-1$
+                            op = BmObjectHelper.createChildObject("Operation", v8Project, //$NON-NLS-1$
+                                lost -> defaultsLost[0] = lost);
                         }
                         if (op == null)
                         {
@@ -596,6 +616,10 @@ final class ServiceOps
             .put("operation_name", operationName) //$NON-NLS-1$
             .put("handler", handler) //$NON-NLS-1$
             .put("dryRun", dryRun); //$NON-NLS-1$
+        if (defaultsLost[0] != null)
+        {
+            result.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
+        }
         if (!moduleInfo.isEmpty())
         {
             result.put("module", moduleInfo); //$NON-NLS-1$
@@ -638,6 +662,8 @@ final class ServiceOps
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 String ecName = owner.eClass().getName();
@@ -659,10 +685,12 @@ final class ServiceOps
                         "Pick a different name or remove the existing operation first.", //$NON-NLS-1$
                         new MetadataGuards.ErrorTag(ErrorTags.ALREADY_EXISTS.wire(), data)));
                 }
-                MdObject op = BmObjectHelper.createGenericObject("WebServiceOperation"); //$NON-NLS-1$
+                MdObject op = BmObjectHelper.createChildObject("WebServiceOperation", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (op == null)
                 {
-                    op = BmObjectHelper.createGenericObject("Operation"); //$NON-NLS-1$
+                    op = BmObjectHelper.createChildObject("Operation", v8Project, //$NON-NLS-1$
+                        lost -> defaultsLost[0] = lost);
                 }
                 if (op == null)
                 {
@@ -744,6 +772,10 @@ final class ServiceOps
                         + "re-run with withHandlerStub=true. Signature: " //$NON-NLS-1$
                         + "Функция " + resolvedHandler + "() Экспорт ... КонецФункции"); //$NON-NLS-1$ //$NON-NLS-2$
             }
+        }
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
         }
         return EditMetadataTool.formatResult(r, "add_web_service_operation"); //$NON-NLS-1$
     }
@@ -827,6 +859,8 @@ final class ServiceOps
         final boolean[] typeApplied = { false };
         final List<String> warn = new ArrayList<>();
 
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 String ecName = owner.eClass().getName();
@@ -863,7 +897,8 @@ final class ServiceOps
                         "Pick a different name or remove it first.", //$NON-NLS-1$
                         new MetadataGuards.ErrorTag(ErrorTags.ALREADY_EXISTS.wire(), data)));
                 }
-                MdObject param = BmObjectHelper.createGenericObject("Parameter"); //$NON-NLS-1$
+                MdObject param = BmObjectHelper.createChildObject("Parameter", v8Project, //$NON-NLS-1$
+                    lost -> defaultsLost[0] = lost);
                 if (param == null)
                 {
                     throw new RuntimeException("Cannot create Parameter - " //$NON-NLS-1$
@@ -931,6 +966,10 @@ final class ServiceOps
             {
                 r.tags.put("warnings", warn); //$NON-NLS-1$
             }
+        }
+        if (defaultsLost[0] != null)
+        {
+            r.tags.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
         }
         return EditMetadataTool.formatResult(r, "add_operation_parameter"); //$NON-NLS-1$
     }
@@ -1084,6 +1123,8 @@ final class ServiceOps
         final String fHttpMethod = httpMethod;
         final String fHandler = handler;
 
+        final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
+        final String[] defaultsLost = { null };
         StringBuilder finalErr = new StringBuilder();
         try
         {
@@ -1093,7 +1134,8 @@ final class ServiceOps
                 @Override
                 public Void execute(IBmTransaction tx, IProgressMonitor pm)
                 {
-                    MdObject service = BmObjectHelper.createGenericObject("HTTPService"); //$NON-NLS-1$
+                    MdObject service = BmObjectHelper.createChildObject("HTTPService", v8Project, //$NON-NLS-1$
+                        lost -> defaultsLost[0] = lost);
                     if (service == null)
                     {
                         finalErr.append("Cannot create HTTPService - " //$NON-NLS-1$
@@ -1141,7 +1183,8 @@ final class ServiceOps
                         @SuppressWarnings("unchecked")
                         EList<MdObject> templates = (EList<MdObject>) service.getClass()
                             .getMethod("getUrlTemplates").invoke(service); //$NON-NLS-1$
-                        MdObject tmpl = BmObjectHelper.createGenericObject("URLTemplate"); //$NON-NLS-1$
+                        MdObject tmpl = BmObjectHelper.createChildObject("URLTemplate", v8Project, //$NON-NLS-1$
+                            lost -> defaultsLost[0] = lost);
                         if (tmpl == null)
                         {
                             finalErr.append("Cannot create URLTemplate - factory unavailable."); //$NON-NLS-1$
@@ -1154,7 +1197,8 @@ final class ServiceOps
                         @SuppressWarnings("unchecked")
                         EList<MdObject> methods = (EList<MdObject>) tmpl.getClass()
                             .getMethod("getMethods").invoke(tmpl); //$NON-NLS-1$
-                        MdObject m = BmObjectHelper.createGenericObject("Method"); //$NON-NLS-1$
+                        MdObject m = BmObjectHelper.createChildObject("Method", v8Project, //$NON-NLS-1$
+                            lost -> defaultsLost[0] = lost);
                         if (m == null)
                         {
                             finalErr.append("Cannot create HTTPService Method - factory unavailable."); //$NON-NLS-1$
@@ -1237,6 +1281,10 @@ final class ServiceOps
             .put("method", //$NON-NLS-1$
                 methodName + " " + httpMethod + " -> " + handler) //$NON-NLS-1$ //$NON-NLS-2$
             .put("dryRun", dryRun); //$NON-NLS-1$
+        if (defaultsLost[0] != null)
+        {
+            result.put("defaultsWarning", defaultsLost[0]); //$NON-NLS-1$
+        }
         if (!moduleInfo.isEmpty())
         {
             result.put("module", moduleInfo); //$NON-NLS-1$

@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
@@ -890,6 +891,49 @@ public final class BmObjectHelper
             return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
                 + ") failed: " + e.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Creates a child metadata object - a recalculation, an enumeration value, a service
+     * method - through the project-aware factory, and through the raw factory when that
+     * factory cannot run.
+     *
+     * @param typeName English bare type name, e.g. {@code "EnumValue"}.
+     * @param v8Project project whose version the defaults are taken from; may be
+     *     {@code null}, which makes the factory unrunnable.
+     * @param defaultsLost told the warning when the object came from the raw factory
+     *     because the project-aware one was unreachable or failed; may be {@code null}.
+     * @return the object, or {@code null} when the type does not resolve.
+     */
+    public static MdObject createChildObject(String typeName, IV8Project v8Project,
+        Consumer<String> defaultsLost)
+    {
+        CreationOutcome creation = createInitializedObjectWithReason(typeName, v8Project);
+        MdObject created = creation.getObject();
+        if (created != null)
+        {
+            return created;
+        }
+        created = createGenericObject(typeName);
+        if (created != null && creation.isFactoryFailure() && defaultsLost != null)
+        {
+            defaultsLost.accept(creation.getDefaultsWarning());
+        }
+        return created;
+    }
+
+    /**
+     * The V8 project of a workspace project.
+     *
+     * @param project the project; may be {@code null}.
+     * @return the V8 project, or {@code null} when there is no project manager or it
+     *     does not know the project.
+     */
+    public static IV8Project v8ProjectOf(IProject project)
+    {
+        Activator activator = Activator.getDefault();
+        IV8ProjectManager manager = activator != null ? activator.getV8ProjectManager() : null;
+        return manager != null && project != null ? manager.getProject(project) : null;
     }
 
     /**
