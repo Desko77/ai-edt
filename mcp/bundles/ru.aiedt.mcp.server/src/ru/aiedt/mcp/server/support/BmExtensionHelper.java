@@ -140,9 +140,16 @@ public final class BmExtensionHelper
                 if (ref != null)
                 {
                     Object svc = bc.getService(ref);
-                    if (svc != null)
+                    try
                     {
-                        return svc;
+                        if (svc != null)
+                        {
+                            return svc;
+                        }
+                    }
+                    finally
+                    {
+                        bc.ungetService(ref);
                     }
                 }
             }
