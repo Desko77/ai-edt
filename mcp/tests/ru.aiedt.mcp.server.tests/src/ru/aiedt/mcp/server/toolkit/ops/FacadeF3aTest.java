@@ -246,6 +246,28 @@ public class FacadeF3aTest
         assertTrue(result.contains("operation picker")); //$NON-NLS-1$
     }
 
+    @Test
+    public void projectAdminMissingOperationNamesEveryOperationItTakes()
+    {
+        Map<String, String> params = new HashMap<>();
+        String result = new ProjectAdminFacadeTool().execute(params);
+
+        assertTrue(result, result.contains("operation is required")); //$NON-NLS-1$
+        // The catalog names answer_dialog, so the refusal's allowed list has to as well.
+        assertTrue(result, result.contains("answer_dialog")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void projectAdminHelpWorkflowTopicNamesAnswerDialog()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("operation", "help"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("topic", "workflow"); //$NON-NLS-1$ //$NON-NLS-2$
+        String result = new ProjectAdminFacadeTool().execute(params);
+
+        assertTrue(result, result.contains("answer_dialog")); //$NON-NLS-1$
+    }
+
     // -- cross-facade sanity --
 
     @Test

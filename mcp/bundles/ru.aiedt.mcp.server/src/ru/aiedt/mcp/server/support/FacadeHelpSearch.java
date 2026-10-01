@@ -163,7 +163,10 @@ public final class FacadeHelpSearch
      * <p>
      * A refusal that only lists every name leaves the caller to find their typo in the list by
      * eye. The names closest by edit distance are usually what was meant, and the one-line
-     * description says which of them does what - so the retry is chosen, not guessed.
+     * description says which of them does what - so the retry is chosen, not guessed. A name is
+     * suggested only while its distance stays within {@code max(2, a third of the asked length)};
+     * when nothing is that close, naming the least far of an unrelated set would be a guess, so
+     * no suggestion is made.
      * </p>
      *
      * @param name what was asked for and nothing answered to; may be <code>null</code>.
@@ -171,7 +174,7 @@ public final class FacadeHelpSearch
      * @param descriptions what the catalog says about a candidate, as {@link #describe} returns
      *            it; a candidate absent from it is named without a description.
      * @return the suggestion block to splice into the refusal, or an empty string when there are
-     *         no candidates
+     *         no candidates close enough to be what was meant
      */
     public static String closestMatches(String name, Collection<String> candidates,
         Map<String, String> descriptions)
@@ -196,10 +199,26 @@ public final class FacadeHelpSearch
                 Integer.compare(editDistance(asked, left), editDistance(asked, right));
             return byDistance != 0 ? byDistance : left.compareTo(right);
         });
-        StringBuilder block = new StringBuilder("\n\nClosest matches:"); //$NON-NLS-1$
-        for (int i = 0; i < nearest.size() && i < CLOSEST; i++)
+        // A guess is only worth naming while it is close enough to be what was meant. Past the
+        // threshold the nearest names are the least far of an unrelated set, and suggesting them
+        // sends the retry somewhere random - so a name nothing resembles gets no guess at all.
+        int nearEnough = Math.max(2, asked.length() / 3);
+        List<String> close = new ArrayList<>();
+        for (String candidate : nearest)
         {
-            String candidate = nearest.get(i);
+            if (editDistance(asked, candidate) <= nearEnough)
+            {
+                close.add(candidate);
+            }
+        }
+        if (close.isEmpty())
+        {
+            return ""; //$NON-NLS-1$
+        }
+        StringBuilder block = new StringBuilder("\n\nClosest matches:"); //$NON-NLS-1$
+        for (int i = 0; i < close.size() && i < CLOSEST; i++)
+        {
+            String candidate = close.get(i);
             String described = descriptions.get(candidate);
             block.append("\n- ").append(candidate); //$NON-NLS-1$
             if (described != null && !described.isEmpty())
