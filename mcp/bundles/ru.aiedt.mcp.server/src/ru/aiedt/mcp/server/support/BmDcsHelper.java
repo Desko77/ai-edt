@@ -78,6 +78,36 @@ public final class BmDcsHelper
     /** Default DCS template name on Reports / DataProcessors / etc. */
     public static final String DEFAULT_TEMPLATE_NAME = "MainDataCompositionSchema"; //$NON-NLS-1$
 
+    /**
+     * The Russian names the platform gives the comparison kinds
+     * (ВидСравненияКомпоновкиДанных), each paired with the literal the DCS model
+     * carries. The model holds no Russian literals, so a Russian name resolves
+     * through its English counterpart; every English literal here is one the
+     * model's DataCompositionComparisonType knows.
+     */
+    private static final String[][] COMPARISON_SYNONYMS = {
+        {"Равно", "Equal"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеРавно", "NotEqual"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"Больше", "Greater"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"БольшеИлиРавно", "GreaterOrEqual"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"Меньше", "Less"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"МеньшеИлиРавно", "LessOrEqual"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"ВСписке", "InList"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеВСписке", "NotInList"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"ВИерархии", "InHierarchy"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеВИерархии", "NotInHierarchy"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"ВСпискеПоИерархии", "InListByHierarchy"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеВСпискеПоИерархии", "NotInListByHierarchy"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"Содержит", "Contains"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеСодержит", "NotContains"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"Заполнено", "Filled"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеЗаполнено", "NotFilled"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НачинаетсяС", "BeginsWith"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеНачинаетсяС", "NotBeginsWith"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"Подобно", "Like"}, //$NON-NLS-1$ //$NON-NLS-2$
+        {"НеПодобно", "NotLike"}, //$NON-NLS-1$ //$NON-NLS-2$
+    };
+
     private static volatile Boolean cachedAvailable;
     private static volatile Object cachedFactory;
     private static volatile Object cachedSettingsFactory;
@@ -1860,10 +1890,37 @@ public final class BmDcsHelper
                     }
                 }
             }
+            // The platform names the comparison kinds in Russian; the model only
+            // knows the English literals, so a Russian name goes through its
+            // English counterpart.
+            String synonym = comparisonLiteral(s);
+            if (synonym != null)
+            {
+                return coerceValue(synonym, targetType);
+            }
             throw new RuntimeException("Unknown enum value '" + s //$NON-NLS-1$
                 + "' for type " + targetType.getSimpleName()); //$NON-NLS-1$
         }
         return value;
+    }
+
+    /**
+     * The English literal a Russian comparison name stands for.
+     *
+     * @param value the value as the caller wrote it
+     * @return the model literal, or null when the value is not a Russian comparison name
+     */
+    private static String comparisonLiteral(String value)
+    {
+        String trimmed = value == null ? "" : value.trim(); //$NON-NLS-1$
+        for (String[] pair : COMPARISON_SYNONYMS)
+        {
+            if (pair[0].equalsIgnoreCase(trimmed))
+            {
+                return pair[1];
+            }
+        }
+        return null;
     }
 
     /**

@@ -305,7 +305,12 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("groupingType", //$NON-NLS-1$
                 "add_grouping: grouping type (default Items).") //$NON-NLS-1$
             .stringProperty("itemPath", //$NON-NLS-1$
-                "remove_settings_item: path of the settings item to remove.") //$NON-NLS-1$
+                "remove_settings_item: dot-separated path of the settings item to remove. Each " //$NON-NLS-1$
+                    + "step names a settings collection and carries the item to take out of it " //$NON-NLS-1$
+                    + "in brackets, by number (Structure[0].Filter[1]) or by name " //$NON-NLS-1$
+                    + "(DataParameters[Период], Selection[Сумма], Filter[Сумма], " //$NON-NLS-1$
+                    + "UserFields[Итог]). A name matches the item's name, dataPath, field, " //$NON-NLS-1$
+                    + "parameter, or filter left value - whichever it carries - ignoring case.") //$NON-NLS-1$
             .stringProperty("orderType", //$NON-NLS-1$
                 "add_order: Asc / Desc (default Asc; alias of direction).") //$NON-NLS-1$
             .stringProperty("presentation", //$NON-NLS-1$
@@ -775,7 +780,7 @@ public class DcsWorkshopTool implements IMcpTool
      * and records a short message in {@link BmDcsHelper.Result#message}. Errors
      * surface as {@link MetadataGuards.BlockedGuardException} with structured tags.
      */
-    private String opSchemaMutation(String op, Map<String, String> params)
+    String opSchemaMutation(String op, Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String objectName = JsonUtils.extractStringArgument(params, "objectName"); //$NON-NLS-1$
@@ -819,25 +824,42 @@ public class DcsWorkshopTool implements IMcpTool
         BmDcsHelper.Result r;
         try
         {
-            r = BmDcsHelper.executeWriteOnSchema(project, objectName, templateName,
-                dryRun, (tx, schema) -> applySchemaMutation(op, params,
+            r = runSchemaWrite(project, objectName, templateName, dryRun,
+                (tx, schema) -> applySchemaMutation(op, params,
                     schemaToWorkIn(schema, nestedSchemaName), project));
+            if (r.ok)
+            {
+                attachSettingsWarnings(r.tags, written.warnings);
+                attachOutputParameterNameCheck(r.tags, written.outputParameterNameNote);
+                attachRemovalImpact(r.tags);
+            }
         }
         finally
         {
             endSettingsScope(written);
-        }
-        if (r.ok)
-        {
-            attachSettingsWarnings(r.tags, written.warnings);
-            attachOutputParameterNameCheck(r.tags, written.outputParameterNameNote);
-            attachRemovalImpact(r.tags);
-        }
-        else
-        {
             REMOVAL_IMPACT.remove();
         }
         return formatResult(r, op);
+    }
+
+    /**
+     * Runs the schema write the mutation dispatch answers for.
+     * <p>
+     * A test replaces this to crash the write after the mutation has run, which is the outcome the
+     * cleanup above has to survive.
+     * </p>
+     *
+     * @param project the project the schema belongs to
+     * @param objectName the schema owner, or the full schema FQN
+     * @param templateName the template holding the schema, or null to resolve the owner's default
+     * @param dryRun whether the write is discarded
+     * @param action the mutation, run inside the BM write transaction
+     * @return the write outcome
+     */
+    BmDcsHelper.Result runSchemaWrite(IProject project, String objectName, String templateName,
+        boolean dryRun, BmDcsHelper.DcsAction action)
+    {
+        return BmDcsHelper.executeWriteOnSchema(project, objectName, templateName, dryRun, action);
     }
 
     /**
@@ -896,6 +918,7 @@ public class DcsWorkshopTool implements IMcpTool
         finally
         {
             endSettingsScope(written);
+            REMOVAL_IMPACT.remove();
         }
         String notWritten = null;
         if (!dryRun && settingsFqn[0] != null && (outcome == null || !outcome.startsWith("Error:"))) //$NON-NLS-1$
@@ -3162,7 +3185,11 @@ public class DcsWorkshopTool implements IMcpTool
         List<String> paths = new ArrayList<>();
         addDataSetFieldPaths(existing, paths);
         addCascadedFieldPaths(schema, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        // The dataset's own name: a selection of the dataset as a field and a dataset link joined
+        // on the dataset are references to it, not only its fields are.
+        addFieldPath(null, name, paths);
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.singletonList(name));
         dataSets.remove(existing);
         // Cascade: a field whose expression's first path segment is this dataset.
         int removedCalc = removeFieldsReferencing(schema, "getCalculatedFields", name); //$NON-NLS-1$
@@ -3266,13 +3293,14 @@ public class DcsWorkshopTool implements IMcpTool
      * @param parameterNames parameter names, possibly empty for a field
      */
     private void recordAffectedSettings(Map<String, String> params, EObject schema,
-        List<String> fieldPaths, List<String> parameterNames)
+        List<String> fieldPaths, List<String> parameterNames, List<String> dataSetNames)
     {
         if (!JsonUtils.extractBooleanArgument(params, "reportAffectedSettings", true)) //$NON-NLS-1$
         {
             return;
         }
-        REMOVAL_IMPACT.set(DcsSettingsImpact.collect(schema, fieldPaths, parameterNames));
+        REMOVAL_IMPACT.set(DcsSettingsImpact.collect(schema, fieldPaths, parameterNames,
+            dataSetNames));
     }
 
     /**
@@ -3961,7 +3989,7 @@ public class DcsWorkshopTool implements IMcpTool
             throw notFoundTag(name, "parameter"); //$NON-NLS-1$
         }
         recordAffectedSettings(params, schema, Collections.<String>emptyList(),
-            Collections.singletonList(name));
+            Collections.singletonList(name), Collections.<String>emptyList());
         parameters.remove(existing);
         return name;
     }
@@ -5366,10 +5394,17 @@ public class DcsWorkshopTool implements IMcpTool
 
     /**
      * 1.41 / 4c: universal cascade-remove operation. {@code itemPath} is a
-     * dot-separated path with bracketed indices. Supported roots:
-     * {@code Structure[N]}, {@code Filter[N]}, {@code Order[N]},
-     * {@code Selection[N]}, {@code ConditionalAppearance[N]},
-     * {@code DataParameters[N]}.
+     * dot-separated path whose steps carry a bracketed key. A step addresses a
+     * settings collection with the item to take out of it: the key is either a
+     * zero-based number ({@code Structure[0]}, {@code Filter[1]}) or the item's
+     * name ({@code DataParameters[Период]}, {@code Selection[Сумма]},
+     * {@code Filter[Сумма]}, {@code UserFields[Итог]}), matched ignoring case
+     * against the item's name, dataPath, field, parameter, or filter left value -
+     * the first of those the item carries. Supported roots:
+     * {@code Structure}, {@code Filter}, {@code Order}, {@code Selection},
+     * {@code ConditionalAppearance}, {@code DataParameters},
+     * {@code UserFields}. Dots inside brackets belong to the name, not to the
+     * path, so {@code Filter[ПараметрыДанных.Период]} is one step.
      */
     private Object doRemoveSettingsItem(Map<String, String> params, EObject schema)
     {
@@ -5379,22 +5414,20 @@ public class DcsWorkshopTool implements IMcpTool
         {
             throw new RuntimeException("Could not create DefaultSettings on schema"); //$NON-NLS-1$
         }
-        // Parse the path into root.getter[index] tokens
-        String[] parts = itemPath.split("\\."); //$NON-NLS-1$
-        if (parts.length == 0)
-        {
-            throw new RuntimeException("itemPath cannot be empty"); //$NON-NLS-1$
-        }
+        List<String> steps = pathStepsOf(itemPath);
         Object current = settings;
         EList<EObject> parentList = null;
         int parentIndex = -1;
-        for (String token : parts)
+        for (String token : steps)
         {
             int lb = token.indexOf('[');
-            int rb = token.indexOf(']');
+            int rb = token.lastIndexOf(']');
             String collectionName = lb > 0 ? token.substring(0, lb) : token;
-            int index = (lb > 0 && rb > lb)
-                ? Integer.parseInt(token.substring(lb + 1, rb)) : -1;
+            if (collectionName.isEmpty())
+            {
+                throw new RuntimeException("itemPath has an empty step: '" + itemPath + "'"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            String key = lb > 0 && rb > lb ? token.substring(lb + 1, rb).trim() : ""; //$NON-NLS-1$
             String getterName = "get" + Character.toUpperCase(collectionName.charAt(0)) //$NON-NLS-1$
                 + collectionName.substring(1);
             Object collection = invokeGetter(current, getterName);
@@ -5414,17 +5447,19 @@ public class DcsWorkshopTool implements IMcpTool
             {
                 throw new RuntimeException(getterName + " has no items collection"); //$NON-NLS-1$
             }
-            if (index < 0)
+            if (key.isEmpty())
             {
-                // Walked into a collection root without a specific index -
+                // Walked into a collection root without a specific item -
                 // not a removable target by itself
                 throw new RuntimeException("Path '" + token //$NON-NLS-1$
-                    + "' requires [index] to remove a specific entry"); //$NON-NLS-1$
+                    + "' requires an item number or name to remove a specific entry"); //$NON-NLS-1$
             }
-            if (index >= items.size())
+            Integer number = asItemIndex(key);
+            int index = number != null ? number.intValue() : indexByName(items, key, getterName);
+            if (index < 0 || index >= items.size())
             {
-                throw new RuntimeException(getterName + "[" + index //$NON-NLS-1$
-                    + "] out of bounds (size=" + items.size() + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+                throw new RuntimeException(getterName + "[" + key //$NON-NLS-1$
+                    + "] is not an item position (size=" + items.size() + ")"); //$NON-NLS-1$ //$NON-NLS-2$
             }
             parentList = items;
             parentIndex = index;
@@ -5438,6 +5473,162 @@ public class DcsWorkshopTool implements IMcpTool
         // automatically detaches the contained subtree.
         parentList.remove(parentIndex);
         return "settings item at '" + itemPath + "' removed (cascade)"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Splits a settings path into its steps, keeping the dots inside brackets.
+     *
+     * @param path the path as the caller wrote it
+     * @return the steps, each a collection name with its bracketed key
+     */
+    private static List<String> pathStepsOf(String path)
+    {
+        List<String> steps = new ArrayList<>();
+        StringBuilder step = new StringBuilder();
+        int depth = 0;
+        for (int i = 0; i < path.length(); i++)
+        {
+            char c = path.charAt(i);
+            if (c == '[')
+            {
+                depth++;
+            }
+            else if (c == ']')
+            {
+                depth = Math.max(0, depth - 1);
+            }
+            if (c == '.' && depth == 0)
+            {
+                steps.add(step.toString());
+                step.setLength(0);
+                continue;
+            }
+            step.append(c);
+        }
+        steps.add(step.toString());
+        return steps;
+    }
+
+    /**
+     * Reads a bracketed key as a zero-based position.
+     *
+     * @param key the bracketed key, never empty
+     * @return the position, or null when the key does not spell a number
+     */
+    private static Integer asItemIndex(String key)
+    {
+        try
+        {
+            return Integer.valueOf(Integer.parseInt(key));
+        }
+        catch (NumberFormatException notANumber)
+        {
+            // A key that is not a number names an item; the lookup matches it by name.
+            return null;
+        }
+    }
+
+    /**
+     * Finds the one item whose name answers to the key.
+     * <p>
+     * Several items of the same name on one level are refused with their positions, so a removal
+     * meant for one of them never takes another.
+     * </p>
+     *
+     * @param items the collection to search
+     * @param key the name the path asked for
+     * @param label what the collection is called in the refusal
+     * @return the position of the single item of that name
+     */
+    private int indexByName(EList<EObject> items, String key, String label)
+    {
+        List<Integer> matches = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++)
+        {
+            String held = settingsItemName(items.get(i));
+            if (held != null && key.equalsIgnoreCase(held))
+            {
+                matches.add(Integer.valueOf(i));
+            }
+        }
+        if (matches.isEmpty())
+        {
+            throw new RuntimeException(label + " has no item named '" + key + "' (" //$NON-NLS-1$ //$NON-NLS-2$
+                + items.size() + " items)"); //$NON-NLS-1$
+        }
+        if (matches.size() > 1)
+        {
+            StringBuilder numbers = new StringBuilder();
+            for (Integer match : matches)
+            {
+                if (numbers.length() > 0)
+                {
+                    numbers.append(", "); //$NON-NLS-1$
+                }
+                numbers.append(match);
+            }
+            throw new RuntimeException(label + " has " + matches.size() + " items named '" + key //$NON-NLS-1$ //$NON-NLS-2$
+                + "' (indices " + numbers + "); address one by number"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return matches.get(0).intValue();
+    }
+
+    /**
+     * The name a settings item answers to.
+     *
+     * @param item the settings item
+     * @return its name, dataPath, field, parameter, or filter left value - the first that is
+     *         set, or null when the item carries none of them
+     */
+    private String settingsItemName(EObject item)
+    {
+        String name = nonEmptyText(invokeGetter(item, "getName")); //$NON-NLS-1$
+        if (name == null)
+        {
+            name = nonEmptyText(invokeGetter(item, "getDataPath")); //$NON-NLS-1$
+        }
+        if (name == null)
+        {
+            name = valueCarrierText(item, "getField"); //$NON-NLS-1$
+        }
+        if (name == null)
+        {
+            name = valueCarrierText(item, "getParameter"); //$NON-NLS-1$
+        }
+        if (name == null)
+        {
+            name = valueCarrierText(item, "getLeft"); //$NON-NLS-1$
+        }
+        return name;
+    }
+
+    /**
+     * The text a value carrier of an item holds.
+     *
+     * @param target the item that may carry one
+     * @param getter the getter of the carrier, such as {@code getField}
+     * @return the carrier's value as text, or null when there is nothing
+     */
+    private String valueCarrierText(Object target, String getter)
+    {
+        Object carrier = invokeGetter(target, getter);
+        return carrier == null ? null : nonEmptyText(invokeGetter(carrier, "getValue")); //$NON-NLS-1$
+    }
+
+    /**
+     * The text an object reads as, or null when it reads as nothing.
+     *
+     * @param value the object, possibly null
+     * @return its text, or null when it is null or blank
+     */
+    private static String nonEmptyText(Object value)
+    {
+        if (value == null)
+        {
+            return null;
+        }
+        String text = value.toString();
+        return text.isEmpty() ? null : text;
     }
 
     /**
@@ -6332,7 +6523,8 @@ public class DcsWorkshopTool implements IMcpTool
         List<String> paths = new ArrayList<>();
         addFieldPaths(dataSetName, toRemove, paths);
         addFieldPath(dataSetName, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.<String>emptyList());
         fields.remove(toRemove);
         return "dataset field '" + dataSetName + "." + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
@@ -6388,7 +6580,8 @@ public class DcsWorkshopTool implements IMcpTool
         addFieldPaths(null, field, paths);
         addExpressionPath(textOfGetter(invokeGetter(field, "getExpression")), paths); //$NON-NLS-1$
         addFieldPath(null, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.<String>emptyList());
         calc.remove(field);
         return "calculated field '" + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -6442,7 +6635,8 @@ public class DcsWorkshopTool implements IMcpTool
         addFieldPaths(null, field, paths);
         addExpressionPath(textOfGetter(invokeGetter(field, "getExpression")), paths); //$NON-NLS-1$
         addFieldPath(null, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.<String>emptyList());
         totals.remove(field);
         return "total field '" + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -8000,9 +8194,16 @@ public class DcsWorkshopTool implements IMcpTool
             sb.append("**Removing a schema element.** remove_dataset, remove_dataset_field, " //$NON-NLS-1$
                 + "remove_parameter, remove_calculated_field and remove_total_field list every " //$NON-NLS-1$
                 + "settings variant that still references what was removed (selection, order, " //$NON-NLS-1$
-                + "filter, structure, conditional appearance, data parameters) in " //$NON-NLS-1$
-                + "`affectedSettings`, and leave those settings unchanged. " //$NON-NLS-1$
+                + "filter, structure, conditional appearance, data parameters, user fields, " //$NON-NLS-1$
+                + "parameter values, and the schema's dataset links, named with variant=schema) " //$NON-NLS-1$
+                + "in `affectedSettings`, and leave those settings unchanged. " //$NON-NLS-1$
                 + "reportAffectedSettings=false omits the list.\n\n"); //$NON-NLS-1$
+            sb.append("**Removing a settings item.** remove_settings_item takes itemPath, a " //$NON-NLS-1$
+                + "dot-separated path whose steps name a settings collection and the item to " //$NON-NLS-1$
+                + "take out in brackets: by number (Structure[0]) or by name " //$NON-NLS-1$
+                + "(Filter[Сумма], DataParameters[Период], UserFields[Итог]). A name matches " //$NON-NLS-1$
+                + "the item's name, dataPath, field, parameter, or filter left value, " //$NON-NLS-1$
+                + "ignoring case; several items of one name are refused with their indices.\n\n"); //$NON-NLS-1$
             sb.append("**Heuristic query editing (1.43.x batch 4b, dispatch-wired - use these exact names):**\n"); //$NON-NLS-1$
             sb.append("- add_query_field, remove_query_field, add_query_condition, remove_query_condition\n"); //$NON-NLS-1$
             sb.append("  (lexical token-splice of the dataset query; auto-revalidated; "); //$NON-NLS-1$
@@ -8119,7 +8320,11 @@ public class DcsWorkshopTool implements IMcpTool
             + "- Like, NotLike\n" //$NON-NLS-1$
             + "- BeginsWith, NotBeginsWith, Contains, NotContains\n" //$NON-NLS-1$
             + "- Filled, NotFilled\n" //$NON-NLS-1$
-            + "- Between, NotBetween.\n\n" //$NON-NLS-1$
+            + "- Between, NotBetween.\n" //$NON-NLS-1$
+            + "The Russian platform names are accepted too: Равно, НеРавно, Больше, " //$NON-NLS-1$
+            + "БольшеИлиРавно, Меньше, МеньшеИлиРавно, ВСписке, НеВСписке, ВИерархии, " //$NON-NLS-1$
+            + "НеВИерархии, ВСпискеПоИерархии, НеВСпискеПоИерархии, Содержит, НеСодержит, " //$NON-NLS-1$
+            + "Заполнено, НеЗаполнено, НачинаетсяС, НеНачинаетсяС, Подобно, НеПодобно.\n\n" //$NON-NLS-1$
             + "**viewMode** (filter, parameter, selected field):\n" //$NON-NLS-1$
             + "- Auto, Normal, QuickAccess, Inaccessible.\n\n" //$NON-NLS-1$
             + "**groupingType** (add_grouping):\n" //$NON-NLS-1$

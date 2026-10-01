@@ -124,7 +124,7 @@ public class AnUnknownComparisonTypeIsRefusedTest
     {
         try
         {
-            run("add_filter", "field", "Контрагент", "comparisonType", "Больше", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            run("add_filter", "field", "Контрагент", "comparisonType", "Exactly", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
                 "value", "10"); //$NON-NLS-1$ //$NON-NLS-2$
             fail("an unknown comparison type must be refused before the filter gains an item"); //$NON-NLS-1$
         }
@@ -136,14 +136,14 @@ public class AnUnknownComparisonTypeIsRefusedTest
     }
 
     /**
-     * An unknown appearance comparison adds nothing.
+     * A Russian name that is not one of the platform's comparison names adds nothing.
      */
     @Test
     public void anUnknownAppearanceComparisonAddsNothing()
     {
         try
         {
-            run("add_appearance", "field", "Контрагент", "conditionType", "Больше", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            run("add_appearance", "field", "Контрагент", "conditionType", "ТочноРавно", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
                 "conditionValue", "10"); //$NON-NLS-1$ //$NON-NLS-2$
             fail("an unknown condition type must be refused before the appearance gains an item"); //$NON-NLS-1$
         }
