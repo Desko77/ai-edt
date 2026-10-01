@@ -3188,7 +3188,8 @@ public class DcsWorkshopTool implements IMcpTool
         // The dataset's own name: a selection of the dataset as a field and a dataset link joined
         // on the dataset are references to it, not only its fields are.
         addFieldPath(null, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.singletonList(name));
         dataSets.remove(existing);
         // Cascade: a field whose expression's first path segment is this dataset.
         int removedCalc = removeFieldsReferencing(schema, "getCalculatedFields", name); //$NON-NLS-1$
@@ -3292,13 +3293,14 @@ public class DcsWorkshopTool implements IMcpTool
      * @param parameterNames parameter names, possibly empty for a field
      */
     private void recordAffectedSettings(Map<String, String> params, EObject schema,
-        List<String> fieldPaths, List<String> parameterNames)
+        List<String> fieldPaths, List<String> parameterNames, List<String> dataSetNames)
     {
         if (!JsonUtils.extractBooleanArgument(params, "reportAffectedSettings", true)) //$NON-NLS-1$
         {
             return;
         }
-        REMOVAL_IMPACT.set(DcsSettingsImpact.collect(schema, fieldPaths, parameterNames));
+        REMOVAL_IMPACT.set(DcsSettingsImpact.collect(schema, fieldPaths, parameterNames,
+            dataSetNames));
     }
 
     /**
@@ -3987,7 +3989,7 @@ public class DcsWorkshopTool implements IMcpTool
             throw notFoundTag(name, "parameter"); //$NON-NLS-1$
         }
         recordAffectedSettings(params, schema, Collections.<String>emptyList(),
-            Collections.singletonList(name));
+            Collections.singletonList(name), Collections.<String>emptyList());
         parameters.remove(existing);
         return name;
     }
@@ -6521,7 +6523,8 @@ public class DcsWorkshopTool implements IMcpTool
         List<String> paths = new ArrayList<>();
         addFieldPaths(dataSetName, toRemove, paths);
         addFieldPath(dataSetName, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.<String>emptyList());
         fields.remove(toRemove);
         return "dataset field '" + dataSetName + "." + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
@@ -6577,7 +6580,8 @@ public class DcsWorkshopTool implements IMcpTool
         addFieldPaths(null, field, paths);
         addExpressionPath(textOfGetter(invokeGetter(field, "getExpression")), paths); //$NON-NLS-1$
         addFieldPath(null, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.<String>emptyList());
         calc.remove(field);
         return "calculated field '" + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$
     }
@@ -6631,7 +6635,8 @@ public class DcsWorkshopTool implements IMcpTool
         addFieldPaths(null, field, paths);
         addExpressionPath(textOfGetter(invokeGetter(field, "getExpression")), paths); //$NON-NLS-1$
         addFieldPath(null, name, paths);
-        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList());
+        recordAffectedSettings(params, schema, paths, Collections.<String>emptyList(),
+            Collections.<String>emptyList());
         totals.remove(field);
         return "total field '" + name + "' removed"; //$NON-NLS-1$ //$NON-NLS-2$
     }

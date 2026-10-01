@@ -90,7 +90,24 @@ public final class DcsSettingsImpact
     public static List<Map<String, Object>> collect(EObject schema, Collection<String> fieldPaths,
         Collection<String> parameterNames)
     {
-        Probe probe = new Probe(fieldPaths, parameterNames);
+        return collect(schema, fieldPaths, parameterNames, null);
+    }
+
+    /**
+     * Collects every settings reference to the given field paths, parameter names and dataset
+     * names.
+     *
+     * @param schema the composition schema whose variants are read, or <code>null</code>
+     * @param fieldPaths data paths of the element being removed
+     * @param parameterNames names of the parameters being removed, or an empty collection
+     * @param dataSetNames names of the datasets being removed; a link endpoint naming one of
+     *            them is a reference. Possibly <code>null</code>
+     * @return the hits, in walk order
+     */
+    public static List<Map<String, Object>> collect(EObject schema, Collection<String> fieldPaths,
+        Collection<String> parameterNames, Collection<String> dataSetNames)
+    {
+        Probe probe = new Probe(fieldPaths, parameterNames, dataSetNames);
         if (schema == null || (probe.fieldPaths.isEmpty() && probe.parameterNames.isEmpty()))
         {
             return probe.found;
@@ -116,9 +133,9 @@ public final class DcsSettingsImpact
      * Reads the schema's dataset links, which belong to no variant.
      * <p>
      * A link is a reference to what was removed when one of its dataset names is a removed
-     * dataset, when its source or destination expression is the removed field path, when its
-     * condition or start expression mentions the removed path, or when the parameter it passes is
-     * a removed parameter.
+     * dataset, when its source or destination, condition or start expression mentions the removed
+     * identifier, or when the parameter it passes is a removed parameter. A dataset name matches
+     * only a removed dataset, and an expression slot is read as an expression, not as one path.
      * </p>
      *
      * @param schema the schema whose links are read
@@ -134,14 +151,14 @@ public final class DcsSettingsImpact
         for (int i = 0; i < links.size(); i++)
         {
             String here = DATA_SET_LINKS + "[" + i + "]"; //$NON-NLS-1$ //$NON-NLS-2$
-            considerLinkText(read(links.get(i), "getSourceDataSet"), here + ".sourceDataSet", //$NON-NLS-1$ //$NON-NLS-2$
+            considerDataSetName(read(links.get(i), "getSourceDataSet"), here + ".sourceDataSet", //$NON-NLS-1$ //$NON-NLS-2$
                 probe);
-            considerLinkText(read(links.get(i), "getDestinationDataSet"), //$NON-NLS-1$
+            considerDataSetName(read(links.get(i), "getDestinationDataSet"), //$NON-NLS-1$
                 here + ".destinationDataSet", probe); //$NON-NLS-1$
-            considerLinkText(read(links.get(i), "getParameter"), here + ".parameter", probe); //$NON-NLS-1$ //$NON-NLS-2$
-            considerLinkText(read(links.get(i), "getSourceExpression"), here + ".sourceExpression", //$NON-NLS-1$ //$NON-NLS-2$
+            considerParameterName(read(links.get(i), "getParameter"), here + ".parameter", probe); //$NON-NLS-1$ //$NON-NLS-2$
+            considerLinkExpression(read(links.get(i), "getSourceExpression"), here + ".sourceExpression", //$NON-NLS-1$ //$NON-NLS-2$
                 probe);
-            considerLinkText(read(links.get(i), "getDestinationExpression"), //$NON-NLS-1$
+            considerLinkExpression(read(links.get(i), "getDestinationExpression"), //$NON-NLS-1$
                 here + ".destinationExpression", probe); //$NON-NLS-1$
             considerLinkExpression(read(links.get(i), "getLinkConditionExpression"), //$NON-NLS-1$
                 here + ".linkConditionExpression", probe); //$NON-NLS-1$
@@ -151,16 +168,36 @@ public final class DcsSettingsImpact
     }
 
     /**
-     * Records a link property that holds one of the identifiers as its text.
+     * Records a link endpoint that names a removed dataset.
+     * <p>
+     * A dataset name matches only a removed dataset of that name: a removed field or parameter
+     * that happens to share the name does not make the link a reference to it.
+     * </p>
      *
-     * @param value the stored text, or null
-     * @param path where the property sits
+     * @param value the stored name, or null
+     * @param path where the name sits
      * @param probe the identifiers and the hits
      */
-    private static void considerLinkText(Object value, String path, Probe probe)
+    private static void considerDataSetName(Object value, String path, Probe probe)
     {
         String text = textOf(value);
-        if (text != null && (probe.fieldMatches(text) || probe.parameterMatches(text)))
+        if (text != null && probe.dataSetMatches(text))
+        {
+            probe.add(SCHEMA_VARIANT, DATA_SET_LINKS, path, text);
+        }
+    }
+
+    /**
+     * Records a link property that names a removed parameter.
+     *
+     * @param value the stored name, or null
+     * @param path where the name sits
+     * @param probe the identifiers and the hits
+     */
+    private static void considerParameterName(Object value, String path, Probe probe)
+    {
+        String text = textOf(value);
+        if (text != null && probe.parameterMatches(text))
         {
             probe.add(SCHEMA_VARIANT, DATA_SET_LINKS, path, text);
         }
@@ -219,6 +256,21 @@ public final class DcsSettingsImpact
             if (detail != null && probe.expressionMentions(detail))
             {
                 probe.add(variant, USER_FIELDS, here + ".detailExpression", dataPath); //$NON-NLS-1$
+            }
+            String total = textOf(read(item, "getTotalExpression")); //$NON-NLS-1$
+            if (total != null && probe.expressionMentions(total))
+            {
+                probe.add(variant, USER_FIELDS, here + ".totalExpression", dataPath); //$NON-NLS-1$
+            }
+            EList<EObject> cases = BmDcsHelper.getEObjectList(item, "getCases"); //$NON-NLS-1$
+            if (cases == null)
+            {
+                continue;
+            }
+            for (int c = 0; c < cases.size(); c++)
+            {
+                readFilter(read(cases.get(c), "getFilter"), variant, USER_FIELDS, //$NON-NLS-1$ //$NON-NLS-2$
+                    here + ".cases[" + c + "].filter", probe); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
     }
@@ -447,7 +499,13 @@ public final class DcsSettingsImpact
         }
         for (int v = 0; v < values.size(); v++)
         {
-            String text = textOf(read(values.get(v), "getValue")); //$NON-NLS-1$
+            Object carrier = read(values.get(v), "getValue"); //$NON-NLS-1$
+            if (!(carrier instanceof EObject)
+                || !"DataCompositionField".equals(((EObject)carrier).eClass().getName())) //$NON-NLS-1$
+            {
+                continue;
+            }
+            String text = textOf(read(carrier, "getValue")); //$NON-NLS-1$
             if (text != null && probe.fieldMatches(text))
             {
                 probe.add(variant, section, path + ".values[" + v + "]", text); //$NON-NLS-1$ //$NON-NLS-2$
@@ -619,6 +677,9 @@ public final class DcsSettingsImpact
         /** Parameter names, in the order they were given, blanks dropped. */
         private final List<String> parameterNames = new ArrayList<>();
 
+        /** Dataset names, in the order they were given, blanks dropped. */
+        private final List<String> dataSetNames = new ArrayList<>();
+
         /** Hits, in the order the walk met them. */
         private final List<Map<String, Object>> found = new ArrayList<>();
 
@@ -628,10 +689,23 @@ public final class DcsSettingsImpact
          * @param fields the field paths, possibly <code>null</code>
          * @param parameters the parameter names, possibly <code>null</code>
          */
-        Probe(Collection<String> fields, Collection<String> parameters)
+        Probe(Collection<String> fields, Collection<String> parameters,
+            Collection<String> dataSets)
         {
             copy(fields, this.fieldPaths);
             copy(parameters, this.parameterNames);
+            copy(dataSets, this.dataSetNames);
+        }
+
+        /**
+         * Whether a stored dataset name is one of the removed datasets.
+         *
+         * @param stored the name the link holds
+         * @return <code>true</code> when it names a removed dataset
+         */
+        boolean dataSetMatches(String stored)
+        {
+            return contains(this.dataSetNames, stored);
         }
 
         /**

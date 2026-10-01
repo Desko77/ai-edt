@@ -122,6 +122,28 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
      * @param pathPart a part of the path to look for
      * @return <code>true</code> when a hit matches
      */
+    /**
+     * The hit at a path, or <code>null</code> when there is none.
+     *
+     * @param hits the report
+     * @param section the section of the hit
+     * @param pathPart the path fragment
+     * @return the hit, or <code>null</code>
+     */
+    private static Map<String, Object> hitAt(List<Map<String, Object>> hits, String section,
+        String pathPart)
+    {
+        for (Map<String, Object> hit : hits)
+        {
+            if (section.equals(hit.get("section")) //$NON-NLS-1$
+                && String.valueOf(hit.get("path")).contains(pathPart)) //$NON-NLS-1$
+            {
+                return hit;
+            }
+        }
+        return null;
+    }
+
     private static boolean hasHit(List<Map<String, Object>> hits, String section, String pathPart)
     {
         for (Map<String, Object> hit : hits)
@@ -296,8 +318,12 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
      *
      * @throws Exception if a call refuses
      */
+    /**
+     * A parameter value is a literal: however it spells, it is not a reference to the field of
+     * that name, and the report leaves it alone.
+     */
     @Test
-    public void aParameterEntryHoldingTheRemovedFieldIsListed() throws Exception
+    public void aLiteralThatSpellsTheRemovedFieldIsNotListed() throws Exception
     {
         run("add_dataset", "name", "Продажи"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         run("add_field", "dataSetName", "Продажи", "name", "Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
@@ -305,9 +331,49 @@ public class ARemovalReportNamesUserFieldsLinksAndValuesTest
         run("set_settings_parameter", "name", "Период", "value", "Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
 
         List<Map<String, Object>> hits = impact("remove_dataset_field", //$NON-NLS-1$
-            "dataSetName", "Продажи", "name", "Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "dataSetName", "Продажи", "name", "Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
-        assertTrue("the parameter value is in the report: " + hits, //$NON-NLS-1$
+        assertNull("a literal is not a field reference: " + hits, //$NON-NLS-1$
+            hitAt(hits, "dataParameters", "values[0]")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A parameter value that carries the field itself - a model DataCompositionField in the
+     * values list - is a reference the removal breaks.
+     */
+    @Test
+    public void aParameterValueHoldingTheFieldItselfIsListed() throws Exception
+    {
+        run("add_dataset", "name", "Продажи"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("add_field", "dataSetName", "Продажи", "name", "Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        run("add_parameter", "name", "Период"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        run("set_settings_parameter", "name", "Период", "value", "текст"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        Object entry = firstParameterEntry();
+        Assume.assumeNotNull("the settings carry the parameter entry", entry); //$NON-NLS-1$
+        EList<EObject> values = BmDcsHelper.getEObjectList(entry, "getValues"); //$NON-NLS-1$
+        Assume.assumeNotNull(values);
+        values.clear();
+        com._1c.g5.v8.dt.dcs.model.core.DataCompositionField field =
+            com._1c.g5.v8.dt.dcs.model.core.DcsFactory.eINSTANCE.createDataCompositionField();
+        field.setValue("Сумма"); //$NON-NLS-1$
+        values.add(field);
+
+        List<Map<String, Object>> hits = impact("remove_dataset_field", //$NON-NLS-1$
+            "dataSetName", "Продажи", "name", "Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue("the field held as a value is in the report: " + hits, //$NON-NLS-1$
             hasHit(hits, "dataParameters", "values[0]")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The first entry of the settings' data parameters.
+     *
+     * @return the entry, or <code>null</code> when the settings carry none
+     */
+    private EObject firstParameterEntry()
+    {
+        EList<EObject> items = BmDcsHelper.getEObjectList(
+            BmDcsHelper.getEObjectList(settings(), "getDataParameters"), "getItems"); //$NON-NLS-1$ //$NON-NLS-2$
+        return items == null || items.isEmpty() ? null : items.get(0);
     }
 }
