@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
+import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.IProgressMonitor;
@@ -1153,6 +1154,38 @@ public final class BmSupportRegistryHelper
     private static String literal(UserSupportMode mode)
     {
         return mode == null ? null : mode.getName();
+    }
+
+    /**
+     * The support mode of each metadata object of a project, read the way {@link #objectMode} reads
+     * it: the user mode the support service holds for the object.
+     *
+     * @param project the project; may be <code>null</code>
+     * @return object to its mode name, or to <code>null</code> when it has none; <code>null</code>
+     *         when the support service is not reachable or the project is not on support
+     */
+    public static Function<MdObject, String> userModes(IProject project)
+    {
+        if (project == null)
+        {
+            return null;
+        }
+        Service service = findService();
+        if (service.manager == null || service.manager.getDistributionSupport(project) == null)
+        {
+            return null;
+        }
+        IDistributionSupportManager manager = service.manager;
+        return object -> {
+            try
+            {
+                return literal(manager.getUserSupportMode(object));
+            }
+            catch (RuntimeException unreadable)
+            {
+                return "unreadable: " + unreadable.getClass().getSimpleName(); //$NON-NLS-1$
+            }
+        };
     }
 
     /**

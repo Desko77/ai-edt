@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.toolkit.mdreport;
 
 import java.util.Set;
+import java.util.function.Function;
 
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
@@ -67,5 +68,24 @@ public final class MetadataFormatterHub
         boolean outline)
     {
         return MetadataFormatter.format(object, full, language, sections, outline);
+    }
+
+    /**
+     * Describes part of a metadata object with the support mode of the object and of each of its
+     * forms.
+     *
+     * @param object the object; may be <code>null</code>
+     * @param full <code>true</code> to dump every property the model holds
+     * @param language which language to prefer out of a synonym; may be <code>null</code>
+     * @param sections the section headings to keep; <code>null</code> or empty returns every section
+     * @param outline <code>true</code> to answer with the section map alone
+     * @param supportMode the support mode of a metadata object, <code>null</code> for one that has
+     *            none; <code>null</code> as a whole when the project is not on support
+     * @return the markdown, never <code>null</code>
+     */
+    public static String format(MdObject object, boolean full, String language, Set<String> sections,
+        boolean outline, Function<MdObject, String> supportMode)
+    {
+        return MetadataFormatter.format(object, full, language, sections, outline, supportMode);
     }
 }
