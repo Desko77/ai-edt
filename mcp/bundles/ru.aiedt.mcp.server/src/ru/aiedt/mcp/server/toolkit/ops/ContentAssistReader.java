@@ -71,8 +71,7 @@ public class ContentAssistReader
     {
         return "Back-compat alias of `code_search` `operation=content_assist`; prefer the facade for new prompts. " //$NON-NLS-1$
             + "Retrieves code-completion (content assist) proposals for a specific position in a BSL file. " //$NON-NLS-1$
-            + "Opens the file in the EDT editor and collects the completions available at the requested " //$NON-NLS-1$
-            + "line and column."; //$NON-NLS-1$
+            + "Collects the completions available at the requested line and column."; //$NON-NLS-1$
     }
 
     @Override
@@ -89,9 +88,9 @@ public class ContentAssistReader
             .stringProperty("filePath", //$NON-NLS-1$
                 "Relative path to the BSL file, measured from the project's src folder (e.g. " //$NON-NLS-1$
                     + "'CommonModules/MyModule/Module.bsl'). Optional when positions are supplied: " //$NON-NLS-1$
-                    + "each position then names its own filePath", true) //$NON-NLS-1$
-            .integerProperty("line", "1-based line number to inspect. Optional when positions are supplied", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("column", "1-based column number to inspect. Optional when positions are supplied", true) //$NON-NLS-1$ //$NON-NLS-2$
+                    + "each position then names its own filePath") //$NON-NLS-1$
+            .integerProperty("line", "1-based line number to inspect. Optional when positions are supplied") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("column", "1-based column number to inspect. Optional when positions are supplied") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("positions", //$NON-NLS-1$
                 "Batch mode: a JSON array of positions, each an object with filePath (falls back to " //$NON-NLS-1$
                     + "the top-level filePath), line and column - e.g. " //$NON-NLS-1$
@@ -128,12 +127,20 @@ public class ContentAssistReader
         {
             if (filePath == null || filePath.isEmpty())
             {
-                return ToolResult.error("filePath must be provided").toJson(); //$NON-NLS-1$
+                return ToolResult.error("Provide either positions, or filePath with line and column") //$NON-NLS-1$
+                    .toJson();
+            }
+            String lineRaw = JsonUtils.extractStringArgument(params, "line"); //$NON-NLS-1$
+            String columnRaw = JsonUtils.extractStringArgument(params, "column"); //$NON-NLS-1$
+            if (lineRaw == null || columnRaw == null)
+            {
+                return ToolResult.error("Provide either positions, or filePath with line and column") //$NON-NLS-1$
+                    .toJson();
             }
             try
             {
-                line = (int)Double.parseDouble(JsonUtils.extractStringArgument(params, "line")); //$NON-NLS-1$
-                column = (int)Double.parseDouble(JsonUtils.extractStringArgument(params, "column")); //$NON-NLS-1$
+                line = (int)Double.parseDouble(lineRaw);
+                column = (int)Double.parseDouble(columnRaw);
             }
             catch (Exception e)
             {

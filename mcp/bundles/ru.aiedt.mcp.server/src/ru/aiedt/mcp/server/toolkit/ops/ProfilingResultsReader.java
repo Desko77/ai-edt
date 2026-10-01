@@ -177,11 +177,6 @@ public final class ProfilingResultsReader implements IMcpTool
 
                     List<Map<String, Object>> lines = moduleGroups.computeIfAbsent(modName, k -> new ArrayList<>());
 
-                    if (lines.size() >= MAX_LINES_PER_MODULE)
-                    {
-                        continue;
-                    }
-
                     Map<String, Object> lineInfo = new LinkedHashMap<>();
                     lineInfo.put("line", getLineNo.invoke(lr)); //$NON-NLS-1$
                     lineInfo.put("calls", freq); //$NON-NLS-1$
@@ -203,6 +198,19 @@ public final class ProfilingResultsReader implements IMcpTool
                     lines.add(lineInfo);
                 }
 
+                int totalLines = 0;
+                int droppedLines = 0;
+                for (Map.Entry<String, List<Map<String, Object>>> group : moduleGroups.entrySet())
+                {
+                    List<Map<String, Object>> moduleLines = group.getValue();
+                    totalLines += moduleLines.size();
+                    List<Map<String, Object>> kept = clipLinesByWeight(moduleLines, MAX_LINES_PER_MODULE);
+                    droppedLines += moduleLines.size() - kept.size();
+                    group.setValue(kept);
+                }
+
+                summary.put("totalLines", totalLines); //$NON-NLS-1$
+                summary.put("droppedLines", droppedLines); //$NON-NLS-1$
                 summary.put("moduleCount", moduleGroups.size()); //$NON-NLS-1$
                 summary.put("modules", moduleGroups); //$NON-NLS-1$
                 resultSummaries.add(summary);
@@ -216,5 +224,46 @@ public final class ProfilingResultsReader implements IMcpTool
             Activator.logError("get_profiling_results failed", e); //$NON-NLS-1$
             return ToolResult.error("Failed: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Keeps the heaviest lines of one module when there are more than the cap allows.
+     * <p>
+     * Weight is the line's total time, ties broken by the call count. Cutting by arrival order
+     * would keep whichever lines the profiler happened to list first, and the caller would read
+     * the beginning of the module instead of its hot spots, with nothing in the answer saying so.
+     * </p>
+     *
+     * @param lines the module's line entries, each carrying "dur" and "calls" numbers
+     * @param max how many entries to keep
+     * @return the kept entries, heaviest first; the input list itself when it fits
+     */
+    static List<Map<String, Object>> clipLinesByWeight(List<Map<String, Object>> lines, int max)
+    {
+        if (lines.size() <= max)
+        {
+            return lines;
+        }
+        List<Map<String, Object>> sorted = new ArrayList<>(lines);
+        sorted.sort((left, right) ->
+        {
+            int byTime = Double.compare(weightOf(right, "dur"), weightOf(left, "dur")); //$NON-NLS-1$
+            return byTime != 0 ? byTime
+                : Double.compare(weightOf(right, "calls"), weightOf(left, "calls")); //$NON-NLS-1$
+        });
+        return new ArrayList<>(sorted.subList(0, max));
+    }
+
+    /**
+     * Reads a numeric entry of a line map, absent or non-numeric counting as zero.
+     *
+     * @param line the line entry
+     * @param key the entry to read
+     * @return the entry's value as a double
+     */
+    private static double weightOf(Map<String, Object> line, String key)
+    {
+        Object value = line.get(key);
+        return value instanceof Number ? ((Number)value).doubleValue() : 0.0;
     }
 }

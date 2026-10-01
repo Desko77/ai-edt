@@ -281,6 +281,28 @@ public class FacadeHelpSearchTest
     }
 
     @Test
+    public void aNameNothingResemblesGetsNoGuess()
+    {
+        Map<String, String> described = FacadeHelpSearch.describe(helpOf(null));
+        String block = FacadeHelpSearch.closestMatches("zzzzqqqq",
+            Arrays.asList("alpha", "beta", "help"), described);
+
+        assertEquals("", block);
+    }
+
+    @Test
+    public void aNameTooFarFromACandidateLeavesItOut()
+    {
+        Map<String, String> described = FacadeHelpSearch.describe(helpOf(null));
+        // "alpa" is one edit from "alpha" - inside the floor of two - and three from "beta".
+        String block = FacadeHelpSearch.closestMatches("alpa",
+            Arrays.asList("alpha", "beta", "help"), described);
+
+        assertTrue(block, block.contains("- alpha"));
+        assertFalse(block, block.contains("- beta"));
+    }
+
+    @Test
     public void aBulletWithSeveralNamesDescribesEachOfThem()
     {
         Map<String, String> described =

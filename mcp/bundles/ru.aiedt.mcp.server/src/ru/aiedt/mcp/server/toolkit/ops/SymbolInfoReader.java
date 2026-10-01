@@ -6,8 +6,6 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -1189,6 +1187,21 @@ public class SymbolInfoReader
     }
 
     /**
+     * Reads a module file the way the main path of this tool does: the byte-order mark first, the
+     * workspace's declared charset after it. The EMF fallback computes offsets against this text,
+     * so decoding it differently from the document the offsets come from would shift every offset
+     * in a non-UTF-8 module.
+     *
+     * @param file the module file
+     * @return the file's text
+     * @throws Exception when the file cannot be read
+     */
+    static String readModuleContent(IFile file) throws Exception
+    {
+        return BslModuleAccess.readFileText(file);
+    }
+
+    /**
      * EMF fallback used when the workbench cannot serve the editor: loads the model and reads the raw
      * file to compute the offset, then resolves the element from the node model.
      *
@@ -1210,19 +1223,7 @@ public class SymbolInfoReader
 
             IPath relativePath = new Path("src").append(filePath); //$NON-NLS-1$
             IFile file = project.getFile(relativePath);
-            String content;
-            try (InputStream is = file.getContents())
-            {
-                content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-            }
-            if (content.length() > 0 && content.charAt(0) == '﻿')
-            {
-                content = content.substring(1); // strip UTF-8 BOM
-            }
-            if (content == null)
-            {
-                return null;
-            }
+            String content = readModuleContent(file);
 
             int offset = 0;
             int currentLine = 1;

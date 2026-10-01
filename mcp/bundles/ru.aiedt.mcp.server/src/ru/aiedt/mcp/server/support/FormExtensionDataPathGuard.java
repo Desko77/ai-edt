@@ -760,9 +760,16 @@ public final class FormExtensionDataPathGuard
                     if (reference != null)
                     {
                         Object service = context.getService(reference);
-                        if (service != null)
+                        try
                         {
-                            return service;
+                            if (service != null)
+                            {
+                                return service;
+                            }
+                        }
+                        finally
+                        {
+                            context.ungetService(reference);
                         }
                     }
                 }

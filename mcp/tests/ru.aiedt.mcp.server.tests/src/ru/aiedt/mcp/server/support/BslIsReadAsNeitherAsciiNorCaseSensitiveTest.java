@@ -141,6 +141,24 @@ public class BslIsReadAsNeitherAsciiNorCaseSensitiveTest
     }
 
     /**
+     * A suite that registers through ИсполняемыеСценарии is a test module too.
+     * <p>
+     * That is the registration the plugin's own YAxUnit help teaches, so a module that follows it
+     * and carries no other marker was counted as a plain module and the project read as having no
+     * tests.
+     * </p>
+     */
+    @Test
+    public void theExecutableScenariosMarkerIsSeen() throws Exception
+    {
+        Pattern marker = patternOf(ProjectMetricsCollector.class, "YAXUNIT_PATTERN"); //$NON-NLS-1$
+        assertTrue("ИсполняемыеСценарии", //$NON-NLS-1$
+            marker.matcher("Процедура ИсполняемыеСценарии(СписокТестов) Экспорт").find()); //$NON-NLS-1$
+        assertTrue("исполняемыесценарии is the same marker", //$NON-NLS-1$
+            marker.matcher("процедура исполняемыесценарии(СписокТестов)").find()); //$NON-NLS-1$
+    }
+
+    /**
      * The variable a query text is assigned to is usually named in Cyrillic.
      * <p>
      * The name here deliberately does not contain the word {@code Запрос}: a name that does matches
