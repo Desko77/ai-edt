@@ -199,6 +199,36 @@ public class TaskDirectoryTest
         release.countDown();
     }
 
+    /**
+     * A cancel whose domain stopped the run before it launched its platform process says that
+     * process was not started, not that the work may still be writing.
+     */
+    @Test
+    public void aCancelThatPreventedTheLaunchSaysNothingWasStarted() throws Exception
+    {
+        java.util.function.Function<String, PendingWorkRegistry.StopOutcome> declared =
+            PendingWorkRegistry.GENERIC.stopper();
+        PendingWorkRegistry.GENERIC.stopsWith(runKey -> PendingWorkRegistry.StopOutcome.PREVENTED);
+        CountDownLatch release = new CountDownLatch(1);
+        try
+        {
+            String key = start("prevented", release); //$NON-NLS-1$
+            TaskDirectory.Task task = directory.open(key, "export_infobase", "export_infobase", args()); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertTrue(directory.cancel(task.taskId));
+
+            TaskDirectory.Task polled = directory.poll(task.taskId);
+            assertEquals(TaskDirectory.CANCELLED, polled.status);
+            assertTrue(polled.statusMessage, polled.statusMessage.contains("was not started")); //$NON-NLS-1$
+            assertFalse(polled.statusMessage, polled.statusMessage.contains("may still be running")); //$NON-NLS-1$
+        }
+        finally
+        {
+            release.countDown();
+            PendingWorkRegistry.GENERIC.stopsWith(declared);
+        }
+    }
+
     /** An id nobody handed out is not a task, and cancelling one is not a success. */
     @Test
     public void anUnknownIdIsNotATask()

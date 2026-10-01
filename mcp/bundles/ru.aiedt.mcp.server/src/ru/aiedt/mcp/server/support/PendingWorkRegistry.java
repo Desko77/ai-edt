@@ -895,9 +895,10 @@ public final class PendingWorkRegistry
     /**
      * What stopping a domain's work came to.
      * <p>
-     * Three answers rather than two, because asking a process to stop and its having stopped are
+     * More than a yes or no, because asking a process to stop and its having stopped are
      * different facts, and a caller told the second when only the first happened will act as
-     * though the work is done with whatever it was holding.
+     * though the work is done with whatever it was holding. A platform process that was never
+     * launched is a third fact: there was no process to stop, and it wrote nothing.
      * </p>
      */
     public enum StopOutcome
@@ -907,7 +908,12 @@ public final class PendingWorkRegistry
         /** The work is stopped. */
         STOPPED,
         /** It was told to stop and had not stopped. */
-        STILL_RUNNING
+        STILL_RUNNING,
+        /**
+         * The run was stopped before it launched its platform process, so that process never
+         * started. The run's own cleanup may still be finishing.
+         */
+        PREVENTED
     }
 
     /**
@@ -972,8 +978,9 @@ public final class PendingWorkRegistry
      *
      * @param runKey the key.
      * @return {@link StopOutcome#STOPPED} when the run's work is no longer executing,
-     *         {@link StopOutcome#STILL_RUNNING} when it was told to stop and had not stopped, and
-     *         {@link StopOutcome#NOTHING_TO_STOP} when no run was live
+     *         {@link StopOutcome#PREVENTED} when the domain stopped it before it launched its
+     *         platform process, {@link StopOutcome#STILL_RUNNING} when it was told to stop and had
+     *         not stopped, and {@link StopOutcome#NOTHING_TO_STOP} when no run was live
      */
     public StopOutcome cancelAndStop(String runKey)
     {
@@ -987,6 +994,16 @@ public final class PendingWorkRegistry
         if (told == StopOutcome.STOPPED)
         {
             return StopOutcome.STOPPED;
+        }
+        if (told == StopOutcome.PREVENTED)
+        {
+            // No platform process was launched. The body is still given its wait, so what it
+            // opened before the boundary is usually closed by the time the caller reads this.
+            if (wasRunning)
+            {
+                awaitTheRunsExit(entry);
+            }
+            return StopOutcome.PREVENTED;
         }
         if (!wasRunning)
         {

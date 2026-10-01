@@ -386,7 +386,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
         ctx.launcher = recordingLauncher(order, lock, null);
-        ctx.launchClaim.set(true); // the abandonment crossed the boundary first
+        ctx.launchClaim.claimStop(); // the stop side crossed the boundary first
 
         try
         {
@@ -414,7 +414,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         RecordingLock lock = new RecordingLock(order);
         ThickClientLaunch.LauncherContext ctx = new ThickClientLaunch.LauncherContext();
         ctx.lock = lock;
-        ctx.launchClaim.set(true);
+        ctx.launchClaim.claimStop();
         Object target = new Object()
         {
             @SuppressWarnings("unused")

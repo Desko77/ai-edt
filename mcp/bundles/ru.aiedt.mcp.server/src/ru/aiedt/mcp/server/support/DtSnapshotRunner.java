@@ -252,41 +252,47 @@ public final class DtSnapshotRunner
     static final class LiveRun
     {
         /**
-         * The launch boundary of the current launcher call, or {@code null} before it starts.
-         * <p>
-         * Claimed by whoever crosses it first: the worker under the per-infobase lock, right before
-         * it calls the launcher, or this run's abandonment, which claims it before it declares
-         * itself. Nobody else claims it - a stopper that took it would make the abandonment read a
-         * boundary it did not take as a call already committed, and report a platform process for a
-         * worker that never reached the launcher. A launcher call that claimed it is committed and
-         * reported as still running when the wait gives up; one that did not never reaches the
-         * platform.
-         * </p>
+         * Completed by the current launcher call once its wait has ended: {@code true} when the
+         * stop side holds the launch boundary, so no platform process was started. Replaced at
+         * the start of every launcher call, since a load makes two.
          */
-        volatile AtomicBoolean launchClaim;
+        volatile java.util.concurrent.CompletableFuture<Boolean> launchDecision =
+            new java.util.concurrent.CompletableFuture<>();
+
+        /**
+         * The launch boundary of the launcher call in progress, claimed by the stopper the moment
+         * the stop is signaled - a worker still waiting for the per-infobase lock then finds the
+         * boundary taken and starts no platform process, however soon the lock is freed.
+         */
+        volatile LaunchBoundary launchBoundary;
+
+        /**
+         * Set once a launcher call of this run crossed its boundary, so a stop that prevents a
+         * later call of the same run - a load's restore after its backup - is not reported as a
+         * run that never launched a platform process.
+         */
+        final AtomicBoolean aLauncherCallRan = new AtomicBoolean();
 
         /** Counted down by the stopper; the run's wait polls it. */
         final CountDownLatch stopped = new CountDownLatch(1);
     }
 
     /**
-     * Stops the run a registry cancel names: wakes the wait so the abandonment is answered now
-     * rather than at the budget's end.
+     * Stops the run a registry cancel names: claims the launch boundary at the signal, so a worker
+     * still waiting for the per-infobase lock starts no platform process however soon the lock is
+     * freed, wakes the wait so the abandonment is answered now rather than at the budget's end,
+     * and reports how the launch boundary was decided.
      * <p>
-     * The launch boundary itself is left to the two sides that can decide it - the worker, under the
-     * per-infobase lock right before the launcher, and the abandonment, before it declares itself.
-     * This stopper must not claim it as a third party: the abandonment reads a boundary it did not
-     * take as a launcher call that is already committed, so a claim made here over a worker that is
-     * still waiting for the lock would be reported as a platform process running when none was ever
-     * started. Waking the wait is enough - the abandonment is the side that claims, and a worker
-     * that has not reached the boundary by then finds it taken and starts nothing.
+     * The claim only reserves the boundary for the stop side; who holds it is still read from the
+     * run's own decision, so a worker that crossed first is reported as a platform process still
+     * running, not as a prevented launch.
      * </p>
      *
      * @param runKey the run's key
-     * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live, otherwise
-     *         {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}, whether or not the Designer run
-     *         has started - this side only wakes the wait, and the run's own answer under its runKey
-     *         says whether a Designer run was launched
+     * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live,
+     *         {@link PendingWorkRegistry.StopOutcome#PREVENTED} when the stop side holds the
+     *         boundary and no earlier launcher call of this run started a platform process,
+     *         otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
      */
     static PendingWorkRegistry.StopOutcome stopTheRun(String runKey)
     {
@@ -295,8 +301,19 @@ public final class DtSnapshotRunner
         {
             return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
         }
+        LaunchBoundary boundary = live.launchBoundary;
+        if (boundary != null)
+        {
+            boundary.claimStop();
+        }
         live.stopped.countDown();
-        return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        PendingWorkRegistry.StopOutcome outcome =
+            InfobaseObjectsExporter.outcomeOnceDecided(live.launchDecision);
+        if (outcome == PendingWorkRegistry.StopOutcome.PREVENTED && live.aLauncherCallRan.get())
+        {
+            return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        }
+        return outcome;
     }
 
     /**
@@ -735,6 +752,11 @@ public final class DtSnapshotRunner
      * another dump against a process that is still working.
      * </p>
      *
+     * <p>
+     * A wait given up because its budget ran out is answered as {@code budgetExpired}, one the
+     * caller cancelled as {@code cancelled}.
+     * </p>
+     *
      * @param out the outcome being filled
      * @param failed what the run threw
      */
@@ -744,7 +766,8 @@ public final class DtSnapshotRunner
         {
             DumpInfoRebuilder.Abandoned abandoned = (DumpInfoRebuilder.Abandoned)failed;
             out.error = ThickClientLaunch.oneLine(failed.getMessage());
-            out.failureKind = ErrorTags.CANCELLED.wire();
+            out.failureKind = abandoned.timedOut() ? ErrorTags.BUDGET_EXPIRED.wire()
+                : ErrorTags.CANCELLED.wire();
             if (abandoned.processStillRunning())
             {
                 out.error = out.error + " The call was under way in the launcher and the platform " //$NON-NLS-1$
@@ -1249,12 +1272,15 @@ public final class DtSnapshotRunner
          */
         private void runTheLauncherCall(LauncherCall call) throws Exception
         {
+            java.util.concurrent.CompletableFuture<Boolean> decision =
+                new java.util.concurrent.CompletableFuture<>();
+            LaunchBoundary launchClaim = new LaunchBoundary();
+            ctx.launchClaim = launchClaim;
+            live.launchDecision = decision;
+            live.launchBoundary = launchClaim;
             LIVE.put(runKey, live);
             try
             {
-                AtomicBoolean launchClaim = new AtomicBoolean();
-                ctx.launchClaim = launchClaim;
-                live.launchClaim = launchClaim;
                 BooleanSupplier watch = () -> live.stopped.getCount() == 0
                     || (callerCancelled != null && callerCancelled.getAsBoolean());
                 InfobaseObjectsExporter.runUnderBudget("the " + operation, SNAPSHOT_BUDGET_MS, //$NON-NLS-1$
@@ -1263,9 +1289,20 @@ public final class DtSnapshotRunner
                             call::run);
                         return "ok"; //$NON-NLS-1$
                     }, launchClaim, watch);
+                live.aLauncherCallRan.set(true);
+            }
+            catch (DumpInfoRebuilder.Abandoned abandoned)
+            {
+                if (!abandoned.launchPrevented())
+                {
+                    live.aLauncherCallRan.set(true);
+                }
+                decision.complete(Boolean.valueOf(abandoned.launchPrevented()));
+                throw abandoned;
             }
             finally
             {
+                decision.complete(Boolean.FALSE);
                 LIVE.remove(runKey);
             }
         }

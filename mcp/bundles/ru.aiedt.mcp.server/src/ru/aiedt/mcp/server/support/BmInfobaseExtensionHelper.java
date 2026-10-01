@@ -453,7 +453,7 @@ public final class BmInfobaseExtensionHelper
      * @throws Exception whatever the work throws, after the infobase has been taken back
      */
     static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim,
+        LaunchBoundary launchClaim,
         java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
@@ -463,7 +463,7 @@ public final class BmInfobaseExtensionHelper
             {
                 lock.lockInterruptibly();
             }
-            if (launchClaim != null && !launchClaim.compareAndSet(false, true))
+            if (launchClaim != null && !launchClaim.claimLaunch())
             {
                 if (lock != null)
                 {
@@ -1105,20 +1105,23 @@ public final class BmInfobaseExtensionHelper
      * Reads the project/infobase equality state for a guarded export.
      *
      * @param ctx the resolved launcher context
-     * @return the equality state, or <code>null</code> when it cannot be obtained (no
-     *         synchronization manager on this runtime, or the read failed) - the caller
-     *         refuses on <code>null</code>, because a guard that could not run cleared nothing
+     * @return the equality state, or <code>null</code> when it cannot be obtained (no project in
+     *         the context, no synchronization manager on this runtime, or the read failed) - the
+     *         caller refuses on <code>null</code>, because a guard that could not run cleared
+     *         nothing
      */
     private static InfobaseEqualityState readEqualityState(ThickClientLaunch.LauncherContext ctx)
     {
-        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (ctx.project == null)
         {
             return null;
         }
         try
         {
-            return mgr.getEqualityState(ctx.project, ctx.infobase);
+            // ServiceAccess.get answers with the service or throws, so a runtime without the
+            // manager lands in the catch below.
+            return ServiceAccess.get(IInfobaseSynchronizationManager.class)
+                .getEqualityState(ctx.project, ctx.infobase);
         }
         catch (Throwable e)
         {
@@ -1709,10 +1712,6 @@ public final class BmInfobaseExtensionHelper
             return false;
         }
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null)
-        {
-            return false;
-        }
         boolean wasConnected = mgr.isConnected(ctx.project, ctx.infobase);
         try
         {
@@ -1739,12 +1738,6 @@ public final class BmInfobaseExtensionHelper
     static boolean releaseForThickClient(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null)
-        {
-            // Without the manager nothing can be released, and a Designer run on an infobase EDT
-            // still holds is exactly what the release exists to prevent.
-            throw new IllegalStateException("IInfobaseSynchronizationManager is not available on this EDT runtime"); //$NON-NLS-1$
-        }
         if (ctx.project == null)
         {
             throw new IllegalStateException("the launcher context carries no project"); //$NON-NLS-1$
@@ -1797,13 +1790,6 @@ public final class BmInfobaseExtensionHelper
     static void takeInfobaseBack(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null)
-        {
-            // The infobase was released through this manager; without it now, it stays released,
-            // and that is a failure to report, not a step to skip.
-            throw new IllegalStateException("IInfobaseSynchronizationManager is no longer available; " //$NON-NLS-1$
-                + "the infobase stays disconnected"); //$NON-NLS-1$
-        }
         mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
     }
 
@@ -2007,7 +1993,7 @@ public final class BmInfobaseExtensionHelper
         {
             ctx.lock.lockInterruptibly();
         }
-        if (!ctx.launchClaim.compareAndSet(false, true))
+        if (!ctx.launchClaim.claimLaunch())
         {
             if (ctx.lock != null)
             {
@@ -2064,14 +2050,16 @@ public final class BmInfobaseExtensionHelper
 
     private static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx)
     {
-        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (ctx.project == null)
         {
             return;
         }
         try
         {
-            mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
+            // ServiceAccess.get answers with the service or throws; a runtime without the manager
+            // is reported below like any other failed reconnect.
+            ServiceAccess.get(IInfobaseSynchronizationManager.class)
+                .connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
         }
         catch (Throwable e)
         {

@@ -318,6 +318,11 @@ public final class TaskDirectory
                     + "the domain stopped the work it had started. What that work had already " //$NON-NLS-1$
                     + "written stays written."; //$NON-NLS-1$
             }
+            if (stopping == PendingWorkRegistry.StopOutcome.PREVENTED)
+            {
+                return "Cancellation was asked for before the run launched its platform process, " //$NON-NLS-1$
+                    + "so that process was not started and wrote nothing."; //$NON-NLS-1$
+            }
             if (stopping == PendingWorkRegistry.StopOutcome.STILL_RUNNING)
             {
                 return "Cancellation was asked for and the work was told to stop, but it had " //$NON-NLS-1$

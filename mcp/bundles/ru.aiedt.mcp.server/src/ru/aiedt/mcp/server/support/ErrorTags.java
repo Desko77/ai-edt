@@ -49,6 +49,10 @@ public enum ErrorTags
      * internal cancellation. */
     CANCELLED("cancelled"), //$NON-NLS-1$
 
+    /** The run's own time budget ran out before it finished, so the wait gave it up; nobody
+     * cancelled it. */
+    BUDGET_EXPIRED("budgetExpired"), //$NON-NLS-1$
+
     /** The client disconnected while the tool was still running, so the call
      * was abandoned. */
     CLIENT_GONE("clientGone"), //$NON-NLS-1$

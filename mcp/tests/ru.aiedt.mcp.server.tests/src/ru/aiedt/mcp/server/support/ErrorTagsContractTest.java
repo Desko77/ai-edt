@@ -31,7 +31,7 @@ import org.junit.Test;
 public class ErrorTagsContractTest
 {
     /** Total number of {@link ErrorTags} constants this test covers: 6 reliability + 54 folded. */
-    private static final int EXPECTED_CONSTANT_COUNT = 63;
+    private static final int EXPECTED_CONSTANT_COUNT = 64;
 
     private static Map<String, String> goldenWireStrings()
     {
@@ -43,6 +43,7 @@ public class ErrorTagsContractTest
         golden.put("DEGRADED", "degraded"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("TRUNCATED", "truncated"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("CANCELLED", "cancelled"); //$NON-NLS-1$ //$NON-NLS-2$
+        golden.put("BUDGET_EXPIRED", "budgetExpired"); //$NON-NLS-1$ //$NON-NLS-2$
         golden.put("CLIENT_GONE", "clientGone"); //$NON-NLS-1$ //$NON-NLS-2$
 
         // -- Folded set: MetadataGuards.ErrorTag / BM guards --
