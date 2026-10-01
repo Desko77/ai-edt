@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.core.resources.IProject;
@@ -150,6 +151,8 @@ public class GetFormStructureTool implements IMcpTool
         // M1: dynamic-list data attributes (query + main table) - read from
         // Form.getAttributes(), not the UI items tree.
         final com.google.gson.JsonArray[] dynamicListsRef = new com.google.gson.JsonArray[1];
+        final List<String> dynamicListsUnread = new ArrayList<>();
+        final AtomicBoolean dropped = new AtomicBoolean();
         final List<List<Map<String, Object>>> appearanceRef = new ArrayList<>();
         final List<String> emptyGroupNames = new ArrayList<>();
         final List<String> emptyTabRowNames = new ArrayList<>();
@@ -170,13 +173,13 @@ public class GetFormStructureTool implements IMcpTool
                     }
                     root = found;
                 }
-                resultRoot[0] = walk(root, 0, finalDepth, finalMax, counter);
+                resultRoot[0] = walk(root, 0, finalDepth, finalMax, counter, dropped);
                 collectEmptyContainers(root, emptyGroupNames, emptyTabRowNames, emptyPageNames);
                 if (includeCi)
                 {
                     commandInterfaceObj[0] = collectCommandInterface(form);
                 }
-                dynamicListsRef[0] = collectDynamicLists(form);
+                dynamicListsRef[0] = collectDynamicLists(form, dynamicListsUnread);
                 appearanceRef.add(FormAppearanceOps.describe(transaction, form));
             }
             catch (Throwable t)
@@ -211,7 +214,7 @@ public class GetFormStructureTool implements IMcpTool
         envelope.addProperty("emitted", counter.get()); //$NON-NLS-1$
         envelope.addProperty("limit", finalMax); //$NON-NLS-1$
         envelope.addProperty("depth", finalDepth); //$NON-NLS-1$
-        if (counter.get() >= finalMax)
+        if (dropped.get())
         {
             envelope.addProperty("truncated", true); //$NON-NLS-1$
         }
@@ -223,6 +226,10 @@ public class GetFormStructureTool implements IMcpTool
         if (dynamicListsRef[0] != null && dynamicListsRef[0].size() > 0)
         {
             envelope.add("dynamicLists", dynamicListsRef[0]); //$NON-NLS-1$
+        }
+        if (!dynamicListsUnread.isEmpty())
+        {
+            envelope.add("dynamicListsUnread", new com.google.gson.Gson().toJsonTree(dynamicListsUnread)); //$NON-NLS-1$
         }
         if (!appearanceRef.isEmpty() && !appearanceRef.get(0).isEmpty())
         {
@@ -271,8 +278,17 @@ public class GetFormStructureTool implements IMcpTool
      * {@code settings} - order, filter, grouping and appearance, named the way the operations that
      * write them name their arguments. Returns an empty array when the form has no
      * dynamic lists or reflection is unavailable.
+     * <p>
+     * An attribute whose reading failed is named in {@code unread} with the failure, so a partial
+     * list is told apart from a form that has fewer lists. An attribute type without
+     * {@code getExtInfo} is not a failure.
+     * </p>
+     *
+     * @param form the form
+     * @param unread receives one line per attribute, or per list, that could not be read
+     * @return the dynamic lists that were read
      */
-    private static com.google.gson.JsonArray collectDynamicLists(Object form)
+    static com.google.gson.JsonArray collectDynamicLists(Object form, List<String> unread)
     {
         com.google.gson.JsonArray arr = new com.google.gson.JsonArray();
         try
@@ -284,64 +300,104 @@ public class GetFormStructureTool implements IMcpTool
             }
             for (Object attr : (Iterable<?>) attrs)
             {
-                Object extInfo;
                 try
                 {
-                    extInfo = attr.getClass().getMethod("getExtInfo").invoke(attr); //$NON-NLS-1$
-                }
-                catch (Exception noExt)
-                {
-                    continue;
-                }
-                if (extInfo == null
-                    || !extInfo.getClass().getSimpleName().contains("DynamicList")) //$NON-NLS-1$
-                {
-                    continue;
-                }
-                JsonObject o = new JsonObject();
-                o.addProperty("name", probeStringGetter(attr, new String[] { "getName" })); //$NON-NLS-1$ //$NON-NLS-2$
-                Object mainTable = null;
-                try
-                {
-                    mainTable = extInfo.getClass().getMethod("getMainTable").invoke(extInfo); //$NON-NLS-1$
-                }
-                catch (Exception ignored)
-                {
-                    // no main table getter
-                }
-                if (mainTable != null)
-                {
-                    o.addProperty("mainTable", //$NON-NLS-1$
-                        probeStringGetter(mainTable, new String[] { "getName", "getNameRu" })); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                Boolean custom = probeBooleanGetter(extInfo, "isCustomQuery"); //$NON-NLS-1$
-                if (custom != null)
-                {
-                    o.addProperty("customQuery", custom); //$NON-NLS-1$
-                }
-                String q = probeStringGetter(extInfo, new String[] { "getQueryText" }); //$NON-NLS-1$
-                if (q != null && !q.isEmpty())
-                {
-                    o.addProperty("queryLength", q.length()); //$NON-NLS-1$
-                    if (q.length() > 4000)
+                    JsonObject list = readDynamicList(attr);
+                    if (list != null)
                     {
-                        o.addProperty("queryText", q.substring(0, 4000)); //$NON-NLS-1$
-                        o.addProperty("queryTruncated", true); //$NON-NLS-1$
-                    }
-                    else
-                    {
-                        o.addProperty("queryText", q); //$NON-NLS-1$
+                        arr.add(list);
                     }
                 }
-                o.add("settings", readListSettings(extInfo)); //$NON-NLS-1$
-                arr.add(o);
+                catch (Exception | LinkageError failed)
+                {
+                    unread.add(unreadLine(probeStringGetter(attr, new String[] { "getName" }), failed)); //$NON-NLS-1$
+                }
             }
+        }
+        catch (NoSuchMethodException noAttributes)
+        {
+            // form exposes no getAttributes: it has no dynamic lists to read
+        }
+        catch (Exception | LinkageError failed)
+        {
+            unread.add(unreadLine("attributes", failed)); //$NON-NLS-1$
+        }
+        return arr;
+    }
+
+    /**
+     * @param name what could not be read, or {@code null}
+     * @param failed the failure
+     * @return the line naming it and the failure
+     */
+    private static String unreadLine(String name, Throwable failed)
+    {
+        Throwable cause = failed instanceof java.lang.reflect.InvocationTargetException
+            && failed.getCause() != null ? failed.getCause() : failed;
+        return (name == null ? "attribute" : name) + ": " + cause.getClass().getSimpleName() //$NON-NLS-1$ //$NON-NLS-2$
+            + (cause.getMessage() == null ? "" : " - " + cause.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Reads one form attribute as a dynamic list.
+     *
+     * @param attr the form attribute
+     * @return the list, or {@code null} when the attribute is not a dynamic list
+     * @throws Exception when the attribute could not be read
+     */
+    private static JsonObject readDynamicList(Object attr) throws Exception
+    {
+        Object extInfo;
+        try
+        {
+            extInfo = attr.getClass().getMethod("getExtInfo").invoke(attr); //$NON-NLS-1$
+        }
+        catch (NoSuchMethodException noExt)
+        {
+            return null;
+        }
+        if (extInfo == null
+            || !extInfo.getClass().getSimpleName().contains("DynamicList")) //$NON-NLS-1$
+        {
+            return null;
+        }
+        JsonObject o = new JsonObject();
+        o.addProperty("name", probeStringGetter(attr, new String[] { "getName" })); //$NON-NLS-1$ //$NON-NLS-2$
+        Object mainTable = null;
+        try
+        {
+            mainTable = extInfo.getClass().getMethod("getMainTable").invoke(extInfo); //$NON-NLS-1$
         }
         catch (Exception ignored)
         {
-            // form exposes no getAttributes / reflection failure - return what we have
+            // no main table getter
         }
-        return arr;
+        if (mainTable != null)
+        {
+            o.addProperty("mainTable", //$NON-NLS-1$
+                probeStringGetter(mainTable, new String[] { "getName", "getNameRu" })); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        Boolean custom = probeBooleanGetter(extInfo, "isCustomQuery"); //$NON-NLS-1$
+        if (custom != null)
+        {
+            o.addProperty("customQuery", custom); //$NON-NLS-1$
+        }
+        String q = probeStringGetter(extInfo, new String[] { "getQueryText" }); //$NON-NLS-1$
+        if (q != null && !q.isEmpty())
+        {
+            o.addProperty("queryLength", q.length()); //$NON-NLS-1$
+            if (q.length() > 4000)
+            {
+                o.addProperty("queryText", q.substring(0, 4000)); //$NON-NLS-1$
+                o.addProperty("queryTruncated", true); //$NON-NLS-1$
+            }
+            else
+            {
+                o.addProperty("queryText", q); //$NON-NLS-1$
+            }
+        }
+        o.add("settings", readListSettings(extInfo)); //$NON-NLS-1$
+        return o;
     }
 
     /**
@@ -507,8 +563,34 @@ public class GetFormStructureTool implements IMcpTool
     JsonObject walk(Object item, int currentDepth, int maxDepth, int maxElements,
         AtomicInteger counter)
     {
-        if (counter.get() >= maxElements || item == null)
+        return walk(item, currentDepth, maxDepth, maxElements, counter, new AtomicBoolean());
+    }
+
+    /**
+     * The walk that also says whether the element cap left a node out.
+     * <p>
+     * {@code dropped} is set only when a node that exists was not emitted because of the cap. A
+     * form whose nodes number exactly the cap is emitted whole and leaves it unset.
+     * </p>
+     *
+     * @param item the form item to emit, or the form itself
+     * @param currentDepth the depth {@code item} sits at; the root sits at 0
+     * @param maxDepth the depth the walk stops descending beyond; 0 descends without limit
+     * @param maxElements the cap on the total nodes the walk may emit
+     * @param counter the count of nodes the walk has emitted so far, shared across the walk
+     * @param dropped set when the cap left a node out
+     * @return the node, or <code>null</code> when the element cap is reached or the item is absent
+     */
+    JsonObject walk(Object item, int currentDepth, int maxDepth, int maxElements,
+        AtomicInteger counter, AtomicBoolean dropped)
+    {
+        if (item == null)
         {
+            return null;
+        }
+        if (counter.get() >= maxElements)
+        {
+            dropped.set(true);
             return null;
         }
         counter.incrementAndGet();
@@ -569,10 +651,11 @@ public class GetFormStructureTool implements IMcpTool
             {
                 if (counter.get() >= maxElements)
                 {
+                    dropped.set(true);
                     break;
                 }
                 JsonObject childNode = walk(child, currentDepth + 1, maxDepth,
-                    maxElements, counter);
+                    maxElements, counter, dropped);
                 if (childNode != null)
                 {
                     itemsArr.add(childNode);
@@ -1296,17 +1379,21 @@ public class GetFormStructureTool implements IMcpTool
     }
 
     /**
-     * Depth-first search for a FormItem with matching getName().
-     * Used to resolve the {@code subtree} parameter.
+     * Depth-first search for a FormItem with matching getName(), ignoring case as the platform
+     * does for names. Used to resolve the {@code subtree} parameter.
+     *
+     * @param root where the search starts
+     * @param targetName the name to find
+     * @return the item, or {@code null}
      */
-    private Object findItemByName(Object root, String targetName)
+    Object findItemByName(Object root, String targetName)
     {
         if (root == null)
         {
             return null;
         }
         String name = invokeStringNoArg(root, "getName"); //$NON-NLS-1$
-        if (targetName.equals(name))
+        if (targetName.equalsIgnoreCase(name))
         {
             return root;
         }
