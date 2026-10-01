@@ -231,7 +231,7 @@ public class DatabaseUpdater implements IMcpTool
                 + "Off by default: a file of a foreign format makes the platform answer FullDump " //$NON-NLS-1$
                 + "and the update silently becomes a full configuration load. A base with no " //$NON-NLS-1$
                 + "recorded format is not compared at all. The way to actually fix the file is " //$NON-NLS-1$
-                + "sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
+                + "infobase_admin operation=sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
                 + "EDT-launched runtime-client sessions for this infobase, so an active client cannot keep " //$NON-NLS-1$
                 + "the infobase locked and block the update. Only runtime-client launches that match both this project " //$NON-NLS-1$

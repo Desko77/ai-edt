@@ -15,6 +15,7 @@ import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.EMap;
 import org.eclipse.emf.ecore.EObject;
 
 import ru.aiedt.mcp.server.support.BmDcsHelper;
@@ -572,7 +573,7 @@ final class FormAppearanceOps
             }
             Object key = invoke(invoke(parameter, "getParameter"), "getValue"); //$NON-NLS-1$ //$NON-NLS-2$
             EList<EObject> values = BmDcsHelper.getEObjectList(parameter, "getValues"); //$NON-NLS-1$
-            String text = values == null || values.isEmpty() ? null : valueText(values.get(0));
+            Object text = values == null || values.isEmpty() ? null : appearanceValue(values.get(0));
             out.put(String.valueOf(key), text);
         }
         return out;
@@ -590,6 +591,52 @@ final class FormAppearanceOps
         }
         Object path = invoke(field, "getValue"); //$NON-NLS-1$
         return path != null ? path.toString() : null;
+    }
+
+    /**
+     * The value of an appearance parameter as the answer carries it: a localized string as its
+     * texts by language, anything else as {@link #valueText}.
+     * <p>
+     * The localized string of composition settings is itself the value: it implements
+     * {@code mcore.Value} and has {@code getContent} but no {@code getValue}. A value that carries
+     * one through {@code getValue} is read as well.
+     * </p>
+     *
+     * @param value an mcore value
+     * @return language to text for a localized string, otherwise the text
+     */
+    static Object appearanceValue(Object value)
+    {
+        Map<String, String> localized = localizedText(value);
+        if (localized == null)
+        {
+            localized = localizedText(invoke(value, "getValue")); //$NON-NLS-1$
+        }
+        return localized != null ? localized : valueText(value);
+    }
+
+    /**
+     * The texts of a localized string by language.
+     *
+     * @param carried a carried model object, or <code>null</code>
+     * @return language to text, or <code>null</code> when the object holds no such content
+     */
+    private static Map<String, String> localizedText(Object carried)
+    {
+        Object content = invoke(carried, "getContent"); //$NON-NLS-1$
+        Map<?, ?> entries = content instanceof EMap ? ((EMap<?, ?>)content).map()
+            : content instanceof Map ? (Map<?, ?>)content : null;
+        if (entries == null)
+        {
+            return null;
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : entries.entrySet())
+        {
+            out.put(String.valueOf(entry.getKey()),
+                entry.getValue() == null ? null : String.valueOf(entry.getValue()));
+        }
+        return out;
     }
 
     /**
