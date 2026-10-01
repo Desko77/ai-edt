@@ -161,8 +161,13 @@ public class TheToolListHasAWeightBudgetTest
      * list (measured 30.09: 3028). Its five write doors are hidden under Canonical and weigh
      * nothing here.
      * </p>
+     * <p>
+     * And from 186245 to 186359 for runKey on launch_debugger: a launch held open by a modal
+     * question answers Pending with a key to collect what it came to, and the schema is where a
+     * client learns the key exists. Measured 30.09: 186359.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186245;
+    private static final int DOCUMENT_BUDGET = 186359;
 
     private LiveServer server;
 

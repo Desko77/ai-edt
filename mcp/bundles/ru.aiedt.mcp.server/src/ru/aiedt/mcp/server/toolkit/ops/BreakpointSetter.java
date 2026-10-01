@@ -42,6 +42,8 @@ import ru.aiedt.mcp.server.support.ProjectStateGuard;
  * Batch mode exists because an arming a scenario breakpoint by breakpoint is slow, and an agent that
  * knows the layout of a test up front can name every line in one call. Each item is its own attempt:
  * one failure does not roll back the others, and the response reports per-item outcome plus a tally.
+ * A replacing batch ({@code replaceModuleSet}) is refused whole when a module it addresses does not
+ * resolve, and a replacing batch that armed nothing of what it cleared is an error naming what went.
  * </p>
  */
 public class BreakpointSetter
@@ -72,7 +74,16 @@ public class BreakpointSetter
     private static final String KEY_REPLACED_MODULE_SET = "replacedModuleSet"; //$NON-NLS-1$
     private static final String KEY_CLEARED_MODULES = "clearedModules"; //$NON-NLS-1$
     private static final String KEY_REMOVED_COUNT = "removedCount"; //$NON-NLS-1$
+    private static final String KEY_REMOVED_LINES = "removedLines"; //$NON-NLS-1$
     private static final String KEY_BREAKPOINT_RESULTS = "breakpointResults"; //$NON-NLS-1$
+    private static final String KEY_REASON = "reason"; //$NON-NLS-1$
+    private static final String KEY_MODULES = "modules"; //$NON-NLS-1$
+
+    /** Why a replacing batch was refused whole: a module it addresses does not resolve. */
+    static final String REASON_MODULE_NOT_RESOLVED = "moduleNotResolved"; //$NON-NLS-1$
+
+    /** Why a replacing batch answered as an error: its modules were cleared and nothing was armed. */
+    static final String REASON_NO_BREAKPOINT_SET = "noBreakpointSet"; //$NON-NLS-1$
     private static final String KEY_INDEX = "index"; //$NON-NLS-1$
     private static final String KEY_RESPONSE = "response"; //$NON-NLS-1$
     private static final String KEY_ERROR = "error"; //$NON-NLS-1$
@@ -251,6 +262,13 @@ public class BreakpointSetter
      * Sets a batch of breakpoints. Each item is resolved through {@link #setOne(Map)}, so the single
      * path's validation, readiness gate and option handling apply per item. An item's failure does not
      * stop the rest.
+     * <p>
+     * A replacing batch is held to more, because it destroys before it arms: every module it
+     * addresses is resolved first, and an unresolvable one refuses the whole batch with nothing
+     * removed. A batch whose modules were cleared but whose breakpoints all failed to arm is an
+     * error naming what went - the caller is left holding the list to re-arm, not a success that
+     * says a module is left with no breakpoints at all.
+     * </p>
      *
      * @param raw the JSON array
      * @param outer the outer parameters, for the projectName an item may inherit
@@ -282,25 +300,34 @@ public class BreakpointSetter
         String outerProject = JsonUtils.extractStringArgument(outer, KEY_PROJECT_NAME);
         boolean replaceModuleSet =
             JsonUtils.extractBooleanArgument(outer, KEY_REPLACE_MODULE_SET, false);
+
+        List<Map<String, String>> items = new ArrayList<>();
+        for (int i = 0; i < arr.size(); i++)
+        {
+            try
+            {
+                items.add(normalizeItem(arr.get(i), outerProject));
+            }
+            catch (Exception notAnObject)
+            {
+                // A malformed item names no module; the arming pass reports it where it sits.
+                items.add(null);
+            }
+        }
+
         List<Map<String, Object>> clearedModules = new ArrayList<>();
         int removedCount = 0;
         if (replaceModuleSet)
         {
+            List<String> unresolvable =
+                unresolvableModules(items, BreakpointSetter::moduleResolvable);
+            if (!unresolvable.isEmpty())
+            {
+                return moduleNotResolvedAnswer(unresolvable, outerProject);
+            }
             // Cleared before the first breakpoint is armed: the batch that follows has to be the
             // module's whole set, and arming first would have the arming removed with the rest.
-            List<Map<String, String>> addressed = new ArrayList<>();
-            for (int i = 0; i < arr.size(); i++)
-            {
-                try
-                {
-                    addressed.add(normalizeItem(arr.get(i), outerProject));
-                }
-                catch (Exception notAnObject)
-                {
-                    // The main pass reports the malformed item; there is no module to clear for it.
-                }
-            }
-            clearedModules = clearModuleSet(addressed, MODULE_CLEARER);
+            clearedModules = clearModuleSet(items, MODULE_CLEARER);
             for (Map<String, Object> cleared : clearedModules)
             {
                 Object removed = cleared.get(KEY_REMOVED_COUNT);
@@ -320,12 +347,8 @@ public class BreakpointSetter
             Map<String, Object> entry = new LinkedHashMap<>();
             entry.put(KEY_INDEX, Integer.valueOf(i));
 
-            Map<String, String> item;
-            try
-            {
-                item = normalizeItem(arr.get(i), outerProject);
-            }
-            catch (Exception itemEx)
+            Map<String, String> item = items.get(i);
+            if (item == null)
             {
                 entry.put(KEY_OK, Boolean.FALSE);
                 entry.put(KEY_ERROR, "item " + i + " is not a JSON object"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -367,6 +390,11 @@ public class BreakpointSetter
             results.add(entry);
         }
 
+        if (replaceModuleSet && okCount == 0)
+        {
+            return noBreakpointSetAnswer(results, failCount, removedCount, clearedModules);
+        }
+
         ToolResult answer = ToolResult.success()
             .put(KEY_BATCH, true)
             .put(KEY_OK, okCount)
@@ -379,6 +407,135 @@ public class BreakpointSetter
                 .put(KEY_CLEARED_MODULES, clearedModules);
         }
         return answer.toJson();
+    }
+
+    /**
+     * The modules of a batch that name no file the workspace holds, distinct and in the order the
+     * batch wrote them.
+     * <p>
+     * The address being resolved is the pair (project, module): one relative path is a different
+     * file in every project that holds it, so the first project's copy says nothing about the
+     * second's. The reported name is the module alone - the fix for one copy of the path is the fix
+     * for every copy of it.
+     * </p>
+     *
+     * @param items the batch items, already normalized; a malformed one is <code>null</code> and
+     *            names nothing
+     * @param resolvable how the decision is made, so a test answers it without a workspace
+     * @return the module addresses that do not resolve; empty when they all do
+     */
+    static List<String> unresolvableModules(List<Map<String, String>> items,
+        java.util.function.BiFunction<String, String, Boolean> resolvable)
+    {
+        List<String> unresolvable = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+        for (Map<String, String> item : items)
+        {
+            if (item == null)
+            {
+                continue;
+            }
+            String module = item.get(KEY_MODULE);
+            if (module == null || module.isEmpty())
+            {
+                continue;
+            }
+            String project = item.get(KEY_PROJECT_NAME);
+            String address = (project == null ? "" : project) + "|" + module; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!seen.add(address))
+            {
+                continue;
+            }
+            if (!resolvable.apply(project, module).booleanValue() && !unresolvable.contains(module))
+            {
+                unresolvable.add(module);
+            }
+        }
+        return unresolvable;
+    }
+
+    /**
+     * Whether a module address names a file the workspace holds.
+     * <p>
+     * The same resolution the arming pass applies per item, read once up front for a replacing
+     * batch: a module that does not resolve cannot be armed and cannot be cleared either, and a
+     * batch that cleared its other modules first would leave them empty for nothing.
+     * </p>
+     *
+     * @param projectName the project the module is relative to; <code>null</code> for an absolute
+     *            path
+     * @param module the module address
+     * @return whether the workspace holds the file it names
+     */
+    static boolean moduleResolvable(String projectName, String module)
+    {
+        if (module == null || module.isEmpty())
+        {
+            return false;
+        }
+        if (!BreakpointAccess.looksLikeAbsolutePath(module)
+            && (projectName == null || projectName.isEmpty()))
+        {
+            return false;
+        }
+        IFile file = BreakpointAccess.resolveModuleFile(projectName, module);
+        return file != null && file.exists();
+    }
+
+    /**
+     * The refusal for a replacing batch with a module that does not resolve.
+     *
+     * @param modules the unresolvable module addresses
+     * @param projectName the project the outer call named, so the refusal names the address whole
+     * @return the answer: the batch refused whole, nothing removed
+     */
+    static String moduleNotResolvedAnswer(List<String> modules, String projectName)
+    {
+        ToolResult answer = ToolResult.error(
+            "The batch was refused whole: a module it addresses does not resolve, and a replacing " //$NON-NLS-1$
+                + "batch has to arm what it cleared - one whose module is not resolvable would clear " //$NON-NLS-1$
+                + "the rest and arm nothing over them. Nothing was removed and nothing was armed. " //$NON-NLS-1$
+                + "Fix or drop the modules and send the batch again.")
+            .put(KEY_BATCH, true)
+            .put(KEY_REASON, REASON_MODULE_NOT_RESOLVED)
+            .put(KEY_MODULES, modules)
+            .put(KEY_REMOVED_COUNT, Integer.valueOf(0));
+        if (projectName != null && !projectName.isEmpty())
+        {
+            answer.put(KEY_PROJECT_NAME, projectName);
+        }
+        return answer.toJson();
+    }
+
+    /**
+     * The refusal for a replacing batch whose modules were cleared and none of whose breakpoints
+     * was armed.
+     *
+     * @param results the per-item outcomes, each naming why its breakpoint failed
+     * @param failCount how many items failed
+     * @param removedCount how many breakpoints were removed from the modules
+     * @param clearedModules the per-module removals, each with its removedLines
+     * @return the answer: an error that names what went, so the caller can re-arm it
+     */
+    static String noBreakpointSetAnswer(List<Map<String, Object>> results, int failCount,
+        int removedCount, List<Map<String, Object>> clearedModules)
+    {
+        return ToolResult.error(
+            "None of the batch's breakpoints was set, and the modules' previous breakpoints were " //$NON-NLS-1$
+                + "already removed. clearedModules names each module with the lines its removed " //$NON-NLS-1$
+                + "line breakpoints sat on - removedCount also counts the ones that carry no line, " //$NON-NLS-1$
+                + "which no line can name - and breakpointResults names why every new breakpoint " //$NON-NLS-1$
+                + "failed. Re-arm the removed lines with add_breakpoint, or fix what the failures " //$NON-NLS-1$
+                + "name and send the batch again.")
+            .put(KEY_BATCH, true)
+            .put(KEY_OK, Integer.valueOf(0))
+            .put(KEY_FAIL, Integer.valueOf(failCount))
+            .put(KEY_REASON, REASON_NO_BREAKPOINT_SET)
+            .put(KEY_BREAKPOINT_RESULTS, results)
+            .put(KEY_REPLACED_MODULE_SET, true)
+            .put(KEY_REMOVED_COUNT, Integer.valueOf(removedCount))
+            .put(KEY_CLEARED_MODULES, clearedModules)
+            .toJson();
     }
 
     /**
@@ -397,17 +554,19 @@ public class BreakpointSetter
          * @param projectName the project the module belongs to; may be <code>null</code> for an
          *            absolute module path
          * @param module the module address as the batch item wrote it
-         * @return how many breakpoints were removed from that module
+         * @return what the clearing removed: every breakpoint kind in {@link BreakpointAccess.Removal#count},
+         *         the line-bound ones by their lines in {@link BreakpointAccess.Removal#lines}
          * @throws Exception when the module cannot be resolved or the platform refuses a removal
          */
-        int clear(String projectName, String module) throws Exception;
+        BreakpointAccess.Removal clear(String projectName, String module) throws Exception;
     }
 
     /** The live clearer: resolves the module file, then drops every breakpoint on it. */
     private static final ModuleClearer MODULE_CLEARER = (projectName, module) ->
     {
         IFile file = BreakpointAccess.resolveModuleFile(projectName, module);
-        return file == null ? 0 : BreakpointAccess.removeAllBreakpointsInResource(file);
+        return file == null ? new BreakpointAccess.Removal(0, List.of())
+            : BreakpointAccess.removeAllBreakpointsReportingLines(file);
     };
 
     /**
@@ -415,10 +574,11 @@ public class BreakpointSetter
      * set. Each module is cleared once however many items name it, and one module that cannot be
      * cleared does not stop the rest - its item carries the reason and the others are still replaced.
      *
-     * @param items the batch items, already normalized, in the order the caller wrote them
+     * @param items the batch items, already normalized, in the order the caller wrote them; a
+     *            malformed one is <code>null</code> and names nothing
      * @param clearer how to clear one module
-     * @return one entry per distinct module: its address, how many breakpoints went, or why it could
-     *         not be cleared
+     * @return one entry per distinct module: its address, how many breakpoints went and the lines
+     *         the line-bound ones sat on, or why it could not be cleared
      */
     static List<Map<String, Object>> clearModuleSet(List<Map<String, String>> items,
         ModuleClearer clearer)
@@ -427,6 +587,10 @@ public class BreakpointSetter
         Set<String> seen = new HashSet<>();
         for (Map<String, String> item : items)
         {
+            if (item == null)
+            {
+                continue;
+            }
             String module = item.get(KEY_MODULE);
             if (module == null || module.isEmpty())
             {
@@ -447,7 +611,9 @@ public class BreakpointSetter
             }
             try
             {
-                entry.put(KEY_REMOVED_COUNT, Integer.valueOf(clearer.clear(project, module)));
+                BreakpointAccess.Removal removal = clearer.clear(project, module);
+                entry.put(KEY_REMOVED_COUNT, Integer.valueOf(removal.count));
+                entry.put(KEY_REMOVED_LINES, removal.lines);
             }
             catch (Exception e)
             {

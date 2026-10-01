@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -142,6 +143,8 @@ public class LaunchDebuggerTool implements IMcpTool
             .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
                 "launch: how long to wait for waitForEndpoint, default 20, limit 50. Refused " //$NON-NLS-1$
                     + "without waitForEndpoint.") //$NON-NLS-1$
+            .stringProperty("runKey", //$NON-NLS-1$
+                "launch: resume a launch that answered Pending, by the runKey it answered with.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$
                 "terminate: stop every active EDT launch (default false).") //$NON-NLS-1$
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
@@ -155,7 +158,7 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "set_breakpoint_state.") //$NON-NLS-1$
             .booleanProperty("breakpointEnabled", //$NON-NLS-1$
                 "set_breakpoint_state: true enables the breakpoint, false switches it off " //$NON-NLS-1$
-                    + "without removing it. Required - neither default suits every caller.") //$NON-NLS-1$
+                    + "without removing it; that action refuses a call without it.") //$NON-NLS-1$
             .booleanProperty("replaceModuleSet", //$NON-NLS-1$
                 "add_breakpoint batch: drop the breakpoints the addressed modules already carry, " //$NON-NLS-1$
                     + "so the batch is their whole set (default false).") //$NON-NLS-1$
@@ -219,6 +222,33 @@ public class LaunchDebuggerTool implements IMcpTool
         }
         return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", true) //$NON-NLS-1$
             ? "update_database" : null; //$NON-NLS-1$
+    }
+
+    /**
+     * Polls a launch this facade's launch actions started.
+     * <p>
+     * {@code launch} and {@code debug_launch} hand the call to {@link DebugSessionStarter}, which
+     * reads {@code runKey} and resumes the run it names; every other action starts new work, so a
+     * live launch key must not exempt it. The name returned is the one the run was stamped with -
+     * the starter's own, not this facade's.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the action argument, normalized exactly as {@link #execute} normalizes it;
+     *            may be {@code null}
+     * @return {@link DebugSessionStarter#NAME} when this call polls a handed-over launch,
+     *         <code>null</code> otherwise
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        if (!PendingWorkRegistry.DEBUG_LAUNCH.domain().equals(domain))
+        {
+            return null;
+        }
+        String normalized = JsonUtils.normalizeOperationToken(operation);
+        return "launch".equals(normalized) || "debug_launch".equals(normalized) //$NON-NLS-1$ //$NON-NLS-2$
+            ? DebugSessionStarter.NAME : null;
     }
 
     @Override

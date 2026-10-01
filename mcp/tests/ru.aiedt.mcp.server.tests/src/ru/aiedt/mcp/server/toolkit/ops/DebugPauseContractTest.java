@@ -41,9 +41,14 @@ public class DebugPauseContractTest
     private static final String TERMINATED_APP = "d19-pause-terminated"; //$NON-NLS-1$
     private static final String TARGETLESS_APP = "d19-pause-targetless"; //$NON-NLS-1$
     private static final String REFUSED_APP = "d19-pause-refused"; //$NON-NLS-1$
+    private static final String NAMED_WITH_SNAPSHOT_APP = "d31-pause-named-with-snapshot"; //$NON-NLS-1$
+    private static final String ALREADY_SUSPENDED_APP = "d31-pause-already-suspended"; //$NON-NLS-1$
+    private static final String FOREIGN_APP = "d31-pause-foreign-thread"; //$NON-NLS-1$
+    private static final String OWN_APP = "d31-pause-own-app"; //$NON-NLS-1$
 
     private static final List<String> TOUCHED = List.of(PAUSED_APP, NAMED_APP, ARMED_APP, BARE_APP,
-        TERMINATED_APP, TARGETLESS_APP, REFUSED_APP);
+        TERMINATED_APP, TARGETLESS_APP, REFUSED_APP, NAMED_WITH_SNAPSHOT_APP,
+        ALREADY_SUSPENDED_APP, FOREIGN_APP, OWN_APP);
 
     private final DebugSessionBook registry = DebugSessionBook.get();
 
@@ -93,6 +98,67 @@ public class DebugPauseContractTest
         assertEquals(1, session.suspendRequests);
         assertEquals("the answer reports the thread that was named, not another one", //$NON-NLS-1$
             session.thread(), registry.getThread(answer.get("threadId").getAsLong())); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aNamedThreadIsAskedEvenWhenAnotherThreadOfTheSessionIsStopped() throws Exception
+    {
+        FakeDebugFrames.Session stopped = FakeDebugFrames.session(NAMED_WITH_SNAPSHOT_APP);
+        FakeDebugFrames.Session named = runningSession(NAMED_WITH_SNAPSHOT_APP);
+        long namedId = FakeDebugToolCalls.register(NAMED_WITH_SNAPSHOT_APP, named);
+        // The registry holds a stop of the OTHER thread, the state the defect was read in: the
+        // named thread is running, and a snapshot of its neighbour is not a stop of it.
+        registry.clearSnapshot(NAMED_WITH_SNAPSHOT_APP);
+        FakeDebugToolCalls.register(NAMED_WITH_SNAPSHOT_APP, stopped);
+
+        JsonObject answer = json(DebugPauser.pause(registry, NAMED_WITH_SNAPSHOT_APP,
+            stopped.debugTarget(), named.thread(), namedId, 1));
+
+        assertEquals(DebugPauser.OUTCOME_PAUSED, outcome(answer));
+        assertEquals("the named thread receives the suspend request", 1, named.suspendRequests); //$NON-NLS-1$
+        assertEquals("the answer names the thread the caller named", namedId, //$NON-NLS-1$
+            answer.get("threadId").getAsLong()); //$NON-NLS-1$
+        assertFalse("a thread that was running before the ask is not answered as already stopped", //$NON-NLS-1$
+            answer.has("alreadySuspended")); //$NON-NLS-1$
+        assertEquals(named.thread(), registry.getThread(answer.get("threadId").getAsLong())); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aNamedThreadAlreadySuspendedIsAnsweredWithoutBeingAsked() throws Exception
+    {
+        FakeDebugFrames.Session stopped = FakeDebugFrames.session(ALREADY_SUSPENDED_APP);
+        FakeDebugFrames.Session named = FakeDebugFrames.session(ALREADY_SUSPENDED_APP);
+        long namedId = FakeDebugToolCalls.register(ALREADY_SUSPENDED_APP, named);
+        registry.clearSnapshot(ALREADY_SUSPENDED_APP);
+        FakeDebugToolCalls.register(ALREADY_SUSPENDED_APP, stopped);
+
+        JsonObject answer = json(DebugPauser.pause(registry, ALREADY_SUSPENDED_APP,
+            stopped.debugTarget(), named.thread(), namedId, 1));
+
+        assertEquals(DebugPauser.OUTCOME_PAUSED, outcome(answer));
+        assertEquals("a thread already suspended is answered from its own state", 0, //$NON-NLS-1$
+            named.suspendRequests);
+        assertEquals(true, answer.get("alreadySuspended").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(namedId, answer.get("threadId").getAsLong()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aThreadOfAnotherSessionIsRefusedBeforeAnythingIsAsked() throws Exception
+    {
+        FakeDebugFrames.Session foreign = FakeDebugFrames.session(FOREIGN_APP);
+        long foreignId = FakeDebugToolCalls.register(FOREIGN_APP, foreign);
+
+        JsonObject answer = FakeDebugToolCalls.json(new DebugPauser().execute(
+            FakeDebugToolCalls.args("applicationId", OWN_APP, //$NON-NLS-1$
+                "threadId", String.valueOf(foreignId)))); //$NON-NLS-1$
+
+        assertEquals(DebugPauser.OUTCOME_ERROR, outcome(answer));
+        assertEquals(DebugThreadOwnership.REASON, answer.get("reason").getAsString()); //$NON-NLS-1$
+        assertEquals("the answer names the session the thread belongs to", FOREIGN_APP, //$NON-NLS-1$
+            answer.get("applicationId").getAsString()); //$NON-NLS-1$
+        assertTrue("the text names the owning session too: " + answer, //$NON-NLS-1$
+            answer.get("error").getAsString().contains(FOREIGN_APP)); //$NON-NLS-1$
+        assertEquals("nothing is asked of a thread that is refused", 0, foreign.suspendRequests); //$NON-NLS-1$
     }
 
     @Test

@@ -294,7 +294,7 @@ public final class TaskDirectory
             PendingWorkRegistry.StopOutcome stopping = registry == null
                 ? PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP
                 : registry.cancelAndStop(runKey);
-            statusMessage = cancellationMessage(stopping);
+            statusMessage = cancellationMessage(stopping, registry);
             status = CANCELLED;
             lastUpdatedAt = System.currentTimeMillis();
         }
@@ -308,12 +308,27 @@ public final class TaskDirectory
          * </p>
          *
          * @param stopping what the domain reported.
+         * @param registry the domain the run belongs to, or {@code null} when no domain holds the
+         *            key; a debug launch keeps belonging to the environment after this server
+         *            stopped waiting on it, and the message says so
          * @return the sentence for the caller
          */
-        private static String cancellationMessage(PendingWorkRegistry.StopOutcome stopping)
+        private static String cancellationMessage(PendingWorkRegistry.StopOutcome stopping,
+            PendingWorkRegistry registry)
         {
             if (stopping == PendingWorkRegistry.StopOutcome.STOPPED)
             {
+                if (registry == PendingWorkRegistry.DEBUG_LAUNCH)
+                {
+                    // The run's body is done with, but the body only WAITED on the launch: the
+                    // launch was handed to the environment before the run existed, and nothing
+                    // here can pull it back from a question it is parked on.
+                    return "Cancellation was asked for and this server stopped waiting on the " //$NON-NLS-1$
+                        + "run. The launch itself belongs to the environment: it may still be " //$NON-NLS-1$
+                        + "waiting on a question open in EDT, and answering that question still " //$NON-NLS-1$
+                        + "starts the client. Check debug_status before launching this " //$NON-NLS-1$
+                        + "application again."; //$NON-NLS-1$
+                }
                 return "Cancellation was asked for. This server stopped waiting on the run, and " //$NON-NLS-1$
                     + "the domain stopped the work it had started. What that work had already " //$NON-NLS-1$
                     + "written stays written."; //$NON-NLS-1$
