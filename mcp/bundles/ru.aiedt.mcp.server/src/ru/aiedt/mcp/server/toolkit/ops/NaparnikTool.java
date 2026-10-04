@@ -52,8 +52,15 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 public class NaparnikTool
     implements IMcpTool
 {
-    /** The only version this bridge calls. A qualifier after the micro is accepted. */
-    static final String SUPPORTED_VERSION = "1.0.7"; //$NON-NLS-1$
+    /**
+     * The versions this bridge calls, oldest first. A qualifier after the micro is accepted. Both
+     * were measured on the stand: 1.0.7 carries the 9-argument request this bridge builds, and
+     * 1.0.8.v202609241142 kept every reflected link the bridge walks.
+     */
+    static final List<String> SUPPORTED_VERSIONS = List.of("1.0.7", "1.0.8"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** The versions as one line, for the sentences that name them all. */
+    static final String SUPPORTED_VERSIONS_TEXT = String.join(", ", SUPPORTED_VERSIONS); //$NON-NLS-1$
 
     private static final String BUNDLE_AI = "com.e1c.edt.ai"; //$NON-NLS-1$
 
@@ -204,7 +211,8 @@ public class NaparnikTool
     @Override
     public String getDescription()
     {
-        return "Asks 1C:Naparnik 1.0.7 a question, and reports whether that version is installed. " //$NON-NLS-1$
+        return "Asks 1C:Naparnik 1.0.7 or 1.0.8 a question, and reports whether one of them is "
+            + "installed. " //$NON-NLS-1$
             + "operation=status only lists bundles. probe=true starts the Naparnik UI bundle if it " //$NON-NLS-1$
             + "is not already running. operation=ask sends the question. The question, and whatever " //$NON-NLS-1$
             + "Naparnik's tools read, goes to the 1C:Naparnik service. The bridge " //$NON-NLS-1$
@@ -285,11 +293,11 @@ public class NaparnikTool
     private String buildHelp()
     {
         String text = "status reports whether 1C:Naparnik is installed, which copies exist, " //$NON-NLS-1$
-            + "whether the chosen version is " + SUPPORTED_VERSION //$NON-NLS-1$
+            + "whether the chosen version is one of " + SUPPORTED_VERSIONS_TEXT //$NON-NLS-1$
             + ", and the bridge setting (mcpNaparnikBridgeEnabled, off by default). " //$NON-NLS-1$
             + "probe=true starts the Naparnik UI bundle if it is not already running and checks " //$NON-NLS-1$
             + "each link to the facade: class loading, the injector, the facade, and the tool " //$NON-NLS-1$
-            + "names. ask sends one question to 1C:Naparnik " + SUPPORTED_VERSION //$NON-NLS-1$
+            + "names. ask sends one question to 1C:Naparnik " + SUPPORTED_VERSIONS_TEXT //$NON-NLS-1$
             + ". The question, and whatever Naparnik's tools read, goes to the 1C:Naparnik service. " //$NON-NLS-1$
             + "ask arguments: projectName, question (up to 20000 characters), conversationId, " //$NON-NLS-1$
             + "replyTo (only with conversationId), maxToolRounds (1..30, default 10), " //$NON-NLS-1$
@@ -315,7 +323,7 @@ public class NaparnikTool
         Survey survey = survey();
         ToolResult result = ToolResult.success()
             .put("bridgeEnabled", bridgeEnabled()) //$NON-NLS-1$
-            .put("supportedVersion", SUPPORTED_VERSION) //$NON-NLS-1$
+            .put("supportedVersion", SUPPORTED_VERSIONS_TEXT) //$NON-NLS-1$
             .put("inPolicy", survey.inPolicy) //$NON-NLS-1$
             .put("bundles", survey.bundles) //$NON-NLS-1$
             .put("allowedServiceTools", ALLOWED_SERVICE_TOOLS); //$NON-NLS-1$
@@ -402,7 +410,7 @@ public class NaparnikTool
         }
         if (!outside.isEmpty())
         {
-            survey.refusal = "outside the supported version " + SUPPORTED_VERSION + ": " //$NON-NLS-1$ //$NON-NLS-2$
+            survey.refusal = "outside the supported versions " + SUPPORTED_VERSIONS_TEXT + ": " //$NON-NLS-1$ //$NON-NLS-2$
                 + String.join(", ", outside); //$NON-NLS-1$
             return survey;
         }
@@ -498,8 +506,15 @@ public class NaparnikTool
 
     private static boolean supported(String version)
     {
-        return SUPPORTED_VERSION.equals(version)
-            || (version != null && version.startsWith(SUPPORTED_VERSION + ".")); //$NON-NLS-1$
+        for (String known : SUPPORTED_VERSIONS)
+        {
+            if (known.equals(version)
+                || (version != null && version.startsWith(known + "."))) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String duplicateSingleton(Map<String, List<BundleCopy>> byName)
@@ -518,7 +533,7 @@ public class NaparnikTool
             {
                 return "resolved copies of singleton " + name + ": " //$NON-NLS-1$ //$NON-NLS-2$
                     + String.join(" and ", versions) //$NON-NLS-1$
-                    + "; supported version is " + SUPPORTED_VERSION; //$NON-NLS-1$
+                    + "; supported versions are " + SUPPORTED_VERSIONS_TEXT; //$NON-NLS-1$
             }
         }
         return null;
@@ -586,7 +601,7 @@ public class NaparnikTool
             }
         }
         return "1C:Naparnik is installed but not resolved: " + String.join("; ", parts) //$NON-NLS-1$ //$NON-NLS-2$
-            + "; supported version is " + SUPPORTED_VERSION; //$NON-NLS-1$
+            + "; supported versions are " + SUPPORTED_VERSIONS_TEXT; //$NON-NLS-1$
     }
 
     private static List<Map<String, Object>> rows(Map<String, List<BundleCopy>> byName)

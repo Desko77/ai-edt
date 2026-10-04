@@ -48,6 +48,8 @@ public class NaparnikStatusTest
 {
     private static final String SUPPORTED = "1.0.7.v202608311234"; //$NON-NLS-1$
 
+    private static final String NEWER = "1.0.8.v202609241142"; //$NON-NLS-1$
+
     private static final String OLDER = "1.0.5.v202601010000"; //$NON-NLS-1$
 
     @Test
@@ -57,7 +59,8 @@ public class NaparnikStatusTest
 
         assertTrue(doc.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(doc.get("inPolicy").getAsBoolean()); //$NON-NLS-1$
-        assertEquals(NaparnikTool.SUPPORTED_VERSION, doc.get("supportedVersion").getAsString()); //$NON-NLS-1$
+        assertEquals(NaparnikTool.SUPPORTED_VERSIONS_TEXT,
+            doc.get("supportedVersion").getAsString()); //$NON-NLS-1$
         assertFalse(doc.get("bridgeEnabled").getAsBoolean()); //$NON-NLS-1$
         assertFalse(doc.has("refusal")); //$NON-NLS-1$
         assertFalse(doc.has("links")); //$NON-NLS-1$
@@ -71,6 +74,29 @@ public class NaparnikStatusTest
     }
 
     @Test
+    public void theNewerSupportedVersionIsInPolicy()
+    {
+        JsonObject doc = status(installation(NEWER, "RESOLVED"), false); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(doc.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(doc.get("inPolicy").getAsBoolean()); //$NON-NLS-1$
+        assertFalse(doc.has("refusal")); //$NON-NLS-1$
+        assertEquals(4, doc.getAsJsonArray("bundles").size()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aFutureVersionIsRefusedByName()
+    {
+        JsonObject doc = status(installation("1.0.9.v202612312359", "RESOLVED"), false); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertFalse(doc.get("inPolicy").getAsBoolean()); //$NON-NLS-1$
+        String refusal = doc.get("refusal").getAsString(); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("1.0.9")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("1.0.7")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("1.0.8")); //$NON-NLS-1$
+    }
+
+    @Test
     public void anOlderVersionIsRefusedByName()
     {
         JsonObject doc = status(installation(OLDER, "RESOLVED"), false); //$NON-NLS-1$
@@ -79,6 +105,7 @@ public class NaparnikStatusTest
         String refusal = doc.get("refusal").getAsString(); //$NON-NLS-1$
         assertTrue(refusal, refusal.contains("1.0.5")); //$NON-NLS-1$
         assertTrue(refusal, refusal.contains("1.0.7")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("1.0.8")); //$NON-NLS-1$
         assertFalse(refusal, refusal.contains("not installed")); //$NON-NLS-1$
     }
 
@@ -442,7 +469,8 @@ public class NaparnikStatusTest
         JsonObject doc = parse(new NaparnikTool(live).execute(Map.of("operation", "status"))); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertTrue(doc.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertEquals(NaparnikTool.SUPPORTED_VERSION, doc.get("supportedVersion").getAsString()); //$NON-NLS-1$
+        assertEquals(NaparnikTool.SUPPORTED_VERSIONS_TEXT,
+            doc.get("supportedVersion").getAsString()); //$NON-NLS-1$
         assertFalse(doc.has("links")); //$NON-NLS-1$
         String refusal = doc.has("refusal") ? doc.get("refusal").getAsString() : ""; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         if (doc.toString().contains("1.0.2")) //$NON-NLS-1$
