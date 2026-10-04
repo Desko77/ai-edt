@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -135,6 +136,11 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         }
         String format = orDefault(JsonUtils.extractStringArgument(params, "format"), "json"); //$NON-NLS-1$ //$NON-NLS-2$
         Set<String> enabledRules = parseRules(JsonUtils.extractStringArgument(params, "rules")); //$NON-NLS-1$
+        String unknownRule = unknownRule(enabledRules);
+        if (unknownRule != null)
+        {
+            return ToolResult.error(TextSuggest.invalidValue("rules", unknownRule, RULE_NAMES)).toJson(); //$NON-NLS-1$
+        }
 
         try
         {
@@ -429,15 +435,55 @@ public class DetectQueryAntiPatternsTool implements IMcpTool
         return enabled == null || enabled.isEmpty() || enabled.contains(rule);
     }
 
-    private static Set<String> parseRules(String raw)
+    /** The rule names {@code rules} accepts. */
+    static final List<String> RULE_NAMES = List.of("SELECT_STAR", "NO_WHERE_ON_LARGE_TABLE", //$NON-NLS-1$ //$NON-NLS-2$
+        "VIRTUAL_TABLE_PARAMS", "CROSS_JOIN_NO_CONDITION", "NESTED_QUERY_DEPTH", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "SUBQUERY_IN_SELECT", "QUERY_IN_LOOP"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * Reads the {@code rules} argument: names separated by commas, trimmed and upper-cased.
+     *
+     * @param raw the argument, or {@code null}
+     * @return the names, or {@code null} for every rule
+     */
+    static Set<String> parseRules(String raw)
     {
         if (raw == null || raw.isEmpty())
         {
             return null;
         }
-        Set<String> out = new HashSet<>(Arrays.asList(raw.split("\\s*,\\s*"))); //$NON-NLS-1$
-        out.removeIf(String::isEmpty);
+        Set<String> out = new HashSet<>();
+        for (String name : raw.split(",")) //$NON-NLS-1$
+        {
+            String trimmed = name.trim();
+            if (!trimmed.isEmpty())
+            {
+                out.add(trimmed.toUpperCase(Locale.ROOT));
+            }
+        }
         return out.isEmpty() ? null : out;
+    }
+
+    /**
+     * The first name in {@code rules} that names no rule.
+     *
+     * @param rules the names read, or {@code null}
+     * @return the name, or {@code null} when every name is a rule
+     */
+    static String unknownRule(Set<String> rules)
+    {
+        if (rules == null)
+        {
+            return null;
+        }
+        for (String rule : new java.util.TreeSet<>(rules))
+        {
+            if (!RULE_NAMES.contains(rule))
+            {
+                return rule;
+            }
+        }
+        return null;
     }
 
     private static String renderMarkdown(List<Map<String, Object>> findings,

@@ -8,7 +8,6 @@ package ru.aiedt.mcp.server.support;
 
 import java.io.IOException;
 import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.URL;
 
 /**
@@ -67,6 +66,7 @@ public final class EndpointWaiter
         outcome.asked = url;
         long deadline = System.currentTimeMillis() + budgetMs;
         String current = url;
+        int redirects = 0;
         while (System.currentTimeMillis() < deadline)
         {
             long left = deadline - System.currentTimeMillis();
@@ -80,10 +80,11 @@ public final class EndpointWaiter
                 if (redirectTo[0] != null)
                 {
                     current = resolve(current, redirectTo[0]);
-                    int hops = countRedirects(url, current);
-                    if (hops > MAX_REDIRECTS)
+                    redirects++;
+                    if (redirects > MAX_REDIRECTS)
                     {
-                        outcome.lastProblem = "more than " + MAX_REDIRECTS + " redirects"; //$NON-NLS-1$
+                        outcome.lastProblem = "more than " + MAX_REDIRECTS //$NON-NLS-1$
+                            + " redirects (followed " + redirects + ")"; //$NON-NLS-1$ //$NON-NLS-2$
                         break;
                     }
                     continue;
@@ -154,20 +155,6 @@ public final class EndpointWaiter
         catch (Exception e)
         {
             return location;
-        }
-    }
-
-    private static int countRedirects(String from, String to)
-    {
-        try
-        {
-            URI f = URI.create(from);
-            URI t = URI.create(to);
-            return f.equals(t) ? 0 : 1;
-        }
-        catch (Exception e)
-        {
-            return 1;
         }
     }
 

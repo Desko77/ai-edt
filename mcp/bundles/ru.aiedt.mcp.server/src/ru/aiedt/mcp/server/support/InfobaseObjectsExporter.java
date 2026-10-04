@@ -960,9 +960,9 @@ public final class InfobaseObjectsExporter
      * @param budgetMs how long the run is waited for
      * @param call the platform call
      * @param launchClaim the launch boundary of this run, claimed by the worker under the
-     *            per-infobase lock right before it calls the launcher and by the abandonment
-     *            before it declares itself, or {@code null} when the call has no launcher boundary
-     *            (a stand-in)
+     *            per-infobase lock right before it calls the launcher and by the stop side - the
+     *            run's stopper at the signal, the abandonment before it declares itself - or
+     *            {@code null} when the call has no launcher boundary (a stand-in)
      * @param cancelled whether the run's caller has cancelled it; polled while the wait blocks
      * @return the call's own answer
      * @throws Abandoned when the budget ran out or the caller cancelled - the call is interrupted
@@ -970,7 +970,7 @@ public final class InfobaseObjectsExporter
      * @throws Exception when the call itself failed
      */
     static String runUnderBudget(String what, long budgetMs, DesignerCall call,
-        AtomicBoolean launchClaim, BooleanSupplier cancelled) throws Exception
+        LaunchBoundary launchClaim, BooleanSupplier cancelled) throws Exception
     {
         ExecutorService worker = Executors.newSingleThreadExecutor(runnable -> {
             Thread thread = new Thread(runnable, "export-infobase-designer"); //$NON-NLS-1$
@@ -1007,14 +1007,14 @@ public final class InfobaseObjectsExporter
                         throw abandon(what + " was cancelled while it was still running", //$NON-NLS-1$
                             what + " was cancelled before the Designer run it was waiting for started; that run was " //$NON-NLS-1$
                                 + "not launched", //$NON-NLS-1$
-                            running, started, returned, launchClaim);
+                            running, started, returned, launchClaim, false);
                     }
                     if (System.currentTimeMillis() >= deadline)
                     {
                         throw abandon(what + " did not finish within " + (budgetMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
                             what + " did not reach its Designer run within " + (budgetMs / 1000) //$NON-NLS-1$
                                 + "s; that run was not launched", //$NON-NLS-1$
-                            running, started, returned, launchClaim);
+                            running, started, returned, launchClaim, true);
                     }
                 }
                 catch (InterruptedException interrupted)
@@ -1023,11 +1023,22 @@ public final class InfobaseObjectsExporter
                     throw abandon(what + " was interrupted while it was still running", //$NON-NLS-1$
                         what + " was interrupted before the Designer run it was waiting for started; that run was " //$NON-NLS-1$
                             + "not launched", //$NON-NLS-1$
-                        running, started, returned, launchClaim);
+                        running, started, returned, launchClaim, false);
                 }
                 catch (java.util.concurrent.ExecutionException failed)
                 {
                     Throwable cause = failed.getCause() != null ? failed.getCause() : failed;
+                    if (cause instanceof InterruptedException && launchClaim != null
+                        && launchClaim.heldByStop())
+                    {
+                        // The stop side claimed the boundary while the worker waited for the
+                        // per-infobase lock, and the worker's refusal at the boundary is what
+                        // ended the call: this wait's abandonment, with the launch prevented.
+                        throw abandon(what + " was cancelled while it was still running", //$NON-NLS-1$
+                            what + " was cancelled before the Designer run it was waiting for started; that run was " //$NON-NLS-1$
+                                + "not launched", //$NON-NLS-1$
+                            running, started, returned, launchClaim, false);
+                    }
                     if (cause instanceof Exception)
                     {
                         throw (Exception)cause;
@@ -1054,16 +1065,17 @@ public final class InfobaseObjectsExporter
      * @param started set once the worker has begun
      * @param returned counted down when the launcher call returns
      * @param launchClaim the launch boundary, or {@code null} when the work has none
+     * @param timedOut whether the wait gave up because its budget ran out
      * @return the abandonment to throw
      */
     private static Abandoned abandon(String message, String preventedMessage, Future<String> running,
-        AtomicBoolean started, CountDownLatch returned, AtomicBoolean launchClaim)
+        AtomicBoolean started, CountDownLatch returned, LaunchBoundary launchClaim, boolean timedOut)
     {
-        boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
+        boolean launchPrevented = launchClaim != null && launchClaim.claimStop();
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
         return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, launchPrevented,
-            stillRunning ? task -> {
+            timedOut, stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
                 {
@@ -1081,6 +1093,9 @@ public final class InfobaseObjectsExporter
         } : null);
     }
 
+    /** How long a stopper waits for the run it woke to decide its launch boundary. */
+    static final long STOP_DECISION_WAIT_MS = 3_000L;
+
     /** The runs of this domain that are live right now, keyed by runKey. */
     private static final Map<String, LiveRun> LIVE = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -1094,8 +1109,20 @@ public final class InfobaseObjectsExporter
     /** What a live run exposes to its own stopper. */
     static final class LiveRun
     {
-        /** The launch boundary of the current Designer call, or {@code null} before it starts. */
-        volatile AtomicBoolean launchClaim;
+        /**
+         * Completed by the current Designer call once its wait has ended: {@code true} when the
+         * stop side holds the launch boundary, so no Designer run was started. Replaced at the
+         * start of every call.
+         */
+        volatile java.util.concurrent.CompletableFuture<Boolean> launchDecision =
+            new java.util.concurrent.CompletableFuture<>();
+
+        /**
+         * The launch boundary of the Designer call in progress, claimed by the stopper the moment
+         * the stop is signaled - a worker still waiting for the per-infobase lock then finds the
+         * boundary taken and starts no Designer run, however soon the lock is freed.
+         */
+        volatile LaunchBoundary launchBoundary;
 
         /** Counted down by the stopper; the run's wait polls it. */
         final CountDownLatch stopped = new CountDownLatch(1);
@@ -1121,28 +1148,110 @@ public final class InfobaseObjectsExporter
     }
 
     /**
-     * Stops the run a registry cancel names: claims its launch boundary so a worker that has not
-     * crossed it starts no Designer, and wakes the wait so the abandonment is answered now rather
-     * than at the budget's end.
+     * Stops the run a registry cancel names: claims the launch boundary at the signal, so a worker
+     * still waiting for the per-infobase lock starts no Designer run however soon the lock is
+     * freed, wakes the wait so the abandonment is answered now rather than at the budget's end,
+     * and reports how the run's launch boundary was decided.
+     * <p>
+     * The claim only reserves the boundary for the stop side; who holds it is still read from the
+     * run's own decision, so a worker that crossed first is reported as a platform process still
+     * running, not as a prevented launch.
+     * </p>
      *
      * @param runKey the run's key
      * @return {@link PendingWorkRegistry.StopOutcome#NOTHING_TO_STOP} when no run is live,
-     *         otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
+     *         {@link PendingWorkRegistry.StopOutcome#PREVENTED} when the stop side holds the
+     *         boundary, otherwise {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
      */
-    private static PendingWorkRegistry.StopOutcome stopTheRun(String runKey)
+    static PendingWorkRegistry.StopOutcome stopTheRun(String runKey)
     {
         LiveRun live = LIVE.get(runKey);
         if (live == null)
         {
             return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
         }
-        AtomicBoolean claim = live.launchClaim;
-        if (claim != null)
+        LaunchBoundary boundary = live.launchBoundary;
+        if (boundary != null)
         {
-            claim.compareAndSet(false, true);
+            boundary.claimStop();
         }
         live.stopped.countDown();
-        return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        return outcomeOnceDecided(live.launchDecision);
+    }
+
+    /**
+     * What a stopper reports once the run it woke has decided its launch boundary.
+     * <p>
+     * The wait polls its stop signal every 100 ms, so the decision normally lands well inside
+     * {@link #STOP_DECISION_WAIT_MS}. Only a run whose abandonment took the boundary first is
+     * reported as {@link PendingWorkRegistry.StopOutcome#PREVENTED}; every other run is left to
+     * the registry as {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}, and the registry
+     * waits for the body itself.
+     * </p>
+     *
+     * @param launchDecision completed by the run: {@code true} when no platform process was
+     *            launched
+     * @return {@link PendingWorkRegistry.StopOutcome#PREVENTED} or
+     *         {@link PendingWorkRegistry.StopOutcome#STILL_RUNNING}
+     */
+    static PendingWorkRegistry.StopOutcome outcomeOnceDecided(
+        java.util.concurrent.CompletableFuture<Boolean> launchDecision)
+    {
+        try
+        {
+            return Boolean.TRUE.equals(launchDecision.get(STOP_DECISION_WAIT_MS, TimeUnit.MILLISECONDS))
+                ? PendingWorkRegistry.StopOutcome.PREVENTED : PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        }
+        catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException undecided)
+        {
+            return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        }
+    }
+
+    /**
+     * Runs one Designer call under its budget while the run is listed for its stopper, and tells
+     * the stopper how the launch boundary was decided.
+     *
+     * @param runKey the run's key
+     * @param live what the run exposes to its stopper
+     * @param launchClaim the launch boundary of this call
+     * @param what what the run is, as an abandonment names it
+     * @param budgetMs how long the run is waited for
+     * @param call the platform call
+     * @param cancelled whether the run's caller has cancelled it, or {@code null}
+     * @return the call's own answer
+     * @throws Abandoned when the budget ran out, the caller cancelled or the stopper woke the wait
+     * @throws Exception when the call itself failed
+     */
+    static String runWhileLive(String runKey, LiveRun live, LaunchBoundary launchClaim, String what,
+        long budgetMs, DesignerCall call, BooleanSupplier cancelled) throws Exception
+    {
+        java.util.concurrent.CompletableFuture<Boolean> decision =
+            new java.util.concurrent.CompletableFuture<>();
+        live.launchDecision = decision;
+        live.launchBoundary = launchClaim;
+        LIVE.put(runKey, live);
+        try
+        {
+            BooleanSupplier watch = () -> live.stopped.getCount() == 0
+                || (cancelled != null && cancelled.getAsBoolean());
+            return runUnderBudget(what, budgetMs, call, launchClaim, watch);
+        }
+        catch (Abandoned abandoned)
+        {
+            decision.complete(Boolean.valueOf(abandoned.launchPrevented()));
+            throw abandoned;
+        }
+        finally
+        {
+            decision.complete(Boolean.FALSE);
+            LIVE.remove(runKey);
+        }
     }
 
     /**
@@ -1226,22 +1335,11 @@ public final class InfobaseObjectsExporter
         public String runDesigner(Path serviceDir, Path listFile, BooleanSupplier cancelled)
             throws Exception
         {
-            LIVE.put(runKey, live);
-            try
-            {
-                AtomicBoolean launchClaim = new AtomicBoolean();
-                ctx.launchClaim = launchClaim;
-                live.launchClaim = launchClaim;
-                BooleanSupplier watch = () -> live.stopped.getCount() == 0
-                    || (cancelled != null && cancelled.getAsBoolean());
-                return runUnderBudget("the Designer export", DESIGNER_BUDGET_MS, //$NON-NLS-1$
-                    () -> BmInfobaseExtensionHelper.runDesignerExportList(ctx, serviceDir, listFile),
-                    launchClaim, watch);
-            }
-            finally
-            {
-                LIVE.remove(runKey);
-            }
+            LaunchBoundary launchClaim = new LaunchBoundary();
+            ctx.launchClaim = launchClaim;
+            return runWhileLive(runKey, live, launchClaim, "the Designer export", DESIGNER_BUDGET_MS, //$NON-NLS-1$
+                () -> BmInfobaseExtensionHelper.runDesignerExportList(ctx, serviceDir, listFile),
+                cancelled);
         }
 
         @Override

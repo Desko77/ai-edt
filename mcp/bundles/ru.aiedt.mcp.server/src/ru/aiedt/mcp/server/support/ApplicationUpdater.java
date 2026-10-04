@@ -139,7 +139,7 @@ public final class ApplicationUpdater
         {
             return new Result(Outcome.APPLICATION_NOT_FOUND, null, null, null,
                 "No application named '" + applicationId + "' in project '" + projectName + "'",
-                "Use list_applications to refresh the list of registered infobases.");
+                "Use infobase_admin operation=get_applications to refresh the list of registered infobases.");
         }
 
         static Result alreadyUpToDate(ApplicationUpdateState state)

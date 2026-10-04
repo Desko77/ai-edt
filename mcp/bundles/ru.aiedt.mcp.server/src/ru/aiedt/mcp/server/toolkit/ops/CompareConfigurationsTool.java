@@ -13,8 +13,10 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -485,8 +487,8 @@ public class CompareConfigurationsTool implements IMcpTool
         DiffLists lists = new DiffLists();
         boolean modules = "module".equalsIgnoreCase(level); //$NON-NLS-1$
         classify(a, b, lists, watch, modules
-            ? (key, first, second) -> modulePair(key, first, second)
-            : (key, first, second) -> templatePair(key, first, second));
+            ? (key, first, second) -> modulePair(key, first, second, watch)
+            : (key, first, second) -> templatePair(key, first, second, watch));
         Map<String, Object> diff = new LinkedHashMap<>();
         lists.into(diff);
         if (narrowFqn != null)
@@ -502,10 +504,28 @@ public class CompareConfigurationsTool implements IMcpTool
      * @param key the project-relative path, for the answer.
      * @param first the file on the first side.
      * @param second the file on the second side.
+     * @param watch the cancel watch of the call.
      * @return the verdict, with the line counts and the preview when the two differ
      */
-    private static Pair modulePair(String key, IFile first, IFile second)
+    private static Pair modulePair(String key, IFile first, IFile second, WatchForCancel watch)
     {
+        long sizeA = lengthOf(first);
+        long sizeB = lengthOf(second);
+        String omitted = previewOmitted(sizeA, sizeB, "modules"); //$NON-NLS-1$
+        if (omitted != null)
+        {
+            Pair byBytes = templatePair(key, first, second, watch);
+            if (byBytes.changed() == null)
+            {
+                return byBytes;
+            }
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("file", key); //$NON-NLS-1$
+            entry.put("aBytes", sizeA); //$NON-NLS-1$
+            entry.put("bBytes", sizeB); //$NON-NLS-1$
+            entry.put("previewOmitted", omitted); //$NON-NLS-1$
+            return Pair.changed(entry);
+        }
         String contentA = readText(first);
         String contentB = readText(second);
         if (contentA == null || contentB == null)
@@ -533,14 +553,15 @@ public class CompareConfigurationsTool implements IMcpTool
      * @param key the project-relative path, for the answer.
      * @param first the file on the first side.
      * @param second the file on the second side.
+     * @param watch the cancel watch of the call.
      * @return the verdict; a template that could not be read is named as unread rather than
      *         reported equal or different
      */
-    private static Pair templatePair(String key, IFile first, IFile second)
+    private static Pair templatePair(String key, IFile first, IFile second, WatchForCancel watch)
     {
         try (InputStream a = first.getContents(); InputStream b = second.getContents())
         {
-            return sameStreams(a, b) ? Pair.same() : Pair.changed(key);
+            return verdict(key, sameStreams(a, b, watch));
         }
         catch (Exception unreadable)
         {
@@ -703,10 +724,16 @@ public class CompareConfigurationsTool implements IMcpTool
             // Sizes first: two files of different length differ, and that answer costs no read.
             long firstSize = Files.size(p1);
             long secondSize = Files.size(p2);
-            boolean identical = sameBytes(p1, p2);
+            WatchForCancel watch = WatchForCancel.begin();
+            Boolean same = sameBytes(p1, p2, watch);
             Map<String, Object> diff = new LinkedHashMap<>();
             diff.put("firstSize", firstSize); //$NON-NLS-1$
             diff.put("secondSize", secondSize); //$NON-NLS-1$
+            if (same == null)
+            {
+                return formatResult(level, format, diff, watch.note("files")); //$NON-NLS-1$
+            }
+            boolean identical = same;
             diff.put("identical", identical); //$NON-NLS-1$
             // For text level, also produce a preview diff
             if (!identical && isTextLike(firstPath))
@@ -739,11 +766,10 @@ public class CompareConfigurationsTool implements IMcpTool
     private static void addPreview(Map<String, Object> diff, Path first, long firstSize, Path second,
         long secondSize) throws IOException
     {
-        if (firstSize > MAX_BYTES_TO_PREVIEW || secondSize > MAX_BYTES_TO_PREVIEW)
+        String omitted = previewOmitted(firstSize, secondSize, "files"); //$NON-NLS-1$
+        if (omitted != null)
         {
-            diff.put("previewOmitted", //$NON-NLS-1$
-                "the files are larger than " + MAX_BYTES_TO_PREVIEW //$NON-NLS-1$
-                    + " bytes and the line preview reads them whole"); //$NON-NLS-1$
+            diff.put("previewOmitted", omitted); //$NON-NLS-1$
             return;
         }
         String aStr = new String(Files.readAllBytes(first), StandardCharsets.UTF_8);
@@ -755,25 +781,97 @@ public class CompareConfigurationsTool implements IMcpTool
     }
 
     /**
-     * The refusal for an export path that is a symbolic link, or {@code null} when neither is.
+     * The refusal for an export path that is a symbolic link or a directory junction, or
+     * {@code null} when neither is.
      *
      * @param first the first export.
      * @param second the second export.
      * @return the refusal, naming the side that is a link
      */
-    private static String symbolicLinkRefusal(Path first, Path second)
+    static String symbolicLinkRefusal(Path first, Path second)
     {
-        if (Files.isSymbolicLink(first))
+        if (isLink(first))
         {
-            return "The first export is a symbolic link: " + first //$NON-NLS-1$
+            return "The first export is a symbolic link or a junction: " + first //$NON-NLS-1$
                 + ". This comparison does not follow links - name the directory itself."; //$NON-NLS-1$
         }
-        if (Files.isSymbolicLink(second))
+        if (isLink(second))
         {
-            return "The second export is a symbolic link: " + second //$NON-NLS-1$
+            return "The second export is a symbolic link or a junction: " + second //$NON-NLS-1$
                 + ". This comparison does not follow links - name the directory itself."; //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * Whether a path is a symbolic link or another reparse point, such as a Windows directory
+     * junction, that {@link Files#isSymbolicLink} does not report.
+     *
+     * @param path the path.
+     * @return {@code true} for a link; {@code false} for a plain file or directory, or a path that
+     *         does not exist
+     */
+    static boolean isLink(Path path)
+    {
+        if (Files.isSymbolicLink(path))
+        {
+            return true;
+        }
+        try
+        {
+            return Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).isOther();
+        }
+        catch (IOException | RuntimeException unreadable)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * Says why a line preview is left out, when either side is above {@link #MAX_BYTES_TO_PREVIEW}.
+     *
+     * @param firstSize the first side's length in bytes; negative when unknown.
+     * @param secondSize the second side's length in bytes; negative when unknown.
+     * @param what what is compared, in the plural - "files", "modules".
+     * @return the note, or {@code null} when the preview is built
+     */
+    static String previewOmitted(long firstSize, long secondSize, String what)
+    {
+        if (firstSize <= MAX_BYTES_TO_PREVIEW && secondSize <= MAX_BYTES_TO_PREVIEW)
+        {
+            return null;
+        }
+        return "the " + what + " are " + firstSize + " and " + secondSize //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + " bytes, above the " + MAX_BYTES_TO_PREVIEW //$NON-NLS-1$
+            + "-byte limit of the line preview, which reads them whole"; //$NON-NLS-1$
+    }
+
+    /**
+     * The length of a workspace file on disk.
+     *
+     * @param file the file.
+     * @return the length in bytes, or {@code -1} when the file has no local location
+     */
+    private static long lengthOf(IFile file)
+    {
+        org.eclipse.core.runtime.IPath location = file.getLocation();
+        return location == null ? -1 : location.toFile().length();
+    }
+
+    /**
+     * Turns the result of a byte comparison into a verdict.
+     *
+     * @param key the path, for the answer.
+     * @param same the result; {@code null} when the operator cancelled during the read
+     * @return the verdict
+     */
+    private static Pair verdict(String key, Boolean same)
+    {
+        if (same == null)
+        {
+            return Pair.unread("the comparison was cancelled while this file was read"); //$NON-NLS-1$
+        }
+        return same ? Pair.same() : Pair.changed(key);
     }
 
     /**
@@ -857,7 +955,7 @@ public class CompareConfigurationsTool implements IMcpTool
         Walked<Path> a = walkExport(first, level, prefix, watch);
         Walked<Path> b = walkExport(second, level, prefix, watch);
         DiffLists lists = new DiffLists();
-        classify(a, b, lists, watch, CompareConfigurationsTool::pathsPair);
+        classify(a, b, lists, watch, (key, one, other) -> pathsPair(key, one, other, watch));
         Map<String, Object> diff = new LinkedHashMap<>();
         lists.into(diff);
         if (narrowFqn != null)
@@ -873,14 +971,15 @@ public class CompareConfigurationsTool implements IMcpTool
      * @param key the path relative to the export root, for the answer.
      * @param first the file on the first side.
      * @param second the file on the second side.
+     * @param watch the cancel watch of the call.
      * @return the verdict; a file that could not be read is named as unread rather than reported
      *         equal or different
      */
-    private static Pair pathsPair(String key, Path first, Path second)
+    private static Pair pathsPair(String key, Path first, Path second, WatchForCancel watch)
     {
         try
         {
-            return sameBytes(first, second) ? Pair.same() : Pair.changed(key);
+            return verdict(key, sameBytes(first, second, watch));
         }
         catch (IOException | RuntimeException unreadable)
         {
@@ -1038,18 +1137,20 @@ public class CompareConfigurationsTool implements IMcpTool
      *
      * @param first the first file.
      * @param second the second file.
-     * @return whether the two are the same byte for byte
+     * @param watch the cancel watch of the call.
+     * @return whether the two are the same byte for byte; {@code null} when the operator cancelled
+     *         during the read
      * @throws IOException when either file cannot be read
      */
-    private static boolean sameBytes(Path first, Path second) throws IOException
+    private static Boolean sameBytes(Path first, Path second, WatchForCancel watch) throws IOException
     {
         if (Files.size(first) != Files.size(second))
         {
-            return false;
+            return Boolean.FALSE;
         }
         try (InputStream a = Files.newInputStream(first); InputStream b = Files.newInputStream(second))
         {
-            return sameStreams(a, b);
+            return sameStreams(a, b, watch);
         }
     }
 
@@ -1058,15 +1159,22 @@ public class CompareConfigurationsTool implements IMcpTool
      *
      * @param first the first stream.
      * @param second the second stream.
-     * @return whether the two are the same byte for byte
+     * @param watch the cancel watch of the call, asked before each block.
+     * @return whether the two are the same byte for byte; {@code null} when the operator cancelled
+     *         before the streams were read to the end
      * @throws IOException when either stream fails
      */
-    private static boolean sameStreams(InputStream first, InputStream second) throws IOException
+    static Boolean sameStreams(InputStream first, InputStream second, WatchForCancel watch)
+        throws IOException
     {
         byte[] left = new byte[COMPARE_BLOCK_BYTES];
         byte[] right = new byte[COMPARE_BLOCK_BYTES];
         while (true)
         {
+            if (watch.raised())
+            {
+                return null;
+            }
             int filledLeft = readFully(first, left);
             int filledRight = readFully(second, right);
             if (filledLeft != filledRight)

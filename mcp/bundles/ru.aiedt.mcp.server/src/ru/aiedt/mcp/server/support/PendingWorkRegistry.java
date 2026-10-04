@@ -188,6 +188,18 @@ public final class PendingWorkRegistry
         "retrieve_database_changes", "retrieve-changes-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
+     * Async backend for a debug launch that outlived its inline wait.
+     * <p>
+     * A launch is a mutator, so the key is unique per call: two identical launches are two runs,
+     * never one coalesced future and never a replayed cached answer. The body of each entry parks
+     * on the launch the call handed over - which is what a modal question holds open for as long
+     * as nobody answers it - so the pool carries a thread per launch still waiting on a person.
+     * </p>
+     */
+    public static final PendingWorkRegistry DEBUG_LAUNCH = new PendingWorkRegistry(
+        "debug_launch", "debug-launch-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
      * What a cancel reaches in each of the domains that have no process or client of their
      * own to destroy.
      * <p>
@@ -289,6 +301,29 @@ public final class PendingWorkRegistry
      */
     static volatile java.util.function.Consumer<PendingEntry> beforeWorkClaim;
 
+    /**
+     * Runs inside {@link #getOrStart} between the read of {@link #stopping} and the mapping of a
+     * new entry, when a test has set it. Production leaves it {@code null}. The pause is the
+     * window in which a concurrent drop can take the key after the read and before the mapping,
+     * which the mapping itself has to refuse.
+     */
+    static volatile Runnable beforeCoalesceMapping;
+
+    /**
+     * Runs inside {@link #dropEntry} once the entry has left {@link #entries}, when a test has
+     * set it. Production leaves it {@code null}. A repeat parked here meets the key mid-handover:
+     * the entry is gone and the key belongs to the body that has not left yet.
+     */
+    static volatile Runnable afterEntryDetached;
+
+    /**
+     * Runs inside {@link #pruneExpired} once a never-completed entry has matched the abandoned
+     * TTL and before the eviction decides, when a test has set it. Production leaves it
+     * {@code null}. The consumer is handed the entry the decision is about, so a test can land a
+     * claim of its start exactly in the window the decision has to close.
+     */
+    static volatile java.util.function.Consumer<PendingEntry> beforeAbandonedEviction;
+
     private final ExecutorService executor;
 
     /**
@@ -374,6 +409,13 @@ public final class PendingWorkRegistry
      * When a call scope is current, the entry it dispatches is also noted on that scope, so the
      * caller's answer can find the run again after the registry's own tracking of it is dropped.
      * </p>
+     * <p>
+     * A key held by a run whose body has not left - cancelled, detached, or stopped being tracked
+     * - refuses the call instead of starting a second copy of the work (see {@link #stopping}).
+     * The refusal is decided twice: once before the mapping, and once inside it, because a drop
+     * can take the key between the two reads and the mapping is where the entry's absence was
+     * just observed.
+     * </p>
      *
      * @param runKey the coalescing key, never {@code null}
      * @param work the body, handed the entry it runs under so it can set
@@ -385,12 +427,7 @@ public final class PendingWorkRegistry
         PendingEntry stillStopping = stopping.get(runKey);
         if (stillStopping != null && !stillStopping.workHasLeft())
         {
-            return PendingEntry.refused(runKey, ru.aiedt.mcp.server.wire.ToolResult.error(
-                "A cancelled run with the same arguments is still stopping; nothing was started. " //$NON-NLS-1$
-                    + "Call again once it has stopped.") //$NON-NLS-1$
-                .put("runKey", runKey) //$NON-NLS-1$
-                .put("stillStopping", true) //$NON-NLS-1$
-                .toJson());
+            return refusedWhileStopping(runKey, stillStopping);
         }
         // Capture the calling (worker) thread's whole call scope and re-enter it on the executor
         // thread for the duration of the work. The scope carries more than the cancellation flag
@@ -406,8 +443,23 @@ public final class PendingWorkRegistry
         ToolCallScope current = ToolCallScope.current();
         ToolCallScope.Cancellation dispatchCancellation = current != null ? current.cancellation() : null;
         ru.aiedt.mcp.server.RunningToolCall starter = current != null ? current.runningCall() : null;
+        // A test parks a repeat here, between the read above and the mapping below: the window in
+        // which a drop takes the key. Production leaves the gate unset.
+        Runnable coalesceGate = beforeCoalesceMapping;
+        if (coalesceGate != null)
+        {
+            coalesceGate.run();
+        }
         PendingEntry started = entries.computeIfAbsent(runKey, k ->
         {
+            // The key can be taken by a drop that finished after the read above passed with the
+            // key free: the absence this mapping was called for is then the drop's doing, and a
+            // second copy of work whose first body still executes must not be dispatched under it.
+            PendingEntry taken = stopping.get(k);
+            if (taken != null && !taken.workHasLeft())
+            {
+                return null;
+            }
             PendingEntry entry = new PendingEntry(k);
             // The scope the work runs under, kept where it outlives the request that made it. A
             // run that answers Pending goes on after its exchange is closed, and until the entry
@@ -489,6 +541,12 @@ public final class PendingWorkRegistry
             });
             return entry;
         });
+        if (started == null)
+        {
+            // The mapping refused: a run whose body has not left took the key while this call was
+            // between its two reads.
+            return refusedWhileStopping(runKey, stopping.get(runKey));
+        }
         if (current != null)
         {
             // The starter keeps a direct reference to the run it started: a permit spent on the
@@ -497,6 +555,29 @@ public final class PendingWorkRegistry
             current.notePendingEntry(runKey, started);
         }
         return started;
+    }
+
+    /**
+     * The answer to a call whose key a run that has not left still holds, whether that run was
+     * cancelled, detached, or stopped being tracked: nothing is started.
+     *
+     * @param runKey the key the call asked for
+     * @param holding the run that holds it, or {@code null} when its body left while the call was
+     *            between its two reads of the stopping map
+     * @return a completed entry that ran nothing
+     */
+    private static PendingEntry refusedWhileStopping(String runKey, PendingEntry holding)
+    {
+        ru.aiedt.mcp.server.wire.ToolResult refusal = ru.aiedt.mcp.server.wire.ToolResult.error(
+            "A run with the same arguments is still executing under this key; nothing was " //$NON-NLS-1$
+                + "started. Call again once it has stopped.") //$NON-NLS-1$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("stillStopping", true); //$NON-NLS-1$
+        if (holding != null)
+        {
+            refusal.put("bodyRunningMs", holding.bodyRunningMs()); //$NON-NLS-1$
+        }
+        return PendingEntry.refused(runKey, refusal.toJson());
     }
 
     /**
@@ -565,7 +646,7 @@ public final class PendingWorkRegistry
     {
         return Collections.unmodifiableList(
             Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, SNAPSHOT, REFERENCES, IMPORT_BINARY,
-                VANESSA, NAPARNIK, GENERIC, RETRIEVE));
+                VANESSA, NAPARNIK, GENERIC, RETRIEVE, DEBUG_LAUNCH));
     }
 
     /**
@@ -783,19 +864,28 @@ public final class PendingWorkRegistry
 
     /**
      * Drops the entry and completes its tracking future.
+     * <p>
+     * A body still executing keeps the key held: the run goes into {@link #stopping} BEFORE the
+     * entry leaves {@link #entries}, so a repeat that has already passed {@link #getOrStart}'s
+     * first read of the stopping map cannot slip between the two writes and come away with a
+     * second copy of the work.
+     * </p>
      *
      * @param runKey the key.
      * @return whether the key was known
      */
     private boolean dropEntry(String runKey)
     {
-        PendingEntry entry = entries.remove(runKey);
-        boolean known = entry != null;
-        if (known && entry.future != null && !entry.future.isDone())
+        PendingEntry entry = entries.get(runKey);
+        if (entry == null)
+        {
+            return false;
+        }
+        if (entry.future != null && !entry.future.isDone())
         {
             entry.future.cancel(true);
         }
-        if (known && entry.workIsRunning())
+        if (entry.workIsRunning())
         {
             PendingEntry detached = entry;
             stopping.put(runKey, detached);
@@ -803,15 +893,24 @@ public final class PendingWorkRegistry
             // is already gone.
             detached.attachWorkExit(() -> stopping.remove(runKey, detached));
         }
-        return known;
+        entries.remove(runKey, entry);
+        // A test parks a repeat call here, after the entry has left the map and while the key
+        // belongs to the body that has not left. Production leaves the gate unset.
+        Runnable gate = afterEntryDetached;
+        if (gate != null)
+        {
+            gate.run();
+        }
+        return true;
     }
 
     /**
      * What stopping a domain's work came to.
      * <p>
-     * Three answers rather than two, because asking a process to stop and its having stopped are
+     * More than a yes or no, because asking a process to stop and its having stopped are
      * different facts, and a caller told the second when only the first happened will act as
-     * though the work is done with whatever it was holding.
+     * though the work is done with whatever it was holding. A platform process that was never
+     * launched is a third fact: there was no process to stop, and it wrote nothing.
      * </p>
      */
     public enum StopOutcome
@@ -821,7 +920,12 @@ public final class PendingWorkRegistry
         /** The work is stopped. */
         STOPPED,
         /** It was told to stop and had not stopped. */
-        STILL_RUNNING
+        STILL_RUNNING,
+        /**
+         * The run was stopped before it launched its platform process, so that process never
+         * started. The run's own cleanup may still be finishing.
+         */
+        PREVENTED
     }
 
     /**
@@ -886,8 +990,9 @@ public final class PendingWorkRegistry
      *
      * @param runKey the key.
      * @return {@link StopOutcome#STOPPED} when the run's work is no longer executing,
-     *         {@link StopOutcome#STILL_RUNNING} when it was told to stop and had not stopped, and
-     *         {@link StopOutcome#NOTHING_TO_STOP} when no run was live
+     *         {@link StopOutcome#PREVENTED} when the domain stopped it before it launched its
+     *         platform process, {@link StopOutcome#STILL_RUNNING} when it was told to stop and had
+     *         not stopped, and {@link StopOutcome#NOTHING_TO_STOP} when no run was live
      */
     public StopOutcome cancelAndStop(String runKey)
     {
@@ -901,6 +1006,16 @@ public final class PendingWorkRegistry
         if (told == StopOutcome.STOPPED)
         {
             return StopOutcome.STOPPED;
+        }
+        if (told == StopOutcome.PREVENTED)
+        {
+            // No platform process was launched. The body is still given its wait, so what it
+            // opened before the boundary is usually closed by the time the caller reads this.
+            if (wasRunning)
+            {
+                awaitTheRunsExit(entry);
+            }
+            return StopOutcome.PREVENTED;
         }
         if (!wasRunning)
         {
@@ -980,14 +1095,20 @@ public final class PendingWorkRegistry
      * {@link PendingEntry#claimTheLaunch()} just before it and answers cancelled instead. Past it
      * the work is inside a blocking platform call - a Designer-mode update, an EDT build of an
      * external object, a Configurator process importing a binary - and nothing here can promise
-     * that it was killed. That is what {@link StopOutcome#STILL_RUNNING} says, and the run's own
-     * exit is what settles it later.
+     * that it was killed.
+     * </p>
+     * <p>
+     * Either way the answer while the body is executing is {@link StopOutcome#STILL_RUNNING}:
+     * raising the flag only asks, and {@link StopOutcome#STOPPED} is answered by the caller that
+     * waited for the body to leave (see {@link #cancelAndStop}), never ahead of the exit. The
+     * launch claim and the flag read share one lock, so a body the flag reached before its claim
+     * refuses the launch and leaves shortly; a body already past the boundary settles the answer
+     * when the platform call returns.
      * </p>
      *
      * @param runKey the key a cancel was asked for
-     * @return {@link StopOutcome#STOPPED} when the flag kept the launch from starting,
-     *         {@link StopOutcome#STILL_RUNNING} when the work had launched or has no flag at all,
-     *         {@link StopOutcome#NOTHING_TO_STOP} when no body is executing
+     * @return {@link StopOutcome#STILL_RUNNING} while the body is executing,
+     *         {@link StopOutcome#NOTHING_TO_STOP} when no body is
      */
     private StopOutcome stopAtTheLaunchBoundary(String runKey)
     {
@@ -995,17 +1116,6 @@ public final class PendingWorkRegistry
         if (running == null || !running.workIsRunning())
         {
             return StopOutcome.NOTHING_TO_STOP;
-        }
-        if (!running.hasLaunched())
-        {
-            if (running.cancellation == null)
-            {
-                // Nothing raised, so nothing will refuse the launch. Said as it is, rather than as
-                // a stopped run the body has not been told about.
-                return StopOutcome.STILL_RUNNING;
-            }
-            raiseTheFlag(running);
-            return StopOutcome.STOPPED;
         }
         raiseTheFlag(running);
         return StopOutcome.STILL_RUNNING;
@@ -1095,6 +1205,11 @@ public final class PendingWorkRegistry
      * carries on and still holds the infobase; what it holds is readable from
      * {@code MonopolyLock.outstandingHere}.
      * </p>
+     * <p>
+     * The key goes with the work it named: a run whose body is still executing is held in
+     * {@link #stopping} until the body leaves, so a repeat under the same key is refused rather
+     * than started as a second writer into the same work.
+     * </p>
      *
      * @param subject what the runs are about; nothing happens when it is null or empty.
      * @return how many runs stopped being tracked
@@ -1109,18 +1224,27 @@ public final class PendingWorkRegistry
         Iterator<Map.Entry<String, PendingEntry>> it = entries.entrySet().iterator();
         while (it.hasNext())
         {
-            PendingEntry entry = it.next().getValue();
+            Map.Entry<String, PendingEntry> tracked = it.next();
+            String runKey = tracked.getKey();
+            PendingEntry entry = tracked.getValue();
             if (!subject.equals(entry.subject) || entry.completedAt > 0)
             {
                 continue;
             }
-            if (entry.future != null && !entry.future.isDone() && entry.future.cancel(true))
+            if (entry.future == null || entry.future.isDone() || !entry.future.cancel(true))
             {
                 // Removed only when the cancellation actually won. A run that finished between
                 // the check and the call has a result waiting, and this method promises to keep it.
-                it.remove();
-                stopped++;
+                continue;
             }
+            if (entry.workIsRunning())
+            {
+                // The platform call carries on, and the key stays with it until its body leaves.
+                stopping.put(runKey, entry);
+                entry.attachWorkExit(() -> stopping.remove(runKey, entry));
+            }
+            it.remove();
+            stopped++;
         }
         return stopped;
     }
@@ -1136,6 +1260,14 @@ public final class PendingWorkRegistry
      * (a FULL infobase update, a large metadata batch) reaches this TTL; evicting it there is the
      * defect this guard exists for.
      * </p>
+     * <p>
+     * The eviction of a run that never began is decided by
+     * {@link PendingEntry#settleIfWorkNeverBegan()}: the settle and the supplier's claim of the
+     * start are one critical section on the entry's work-life lock, so an entry the settle wins
+     * can never run its body, and a claim that landed first keeps the entry tracked. A body still
+     * executing, and a body whose exit outran the recording of its result, make the settle lose
+     * as well, so neither is evicted.
+     * </p>
      */
     public void pruneExpired()
     {
@@ -1150,9 +1282,20 @@ public final class PendingWorkRegistry
             {
                 it.remove();
             }
-            else if (entry.completedAt == 0 && !entry.workIsRunning()
+            else if (entry.completedAt == 0
                 && now - (entry.beganAt > 0 ? entry.beganAt : entry.startedAt) > abandonedTtlMs)
             {
+                // A test lands a claim of the start exactly here, in the window between the TTL
+                // match and the decision. Production leaves the gate unset.
+                java.util.function.Consumer<PendingEntry> gate = beforeAbandonedEviction;
+                if (gate != null)
+                {
+                    gate.accept(entry);
+                }
+                if (!entry.settleIfWorkNeverBegan())
+                {
+                    continue;
+                }
                 if (entry.future != null && !entry.future.isDone())
                 {
                     entry.future.cancel(true);
@@ -1241,7 +1384,17 @@ public final class PendingWorkRegistry
     public static final class PendingEntry
     {
         public final String runKey;
-        public final long startedAt = System.currentTimeMillis();
+
+        /**
+         * When the run was submitted, written once at construction.
+         * <p>
+         * Writable rather than final so a test can backdate it, the way it backdates
+         * {@link #beganAt} and {@link #completedAt}: the abandoned-TTL paths are only reachable
+         * from a test through an entry that reads as past its TTL, and no clock in the suite runs
+         * for half an hour.
+         * </p>
+         */
+        public volatile long startedAt = System.currentTimeMillis();
 
         /**
          * When the work actually began, or 0 while it is still waiting for a worker.
@@ -1530,7 +1683,7 @@ public final class PendingWorkRegistry
          *
          * @param release what returns the permit; runs immediately when the work already left
          */
-        void attachWorkExit(Runnable release)
+        public void attachWorkExit(Runnable release)
         {
             boolean settled;
             synchronized (workLife)
@@ -1571,15 +1724,18 @@ public final class PendingWorkRegistry
          * A supplier that has not claimed yet either observes the settlement and does not run, or
          * claims first and this method leaves the permit for the body's own exit.
          * </p>
+         *
+         * @return whether this call settled the run as never begun - {@code false} when the body
+         *         had claimed its start or the run was settled already
          */
-        void settleIfWorkNeverBegan()
+        boolean settleIfWorkNeverBegan()
         {
             List<Runnable> releases = null;
             synchronized (workLife)
             {
                 if (workBegan || workExitSettled)
                 {
-                    return;
+                    return false;
                 }
                 workExitSettled = true;
                 if (!onWorkExit.isEmpty())
@@ -1590,12 +1746,13 @@ public final class PendingWorkRegistry
             }
             if (releases == null)
             {
-                return;
+                return true;
             }
             for (Runnable release : releases)
             {
                 release.run();
             }
+            return true;
         }
 
         /**
@@ -1637,6 +1794,28 @@ public final class PendingWorkRegistry
         {
             long end = completedAt > 0 ? completedAt : System.currentTimeMillis();
             return end - startedAt;
+        }
+
+        /**
+         * How long the body has been executing, for an answer that names it.
+         * <p>
+         * Distinct from {@link #elapsedMs()}, which counts from the submission: a run queued
+         * behind another has elapsed time and no body time, and a caller repeating into a key
+         * whose body is holding it is told how long that body has been running.
+         * </p>
+         *
+         * @return milliseconds since the body claimed its start, frozen at completion; 0 while it
+         *         has not begun
+         */
+        public long bodyRunningMs()
+        {
+            long from = beganAt;
+            if (from == 0)
+            {
+                return 0L;
+            }
+            long end = completedAt > 0 ? completedAt : System.currentTimeMillis();
+            return Math.max(0L, end - from);
         }
     }
 }

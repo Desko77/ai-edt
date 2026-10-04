@@ -2128,7 +2128,8 @@ public final class BmTemplateHelper
 
     /**
      * The font a cell renders with when its own format names none: the row's, then the column's,
-     * then the document default format's.
+     * then the document default format's. The column is read from the row's own column set when the
+     * row carries one, and from the document's otherwise.
      * <p>
      * A platform-authored template carries its look on the row and column formats, and a bold asked
      * of a cell that only inherits that look has to ride on the inherited font - rebuilding the
@@ -2141,7 +2142,7 @@ public final class BmTemplateHelper
      * @param colKey the cell's 0-based column key
      * @return the font the cell renders with, or {@code null} when nothing names one
      */
-    private static Font inheritedCellFont(SpreadsheetDocument doc, Row row, Cell cell, int colKey)
+    static Font inheritedCellFont(SpreadsheetDocument doc, Row row, Cell cell, int colKey)
     {
         Font own = fontOfFormat(doc, formatAt(doc, cell.getFormatIndex()));
         if (own != null)
@@ -2153,8 +2154,8 @@ public final class BmTemplateHelper
         {
             return rowFont;
         }
-        Column column = doc.getColumns() == null ? null
-            : doc.getColumns().getColumns().get(Integer.valueOf(colKey));
+        Columns columns = row.getColumns() != null ? row.getColumns() : doc.getColumns();
+        Column column = columns == null ? null : columns.getColumns().get(Integer.valueOf(colKey));
         Font columnFont = fontOfFormat(doc,
             column == null ? null : formatAt(doc, column.getFormatIndex()));
         if (columnFont != null)

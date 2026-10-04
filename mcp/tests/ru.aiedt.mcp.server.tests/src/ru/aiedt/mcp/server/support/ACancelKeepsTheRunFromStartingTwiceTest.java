@@ -170,7 +170,14 @@ public class ACancelKeepsTheRunFromStartingTwiceTest
         assertTrue("IMPORT_BINARY", PendingWorkRegistry.IMPORT_BINARY.stopsItsWork()); //$NON-NLS-1$
     }
 
-    /** A cancel that arrives before the boundary keeps the body from passing it. */
+    /**
+     * A cancel that arrives before the boundary keeps the body from passing it.
+     * <p>
+     * STOPPED is answered only once the body has left. At the moment of the call below the body is
+     * still executing - parked before its boundary - so the outcome says it was told to stop and
+     * had not stopped, and the flag is what keeps the launch from starting all the same.
+     * </p>
+     */
     @Test
     public void aCancelBeforeTheBoundaryKeepsTheBodyFromLaunching() throws Exception
     {
@@ -194,15 +201,37 @@ public class ACancelKeepsTheRunFromStartingTwiceTest
             past.countDown();
             return "done"; //$NON-NLS-1$
         });
-        assertTrue("the body is running and has not launched", began.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
+        try
+        {
+            assertTrue("the body is running and has not launched", began.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
 
-        assertEquals("the cancel found the work before the boundary and kept it there", //$NON-NLS-1$
-            StopOutcome.STOPPED, PendingWorkRegistry.IMPORT_BINARY.cancelAndStop(key));
+            assertEquals("the outcome names a body that is still executing", //$NON-NLS-1$
+                StopOutcome.STILL_RUNNING, PendingWorkRegistry.IMPORT_BINARY.cancelAndStop(key));
 
-        go.countDown();
-        assertTrue("the body reached its boundary", past.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
-        assertFalse("nothing launched after the cancel", launched.get()); //$NON-NLS-1$
-        PendingWorkRegistry.IMPORT_BINARY.remove(key);
+            go.countDown();
+            assertTrue("the body reached its boundary", past.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
+            assertFalse("nothing launched after the cancel", launched.get()); //$NON-NLS-1$
+
+            // And once the body has left, nothing of the run is left to stop.
+            long end = System.currentTimeMillis() + 5_000L;
+            StopOutcome after = null;
+            while (System.currentTimeMillis() < end)
+            {
+                after = PendingWorkRegistry.IMPORT_BINARY.cancelAndStop(key);
+                if (after == StopOutcome.NOTHING_TO_STOP)
+                {
+                    break;
+                }
+                sleep(50);
+            }
+            assertEquals("a body that has left leaves nothing to stop", //$NON-NLS-1$
+                StopOutcome.NOTHING_TO_STOP, after);
+        }
+        finally
+        {
+            go.countDown();
+            PendingWorkRegistry.IMPORT_BINARY.remove(key);
+        }
     }
 
     /** A cancel that arrives after the boundary says the work is still running. */

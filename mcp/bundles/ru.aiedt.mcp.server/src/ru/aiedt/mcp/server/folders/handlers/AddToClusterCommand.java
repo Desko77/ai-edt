@@ -27,6 +27,7 @@ import org.eclipse.ui.dialogs.ElementListSelectionDialog;
 import org.eclipse.ui.handlers.HandlerUtil;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.folders.model.Cluster;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
@@ -86,9 +87,10 @@ public class AddToClusterCommand
             {
                 continue;
             }
-            if (!service.addObjectToCluster(project, fqn, target.getFullPath()))
+            ClusterWriteOutcome outcome = service.addObjectToCluster(project, fqn, target.getFullPath());
+            if (outcome.isRefused())
             {
-                ClusterCommandHandler.showSaveFailure(shell, project);
+                ClusterCommandHandler.showSaveFailure(shell, project, outcome);
                 break;
             }
         }

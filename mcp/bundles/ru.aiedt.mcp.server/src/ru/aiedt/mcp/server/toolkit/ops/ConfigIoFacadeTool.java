@@ -173,7 +173,8 @@ public class ConfigIoFacadeTool implements IMcpTool
             + "Operations: export_configuration_to_xml, " //$NON-NLS-1$
             + "import_configuration_from_xml, import_configuration_from_binary, export_object, " //$NON-NLS-1$
             + "export_common_picture, export_configuration_to_cf, export_infobase_objects, " //$NON-NLS-1$
-            + "export_database_configuration, export_database_extension, help. Pass operation=<name> " //$NON-NLS-1$
+            + "export_database_configuration, export_database_extension, unpack_external_binary, help. " //$NON-NLS-1$
+            + "Pass operation=<name> " //$NON-NLS-1$
             + "(snake_case canonical; camelCase like exportObject is also accepted); remaining " //$NON-NLS-1$
             + "parameters follow the per-operation contracts (call operation=help for the catalog). " //$NON-NLS-1$
             + "import_configuration_from_xml and import_configuration_from_binary mutate " //$NON-NLS-1$
@@ -369,7 +370,8 @@ public class ConfigIoFacadeTool implements IMcpTool
                 + "export_configuration_to_xml / import_configuration_from_xml / " //$NON-NLS-1$
                 + "import_configuration_from_binary / export_object / export_common_picture / " //$NON-NLS-1$
                 + "export_configuration_to_cf / export_infobase_objects / " //$NON-NLS-1$
-                + "export_database_configuration / export_database_extension / help.").toJson(); //$NON-NLS-1$
+                + "export_database_configuration / export_database_extension / " //$NON-NLS-1$
+                + "unpack_external_binary / help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$

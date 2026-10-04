@@ -86,6 +86,10 @@ public class McpToolCatalog
      * gate and the heavy-tool limiter. A bundle that says nothing about weight counts as light,
      * exactly as a tool of this server's that the heavy list does not name.</p>
      *
+     * <p>The two facts are kept only when the registration took. A tool refused because its
+     * capability id or wire name is already taken leaves the owner of that name with the
+     * classification it had: the refused bundle's word is not applied to a tool it does not own.</p>
+     *
      * @param tool the tool
      * @param writes whether the tool changes anything
      * @param heavy whether one call of the tool can be genuinely expensive
@@ -97,14 +101,23 @@ public class McpToolCatalog
             return;
         }
         String capabilityId = capabilityOf(tool);
+        register(tool);
+        if (toolsByCapability.get(capabilityId) != tool)
+        {
+            return;
+        }
         externalTools.put(capabilityId, tool);
         externalWrites.put(capabilityId, Boolean.valueOf(writes));
         externalHeavy.put(capabilityId, Boolean.valueOf(heavy));
-        register(tool);
     }
 
     /**
      * Forgets a tool another bundle published.
+     *
+     * <p>Only the instance that was registered is forgotten: a tool whose registration was refused
+     * owns nothing here, and forgetting it by name would remove the tool that does. The tool
+     * leaves the callable names before its declared facts are dropped, so no listing sees it
+     * callable without them.</p>
      *
      * @param tool the tool
      */
@@ -115,10 +128,14 @@ public class McpToolCatalog
             return;
         }
         String capabilityId = capabilityOf(tool);
+        if (externalTools.get(capabilityId) != tool)
+        {
+            return;
+        }
+        unregister(tool.getName());
         externalTools.remove(capabilityId);
         externalWrites.remove(capabilityId);
         externalHeavy.remove(capabilityId);
-        unregister(tool.getName());
     }
 
     /**
@@ -136,6 +153,22 @@ public class McpToolCatalog
         String capabilityId = callableToCapability.get(callableName);
         Boolean heavy = capabilityId == null ? null : externalHeavy.get(capabilityId);
         return heavy != null && heavy.booleanValue();
+    }
+
+    /**
+     * Whether the tool another bundle published under this capability id declared itself a writer.
+     *
+     * <p>The answer is the bundle's own word, taken at registration: a bundle that said nothing
+     * was registered as a writer. A capability id no external tool owns answers {@code null},
+     * leaving the decision to the presets, which name only this server's own tools.</p>
+     *
+     * @param capabilityId the capability id; may be {@code null}
+     * @return {@code Boolean.TRUE} or {@code Boolean.FALSE} for an external tool, {@code null}
+     *         for one of this server's own
+     */
+    public Boolean externalWritesDeclared(String capabilityId)
+    {
+        return capabilityId == null ? null : externalWrites.get(capabilityId);
     }
 
     /**

@@ -21,6 +21,9 @@ import org.eclipse.core.resources.IProject;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.BorrowedSyncClassification;
+import ru.aiedt.mcp.server.support.BorrowedSyncReader;
+import ru.aiedt.mcp.server.support.BorrowedSyncWriter;
 import ru.aiedt.mcp.server.support.ExtensionFitness;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
@@ -29,6 +32,7 @@ import ru.aiedt.mcp.server.support.BmExtensionProjectHelper;
 import ru.aiedt.mcp.server.support.ChildBorrow;
 import ru.aiedt.mcp.server.support.FacadeParameterHelp;
 import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -38,7 +42,8 @@ import ru.aiedt.mcp.server.support.ToolGate;
 /**
  * Unified extension facade, three areas. Authoring:
  * create_extension_project, borrow_object, borrow_objects (batch), borrow_child,
- * borrow_form_item, borrow_module, list_borrowed. Deployment (routes to the
+ * borrow_form_item, borrow_module, list_borrowed, update_borrowed (review and
+ * align the borrowed objects against the updated base). Deployment (routes to the
  * standalone tools): install_extension, uninstall_extension, list_extension,
  * export_extension. Inspection (routes to the standalone tools):
  * extension_lifecycle, extension_diff, list_interceptors, check_release_fitness,
@@ -68,7 +73,8 @@ public class ExtensionWorkshopTool implements IMcpTool
         return "Unified extension facade - author, deploy and inspect configuration " //$NON-NLS-1$
             + "extensions. Authoring: create_extension_project (new extension from a base " //$NON-NLS-1$
             + "configuration), borrow_object, borrow_objects (batch), borrow_child, " //$NON-NLS-1$
-            + "borrow_form_item, borrow_module, list_borrowed. Deployment (into a " //$NON-NLS-1$
+            + "borrow_form_item, borrow_module, list_borrowed, update_borrowed (resync with the " //$NON-NLS-1$
+            + "base). Deployment (into a " //$NON-NLS-1$
             + "project's infobase): install_extension, uninstall_extension, list_extension, " //$NON-NLS-1$
             + "export_extension. Inspection: extension_lifecycle, extension_diff, " //$NON-NLS-1$
             + "list_interceptors, check_release_fitness, check_platform_verdict. The deploy / " //$NON-NLS-1$
@@ -85,25 +91,23 @@ public class ExtensionWorkshopTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "create_extension_project / borrow_object / borrow_objects / borrow_child / " //$NON-NLS-1$
-                    + "borrow_form_item / borrow_module / list_borrowed / install_extension / " //$NON-NLS-1$
-                    + "uninstall_extension / list_extension / export_extension / " //$NON-NLS-1$
-                    + "extension_lifecycle / extension_diff / list_interceptors / " //$NON-NLS-1$
-                    + "check_release_fitness / check_platform_verdict / help", true) //$NON-NLS-1$
+                    + "borrow_form_item / borrow_module / list_borrowed / update_borrowed / " //$NON-NLS-1$
+                    + "install_extension / uninstall_extension / list_extension / " //$NON-NLS-1$
+                    + "export_extension / extension_lifecycle / extension_diff / " //$NON-NLS-1$
+                    + "list_interceptors / check_release_fitness / check_platform_verdict / help", //$NON-NLS-1$
+                true)
             .stringProperty("projectName", //$NON-NLS-1$
                 "Extension project name. For create_extension_project this is the NEW " //$NON-NLS-1$
                     + "extension's name (must not already exist); for borrow_* it is the " //$NON-NLS-1$
                     + "existing extension to borrow into.") //$NON-NLS-1$
             .stringProperty("baseProjectName", //$NON-NLS-1$
-                "Base configuration project. Required for create_extension_project " //$NON-NLS-1$
-                    + "(parent config the extension adopts from). OPTIONAL for borrow_* - when " //$NON-NLS-1$
-                    + "omitted it auto-resolves to the extension's parent configuration " //$NON-NLS-1$
-                    + "(IExtensionProject.getParentProject()); pass it only to borrow from a " //$NON-NLS-1$
-                    + "non-default base.") //$NON-NLS-1$
+                "Base configuration project. Required for create_extension_project; for " //$NON-NLS-1$
+                    + "borrow_* and update_borrowed defaults to the extension's parent.") //$NON-NLS-1$
             .stringProperty("namePrefix", //$NON-NLS-1$
                 "create_extension_project: optional object name prefix for the new " //$NON-NLS-1$
                     + "extension (applied to its Configuration). Omit to keep the EDT default.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
-                "FQN of the object/child/form-item/module to borrow. " //$NON-NLS-1$
+                "FQN to borrow; update_borrowed: the one object to review. " //$NON-NLS-1$
                     + "Top-level: Catalog.Name. " //$NON-NLS-1$
                     + "Child: Catalog.Name.Form.FormName, Document.Name.Attribute.AttrName, " //$NON-NLS-1$
                     + "Document.Name.TabularSection.TsName, Catalog.Name.Template.TplName, " //$NON-NLS-1$
@@ -125,6 +129,8 @@ public class ExtensionWorkshopTool implements IMcpTool
                     + "the form.") //$NON-NLS-1$
             .booleanProperty("includeChildren", //$NON-NLS-1$
                 "borrow_object: also borrow that object's own children. Default false.") //$NON-NLS-1$
+            .booleanProperty("apply", //$NON-NLS-1$
+                "update_borrowed: write the alignments. Default false - review only.") //$NON-NLS-1$
             .stringProperty("moduleType", //$NON-NLS-1$
                 "borrow_module: ObjectModule / ManagerModule / RecordSetModule / " //$NON-NLS-1$
                     + "CommandModule / ValueModule") //$NON-NLS-1$
@@ -261,6 +267,8 @@ public class ExtensionWorkshopTool implements IMcpTool
                 return doBorrowBatch(params);
             case "list_borrowed": //$NON-NLS-1$
                 return doListBorrowed(params);
+            case "update_borrowed": //$NON-NLS-1$
+                return doUpdateBorrowed(params);
             case "create_extension_project": //$NON-NLS-1$
                 return doCreateExtensionProject(params);
             case "install_extension": //$NON-NLS-1$
@@ -716,6 +724,547 @@ public class ExtensionWorkshopTool implements IMcpTool
             .toJson();
     }
 
+    /** How many rows one update_borrowed answer carries before it says it stopped counting. */
+    private static final int UPDATE_BORROWED_ROW_CAP = 1000;
+
+    /** The statuses an answer counts, in the order the summary lists them. */
+    private static final List<String> UPDATE_BORROWED_STATUSES = List.of(
+        "inSync", "baseWider", "typeConflict", "sourceGone", "renamedInBase", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "formOutOfDate", "handlerSignatureChanged"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * Says how far the borrowed objects of an extension have drifted from the base it extends,
+     * and with {@code apply=true} writes what aligns safely.
+     * <p>
+     * The review reads each borrowed thing's own record against the base: a uuid that no longer
+     * resolves, a name that moved, a controlled type or its qualifiers that moved, a base form
+     * that grew items, a handler that no longer fits its target. Apply writes only the two safe
+     * halves - the controlled types and, through the EDT adopt service, the borrowed forms -
+     * and lists everything else under {@code notApplied} with the reason it stayed. After the
+     * writes the same walk runs again, so {@code stillOutOfSync} is what the model now holds
+     * rather than what the write intended.
+     * </p>
+     *
+     * @param params the call
+     * @return the review, and with {@code apply=true} the write outcomes
+     */
+    private String doUpdateBorrowed(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String baseProjectName = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
+        String objectFqnRaw = JsonUtils.extractStringArgument(params, "objectFqn"); //$NON-NLS-1$
+        Integer limitArg = JsonUtils.extractIntegerArgument(params, "limit"); //$NON-NLS-1$
+        boolean apply = Boolean.TRUE.equals(
+            JsonUtils.extractBooleanArgumentNullable(params, "apply")); //$NON-NLS-1$
+        if (projectName == null || projectName.isBlank())
+        {
+            return ToolResult.error(TextSuggest.missingParam("projectName", //$NON-NLS-1$
+                "update_borrowed projectName=MyExt [objectFqn=Catalog.Products] [apply=true]")) //$NON-NLS-1$
+                .put("operation", "update_borrowed").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (apply)
+        {
+            // The facade is the write door here, so the door is asked before anything else: a
+            // preset that switched this tool off must not let the write through the operation
+            // it kept quiet about.
+            String gate = ToolGate.gateIfPresetDisabled(NAME);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).put("operation", "update_borrowed").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        IProject extension = ProjectResolver.resolve(projectName);
+        if (extension == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        String objectFqn = objectFqnRaw == null || objectFqnRaw.isBlank() ? null
+            : MetadataTypeCatalog.normalizeFqn(objectFqnRaw.trim());
+        Review review = reviewBorrowed(extension, baseProjectName, objectFqn, limitArg);
+        if (review.error != null)
+        {
+            return ToolResult.error(review.error).put("operation", "update_borrowed").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (objectFqn != null && review.rows.isEmpty() && review.notChecked.isEmpty())
+        {
+            return objectNotFound(objectFqn, review);
+        }
+        ToolResult result = ToolResult.success()
+            .put("operation", "update_borrowed") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("extension", projectName) //$NON-NLS-1$
+            .put("base", review.baseProjectName) //$NON-NLS-1$
+            .put("apply", apply); //$NON-NLS-1$
+        if (objectFqn != null)
+        {
+            result.put("objectFqn", objectFqn); //$NON-NLS-1$
+        }
+        result.put("rows", review.rows); //$NON-NLS-1$
+        result.put("summary", review.summary); //$NON-NLS-1$
+        if (!review.notChecked.isEmpty())
+        {
+            result.put("notChecked", review.notChecked); //$NON-NLS-1$
+        }
+        if (review.truncated)
+        {
+            result.put("truncated", true); //$NON-NLS-1$
+        }
+        if (!apply)
+        {
+            return result.toJson();
+        }
+        return applyReview(extension, objectFqn, limitArg, review, result);
+    }
+
+    /** One review of an extension's borrowed things: rows, their summary, what was not read. */
+    private static final class Review
+    {
+        /** The rows, as the answer shows them. */
+        final List<Map<String, Object>> rows = new ArrayList<>();
+
+        /** Counters per status plus the totals the answer leads with. */
+        final Map<String, Object> summary = new LinkedHashMap<>();
+
+        /** What could not be established, each with a reason. */
+        final List<Map<String, String>> notChecked = new ArrayList<>();
+
+        /** The typeConflict rows that carry what a write needs. */
+        final List<BorrowedSyncReader.Row> typeRows = new ArrayList<>();
+
+        /** The formOutOfDate rows that carry a base form. */
+        final List<BorrowedSyncReader.Row> formRows = new ArrayList<>();
+
+        /** The base the review read, by name. */
+        String baseProjectName;
+
+        /** The extension's configuration, for the refusal that names what was not found. */
+        Object extensionConfiguration;
+
+        /** Why nothing was reviewed. Null when the walk ran. */
+        String error;
+
+        /** True when the row cap stopped the count. */
+        boolean truncated;
+    }
+
+    /**
+     * Reads one review: the model walk plus the interceptors, with the summary over both.
+     *
+     * @param extension the extension project
+     * @param baseProjectName the base by name, or null to derive it
+     * @param objectFqn the one object to restrict to, or null
+     * @param limitArg the interceptor cap the caller named, or null
+     * @return the review
+     */
+    private Review reviewBorrowed(IProject extension, String baseProjectName, String objectFqn,
+        Integer limitArg)
+    {
+        Review review = new Review();
+        BorrowedSyncReader.Report report =
+            BorrowedSyncReader.read(extension, baseProjectName, objectFqn);
+        review.error = report.error;
+        review.baseProjectName = report.baseProjectName;
+        review.extensionConfiguration = report.extensionConfiguration;
+        if (report.error != null)
+        {
+            return review;
+        }
+        for (BorrowedSyncReader.Row row : report.rows)
+        {
+            if (review.rows.size() >= UPDATE_BORROWED_ROW_CAP)
+            {
+                review.truncated = true;
+                break;
+            }
+            review.rows.add(rowMap(row));
+            if (row.status == BorrowedSyncClassification.Status.TYPE_CONFLICT
+                && row.targetId != 0 && row.baseTypeDescription != null)
+            {
+                review.typeRows.add(row);
+            }
+            if (row.status == BorrowedSyncClassification.Status.FORM_OUT_OF_DATE
+                && row.baseForm != null)
+            {
+                review.formRows.add(row);
+            }
+        }
+        review.notChecked.addAll(report.notChecked);
+        addInterceptorRows(review, extension, report.baseProject, objectFqn, limitArg);
+        summarise(review);
+        return review;
+    }
+
+    /**
+     * Adds the interceptor rows, from the same scan {@code list_interceptors} runs.
+     *
+     * @param review the review being built
+     * @param extension the extension project
+     * @param baseProject the base the signatures are checked against
+     * @param objectFqn the one object to restrict to, or null
+     * @param limitArg the interceptor cap the caller named, or null
+     */
+    private static void addInterceptorRows(Review review, IProject extension, IProject baseProject,
+        String objectFqn, Integer limitArg)
+    {
+        int max = limitArg != null && limitArg.intValue() > 0 ? limitArg.intValue() : 200;
+        ListInterceptorsTool.Scan scan = ListInterceptorsTool.scan(extension, baseProject, null,
+            max);
+        if (scan.error != null)
+        {
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("fqn", "the modules of " + extension.getName()); //$NON-NLS-1$ //$NON-NLS-2$
+            entry.put("reason", "the interceptor scan failed: " + scan.error); //$NON-NLS-1$
+            review.notChecked.add(entry);
+            return;
+        }
+        // The scan stops at its cap, as list_interceptors reports: past it a signature break is
+        // unseen, so the review is not complete.
+        if (scan.truncated)
+        {
+            review.truncated = true;
+        }
+        for (Map<String, Object> hit : scan.hits)
+        {
+            if (review.rows.size() >= UPDATE_BORROWED_ROW_CAP)
+            {
+                review.truncated = true;
+                break;
+            }
+            String modulePath = String.valueOf(hit.get("module")); //$NON-NLS-1$
+            String owner = ownerFqnOfModule(extension.getName(), modulePath);
+            if (objectFqn != null && (owner == null || !underFilter(owner, objectFqn)))
+            {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("fqn", modulePath); //$NON-NLS-1$
+            row.put("kind", "interceptor"); //$NON-NLS-1$ //$NON-NLS-2$
+            row.put("handler", hit.get("handler")); //$NON-NLS-1$
+            row.put("targetMethod", hit.get("targetMethod")); //$NON-NLS-1$
+            Object breaks = hit.get("signatureBreaks"); //$NON-NLS-1$
+            if (breaks != null)
+            {
+                row.put("signatureBreaks", breaks); //$NON-NLS-1$
+            }
+            Boolean fits = (Boolean)hit.get("signatureFits"); //$NON-NLS-1$
+            Boolean targetExists = (Boolean)hit.get("targetExists"); //$NON-NLS-1$
+            if (fits != null)
+            {
+                row.put("status", fits.booleanValue() ? "inSync" : "handlerSignatureChanged"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                review.rows.add(row);
+                continue;
+            }
+            if (Boolean.FALSE.equals(targetExists))
+            {
+                row.put("status", "handlerSignatureChanged"); //$NON-NLS-1$ //$NON-NLS-2$
+                row.put("note", "the target method is gone from the base module"); //$NON-NLS-1$ //$NON-NLS-2$
+                review.rows.add(row);
+                continue;
+            }
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("fqn", modulePath + ": " + hit.get("handler")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            entry.put("reason", "the signatures could not be compared: " //$NON-NLS-1$
+                + hit.get("signatureNote")); //$NON-NLS-1$
+            review.notChecked.add(entry);
+        }
+    }
+
+    /**
+     * The object a module path belongs to.
+     *
+     * @param projectName the project the path was read under
+     * @param modulePath the module's workspace path
+     * @return the owning object's FQN, or null when the path names no object
+     */
+    private static String ownerFqnOfModule(String projectName, String modulePath)
+    {
+        String relative = modulePath;
+        String prefix = "/" + projectName + "/"; //$NON-NLS-1$ //$NON-NLS-2$
+        if (relative.startsWith(prefix))
+        {
+            relative = relative.substring(prefix.length());
+        }
+        if (relative.startsWith("src/")) //$NON-NLS-1$
+        {
+            relative = relative.substring(4);
+        }
+        String[] segments = relative.split("/"); //$NON-NLS-1$
+        if (segments.length < 2)
+        {
+            return null;
+        }
+        String type = MetadataTypeCatalog.getTypeByDirectoryName(segments[0]);
+        return type == null ? null : type + "." + segments[1]; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether an object is the one a review was restricted to or lives under it.
+     *
+     * @param fqn the object's FQN
+     * @param filter the restriction
+     * @return true when the object belongs in the review
+     */
+    private static boolean underFilter(String fqn, String filter)
+    {
+        return fqn.equals(filter) || fqn.startsWith(filter + "."); //$NON-NLS-1$
+    }
+
+    /**
+     * Turns one model row into the map the answer shows.
+     *
+     * @param row the row
+     * @return the answer's row
+     */
+    private static Map<String, Object> rowMap(BorrowedSyncReader.Row row)
+    {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("fqn", row.fqn); //$NON-NLS-1$
+        map.put("kind", row.kind); //$NON-NLS-1$
+        map.put("status", BorrowedSyncClassification.wire(row.status)); //$NON-NLS-1$
+        if (row.controlledType != null)
+        {
+            map.put("controlledType", row.controlledType); //$NON-NLS-1$
+            map.put("baseType", row.baseType); //$NON-NLS-1$
+        }
+        if (row.baseName != null)
+        {
+            map.put("extensionName", row.extensionName); //$NON-NLS-1$
+            map.put("baseName", row.baseName); //$NON-NLS-1$
+        }
+        if (row.missingItems != null)
+        {
+            map.put("missingItems", row.missingItems); //$NON-NLS-1$
+        }
+        return map;
+    }
+
+    /**
+     * Counts the rows per status and answers whether anything is out of sync.
+     *
+     * @param review the review to count
+     */
+    private static void summarise(Review review)
+    {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (String status : UPDATE_BORROWED_STATUSES)
+        {
+            counts.put(status, Integer.valueOf(0));
+        }
+        boolean outOfSync = false;
+        for (Map<String, Object> row : review.rows)
+        {
+            String status = String.valueOf(row.get("status")); //$NON-NLS-1$
+            counts.merge(status, Integer.valueOf(1), Integer::sum);
+            if (!"inSync".equals(status) && !"baseWider".equals(status)) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                outOfSync = true;
+            }
+        }
+        review.summary.put("rows", Integer.valueOf(review.rows.size())); //$NON-NLS-1$
+        review.summary.putAll(counts);
+        review.summary.put("outOfSync", Boolean.valueOf(outOfSync)); //$NON-NLS-1$
+    }
+
+    /**
+     * Refuses an objectFqn that names no borrowed object, naming the nearest ones.
+     *
+     * @param objectFqn the address the caller asked for
+     * @param review the review that found nothing under it
+     * @return the refusal
+     */
+    private String objectNotFound(String objectFqn, Review review)
+    {
+        List<String> candidates = new ArrayList<>();
+        int dot = objectFqn.indexOf('.');
+        if (dot > 0
+            && review.extensionConfiguration instanceof com._1c.g5.v8.dt.metadata.mdclass.Configuration)
+        {
+            candidates.addAll(MetadataTypeCatalog.findSimilarObjects(
+                (com._1c.g5.v8.dt.metadata.mdclass.Configuration)review.extensionConfiguration,
+                objectFqn.substring(0, dot), objectFqn.substring(dot + 1), 5));
+        }
+        StringBuilder message = new StringBuilder("No borrowed object under "); //$NON-NLS-1$
+        message.append(objectFqn).append(" in this extension."); //$NON-NLS-1$
+        String suggestion = TextSuggest.closest(objectFqn, candidates);
+        if (suggestion != null)
+        {
+            message.append(" Did you mean '").append(suggestion).append("'?"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!candidates.isEmpty())
+        {
+            message.append(" Borrowed here: ").append(String.join(", ", candidates)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return ToolResult.error(message.toString())
+            .put("reason", "objectNotFound") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("operation", "update_borrowed") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
+
+    /**
+     * Writes the alignments, then reads the model again for what is still out of sync.
+     *
+     * @param extension the extension project
+     * @param objectFqn the restriction the review ran under, or null
+     * @param limitArg the interceptor cap the caller named, or null
+     * @param review the review that decided the writes
+     * @param result the answer being built
+     * @return the finished answer
+     */
+    private String applyReview(IProject extension, String objectFqn, Integer limitArg,
+        Review review, ToolResult result)
+    {
+        List<Map<String, Object>> updatedTypes = new ArrayList<>();
+        List<Map<String, Object>> formsUpdated = new ArrayList<>();
+        List<Map<String, Object>> notApplied = new ArrayList<>();
+        Map<String, BorrowedSyncWriter.TypeWrite> writesByFqn = new LinkedHashMap<>();
+        if (!review.typeRows.isEmpty())
+        {
+            for (BorrowedSyncWriter.TypeWrite write : BorrowedSyncWriter.alignTypes(extension,
+                review.typeRows))
+            {
+                writesByFqn.put(write.fqn, write);
+            }
+        }
+        for (BorrowedSyncReader.Row row : review.typeRows)
+        {
+            BorrowedSyncWriter.TypeWrite write = writesByFqn.get(row.fqn);
+            if (write != null && write.error == null)
+            {
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("fqn", write.fqn); //$NON-NLS-1$
+                one.put("was", write.was); //$NON-NLS-1$
+                one.put("now", write.now); //$NON-NLS-1$
+                if (write.flushNote != null)
+                {
+                    one.put("flushNote", write.flushNote); //$NON-NLS-1$
+                }
+                updatedTypes.add(one);
+            }
+            else
+            {
+                notApplied.add(notApplied(write == null ? row.fqn : write.fqn,
+                    write == null || write.error == null ? "nothing was written" : write.error)); //$NON-NLS-1$
+            }
+        }
+        for (BorrowedSyncReader.Row row : review.formRows)
+        {
+            BorrowedSyncWriter.FormWrite write = BorrowedSyncWriter.updateForm(extension, row);
+            if (write.updated)
+            {
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("fqn", write.fqn); //$NON-NLS-1$
+                if (write.flushNote != null)
+                {
+                    one.put("flushNote", write.flushNote); //$NON-NLS-1$
+                }
+                formsUpdated.add(one);
+            }
+            else
+            {
+                notApplied.add(notApplied(write.fqn, write.status));
+            }
+        }
+        for (Map<String, Object> row : review.rows)
+        {
+            Object fqn = row.get("fqn"); //$NON-NLS-1$
+            String status = String.valueOf(row.get("status")); //$NON-NLS-1$
+            if (hasFqn(updatedTypes, fqn) || hasFqn(formsUpdated, fqn) || hasFqn(notApplied, fqn))
+            {
+                // A row with a write of its own is accounted for above - written, or refused
+                // with the write's own failure - and is not listed twice.
+                continue;
+            }
+            notApplied.add(notApplied(String.valueOf(fqn), reasonFor(status)));
+        }
+        result.put("updatedTypes", updatedTypes); //$NON-NLS-1$
+        result.put("formsUpdated", formsUpdated); //$NON-NLS-1$
+        result.put("notApplied", notApplied); //$NON-NLS-1$
+        Review after = reviewBorrowed(extension, review.baseProjectName, objectFqn, limitArg);
+        List<Map<String, Object>> still = new ArrayList<>();
+        if (after.error == null)
+        {
+            for (Map<String, Object> row : after.rows)
+            {
+                String status = String.valueOf(row.get("status")); //$NON-NLS-1$
+                if (!"inSync".equals(status) && !"baseWider".equals(status)) //$NON-NLS-1$ //$NON-NLS-2$
+                {
+                    still.add(row);
+                }
+            }
+        }
+        result.put("stillOutOfSync", still); //$NON-NLS-1$
+        result.put("note", "apply writes the controlled types and updates the borrowed forms " //$NON-NLS-1$
+            + "through the EDT adopt service. sourceGone, renamedInBase and " //$NON-NLS-1$
+            + "handlerSignatureChanged rows are never written: removing a borrowed object, " //$NON-NLS-1$
+            + "renaming to a base name and rewriting a handler module are decisions this " //$NON-NLS-1$
+            + "operation does not take for you."); //$NON-NLS-1$
+        return result.toJson();
+    }
+
+    /**
+     * Whether a list of answer entries already names an FQN.
+     *
+     * @param entries the entries, each a map with an fqn
+     * @param fqn the FQN to look for
+     * @return true when one of the entries carries it
+     */
+    private static boolean hasFqn(List<Map<String, Object>> entries, Object fqn)
+    {
+        for (Map<String, Object> entry : entries)
+        {
+            if (entry.get("fqn").equals(fqn)) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Why a status leaves its row unwritten.
+     *
+     * @param status the row's status
+     * @return the reason
+     */
+    private static String reasonFor(String status)
+    {
+        switch (status)
+        {
+        case "inSync": //$NON-NLS-1$
+            return "in sync - nothing to align"; //$NON-NLS-1$
+        case "baseWider": //$NON-NLS-1$
+            return "the base is wider and the platform accepts it - nothing to align"; //$NON-NLS-1$
+        case "sourceGone": //$NON-NLS-1$
+            return "the base holds nothing under the uuid - removing the borrowed object is a " //$NON-NLS-1$
+                + "separate decision"; //$NON-NLS-1$
+        case "renamedInBase": //$NON-NLS-1$
+            return "the base renamed the object - rewriting the extension's name is a separate " //$NON-NLS-1$
+                + "decision"; //$NON-NLS-1$
+        case "handlerSignatureChanged": //$NON-NLS-1$
+            return "the handler is code in a module - align it with write_module_source"; //$NON-NLS-1$
+        case "typeConflict": //$NON-NLS-1$
+            return "the attribute is not one the object model lets this operation write"; //$NON-NLS-1$
+        case "formOutOfDate": //$NON-NLS-1$
+            return "the base form was not reached, so the adopt service was not asked"; //$NON-NLS-1$
+        default:
+            return "nothing this operation writes"; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * One notApplied entry.
+     *
+     * @param fqn what was not written
+     * @param reason why
+     * @return the entry
+     */
+    private static Map<String, Object> notApplied(String fqn, String reason)
+    {
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("fqn", fqn); //$NON-NLS-1$
+        entry.put("reason", reason); //$NON-NLS-1$
+        return entry;
+    }
+
     private String doCreateExtensionProject(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -869,6 +1418,12 @@ public class ExtensionWorkshopTool implements IMcpTool
             sb.append("- borrow_form_item - borrow a single form item by name\n"); //$NON-NLS-1$
             sb.append("- borrow_module - borrow a specific module of an object\n"); //$NON-NLS-1$
             sb.append("- list_borrowed - report the discovered adopt API and a hint\n"); //$NON-NLS-1$
+            sb.append("- update_borrowed - how far the borrowed objects drifted from the " //$NON-NLS-1$
+                + "updated base, and with apply=true align the controlled types (base's exact " //$NON-NLS-1$
+                + "type, or AnyRef when the base went composite with references) and update the " //$NON-NLS-1$
+                + "borrowed forms. Statuses: inSync, baseWider, typeConflict, sourceGone, " //$NON-NLS-1$
+                + "renamedInBase, formOutOfDate, handlerSignatureChanged. apply writes nothing " //$NON-NLS-1$
+                + "for sourceGone, renamedInBase or handlerSignatureChanged.\n"); //$NON-NLS-1$
             sb.append("Deployment (into a project's infobase; route to the standalone tools):\n"); //$NON-NLS-1$
             sb.append("- install_extension - install a .cfe (inputPath) as an extension\n"); //$NON-NLS-1$
             sb.append("- uninstall_extension - remove a named extension (extensionName)\n"); //$NON-NLS-1$
@@ -876,7 +1431,9 @@ public class ExtensionWorkshopTool implements IMcpTool
             sb.append("- export_extension - extract a named extension to a .cfe (outputPath)\n"); //$NON-NLS-1$
             sb.append("Inspection:\n"); //$NON-NLS-1$
             sb.append("- extension_lifecycle - guided probe / adopt / generate / revalidate\n"); //$NON-NLS-1$
-            sb.append("- extension_diff - what an extension changes vs the base configuration\n"); //$NON-NLS-1$
+            sb.append("- extension_diff - what an extension changes vs the base configuration; " //$NON-NLS-1$
+                + "children under missingFromExtension are not adopted and are inherited from the " //$NON-NLS-1$
+                + "base unchanged\n"); //$NON-NLS-1$
             sb.append("- list_interceptors - method interceptors declared by extensions\n\n"); //$NON-NLS-1$
             sb.append("- check_release_fitness - what a new delivery breaks in an extension: an " //$NON-NLS-1$
                 + "adopted object gone, a borrowed field gone, a field whose type moved. Needs " //$NON-NLS-1$
@@ -997,7 +1554,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         for (String op : Arrays.asList(
             "create_extension_project", //$NON-NLS-1$
             "borrow_object", "borrow_objects", "borrow_child", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "borrow_form_item", "borrow_module", "list_borrowed", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "borrow_form_item", "borrow_module", "list_borrowed", "update_borrowed", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             "install_extension", "uninstall_extension", "list_extension", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "export_extension", "extension_lifecycle", "extension_diff", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "list_interceptors", "check_release_fitness", "check_platform_verdict")) //$NON-NLS-1$

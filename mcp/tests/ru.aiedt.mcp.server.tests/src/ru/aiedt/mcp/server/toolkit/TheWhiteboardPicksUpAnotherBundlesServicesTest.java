@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -32,6 +33,7 @@ import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.support.modules.IModuleSource;
 import ru.aiedt.mcp.server.support.modules.IModuleSourceProvider;
 import ru.aiedt.mcp.server.support.modules.ModuleSources;
+import ru.aiedt.mcp.server.wire.ToolAnnotations;
 
 /**
  * A tool or a module source provider another bundle publishes as an OSGi service is picked up by
@@ -46,6 +48,8 @@ public class TheWhiteboardPicksUpAnotherBundlesServicesTest
     private static final String WRITER = "whiteboard_probe_writer"; //$NON-NLS-1$
 
     private static final String SILENT = "whiteboard_probe_silent"; //$NON-NLS-1$
+
+    private static final String OWNED = "whiteboard_probe_owned"; //$NON-NLS-1$
 
     private BundleContext context;
 
@@ -133,6 +137,67 @@ public class TheWhiteboardPicksUpAnotherBundlesServicesTest
 
         store.setValue(PrefKeys.PREF_TOOL_PRESET, ToolProfile.ALL_TOOLS.name());
         assertTrue(catalog.isToolEnabled(WRITER));
+    }
+
+    /**
+     * The catalogue classes a tool from another bundle by the bundle's own word: a declared
+     * writer - and a tool that said nothing, which counts as a writer - carries no read hints.
+     */
+    @Test
+    public void theCatalogueSaysAnExternalWriterWrites()
+    {
+        McpToolCatalog catalog = McpToolCatalog.getInstance();
+        Probe writer = new Probe(WRITER);
+        Probe silent = new Probe(SILENT);
+        publishTool(writer, Boolean.TRUE);
+        publishTool(silent, null);
+
+        assertNull(ToolAnnotations.of(writer, catalog).get("readOnlyHint")); //$NON-NLS-1$
+        assertNull(ToolAnnotations.of(writer, catalog).get("idempotentHint")); //$NON-NLS-1$
+        assertNull(ToolAnnotations.of(silent, catalog).get("readOnlyHint")); //$NON-NLS-1$
+    }
+
+    /** A declared reader keeps its read hints. */
+    @Test
+    public void theCatalogueSaysAnExternalReaderReads()
+    {
+        McpToolCatalog catalog = McpToolCatalog.getInstance();
+        Probe reader = new Probe(READER);
+        publishTool(reader, Boolean.FALSE);
+
+        assertSame(reader, catalog.getTool(READER));
+        assertEquals(Boolean.TRUE, ToolAnnotations.of(reader, catalog).get("readOnlyHint")); //$NON-NLS-1$
+    }
+
+    /**
+     * A tool another bundle publishes under a name that is already taken is refused, and its
+     * declared write flag is not applied to the tool that owns the name; withdrawing the refused
+     * service leaves the owner in place.
+     */
+    @Test
+    public void aRefusedExternalToolNeitherReclassifiesNorRemovesTheOwner()
+    {
+        McpToolCatalog catalog = McpToolCatalog.getInstance();
+        Probe owner = new Probe(OWNED);
+        catalog.register(owner);
+        try
+        {
+            Probe intruder = new Probe(OWNED);
+            ServiceRegistration<IMcpTool> registration = publishTool(intruder, Boolean.FALSE);
+
+            assertSame("the owner keeps the name", owner, catalog.getTool(OWNED)); //$NON-NLS-1$
+            assertNull("the refused declaration is not recorded", //$NON-NLS-1$
+                catalog.externalWritesDeclared(OWNED));
+
+            registration.unregister();
+            registrations.remove(registration);
+            assertSame("withdrawing the refused service leaves the owner", owner, //$NON-NLS-1$
+                catalog.getTool(OWNED));
+        }
+        finally
+        {
+            catalog.unregister(OWNED);
+        }
     }
 
     /** A module source provider service answers the registry while registered. */

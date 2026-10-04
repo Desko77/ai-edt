@@ -82,14 +82,16 @@ public class TheMapSaysWhatIsEstablishedAndWhatIsTheFacadesTest
     }
 
     @Test
-    public void whatTheOperationIgnoresIsStillSomethingTheCallMayCarry()
+    public void aReadInsideOneBranchIsNotSharedWithTheOthers()
     {
-        // The other half of the same fact. Dropping it from the wide answer would make
-        // UnreadArguments refuse a call carrying applicationId on any operation of this facade.
-        Set<String> read = new HashSet<>(OperationParameters.of("BranchInfobaseTool", "current"));
+        // The wide answer carries what the facade reads before it dispatches and what the
+        // operation's own path reads. applicationId is read inside bind alone.
+        Set<String> current = new HashSet<>(OperationParameters.of("BranchInfobaseTool", "current"));
+        Set<String> bind = new HashSet<>(OperationParameters.of("BranchInfobaseTool", "bind"));
 
-        assertTrue("the facade reads applicationId before it dispatches, so a call may carry it: "
-            + read, read.contains("applicationId"));
+        assertTrue("current does not read applicationId on any path: " + current,
+            !current.contains("applicationId"));
+        assertTrue("bind reads applicationId: " + bind, bind.contains("applicationId"));
     }
 
     @Test

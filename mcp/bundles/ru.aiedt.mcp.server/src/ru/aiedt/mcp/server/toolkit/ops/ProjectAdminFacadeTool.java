@@ -206,10 +206,11 @@ public class ProjectAdminFacadeTool implements IMcpTool
         String operation = JsonUtils.extractStringArgument(params, "operation"); //$NON-NLS-1$
         if (operation == null || operation.isBlank())
         {
-            return ToolResult.error("operation is required. Allowed: list_projects / " //$NON-NLS-1$
-                + "list_configurations / get_configuration_properties / create_project / " //$NON-NLS-1$
-                + "delete_project / resync_to_disk / restart_edt / self_upkeep / " //$NON-NLS-1$
-                + "list_subsystems / help.") //$NON-NLS-1$
+            // The same source the help catalog is built from, so what the refusal names and
+            // what help describes can never drift into two different lists.
+            return ToolResult.error("operation is required. Allowed: " //$NON-NLS-1$
+                + String.join(" / ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
+                + " / help.") //$NON-NLS-1$
                 .toJson();
         }
         operation = JsonUtils.normalizeOperationToken(operation);
@@ -335,6 +336,7 @@ public class ProjectAdminFacadeTool implements IMcpTool
             sb.append("| Remove a throwaway/test project | delete_project |\n"); //$NON-NLS-1$
             sb.append("| EDT shows an object as valid but disk is stale | resync_to_disk |\n"); //$NON-NLS-1$
             sb.append("| Apply a plugin update / recover a stuck IDE | restart_edt |\n"); //$NON-NLS-1$
+            sb.append("| A modal dialog is holding a call | answer_dialog |\n"); //$NON-NLS-1$
             sb.append("| Is there a newer AI-EDT build to install | self_upkeep |\n"); //$NON-NLS-1$
             sb.append("| See the subsystem tree with command-interface flags | " //$NON-NLS-1$
                 + "list_subsystems |\n"); //$NON-NLS-1$

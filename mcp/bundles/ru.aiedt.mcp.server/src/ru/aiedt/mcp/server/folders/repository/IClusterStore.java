@@ -26,12 +26,17 @@ public interface IClusterStore
 
     /**
      * Saves a project's clusters. Saving an empty set deletes the file rather than writing an empty one.
+     * <p>
+     * The result names what happened. {@link ClusterSaveOutcome#NO_CHANGE} means the file was already
+     * in the asked state and is not a refusal. A refusal leaves the file as it was and carries a
+     * reason code.
+     * </p>
      *
      * @param project the project
      * @param storage the clusters to save
-     * @return <code>true</code> on success
+     * @return what the save did
      */
-    boolean save(IProject project, ClusterStore storage);
+    ClusterSaveOutcome save(IProject project, ClusterStore storage);
 
     /**
      * Tells whether a project has a clusters file.

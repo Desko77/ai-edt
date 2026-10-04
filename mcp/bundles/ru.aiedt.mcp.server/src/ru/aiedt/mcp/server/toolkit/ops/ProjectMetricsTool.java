@@ -426,6 +426,12 @@ public class ProjectMetricsTool implements IMcpTool
             sb.append("> **partial=true** - the scan did not finish; every count below is a"
                 + " floor\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
+        Object markerScanError = metrics.get("markerScanError"); //$NON-NLS-1$
+        if (markerScanError != null)
+        {
+            sb.append("> **markerScanError** - the marker scan failed, so the error counts below" //$NON-NLS-1$
+                + " say nothing: ").append(markerScanError).append("\n\n"); //$NON-NLS-1$
+        }
         appendMapAsTable(sb, "Objects", (Map<?, ?>) metrics.get("objects")); //$NON-NLS-1$ //$NON-NLS-2$
         appendMapAsTable(sb, "Modules", (Map<?, ?>) metrics.get("modules")); //$NON-NLS-1$ //$NON-NLS-2$
         appendMapAsTable(sb, "Methods", (Map<?, ?>) metrics.get("methods")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -435,6 +441,9 @@ public class ProjectMetricsTool implements IMcpTool
         appendMapAsTable(sb, "Debt", (Map<?, ?>) metrics.get("debt")); //$NON-NLS-1$ //$NON-NLS-2$
         return sb.toString();
     }
+
+    /** How many list elements one table cell prints before the rest is only counted. */
+    private static final int LIST_CELL_SHOWN = 20;
 
     private static void appendMapAsTable(StringBuilder sb, String title, Map<?, ?> data)
     {
@@ -449,11 +458,40 @@ public class ProjectMetricsTool implements IMcpTool
             Object key = entry.getKey();
             Object value = entry.getValue();
             String valueStr = value == null ? "" //$NON-NLS-1$
-                : value instanceof java.util.List ? ("[" + ((java.util.List<?>) value).size() + " items]") //$NON-NLS-1$ //$NON-NLS-2$
+                : value instanceof java.util.List ? renderListCell((java.util.List<?>)value)
                     : value.toString();
             sb.append("| ").append(key).append(" | ").append(valueStr).append(" |\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
         sb.append("\n"); //$NON-NLS-1$
+    }
+
+    /**
+     * Prints a list value as its elements, not as an element count.
+     * <p>
+     * A cell that says "[37 items]" carries none of what the caller asked the list for - the debt
+     * report's details live in the elements. Past {@link #LIST_CELL_SHOWN} elements the rest is a
+     * count of what is hidden, so the cell stays a cell.
+     * </p>
+     *
+     * @param items the list to print
+     * @return the cell text
+     */
+    private static String renderListCell(java.util.List<?> items)
+    {
+        StringBuilder cell = new StringBuilder();
+        for (int i = 0; i < items.size() && i < LIST_CELL_SHOWN; i++)
+        {
+            if (i > 0)
+            {
+                cell.append("; "); //$NON-NLS-1$
+            }
+            cell.append(items.get(i));
+        }
+        if (items.size() > LIST_CELL_SHOWN)
+        {
+            cell.append("; ... (+").append(items.size() - LIST_CELL_SHOWN).append(" more)"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return cell.toString();
     }
 
     private static class FormStats

@@ -75,4 +75,40 @@ public class AContentAssistBatchAnswersEveryPositionTest
         String schema = new ContentAssistReader().getInputSchema();
         assertTrue(schema, schema.contains("positions")); //$NON-NLS-1$
     }
+
+    /**
+     * A call with neither a batch nor a position is refused naming both ways to ask.
+     */
+    @Test
+    public void aCallWithoutAPositionNamesBothWaysToAsk()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("projectName", "noSuchProject"); //$NON-NLS-1$ //$NON-NLS-2$
+        String answer = new ContentAssistReader().execute(params);
+        assertTrue(answer, answer.contains("positions")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("filePath")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("line")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("column")); //$NON-NLS-1$
+    }
+
+    /**
+     * The schema requires only the project: filePath, line and column stay optional, the way their
+     * own descriptions say, because a batch position names its own.
+     */
+    @Test
+    public void theSchemaRequiresOnlyTheProject()
+    {
+        String schema = new ContentAssistReader().getInputSchema().replace(" ", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(schema, schema.contains("\"required\":[\"projectName\"]")); //$NON-NLS-1$
+    }
+
+    /**
+     * The description does not promise an editor: nothing in this tool opens one.
+     */
+    @Test
+    public void theDescriptionDoesNotPromiseAnEditor()
+    {
+        String description = new ContentAssistReader().getDescription();
+        assertFalse(description, description.contains("Opens the file")); //$NON-NLS-1$
+    }
 }

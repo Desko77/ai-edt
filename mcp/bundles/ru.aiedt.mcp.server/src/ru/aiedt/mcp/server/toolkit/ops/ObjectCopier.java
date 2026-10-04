@@ -120,11 +120,25 @@ public class ObjectCopier
         {
             return ToolResult.error("targetProjectName is required").toJson(); //$NON-NLS-1$
         }
+        String shapeProblem = topLevelOnlyProblem(objectFqn);
+        if (shapeProblem != null)
+        {
+            return ToolResult.error(shapeProblem)
+                .put("operation", NAME) //$NON-NLS-1$
+                .put("objectFqn", objectFqn) //$NON-NLS-1$
+                .toJson();
+        }
 
         boolean allowMissing = JsonUtils.extractBooleanArgument(params, "allowMissingReferences", false); //$NON-NLS-1$
         try
         {
             return UiSync.call(() -> copy(sourceProjectName, objectFqn, targetProjectName, allowMissing));
+        }
+        catch (UiSync.UiBusyException e)
+        {
+            // This tool writes: the tag is how the caller tells a safe retry (nothing ran) from
+            // an interrupted started copy whose outcome is unknown.
+            return ToolResult.error(e.getMessage()).put("tag", e.tag()).toJson(); //$NON-NLS-1$
         }
         catch (Exception e)
         {
@@ -363,6 +377,30 @@ public class ObjectCopier
         String type = dot > 0 ? fqn.substring(0, dot) : fqn;
         String english = MetadataTypeCatalog.toEnglishSingular(type);
         return english != null ? english : type;
+    }
+
+    /**
+     * Names why an FQN cannot be copied, or says it can.
+     * <p>
+     * Only a top-level object has a copyable whole: a FQN with anything past {@code Type.Name} -
+     * {@code Catalog.Goods.Command.Print}, or a nested subsystem {@code Subsystem.A.Subsystem.B} -
+     * addresses a part of an object, and copying the object it belongs to would hand the caller the
+     * whole thing under the part's address.
+     * </p>
+     *
+     * @param fqn the FQN as the caller passed it, not <code>null</code>
+     * @return the refusal text naming the FQN, or <code>null</code> when it addresses a top-level object
+     */
+    static String topLevelOnlyProblem(String fqn)
+    {
+        String[] parts = fqn.split("\\."); //$NON-NLS-1$
+        if (parts.length > 2)
+        {
+            return "'" + fqn + "' addresses something inside '" + parts[0] + "." + parts[1] //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + "', and only top-level objects are copied. Pass the object itself instead, " //$NON-NLS-1$
+                + "e.g. '" + parts[0] + "." + parts[1] + "'."; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        return null;
     }
 
     /**

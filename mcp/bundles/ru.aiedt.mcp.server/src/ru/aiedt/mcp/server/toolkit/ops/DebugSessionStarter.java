@@ -9,6 +9,8 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
@@ -31,6 +33,9 @@ import com.google.gson.JsonObject;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.ModalDialogWatch;
+import ru.aiedt.mcp.server.support.PendingEnvelope;
+import ru.aiedt.mcp.server.support.PendingExecutor;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -80,6 +85,69 @@ public final class DebugSessionStarter implements IMcpTool
      * infobase reference before launching.
      */
     private static final java.util.concurrent.locks.ReentrantLock LAUNCH_LOCK = LaunchConfigAccess.LAUNCH_LOCK;
+
+    /**
+     * How long a poll of a handed-over launch waits inline, in milliseconds.
+     * <p>
+     * A caller that has answered the dialog polls and usually collects at once; one whose launch is
+     * still going gets a fresh Pending answer rather than a request held open longer than a client
+     * keeps one.
+     * </p>
+     */
+    private static final long LAUNCH_RESUME_WAIT_MS = 30_000L;
+
+    /**
+     * The launches handed to a {@code runKey} whose continuation has not finished yet, by the
+     * application they start.
+     * <p>
+     * A handed-over launch keeps running after the call that made it has returned its Pending
+     * envelope, and {@link #LAUNCH_LOCK} goes with that call. Without this reservation the
+     * already-running check sees no target - the first client has not registered one yet - and a
+     * second launch of the same application starts a second client, so answering the dialog that
+     * held the first open starts two. The reservation's life is the continuation's: it is placed
+     * before the run is dispatched and leaves in the run body's own {@code finally} - after the
+     * launch has returned, after the wait for the debug target's registration is over and after
+     * the caller's answer was built. Nothing else releases it: not the launch call's return, which
+     * the continuation outlives while it waits on the target, and not the registry's tracking of
+     * the run, which a cancel drops while the launch is still parked on a question.
+     * </p>
+     */
+    private static final Map<String, InFlightLaunch> LAUNCHES_IN_FLIGHT =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * A handed-over launch reserved by the application it starts.
+     * <p>
+     * The launch itself is kept, not only the key: a run cancelled before its body claimed its
+     * start never enters the body's {@code finally}, so that reservation is released by a reader
+     * once the launch it would have waited on has returned - the only liveness signal left when no
+     * continuation ran.
+     * </p>
+     */
+    static final class InFlightLaunch
+    {
+        /** The key the Pending envelope carried. */
+        final String runKey;
+
+        /** The launch the reservation was placed for. */
+        final LaunchUnderWay launch;
+
+        /**
+         * Whether the run's body never ran, so no {@code finally} will release the reservation.
+         * Written by the work-exit door when it settles with the reservation still held.
+         */
+        volatile boolean bodyNeverRan;
+
+        /**
+         * @param runKey the key the caller polls
+         * @param launch the launch still under way
+         */
+        InFlightLaunch(String runKey, LaunchUnderWay launch)
+        {
+            this.runKey = runKey;
+            this.launch = launch;
+        }
+    }
 
     @Override
     public String getName()
@@ -151,6 +219,9 @@ public final class DebugSessionStarter implements IMcpTool
             .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
                 "How long to wait for waitForEndpoint, in seconds. Default 20, limit 50 - one " //$NON-NLS-1$
                     + "request does not outlive that. Refused without waitForEndpoint.") //$NON-NLS-1$
+            .stringProperty("runKey", //$NON-NLS-1$
+                "Resume a launch that answered Pending: the launch was held by a dialog or outlived " //$NON-NLS-1$
+                    + "its wait, and this key collects what became of it.") //$NON-NLS-1$
             .build();
     }
 
@@ -181,9 +252,29 @@ public final class DebugSessionStarter implements IMcpTool
             ? "update_database" : null; //$NON-NLS-1$
     }
 
+    /**
+     * The run this call resumes in {@code domain}, when that domain holds the launches this tool
+     * hands over.
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument, or <code>null</code> when the call names none
+     * @return {@link #NAME} for this tool's own launches, <code>null</code> otherwise
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.DEBUG_LAUNCH.domain().equals(domain) ? NAME : null;
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
+        String resumeKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if (resumeKey != null && !resumeKey.isEmpty())
+        {
+            return PendingExecutor.resume(PendingWorkRegistry.DEBUG_LAUNCH, NAME, resumeKey,
+                LAUNCH_RESUME_WAIT_MS, null);
+        }
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
@@ -368,6 +459,14 @@ public final class DebugSessionStarter implements IMcpTool
                     .toJson();
             }
 
+            // A launch of this application still in flight answers with its key: the first client
+            // has registered no target yet, and a second launch would start a second client.
+            String inFlightRunKey = inFlightLaunchRunKey(effectiveAppId);
+            if (inFlightRunKey != null)
+            {
+                return launchInFlightRefusal(effectiveAppId, inFlightRunKey);
+            }
+
             // The external object is resolved BEFORE the already-running check: a running session
             // was started without these arguments, and answering success would lose them.
             if (effectiveAppId != null && DebugSessionBook.findActiveTarget(effectiveAppId) != null)
@@ -509,61 +608,75 @@ public final class DebugSessionStarter implements IMcpTool
                     : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
             }
 
-            LaunchOutcome outcome = performLaunch(toLaunch, isAttach);
-            if (!outcome.started)
+            // Copies for the answer below: it runs a second time, on the run's own thread, when
+            // the launch is handed over and settles after the call has answered Pending.
+            final ClientLaunchMode decidedMode = mode;
+            final String appliedFlagState = flagState;
+            final IApplication resolvedApplication = application;
+            final String openedObjectName = openedObject;
+            final ApplicationUpdater.Result updateDone = databaseUpdate;
+            Function<LaunchOutcome, String> settledAnswer = settled ->
             {
-                return refusalFor(outcome, "Could not launch the debug session").toJson(); //$NON-NLS-1$
-            }
-
-            ToolResult result = ToolResult.success()
-                .put("launchConfiguration", config.getName()) //$NON-NLS-1$
-                .put("configurationType", typeId) //$NON-NLS-1$
-                .put("attach", isAttach) //$NON-NLS-1$
-                .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
-            if (databaseUpdate != null)
-            {
-                result.put("databaseUpdate", databaseUpdate.outcome.toString()); //$NON-NLS-1$
-            }
-            if (mode != null)
-            {
-                describeClient(result, mode, flagState, application);
-            }
-            if (debugServerPort > 0)
-            {
-                result.put("debugServerPort", isAttach ? null : Integer.valueOf(debugServerPort)); //$NON-NLS-1$
-                if (isAttach)
+                if (!settled.started)
                 {
-                    result.put("debugServerPortNote", //$NON-NLS-1$
-                        "An Attach configuration starts no debug server, so debugServerPort was not " //$NON-NLS-1$
-                            + "applied. It connects to the debug server named by the configuration."); //$NON-NLS-1$
+                    return refusalFor(settled, "Could not launch the debug session").toJson(); //$NON-NLS-1$
                 }
-            }
-            if (openedObject != null)
+                ToolResult result = ToolResult.success()
+                    .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                    .put("configurationType", typeId) //$NON-NLS-1$
+                    .put("attach", isAttach) //$NON-NLS-1$
+                    .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (updateDone != null)
+                {
+                    result.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
+                }
+                if (decidedMode != null)
+                {
+                    describeClient(result, decidedMode, appliedFlagState, resolvedApplication);
+                }
+                if (debugServerPort > 0)
+                {
+                    result.put("debugServerPort", isAttach ? null : Integer.valueOf(debugServerPort)); //$NON-NLS-1$
+                    if (isAttach)
+                    {
+                        result.put("debugServerPortNote", //$NON-NLS-1$
+                            "An Attach configuration starts no debug server, so debugServerPort was not " //$NON-NLS-1$
+                                + "applied. It connects to the debug server named by the configuration."); //$NON-NLS-1$
+                    }
+                }
+                if (openedObjectName != null)
+                {
+                    result.put("externalObjectOpened", openedObjectName); //$NON-NLS-1$
+                }
+                if (startupOption != null)
+                {
+                    result.put("startupOption", startupOption); //$NON-NLS-1$
+                }
+                String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, result);
+                if (endpointNote != null)
+                {
+                    return endpointNote;
+                }
+                result.put("message", isAttach //$NON-NLS-1$
+                    ? "Attach debug session started - use debug_status to check on it, "
+                        + "or wait_for_break to block until a breakpoint fires."
+                    : "Debug session is now running");
+                if (configProject != null && !configProject.isEmpty())
+                {
+                    result.put("project", configProject); //$NON-NLS-1$
+                }
+                if (effectiveAppId != null)
+                {
+                    result.put("applicationId", effectiveAppId); //$NON-NLS-1$
+                }
+                return result.toJson();
+            };
+            LaunchOutcome outcome = performLaunch(toLaunch, isAttach, effectiveAppId, settledAnswer);
+            if (outcome.pendingAnswer != null)
             {
-                result.put("externalObjectOpened", openedObject); //$NON-NLS-1$
+                return outcome.pendingAnswer;
             }
-            if (startupOption != null)
-            {
-                result.put("startupOption", startupOption); //$NON-NLS-1$
-            }
-            String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, result);
-            if (endpointNote != null)
-            {
-                return endpointNote;
-            }
-            result.put("message", isAttach //$NON-NLS-1$
-                ? "Attach debug session started - use debug_status to check on it, "
-                    + "or wait_for_break to block until a breakpoint fires."
-                : "Debug session is now running");
-            if (configProject != null && !configProject.isEmpty())
-            {
-                result.put("project", configProject); //$NON-NLS-1$
-            }
-            if (effectiveAppId != null)
-            {
-                result.put("applicationId", effectiveAppId); //$NON-NLS-1$
-            }
-            return result.toJson();
+            return settledAnswer.apply(outcome);
         }
         catch (Exception e)
         {
@@ -637,6 +750,14 @@ public final class DebugSessionStarter implements IMcpTool
                     Activator.logError("Failed to check application", e); //$NON-NLS-1$
                     // Continue - try to find a launch configuration anyway.
                 }
+            }
+
+            // A launch of this application still in flight answers with its key: the first client
+            // has registered no target yet, and a second launch would start a second client.
+            String inFlightRunKey = inFlightLaunchRunKey(applicationId);
+            if (inFlightRunKey != null)
+            {
+                return launchInFlightRefusal(applicationId, inFlightRunKey);
             }
 
             // Before the update, not after: an object that cannot be resolved is a typo, and a typo
@@ -815,41 +936,55 @@ public final class DebugSessionStarter implements IMcpTool
             String flagState = application == null ? "not applied: the application was not resolved" //$NON-NLS-1$
                 : ClientLaunchMode.reconcileFlag(application, mode.wantsOrdinaryFlag());
 
-            LaunchOutcome outcome = performLaunch(matchingConfig, false);
-            if (!outcome.started)
+            // Copies for the answer below: it runs a second time, on the run's own thread, when
+            // the launch is handed over and settles after the call has answered Pending.
+            final String launchedConfigTypeId = LaunchConfigAccess.getConfigTypeId(matchingConfig);
+            final boolean createdConfig = autoCreatedConfig;
+            final String openedObjectName = openedObject;
+            final ApplicationUpdater.Result updateDone = databaseUpdate;
+            final IApplication resolvedApplication = application;
+            Function<LaunchOutcome, String> settledAnswer = settled ->
             {
-                return refusalFor(outcome, "Debug session launch failed") //$NON-NLS-1$
+                if (!settled.started)
+                {
+                    return refusalFor(settled, "Debug session launch failed") //$NON-NLS-1$
+                        .put("project", projectName) //$NON-NLS-1$
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("launchConfiguration", configName) //$NON-NLS-1$
+                        .toJson();
+                }
+                ToolResult successResult = ToolResult.success()
                     .put("project", projectName) //$NON-NLS-1$
                     .put("applicationId", applicationId) //$NON-NLS-1$
                     .put("launchConfiguration", configName) //$NON-NLS-1$
-                    .toJson();
-            }
-
-            ToolResult successResult = ToolResult.success()
-                .put("project", projectName) //$NON-NLS-1$
-                .put("applicationId", applicationId) //$NON-NLS-1$
-                .put("launchConfiguration", configName) //$NON-NLS-1$
-                .put("configurationType", LaunchConfigAccess.getConfigTypeId(matchingConfig)) //$NON-NLS-1$
-                .put("autoCreatedConfiguration", autoCreatedConfig) //$NON-NLS-1$
-                .put("attach", false) //$NON-NLS-1$
-                .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("externalObjectOpened", openedObject) //$NON-NLS-1$
-                .put("startupOption", startupOption) //$NON-NLS-1$
-                .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
-                .put("message", autoCreatedConfig //$NON-NLS-1$
-                    ? "Debug session is now running (a launch configuration was auto-created for it)"
-                    : "Debug session is now running");
-            if (databaseUpdate != null)
+                    .put("configurationType", launchedConfigTypeId) //$NON-NLS-1$
+                    .put("autoCreatedConfiguration", createdConfig) //$NON-NLS-1$
+                    .put("attach", false) //$NON-NLS-1$
+                    .put("mode", "debug") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("externalObjectOpened", openedObjectName) //$NON-NLS-1$
+                    .put("startupOption", startupOption) //$NON-NLS-1$
+                    .put("debugServerPort", debugServerPort > 0 ? Integer.valueOf(debugServerPort) : null) //$NON-NLS-1$
+                    .put("message", createdConfig //$NON-NLS-1$
+                        ? "Debug session is now running (a launch configuration was auto-created for it)"
+                        : "Debug session is now running");
+                if (updateDone != null)
+                {
+                    successResult.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
+                }
+                describeClient(successResult, mode, flagState, resolvedApplication);
+                String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
+                if (endpointNote != null)
+                {
+                    return endpointNote;
+                }
+                return successResult.toJson();
+            };
+            LaunchOutcome outcome = performLaunch(matchingConfig, false, applicationId, settledAnswer);
+            if (outcome.pendingAnswer != null)
             {
-                successResult.put("databaseUpdate", databaseUpdate.outcome.toString()); //$NON-NLS-1$
+                return outcome.pendingAnswer;
             }
-            describeClient(successResult, mode, flagState, application);
-            String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
-            if (endpointNote != null)
-            {
-                return endpointNote;
-            }
-            return successResult.toJson();
+            return settledAnswer.apply(outcome);
         }
         catch (Exception e)
         {
@@ -1064,18 +1199,41 @@ public final class DebugSessionStarter implements IMcpTool
         final String observed;
         final List<Map<String, Object>> dialogsSeen;
 
+        /**
+         * The whole answer to return instead of this outcome, for a launch handed to a
+         * {@code runKey}: the caller's own answer-building does not apply to work that is still
+         * running, so the envelope built where the hand-over happened is the answer itself.
+         */
+        final String pendingAnswer;
+
         LaunchOutcome(boolean started, String refusal, String observed,
             List<Map<String, Object>> dialogsSeen)
+        {
+            this(started, refusal, observed, dialogsSeen, null);
+        }
+
+        LaunchOutcome(boolean started, String refusal, String observed,
+            List<Map<String, Object>> dialogsSeen, String pendingAnswer)
         {
             this.started = started;
             this.refusal = refusal;
             this.observed = observed;
             this.dialogsSeen = dialogsSeen;
+            this.pendingAnswer = pendingAnswer;
         }
 
         static LaunchOutcome ok()
         {
             return new LaunchOutcome(true, null, "running", java.util.Collections.emptyList()); //$NON-NLS-1$
+        }
+
+        /**
+         * @param answer the Pending answer built for a launch that outlived its inline wait
+         * @return the outcome that carries it as the answer to return
+         */
+        static LaunchOutcome handOver(String answer)
+        {
+            return new LaunchOutcome(false, "the launch is still running", "pending", null, answer); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
@@ -1229,57 +1387,308 @@ public final class DebugSessionStarter implements IMcpTool
 
     /**
      * Starts the configuration and reports what was observed afterwards.
+     * <p>
+     * The launch is posted to the UI thread and the calling thread waits on it with a window, rather
+     * than blocking inside the launch until it returns: a modal question the environment opens
+     * inside the launch - an update asking whether to go ahead - holds the launch open for as long
+     * as nobody answers it, and a caller parked inside {@code syncExec} sees neither the question
+     * nor anything else. Within the window the workbench's modals are compared with what was up
+     * before the launch; a question that appeared since is answered at once as a Pending envelope
+     * naming the dialog, and the launch keeps running under a {@code runKey} the caller polls once
+     * the dialog is answered. A launch that returns within the window is answered exactly as it was
+     * before the window existed.
+     * </p>
      *
      * @param config the configuration to launch.
      * @param isAttach whether it attaches rather than starts a client.
-     * @return the outcome; {@link LaunchOutcome#started} false carries the refusal
+     * @param applicationId the application the launch starts, held as an in-flight reservation
+     *            when the launch is handed over; may be <code>null</code> when unknown
+     * @param answer how the call answers a settled launch, started or refused; a launch that
+     *            outlives the wait runs the same answer from its continuation
+     * @return the outcome; {@link LaunchOutcome#started} false carries the refusal, and a
+     *         non-null {@link LaunchOutcome#pendingAnswer} carries the whole answer to return
      */
-    private LaunchOutcome performLaunch(ILaunchConfiguration config, boolean isAttach)
+    private LaunchOutcome performLaunch(ILaunchConfiguration config, boolean isAttach,
+        String applicationId, Function<LaunchOutcome, String> answer)
     {
         List<Map<String, Object>> dialogsBefore = ModalDialogWatch.current().getDialogs();
-        final String[] launchError = {null};
-        final ILaunch[] launched = {null};
-        Display display = Display.getDefault();
-        if (display != null && !display.isDisposed())
+        LaunchUnderWay launch = startLaunch(config);
+        long deadline = System.currentTimeMillis() + LAUNCH_WAIT_MS;
+        while (true)
         {
-            display.syncExec(() -> {
-                try
-                {
-                    launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
-                }
-                catch (Exception e)
-                {
-                    Activator.logError("Failed to launch debug session", e); //$NON-NLS-1$
-                    launchError[0] = e.getMessage();
-                }
-            });
+            boolean dialogUp = !newDialogs(dialogsBefore,
+                ModalDialogWatch.current().getDialogs()).isEmpty();
+            LaunchWaitChoice choice = decideLaunchWait(launch.hasReturned(),
+                System.currentTimeMillis() >= deadline, dialogUp);
+            switch (choice)
+            {
+            case ANSWER_THE_LAUNCH:
+                return outcomeOfLaunch(launch, isAttach, dialogsBefore);
+            case ANSWER_BLOCKED_BY_DIALOG:
+            case ANSWER_PENDING:
+                return LaunchOutcome.handOver(pendingLaunchAnswer(launch, isAttach, dialogsBefore,
+                    applicationId, answer));
+            default:
+                break;
+            }
+            try
+            {
+                Thread.sleep(LAUNCH_STEP_MS);
+            }
+            catch (InterruptedException stopped)
+            {
+                Thread.currentThread().interrupt();
+                return new LaunchOutcome(false, "the wait for the launch was interrupted", //$NON-NLS-1$
+                    "interrupted", null); //$NON-NLS-1$
+            }
         }
-        else
+    }
+
+    /**
+     * How long the calling thread gives the launch to come back on its own, in milliseconds.
+     * <p>
+     * A launch that neither returns nor opens a question within this window is handed to a
+     * {@code runKey}: the request a client holds does not outlive much more than this, while the
+     * launch itself may go on for as long as the client it starts takes to appear.
+     * </p>
+     */
+    static final long LAUNCH_WAIT_MS = 10_000L;
+
+    /** How often the launch and the workbench's modals are re-read while waiting, in milliseconds. */
+    static final long LAUNCH_STEP_MS = 250L;
+
+    /** What the bounded launch wait does next. */
+    enum LaunchWaitChoice
+    {
+        /** Nothing new: read both again after a step. */
+        KEEP_WAITING,
+
+        /** The launch returned: answer what it came to. */
+        ANSWER_THE_LAUNCH,
+
+        /** A modal question opened since the launch began: answer the Pending envelope now. */
+        ANSWER_BLOCKED_BY_DIALOG,
+
+        /** The window is over with the launch still open: answer the Pending envelope now. */
+        ANSWER_PENDING
+    }
+
+    /**
+     * Decides the bounded launch wait from plain values, so the decision is testable with no
+     * display, no launch and no clock.
+     *
+     * @param launchReturned whether the launch call has come back
+     * @param deadlineReached whether the wait window is over
+     * @param newDialogUp whether a modal opened since the launch began
+     * @return what the wait does next
+     */
+    static LaunchWaitChoice decideLaunchWait(boolean launchReturned, boolean deadlineReached,
+        boolean newDialogUp)
+    {
+        if (launchReturned)
         {
+            return LaunchWaitChoice.ANSWER_THE_LAUNCH;
+        }
+        if (newDialogUp)
+        {
+            return LaunchWaitChoice.ANSWER_BLOCKED_BY_DIALOG;
+        }
+        if (deadlineReached)
+        {
+            return LaunchWaitChoice.ANSWER_PENDING;
+        }
+        return LaunchWaitChoice.KEEP_WAITING;
+    }
+
+    /**
+     * A launch that has been started and may still be running.
+     * <p>
+     * The seam between the wait, which reads the launch without holding it, and the continuation a
+     * Pending answer leaves behind, which blocks until the launch returns and renders what it came
+     * to.
+     * </p>
+     */
+    interface LaunchUnderWay
+    {
+        /**
+         * @return whether the launch call has come back
+         */
+        boolean hasReturned();
+
+        /**
+         * @return the launch it created; valid once {@link #hasReturned()} is true
+         */
+        ILaunch launch();
+
+        /**
+         * @return why the launch call failed, or <code>null</code> when it did not; valid once
+         *         {@link #hasReturned()} is true
+         */
+        String error();
+
+        /**
+         * Blocks until the launch call comes back.
+         *
+         * @throws InterruptedException if the wait is interrupted
+         */
+        void awaitReturn() throws InterruptedException;
+    }
+
+    /**
+     * Starts the launch wherever the environment can run it.
+     * <p>
+     * With a display the launch is posted to the UI thread - the thread the platform's launch
+     * delegate expects to be called on - and the calling thread is free to watch for dialogs.
+     * Without one there is no UI thread to hold a modal, so the launch runs inline and has already
+     * returned by the time this method answers.
+     * </p>
+     *
+     * @param config the configuration to launch
+     * @return the launch under way
+     */
+    private static LaunchUnderWay startLaunch(ILaunchConfiguration config)
+    {
+        Display display = Display.getDefault();
+        if (display == null || display.isDisposed())
+        {
+            String[] error = {null};
+            ILaunch[] launched = {null};
             try
             {
                 launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
             }
-            catch (CoreException e)
+            catch (Exception e)
             {
                 Activator.logError("Failed to launch debug session", e); //$NON-NLS-1$
-                launchError[0] = e.getMessage();
+                error[0] = e.getMessage();
             }
+            return new FinishedLaunch(launched[0], error[0]);
         }
 
-        LaunchOutcome outcome;
-        if (launchError[0] != null)
+        CountDownLatch returned = new CountDownLatch(1);
+        String[] error = {null};
+        ILaunch[] launched = {null};
+        display.asyncExec(() -> {
+            try
+            {
+                launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
+            }
+            catch (Exception e)
+            {
+                Activator.logError("Failed to launch debug session", e); //$NON-NLS-1$
+                error[0] = e.getMessage();
+            }
+            finally
+            {
+                returned.countDown();
+            }
+        });
+        return new PostedLaunch(returned, launched, error);
+    }
+
+    /** A launch that ran inline and has already returned. */
+    private static final class FinishedLaunch implements LaunchUnderWay
+    {
+        private final ILaunch launch;
+
+        private final String error;
+
+        FinishedLaunch(ILaunch launch, String error)
         {
-            outcome = new LaunchOutcome(false, launchError[0], "threw", null); //$NON-NLS-1$
+            this.launch = launch;
+            this.error = error;
         }
-        else if (launched[0] == null)
+
+        @Override
+        public boolean hasReturned()
+        {
+            return true;
+        }
+
+        @Override
+        public ILaunch launch()
+        {
+            return launch;
+        }
+
+        @Override
+        public String error()
+        {
+            return error;
+        }
+
+        @Override
+        public void awaitReturn()
+        {
+            // already back
+        }
+    }
+
+    /** A launch posted to the UI thread, read through the latch its completion counts down. */
+    private static final class PostedLaunch implements LaunchUnderWay
+    {
+        private final CountDownLatch returned;
+
+        private final ILaunch[] launched;
+
+        private final String[] error;
+
+        PostedLaunch(CountDownLatch returned, ILaunch[] launched, String[] error)
+        {
+            this.returned = returned;
+            this.launched = launched;
+            this.error = error;
+        }
+
+        @Override
+        public boolean hasReturned()
+        {
+            return returned.getCount() == 0;
+        }
+
+        @Override
+        public ILaunch launch()
+        {
+            return launched[0];
+        }
+
+        @Override
+        public String error()
+        {
+            return error[0];
+        }
+
+        @Override
+        public void awaitReturn() throws InterruptedException
+        {
+            returned.await();
+        }
+    }
+
+    /**
+     * What a returned launch came to, observed the way the synchronous path always observed it.
+     *
+     * @param launch the launch that has returned
+     * @param isAttach whether the configuration attaches rather than starts a client
+     * @param dialogsBefore what was open before the launch, for the refusals' dialog aside
+     * @return the outcome
+     */
+    private static LaunchOutcome outcomeOfLaunch(LaunchUnderWay launch, boolean isAttach,
+        List<Map<String, Object>> dialogsBefore)
+    {
+        LaunchOutcome outcome;
+        if (launch.error() != null)
+        {
+            outcome = new LaunchOutcome(false, launch.error(), "threw", null); //$NON-NLS-1$
+        }
+        else if (launch.launch() == null)
         {
             outcome = new LaunchOutcome(false, "the environment created no launch", //$NON-NLS-1$
                 "notCreated", null); //$NON-NLS-1$
         }
         else
         {
-            outcome = watchLaunch(launched[0], isAttach);
+            outcome = watchLaunch(launch.launch(), isAttach);
         }
         if (outcome.started)
         {
@@ -1289,6 +1698,231 @@ public final class DebugSessionStarter implements IMcpTool
         // workbench, and one of them may belong to whatever the person at the keyboard was doing.
         return new LaunchOutcome(false, outcome.refusal, outcome.observed,
             dialogsOpenedDuring(dialogsBefore));
+    }
+
+    /**
+     * Hands a launch that outlived its inline wait to a {@code runKey} and answers the Pending
+     * envelope the caller polls that key with.
+     * <p>
+     * The envelope is the one every long operation answers with, so a modal that is holding the
+     * launch is named in it - title, message, buttons - together with the key. Nothing here presses
+     * a button: which answer the environment's question gets is a person's decision or an explicit
+     * {@code answer_dialog} call, never the launch's own.
+     * </p>
+     * <p>
+     * The application is reserved as in flight BEFORE the run is dispatched, and the reservation
+     * leaves in the run body's own {@code finally}: the body can settle before this method returns,
+     * and a reservation written after that would never be released. That finally runs after the
+     * launch has returned, after the wait for the debug target's registration is over and after
+     * the caller's answer was built - the reservation covers the whole continuation, not only the
+     * launch call. A run cancelled before its body claimed its start never enters that finally,
+     * so the work-exit door marks such a reservation instead, and a reader releases it once the
+     * launch it would have waited on has returned.
+     * </p>
+     *
+     * @param launch the launch that has not returned
+     * @param isAttach whether the configuration attaches rather than starts a client
+     * @param dialogsBefore what was open before the launch
+     * @param applicationId the application the launch starts, held as in flight until it settles;
+     *            <code>null</code> or empty reserves nothing
+     * @param answer how the original call answers a settled launch, started or refused; the run
+     *            body runs it once the launch returns
+     * @return the Pending answer for the caller
+     */
+    static String pendingLaunchAnswer(LaunchUnderWay launch, boolean isAttach,
+        List<Map<String, Object>> dialogsBefore, String applicationId,
+        Function<LaunchOutcome, String> answer)
+    {
+        String runKey = PendingWorkRegistry.computeRunKey(NAME,
+            String.valueOf(System.nanoTime()));
+        boolean reserveApplication = applicationId != null && !applicationId.isEmpty();
+        InFlightLaunch reservation = reserveApplication ? new InFlightLaunch(runKey, launch) : null;
+        if (reservation != null)
+        {
+            LAUNCHES_IN_FLIGHT.put(applicationId, reservation);
+        }
+        PendingWorkRegistry.PendingEntry entry =
+            PendingWorkRegistry.DEBUG_LAUNCH.getOrStart(runKey,
+                ongoing ->
+                {
+                    try
+                    {
+                        return awaitLaunchOutcome(launch, isAttach, dialogsBefore, answer);
+                    }
+                    finally
+                    {
+                        if (reservation != null)
+                        {
+                            LAUNCHES_IN_FLIGHT.remove(applicationId, reservation);
+                        }
+                    }
+                });
+        if (reservation != null)
+        {
+            // The body's own finally runs before this door settles, so a reservation still held
+            // here means the body never ran: the run was cancelled before it claimed its start.
+            // The launch it was to wait on may still be parked on a question, and the reservation
+            // holds until that launch has returned - the liveness a reader then sweeps on.
+            entry.attachWorkExit(() ->
+            {
+                if (LAUNCHES_IN_FLIGHT.get(applicationId) == reservation)
+                {
+                    reservation.bodyNeverRan = true;
+                }
+            });
+        }
+        if (entry.startedBy == null)
+        {
+            entry.startedBy = NAME;
+        }
+        return PendingEnvelope.mark(ToolResult.success()
+            .put("operation", NAME) //$NON-NLS-1$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("waitedMs", Long.valueOf(LAUNCH_WAIT_MS)) //$NON-NLS-1$
+            .put("note", "The launch is still running. When a modal question holds it open, read " //$NON-NLS-1$
+                + "the dialogs this answer names and answer one with answer_dialog or in EDT; " //$NON-NLS-1$
+                + "this plugin presses nothing itself. Nothing is lost: the launch keeps running " //$NON-NLS-1$
+                + "and the answer of what it came to is collected with this runKey.")
+            .put("hint", "Call this tool again with runKey=\"" + runKey //$NON-NLS-1$
+                + "\" once the dialog is answered (or to keep waiting).")) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * What a handed-over launch came to, rendered for the caller that polls its {@code runKey}.
+     * <p>
+     * The answer is the one the original call would have given, handed in as a function: the
+     * continuation runs the same response and the same readiness logic - the endpoint wait
+     * included - so a caller that asked for {@code waitForEndpoint} is not told the operation is
+     * done while the endpoint it named has yet to answer.
+     * </p>
+     *
+     * @param launch the launch that has not returned
+     * @param isAttach whether the configuration attaches rather than starts a client
+     * @param dialogsBefore what was open before the launch
+     * @param answer how the original call answers a settled launch, started or refused
+     * @return the answer of what the launch came to
+     */
+    static String awaitLaunchOutcome(LaunchUnderWay launch, boolean isAttach,
+        List<Map<String, Object>> dialogsBefore, Function<LaunchOutcome, String> answer)
+    {
+        try
+        {
+            launch.awaitReturn();
+        }
+        catch (InterruptedException stopped)
+        {
+            Thread.currentThread().interrupt();
+            return ToolResult.error("The wait for the handed-over launch was interrupted") //$NON-NLS-1$
+                .put("operation", NAME) //$NON-NLS-1$
+                .toJson();
+        }
+        return answer.apply(outcomeOfLaunch(launch, isAttach, dialogsBefore));
+    }
+
+    /**
+     * The {@code runKey} of the launch still in flight for an application, when there is one.
+     * <p>
+     * In flight means the run's continuation has not finished. The launch it waits on may already
+     * have returned - the continuation then waits on the debug target's registration, and the
+     * reservation holds through that wait, so a launch call's return releases nothing here. The
+     * one reservation a reader releases is an orphaned one: its run was cancelled before the body
+     * claimed its start, no continuation will wait on anything, and once that launch has returned
+     * there is nothing left the reservation protects. Whether the key can still be polled is a
+     * separate question, answered where the refusal is built: a cancelled run loses its registry
+     * entry while its launch is still parked, and a key nothing tracks answers
+     * {@code runKey not found}.
+     * </p>
+     *
+     * @param applicationId the application a new launch is being considered for
+     * @return the runKey of the in-flight launch, or <code>null</code> when no launch of it is in
+     *         flight
+     */
+    static String inFlightLaunchRunKey(String applicationId)
+    {
+        if (applicationId == null || applicationId.isEmpty())
+        {
+            return null;
+        }
+        InFlightLaunch inFlight = LAUNCHES_IN_FLIGHT.get(applicationId);
+        if (inFlight == null)
+        {
+            return null;
+        }
+        if (inFlight.bodyNeverRan && inFlight.launch.hasReturned())
+        {
+            LAUNCHES_IN_FLIGHT.remove(applicationId, inFlight);
+            return null;
+        }
+        return inFlight.runKey;
+    }
+
+    /**
+     * The refusal a launch call gets while an earlier launch of the same application is still in
+     * flight, saying what the caller can actually do next.
+     * <p>
+     * Whether the key can be polled is read at refusal time, not remembered from when the run was
+     * started: a cancelled run loses its registry entry while its launch is still parked on a
+     * question, and sending the caller to poll a key nothing holds answers {@code runKey not
+     * found} forever. With the entry still tracked the refusal names the key; without it the
+     * refusal says the launch is still going and to retry once it has settled.
+     * </p>
+     *
+     * @param applicationId the application the in-flight launch starts
+     * @param runKey the key the in-flight run was started under
+     * @return the refusal, ready to return
+     */
+    static String launchInFlightRefusal(String applicationId, String runKey)
+    {
+        if (runKey != null && PendingWorkRegistry.DEBUG_LAUNCH.get(runKey) != null)
+        {
+            return launchInFlightAnswer(applicationId, runKey);
+        }
+        return ToolResult
+            .error("A launch of this application is still in flight: an earlier call handed it " //$NON-NLS-1$
+                + "to a run while a modal question or the wait window held it open, and that run " //$NON-NLS-1$
+                + "is no longer tracked, so there is no runKey to poll. The launch itself is " //$NON-NLS-1$
+                + "still going - answer the question it waits on in EDT or wait for it to " //$NON-NLS-1$
+                + "settle, then launch again. Nothing was launched.") //$NON-NLS-1$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("launchInFlight", true) //$NON-NLS-1$
+            .put("hint", "Answer the dialog the launch waits on in EDT or wait for it to settle, " //$NON-NLS-1$
+                + "then call this tool again.") //$NON-NLS-1$
+            .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The refusal a launch call gets while an earlier launch of the same application is still in
+     * flight under a {@code runKey}.
+     * <p>
+     * The earlier launch has not registered its debug target yet, so the already-running check
+     * cannot see it; what it came to is not known until somebody answers what holds it open, and a
+     * second client started beside the first is exactly what the reservation exists to prevent.
+     * The answer names the key to poll instead.
+     * </p>
+     *
+     * @param applicationId the application the in-flight launch starts
+     * @param runKey the key its Pending envelope carried
+     * @return the refusal, ready to return
+     */
+    static String launchInFlightAnswer(String applicationId, String runKey)
+    {
+        return ToolResult
+            .error("A launch of this application is still in flight: an earlier call handed it " //$NON-NLS-1$
+                + "to a runKey while a modal question or the wait window held it open, and what it " //$NON-NLS-1$
+                + "came to is not known yet. Poll that key instead of starting a second client - " //$NON-NLS-1$
+                + "answering the question one of them waits on could start two. Nothing was " //$NON-NLS-1$
+                + "launched.") //$NON-NLS-1$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("launchInFlight", true) //$NON-NLS-1$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("hint", "Call this tool again with runKey=\"" + runKey //$NON-NLS-1$ //$NON-NLS-2$
+                + "\" to collect the outcome.") //$NON-NLS-1$
+            .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+            .toJson();
     }
 
     /**

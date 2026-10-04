@@ -49,9 +49,19 @@ public enum ErrorTags
      * internal cancellation. */
     CANCELLED("cancelled"), //$NON-NLS-1$
 
+    /** The run's own time budget ran out before it finished, so the wait gave it up; nobody
+     * cancelled it. */
+    BUDGET_EXPIRED("budgetExpired"), //$NON-NLS-1$
+
     /** The client disconnected while the tool was still running, so the call
      * was abandoned. */
     CLIENT_GONE("clientGone"), //$NON-NLS-1$
+
+    /** The wait for the UI thread was broken after the work had already
+     * started, so whether the work's effects landed is unknown. Not a
+     * retryable condition: a repeated write could double one that already
+     * applied, so the caller reads the target's state first. */
+    OUTCOME_UNKNOWN("outcomeUnknown"), //$NON-NLS-1$
 
     // -------------------------------------------------------------------
     // Folded set (2026-07 G2 pass) - MetadataGuards.ErrorTag / BM guards
@@ -237,9 +247,8 @@ public enum ErrorTags
      * applications, or the infobase reference is missing. */
     RESOLVE_FAILED("resolveFailed"), //$NON-NLS-1$
 
-    /** install/export/list/uninstall extension: the resolved application is
-     * not an infobase application (extension management applies only to
-     * infobases). */
+    /** An operation that runs the platform against an infobase: the resolved
+     * application is not an infobase application. */
     NOT_INFOBASE("notInfobase"), //$NON-NLS-1$
 
     /** extension thick-client ops: the .cfe/operation requires a platform

@@ -5,22 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 138 | a test class named after it |
-| exercised | 211 | reached by some other test |
-| tool-sweep | 46 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 41 | needs a display or an extension point |
-| workspace-bound | 22 | drives a live EDT project or debug session |
+| direct | 142 | a test class named after it |
+| exercised | 237 | reached by some other test |
+| tool-sweep | 38 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 37 | needs a display or an extension point |
+| workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **458** | across 562 test classes |
+| **total** | **473** | across 624 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (22)
-
-**folders**
-- IClusterManager
+## workspace-bound (19)
 
 **folders/refactoring**
 - ClusterDeleteRefactorHook
@@ -39,8 +36,6 @@ _none_
 - BmExtensionProjectHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
-- BmXdtoHelper
-- BreakpointAccess
 - BslCallGraphHelper
 - BslSignatureReader
 - BuildTaskHelper
@@ -55,7 +50,7 @@ _none_
 - CommandInterfaceOps
 - FormEventOps
 
-## ui-bound (41)
+## ui-bound (37)
 
 **(root)**
 - McpAutoStart
@@ -69,12 +64,9 @@ _none_
 
 **folders/ui**
 - ClusterEditDialog
-- ClusterNavigatorBridge
-- ClusterTreeContent
 - ClusterTreeLabels
 - ClusterViewFilter
 - CollectionAdapters
-- NavigatorClusterSelection
 
 **labels/handlers**
 - FilterByMarkerCommand
@@ -111,26 +103,22 @@ _none_
 - BslProposalAccess
 - DebugLog
 - OffScreenWidget
-- UiSync
 
 **workbench**
 - NavigatorToolbarTweaker
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (46)
+## tool-sweep (38)
 
 **toolkit/ops**
-- ApplicationsReader
 - AttributeAdder
 - BookmarksReader
 - BreakpointRemover
 - BreakpointsLister
 - CodeTemplateTool
-- CommonPictureExporter
 - ConfigurationInfoReader
 - ConfigurationXmlExporter
-- DcsSearchTool
 - DebugResumer
 - DebugStateReader
 - DebugStepper
@@ -141,10 +129,7 @@ _none_
 - EventLogTool
 - ExportExtensionTool
 - ExportObjectTool
-- ExtensionDiffTool
-- ExtensionLifecycleTool
 - ExternalDataSourceWorkshopTool
-- FindDeadCodeTool
 - FormScreenshotGrabber
 - GenerateHealthSnapshotTool
 - GetObjectHelpTool
@@ -154,7 +139,6 @@ _none_
 - LaunchConfigsLister
 - ListExtensionsTool
 - OutgoingStructuresReader
-- ProfilingResultsReader
 - ProfilingStarter
 - ProjectCleaner
 - ProjectCreator
@@ -166,9 +150,8 @@ _none_
 - TaggedObjectsReader
 - TagsReader
 - UninstallExtensionTool
-- XdtoWorkshopTool
 
-## exercised (211)
+## exercised (237)
 
 **(root)**
 - Activator
@@ -178,7 +161,9 @@ _none_
 
 **folders**
 - ClusterKeys
+- ClusterWriteOutcome
 - IClusterChangeObserver
+- IClusterManager
 
 **folders/handlers**
 - AddToClusterCommand
@@ -191,8 +176,14 @@ _none_
 - ClusterStore
 
 **folders/repository**
+- ClusterSaveOutcome
 - IClusterStore
 - YamlClusterStore
+
+**folders/ui**
+- ClusterNavigatorBridge
+- ClusterTreeContent
+- NavigatorClusterSelection
 
 **labels**
 - MarkerDecorationHelpers
@@ -241,6 +232,10 @@ _none_
 - BmSubsystemHelper
 - BmSupportRegistryHelper
 - BmTemplateHelper
+- BmXdtoHelper
+- BorrowedSyncReader
+- BorrowedSyncWriter
+- BreakpointAccess
 - ChildBorrow
 - ClientLaunchMode
 - ConfigurationListProperties
@@ -270,6 +265,7 @@ _none_
 - InfobaseObjectsExporter
 - InfobaseOutsideChange
 - JUnitRunOutcome
+- LaunchBoundary
 - LaunchConfigAccess
 - MetadataDiffEngine
 - MetadataGuards
@@ -317,6 +313,7 @@ _none_
 - MetadataFormatter
 
 **toolkit/ops**
+- ApplicationsReader
 - AuditRoleRightsTool
 - BreakpointSetter
 - BreakpointStateSetter
@@ -324,18 +321,27 @@ _none_
 - BslModuleAccess
 - CallHierarchyReader
 - CheckDocReader
+- ClusterAddTool
+- ClusterAdminFacadeTool
+- ClusterCreateTool
+- ClusterDeleteTool
+- ClusterRemoveTool
+- ClusterUpdateTool
 - CodeSearchTool
 - CodeTextSearcher
+- CommonPictureExporter
 - CompareConfigurationsTool
 - ConfigIoFacadeTool
 - ContentAssistReader
 - ContentOps
 - DatabaseSyncInspector
 - DatabaseUpdater
+- DcsSearchTool
 - DcsWorkshopTool
 - DebugFrameResolution
 - DebugPauser
 - DebugSessionStarter
+- DebugThreadOwnership
 - DebugVariableWriter
 - DebugVariablesReader
 - DependencyGraphTool
@@ -343,7 +349,10 @@ _none_
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
 - ExpressionEvaluator
+- ExtensionDiffTool
+- ExtensionLifecycleTool
 - ExternalObjectWorkshopTool
+- FindDeadCodeTool
 - FindRlsViolationsTool
 - FormAppearanceOps
 - FormCommandInterfaceOps
@@ -383,6 +392,7 @@ _none_
 - PlatformDocReader
 - PredefinedOps
 - ProblemSummaryReader
+- ProfilingResultsReader
 - ProjectAdminFacadeTool
 - ProjectMetricsTool
 - ProjectProblemsReader
@@ -403,6 +413,7 @@ _none_
 - ValidateForExportTool
 - VanessaTool
 - WorkspaceMarksFacadeTool
+- XdtoWorkshopTool
 - YaxunitDebugRunner
 - YaxunitTestsTool
 
@@ -419,7 +430,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (138)
+## direct (142)
 
 **(root)**
 - BrowserOrigin
@@ -452,9 +463,12 @@ _none_
 - BmFormGeneratorHelper
 - BmInfobaseCredentialsHelper
 - BmInfobaseRegistrationHelper
+- BooleanLiteral
+- BorrowedSyncClassification
 - BranchInfobaseBook
 - BslCommentParseHelper
 - ClientDialogReader
+- CollectionMemberPath
 - ComparisonSessions
 - ControlledFragment
 - DbViewSurvey
@@ -523,6 +537,7 @@ _none_
 - ToolCallScope
 - ToolGate
 - TypeApplication
+- UiSync
 - UpdateReport
 - WalkNarrowing
 - WorkspacePhase
@@ -598,14 +613,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 2 |
-| 3-4 | 13 |
+| 3-4 | 14 |
 | 5-8 | 43 |
-| 9-16 | 58 |
-| 17+ | 22 |
+| 9-16 | 59 |
+| 17+ | 24 |
 
-4533 test methods across 562 test classes; 138 classes have a test of their own, median 10 methods each.
+4896 test methods across 624 test classes; 142 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 138 of 458 classes have one: 46 are covered by the registry-wide contract sweep and 22 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 142 of 473 classes have one: 38 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

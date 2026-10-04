@@ -16,7 +16,9 @@ import org.eclipse.core.resources.IProject;
 
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.model.Cluster;
+import ru.aiedt.mcp.server.folders.repository.ClusterSaveOutcome;
 
 /** Tests the non-UI part of cluster command failure reporting. */
 public class ClusterCommandHandlerTest
@@ -30,8 +32,13 @@ public class ClusterCommandHandlerTest
             new Class<?>[] {IProject.class},
             (proxy, method, arguments) -> "getName".equals(method.getName()) ? "Demo" : null); //$NON-NLS-1$ //$NON-NLS-2$
 
-        assertEquals("The cluster changes were not saved. Check .settings/aiedt-clusters.yaml " //$NON-NLS-1$
-            + "in project 'Demo' and try again.", ClusterCommandHandler.saveFailureMessage(project)); //$NON-NLS-1$
+        ClusterWriteOutcome outcome = ClusterWriteOutcome.of(
+            ClusterSaveOutcome.refused(ClusterSaveOutcome.CHANGED_ON_DISK));
+
+        assertEquals(outcome.explanation() + " Check .settings/aiedt-clusters.yaml " //$NON-NLS-1$
+            + "in project 'Demo' and try again.", //$NON-NLS-1$
+            ClusterCommandHandler.saveFailureMessage(project, outcome));
+        assertTrue(ClusterCommandHandler.saveFailureMessage(project, outcome).startsWith(outcome.explanation()));
     }
 
     /** An object already in the chosen cluster is skipped, not reported as a failed save. */

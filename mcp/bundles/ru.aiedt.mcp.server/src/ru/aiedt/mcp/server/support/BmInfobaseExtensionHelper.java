@@ -453,7 +453,7 @@ public final class BmInfobaseExtensionHelper
      * @throws Exception whatever the work throws, after the infobase has been taken back
      */
     static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim,
+        LaunchBoundary launchClaim,
         java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
@@ -463,7 +463,7 @@ public final class BmInfobaseExtensionHelper
             {
                 lock.lockInterruptibly();
             }
-            if (launchClaim != null && !launchClaim.compareAndSet(false, true))
+            if (launchClaim != null && !launchClaim.claimLaunch())
             {
                 if (lock != null)
                 {
@@ -1105,20 +1105,23 @@ public final class BmInfobaseExtensionHelper
      * Reads the project/infobase equality state for a guarded export.
      *
      * @param ctx the resolved launcher context
-     * @return the equality state, or <code>null</code> when it cannot be obtained (no
-     *         synchronization manager on this runtime, or the read failed) - the caller
-     *         refuses on <code>null</code>, because a guard that could not run cleared nothing
+     * @return the equality state, or <code>null</code> when it cannot be obtained (no project in
+     *         the context, no synchronization manager on this runtime, or the read failed) - the
+     *         caller refuses on <code>null</code>, because a guard that could not run cleared
+     *         nothing
      */
     private static InfobaseEqualityState readEqualityState(ThickClientLaunch.LauncherContext ctx)
     {
-        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (ctx.project == null)
         {
             return null;
         }
         try
         {
-            return mgr.getEqualityState(ctx.project, ctx.infobase);
+            // ServiceAccess.get answers with the service or throws, so a runtime without the
+            // manager lands in the catch below.
+            return ServiceAccess.get(IInfobaseSynchronizationManager.class)
+                .getEqualityState(ctx.project, ctx.infobase);
         }
         catch (Throwable e)
         {
@@ -1508,7 +1511,7 @@ public final class BmInfobaseExtensionHelper
     /** What the designer log of an install run vouches for about a requested database update. */
     enum DatabaseUpdateOutcome
     {
-        /** A success line naming the database is present and no failure line is. */
+        /** A success line about the database update is present and no failure line is. */
         CONFIRMED,
         /** The log says nothing either way (or there is no log). */
         UNVERIFIED,
@@ -1523,10 +1526,13 @@ public final class BmInfobaseExtensionHelper
      * The platform speaks the language the IDE runs in, so both English and Russian
      * wordings are matched; a failure line anywhere wins over every success line, and a
      * summary that counts zero errors ("errors: 0" / its Russian twin) is not a failure
-     * report. Only a success line that names the database confirms the update: the same
-     * run loads the extension first, and its "Загрузка конфигурации успешно завершена"
-     * vouches for the load alone. Measured: a load and update run of an unchanged
-     * extension leaves that load line as the whole log. Package-visible: the matching turns on prose and is exactly the kind that
+     * report. An explicit "not completed" wording counts as a failure even though it
+     * carries the word "completed". Only a success line that is about the update of the
+     * database - naming the database, the update and a successful completion together -
+     * confirms the update: the same run loads the extension first, and its
+     * "Загрузка конфигурации успешно завершена" vouches for the load alone. Measured: a
+     * load and update run of an unchanged extension leaves that load line as the whole
+     * log. Package-visible: the matching turns on prose and is exactly the kind that
      * stops working without anyone noticing, so a test reads it directly.
      * </p>
      *
@@ -1552,16 +1558,22 @@ public final class BmInfobaseExtensionHelper
                 || line.contains("ошибок: 0"); //$NON-NLS-1$
             if (!zeroCount && (line.contains("error") || line.contains("failed") //$NON-NLS-1$ //$NON-NLS-2$
                 || line.contains("failure") || line.contains("exception") //$NON-NLS-1$ //$NON-NLS-2$
+                || line.contains("not completed") // the "did not finish" wording //$NON-NLS-1$
+                || line.contains("не завершено") // its Russian twin //$NON-NLS-1$
                 || line.contains("ошибк") // the Russian error word, any case ending //$NON-NLS-1$
                 || line.contains("не удалось"))) // the Russian "could not" wording //$NON-NLS-1$
             {
                 failed = true;
             }
             boolean success = line.contains("successfully") || line.contains("completed") //$NON-NLS-1$ //$NON-NLS-2$
-                || line.contains("успешно"); // the Russian "successfully" wording //$NON-NLS-1$
+                || line.contains("успешно") // the Russian "successfully" wording //$NON-NLS-1$
+                || line.contains("завершено"); // the Russian "completed" wording //$NON-NLS-1$
             boolean namesTheDatabase = line.contains("database") //$NON-NLS-1$
-                || line.contains("базы данных"); // the Russian "of the database" wording //$NON-NLS-1$
-            if (success && namesTheDatabase)
+                || line.contains("базы данных") // the Russian "of the database" wording //$NON-NLS-1$
+                || line.contains("информационной базы"); // the Russian "of the infobase" wording //$NON-NLS-1$
+            boolean aboutTheUpdate = line.contains("update") //$NON-NLS-1$
+                || line.contains("обновлени"); // the Russian "update" word, any ending //$NON-NLS-1$
+            if (success && namesTheDatabase && aboutTheUpdate)
             {
                 confirmed = true;
             }
@@ -1700,10 +1712,6 @@ public final class BmInfobaseExtensionHelper
             return false;
         }
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null)
-        {
-            return false;
-        }
         boolean wasConnected = mgr.isConnected(ctx.project, ctx.infobase);
         try
         {
@@ -1730,12 +1738,6 @@ public final class BmInfobaseExtensionHelper
     static boolean releaseForThickClient(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null)
-        {
-            // Without the manager nothing can be released, and a Designer run on an infobase EDT
-            // still holds is exactly what the release exists to prevent.
-            throw new IllegalStateException("IInfobaseSynchronizationManager is not available on this EDT runtime"); //$NON-NLS-1$
-        }
         if (ctx.project == null)
         {
             throw new IllegalStateException("the launcher context carries no project"); //$NON-NLS-1$
@@ -1788,13 +1790,6 @@ public final class BmInfobaseExtensionHelper
     static void takeInfobaseBack(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null)
-        {
-            // The infobase was released through this manager; without it now, it stays released,
-            // and that is a failure to report, not a step to skip.
-            throw new IllegalStateException("IInfobaseSynchronizationManager is no longer available; " //$NON-NLS-1$
-                + "the infobase stays disconnected"); //$NON-NLS-1$
-        }
         mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
     }
 
@@ -1998,7 +1993,7 @@ public final class BmInfobaseExtensionHelper
         {
             ctx.lock.lockInterruptibly();
         }
-        if (!ctx.launchClaim.compareAndSet(false, true))
+        if (!ctx.launchClaim.claimLaunch())
         {
             if (ctx.lock != null)
             {
@@ -2055,14 +2050,16 @@ public final class BmInfobaseExtensionHelper
 
     private static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx)
     {
-        IInfobaseSynchronizationManager mgr = ServiceAccess.get(IInfobaseSynchronizationManager.class);
-        if (mgr == null || ctx.project == null)
+        if (ctx.project == null)
         {
             return;
         }
         try
         {
-            mgr.connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
+            // ServiceAccess.get answers with the service or throws; a runtime without the manager
+            // is reported below like any other failed reconnect.
+            ServiceAccess.get(IInfobaseSynchronizationManager.class)
+                .connectInfobase(ctx.project, ctx.infobase, new NullProgressMonitor());
         }
         catch (Throwable e)
         {

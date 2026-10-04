@@ -147,6 +147,8 @@ public class AWriteThatChangedNothingIsNotSuccessTest
         BmDcsHelper.Result r = resultWith(s);
         BmDcsHelper.noteDiskSave(r);
 
+        assertFalse("a failed save has to refuse the call", r.ok);
+        assertNotNull("the refusal has to say why", r.error);
         assertNotNull("a failed save keeps its own tag", r.tags.get("diskSaveFailed"));
         assertNull("and is not also accused of changing nothing", r.tags.get("schemaUnchanged"));
     }

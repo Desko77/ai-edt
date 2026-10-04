@@ -22,6 +22,7 @@ import org.eclipse.ui.ISources;
 import org.eclipse.ui.handlers.HandlerUtil;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
@@ -60,9 +61,10 @@ public class RemoveFromClusterCommand
         Shell shell = HandlerUtil.getActiveShell(event);
         for (ObjectInCluster target : targets)
         {
-            if (!service.removeObjectFromCluster(target.project(), target.fqn()))
+            ClusterWriteOutcome removed = service.removeObjectFromCluster(target.project(), target.fqn());
+            if (removed.isRefused())
             {
-                ClusterCommandHandler.showSaveFailure(shell, target.project());
+                ClusterCommandHandler.showSaveFailure(shell, target.project(), removed);
                 break;
             }
         }

@@ -102,18 +102,20 @@ public class ClusterRenameRefactorHookTest
     public void undoingTheRenameRestoresTheObjectAndItsDescendant() throws Exception
     {
         ClusterManagerImpl manager = new ClusterManagerImpl();
-        assertNotNull(manager.createCluster(probe.project, "Shelf", "Catalogs", null)); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.Products", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertNotNull(manager.createCluster(probe.project, "Shelf", "Catalogs", null).getCluster()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.Products", "Catalogs/Shelf").succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(manager.addObjectToCluster(probe.project,
-            "Catalog.Products.CatalogAttribute.X", "Catalogs/Shelf")); //$NON-NLS-1$ //$NON-NLS-2$
+            "Catalog.Products.CatalogAttribute.X", "Catalogs/Shelf").succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
 
-        assertTrue(ClusterFqnRenameChange.apply(manager, probe.project, "Catalog.Products", "Catalog.Goods")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(ClusterFqnRenameChange.apply(manager, probe.project, "Catalog.Products", "Catalog.Goods") //$NON-NLS-1$ //$NON-NLS-2$
+            .succeeded());
         assertNotNull(manager.findClusterForObject(probe.project, "Catalog.Goods")); //$NON-NLS-1$
         assertNotNull(manager.findClusterForObject(probe.project, "Catalog.Goods.CatalogAttribute.X")); //$NON-NLS-1$
         assertNull(manager.findClusterForObject(probe.project, "Catalog.Products")); //$NON-NLS-1$
         assertNull(manager.findClusterForObject(probe.project, "Catalog.Products.CatalogAttribute.X")); //$NON-NLS-1$
 
-        assertTrue(ClusterFqnRenameChange.apply(manager, probe.project, "Catalog.Goods", "Catalog.Products")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(ClusterFqnRenameChange.apply(manager, probe.project, "Catalog.Goods", "Catalog.Products") //$NON-NLS-1$ //$NON-NLS-2$
+            .succeeded());
         assertNotNull(manager.findClusterForObject(probe.project, "Catalog.Products")); //$NON-NLS-1$
         assertNotNull(manager.findClusterForObject(probe.project, "Catalog.Products.CatalogAttribute.X")); //$NON-NLS-1$
         assertNull(manager.findClusterForObject(probe.project, "Catalog.Goods")); //$NON-NLS-1$

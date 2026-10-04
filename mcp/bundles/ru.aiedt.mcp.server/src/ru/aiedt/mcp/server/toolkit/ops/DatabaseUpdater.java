@@ -231,7 +231,7 @@ public class DatabaseUpdater implements IMcpTool
                 + "Off by default: a file of a foreign format makes the platform answer FullDump " //$NON-NLS-1$
                 + "and the update silently becomes a full configuration load. A base with no " //$NON-NLS-1$
                 + "recorded format is not compared at all. The way to actually fix the file is " //$NON-NLS-1$
-                + "sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
+                + "infobase_admin operation=sync_control syncOperation=rebuild_dump_info.") //$NON-NLS-1$
             .booleanProperty("autoFreeClients", "Opt-in: before running the update, stop this project's own " //$NON-NLS-1$ //$NON-NLS-2$
                 + "EDT-launched runtime-client sessions for this infobase, so an active client cannot keep " //$NON-NLS-1$
                 + "the infobase locked and block the update. Only runtime-client launches that match both this project " //$NON-NLS-1$
@@ -1415,14 +1415,38 @@ public class DatabaseUpdater implements IMcpTool
         java.nio.file.Path stored =
             ru.aiedt.mcp.server.support.SyncBaseline.dumpInfoFile(infobaseProject,
                 infobase.getUuid().toString());
-        InfobaseOutsideChange copy =
-            InfobaseOutsideChange.copyOf(stored, InfobaseIdentity.of(infobase));
+        return recordTheCopy(stored, InfobaseIdentity.of(infobase));
+    }
+
+    /**
+     * Records the store's copy as it is after an update, and names which record stayed when that
+     * fails.
+     * <p>
+     * Two failures leave two different records behind. A copy that does not read has only a
+     * load mark to clear; when the clear fails, the mark stays and the next incremental update
+     * refuses on it. A copy that reads is written as the new record; when that fails, the answer
+     * names what the record left behind makes of the next incremental update.
+     * </p>
+     *
+     * @param stored the store's {@code ConfigDumpInfo.xml}
+     * @param identity the base the copy belongs to, or {@code null}
+     * @return the sentence naming the record that stayed and why, or {@code null} when there was
+     *         nothing to record or the record was written
+     */
+    static String recordTheCopy(java.nio.file.Path stored, String identity)
+    {
+        InfobaseOutsideChange copy = InfobaseOutsideChange.copyOf(stored, identity);
         if (!copy.known())
         {
             // A copy that does not read cannot be recorded as this update's. A load mark on the
             // record would still stop the next incremental update, so it is cleared; a record
             // with no mark is left as it was.
-            return InfobaseOutsideChange.clearTheLoad(InfobaseOutsideChange.recordFileOf(stored));
+            String notCleared =
+                InfobaseOutsideChange.clearTheLoad(InfobaseOutsideChange.recordFileOf(stored));
+            return notCleared == null ? null
+                : "the load mark on the stored dump-info record of this base could not be " //$NON-NLS-1$
+                    + "cleared after the update, so the next incremental update still refuses on " //$NON-NLS-1$
+                    + "it: " + notCleared; //$NON-NLS-1$
         }
         try
         {
@@ -1431,8 +1455,33 @@ public class DatabaseUpdater implements IMcpTool
         }
         catch (Exception | LinkageError cannotWrite)
         {
-            return cannotWrite.toString();
+            return "the stored dump-info copy of this base could not be recorded after the " //$NON-NLS-1$
+                + "update; " + whatTheRecordLeft( //$NON-NLS-1$
+                    InfobaseOutsideChange.read(InfobaseOutsideChange.recordFileOf(stored)))
+                + ": " + cannotWrite; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * What the record that stayed beside the copy makes of the next incremental update.
+     *
+     * @param left the record as it is on disk after the failed write
+     * @return the clause naming it
+     */
+    static String whatTheRecordLeft(InfobaseOutsideChange left)
+    {
+        if (left.replacedByLoad())
+        {
+            return "the record left behind still carries its load mark, so the next incremental " //$NON-NLS-1$
+                + "update refuses on it"; //$NON-NLS-1$
+        }
+        if (!left.known())
+        {
+            return "no recorded content is left, so the next update has nothing to compare the " //$NON-NLS-1$
+                + "copy with"; //$NON-NLS-1$
+        }
+        return "the record the previous update left stays, and the next update compares the " //$NON-NLS-1$
+            + "copy with it"; //$NON-NLS-1$
     }
 
     /**
@@ -1792,8 +1841,7 @@ public class DatabaseUpdater implements IMcpTool
             // before the base is touched.
             if (entry != null && !entry.claimTheLaunch())
             {
-                ToolResult cancelled = ToolResult.error("The update was cancelled before it reached "
-                    + "the infobase. Nothing was started; the base is as it was.");
+                ToolResult cancelled = ToolResult.error(cancelledBeforeTheLaunch(freedClients));
                 cancelled.put("tag", ErrorTags.CANCELLED.wire()); //$NON-NLS-1$
                 cancelled.put("projectName", projectName); //$NON-NLS-1$
                 cancelled.put("applicationId", applicationId); //$NON-NLS-1$
@@ -1889,11 +1937,8 @@ public class DatabaseUpdater implements IMcpTool
             }
             if (recordFailure != null)
             {
-                // Said rather than passed over: the next update compares the copy against nothing
-                // and reports that, so a store that could not be recorded is a fact about this one.
-                result.put("infobaseChangeRecord", "the stored dump-info copy of this base could " //$NON-NLS-1$
-                    + "not be recorded after the update, so the next update has nothing to compare " //$NON-NLS-1$
-                    + "it against: " + recordFailure); //$NON-NLS-1$
+                // Said rather than passed over: the record that stayed shapes the next update.
+                result.put("infobaseChangeRecord", recordFailure); //$NON-NLS-1$
             }
 
             if (updateComplete)
@@ -2677,6 +2722,33 @@ public class DatabaseUpdater implements IMcpTool
         {
             result.put("rootCauseMessage", root.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The sentence a cancel that arrived before the update's launch boundary is answered with.
+     * <p>
+     * The base itself is untouched. Client sessions this call had already stopped to free it are
+     * a change that did happen, and the sentence names them rather than calling everything as it
+     * was.
+     * </p>
+     *
+     * @param freedClients the rows {@link #freeClientsForApplication} returned, or {@code null}
+     *            when no client was freed
+     * @return the sentence
+     */
+    static String cancelledBeforeTheLaunch(List<Map<String, Object>> freedClients)
+    {
+        long stopped = freedClients == null ? 0L
+            : freedClients.stream().filter(row -> Boolean.TRUE.equals(row.get("terminated"))).count(); //$NON-NLS-1$
+        if (stopped == 0L)
+        {
+            return "The update was cancelled before it reached the infobase. Nothing was started; " //$NON-NLS-1$
+                + "the base is as it was."; //$NON-NLS-1$
+        }
+        return "The update was cancelled before it reached the infobase. Nothing was started and " //$NON-NLS-1$
+            + "the base itself was not changed, but " + stopped + " client session(s) of this " //$NON-NLS-1$ //$NON-NLS-2$
+            + "application were stopped to free it before the cancel arrived and are not started " //$NON-NLS-1$
+            + "again - see freedClients."; //$NON-NLS-1$
     }
 
     /**

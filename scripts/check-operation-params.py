@@ -562,7 +562,8 @@ def forwarded_operation(handler: str, holder_source: str, operation: str) -> tup
     return targets[0], aliases.get(operation, operation)
 
 
-def facade_common_reads(source: str, handlers: set[str], depth: int = 5) -> set[str]:
+def facade_common_reads(source: str, handlers: set[str], depth: int = 5,
+                        dispatch: str = "") -> set[str]:
     """What a facade reads on the way from `execute` down to a registry handler.
 
     A facade that resolves the thing before dispatching reads the arguments that name it and hands
@@ -572,7 +573,9 @@ def facade_common_reads(source: str, handlers: set[str], depth: int = 5) -> set[
     argument that says which schema to work on, on every operation the facade has.
 
     Registry handlers are left out of the walk - what they read is theirs alone, and folding it in
-    would give every operation the parameters of all the others.
+    would give every operation the parameters of all the others. For the same reason the text of a
+    dispatch switch, when given, is cut out of every body walked: what its branches read and call
+    belongs to one operation each, and `branch_deep_reads` attributes it there.
     """
     names: set[str] = set()
     seen: set[str] = set()
@@ -584,11 +587,46 @@ def facade_common_reads(source: str, handlers: set[str], depth: int = 5) -> set[
                 continue
             seen.add(method)
             body = method_body(source, method)
+            if dispatch:
+                body = body.replace(dispatch, " ", 1)
             if not body:
                 continue
             names |= set(EXTRACT.findall(body))
             # Lookahead rather than a consuming match: `resultRef.set(dispatch(op, params))` has
             # the call that matters nested inside another, and a consuming match swallows it.
+            following.extend(re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", body))
+        frontier = following
+    return names
+
+
+def branch_deep_reads(branch: str, source: str, dispatch: str, depth: int = 5) -> set[str]:
+    """What the methods a dispatch branch hands `params` to read, down to `depth` calls.
+
+    `parameters_of` follows one call; a branch like `case "backup": return runSnapshotExport(params)`
+    may read further down. These reads go into the operation's union only - the set the
+    unread-argument guard checks - and not into what its help prints. `execute` and the dispatch
+    text are left out: walking them would give the branch the reads of every other branch. A
+    method that hands the map on to another tool - `new SyncControlTool().execute(forwarded)`
+    after copying `params` into `forwarded` - reads what that tool's schema names.
+    """
+    names: set[str] = set()
+    seen: set[str] = {"execute"}
+    frontier = re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", branch)
+    for _ in range(depth):
+        following: list[str] = []
+        for method in frontier:
+            if method in seen or method in CONTROL_WORDS:
+                continue
+            seen.add(method)
+            body = method_body(source, method)
+            if dispatch:
+                body = body.replace(dispatch, " ", 1)
+            if not body:
+                continue
+            names |= set(EXTRACT.findall(body))
+            names |= names_read_through_a_loop(body, source)
+            for class_name in DELEGATE.findall(body):
+                names |= schema_parameters(class_name) or set()
             following.extend(re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", body))
         frontier = following
     return names
@@ -689,14 +727,13 @@ def collect() -> dict[str, dict[str, object]]:
         # registry one does - the form facade takes formFqn there and every branch works on the form
         # it found. Left out, the operations another facade delegates to these lose the argument
         # that names the form, and the guard refuses every call carrying it.
-        common = facade_common_reads(source, set()) - CALL_KEYS
+        # Only what is read outside the switch is common; a branch's own reads, however deep,
+        # join that branch's union alone.
+        common = facade_common_reads(source, set(), dispatch=body) - CALL_KEYS
         for operation, branch in branches(body).items():
             names, how = parameters_of(branch, source)
-            # Established before the union, and the union is left exactly as it was. Stopping the
-            # walk at the handlers instead looked tidier and narrowed the union on 101 operations -
-            # which is the guard refusing calls that work, the one thing this split must not do.
             established = sorted(names)
-            names = set(names) | common
+            names = set(names) | common | (branch_deep_reads(branch, source, body) - CALL_KEYS)
             key = f"{path.stem}:{operation}"
             result[key] = {
                 "facade": path.stem,

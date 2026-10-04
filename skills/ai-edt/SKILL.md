@@ -138,6 +138,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `security_audit` | Role rights, RLS violations, sensitive-data scan. |
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
+| `cluster_admin` | The Navigator's custom folders: read the cluster tree of a collection, create, rename, describe and delete clusters, move objects in and out. Five writes, each gated by its own door. |
 | `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch, what changed in a file, putting one file back, and a restore point taken before a merge. |
 | `yaxunit_tests` | YAxUnit unit tests. |
 
@@ -195,6 +196,37 @@ EDT runtime supports.
 - Cache large maps (module lists, FQN catalogues, the structure of a big module) once into an
   ignored file in the project instead of asking again.
 - Push heavy sweeps into a sub-agent so the raw output does not settle in the main context.
+
+## Reporting a defect or a wish
+
+A tool that answers against its description, or an operation the task needs and the server lacks,
+goes to the plugin repository `Desko77/ai-edt` as an issue.
+
+- Not a plugin defect, not filed: EDT not running or the project not loaded, `*ApiNotFound` and
+  `dcsFactoryMethodNotFound` (the running EDT lacks the API), a mistake in the configuration or in
+  the call itself. Say so to the user instead.
+- Another product, not filed here: a defect of the 1C platform, of another EDT plugin or of the MCP
+  client - name the product and where it takes reports. A question without a defect goes to the
+  Telegram topic `https://t.me/AI_EDT_1c/23`.
+- Reproduce first: the tool and operation, the arguments, the answer with the error tag and text
+  verbatim, what was expected. Look for a duplicate with
+  `gh issue list --repo Desko77/ai-edt --state all --search "<words>"`, or without `gh` give the user
+  `https://github.com/Desko77/ai-edt/issues?q=<words>`; an existing issue gets a comment, not a twin.
+- The draft is a temporary file outside the user's repository, deleted once the issue is sent or
+  handed over. Title `<tool or operation>: <what is wrong>`, up to 80 characters. A defect has the
+  sections What happened, How to reproduce, Expected, Environment (plugin version - `version` of
+  `GET /mcp` or `serverInfo.version`; EDT version - `get_edt_version`; MCP client; 1C platform; OS).
+  A wish has Task, What is missing, How it could work.
+- Generic names only: `Catalog.Items`, `C:/Projects/my-project`, `my-base`. No customer, company or
+  person names, connection strings, credentials, whole logs or screenshots with data.
+- Show the user the title and the whole text, name the repository and the labels, and send only
+  after their explicit consent. When `gh auth status` exits 0: `gh issue create --repo Desko77/ai-edt
+  --title "<title>" --body-file <draft> --label bug --label from-agent` (`enhancement` for a wish); a
+  refusal over a missing label is repeated without that label. Otherwise give the user
+  `https://github.com/Desko77/ai-edt/issues/new/choose` and the text to paste.
+- The `report-issue` skill of the 1C rule collections (`Desko77/claude-code-skills-1c`,
+  `Desko77/cursor-1c-skills`) runs these steps and checks the draft for private data with a script;
+  use it when it is installed.
 
 ## Reference files
 

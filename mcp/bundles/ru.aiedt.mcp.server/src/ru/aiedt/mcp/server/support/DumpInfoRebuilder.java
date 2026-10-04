@@ -55,6 +55,9 @@ public final class DumpInfoRebuilder
         /** Whether the abandonment took the launch boundary first, so no Designer run started. */
         private final boolean launchPrevented;
 
+        /** Whether the wait gave up because its budget ran out rather than on a cancel. */
+        private final boolean timedOut;
+
         /**
          * Schedules cleanup for when that call actually returns. {@code null} when the caller threw
          * this itself (a test) or the call had already finished.
@@ -84,9 +87,23 @@ public final class DumpInfoRebuilder
         Abandoned(String message, boolean processStillRunning, boolean launchPrevented,
             java.util.function.Consumer<Runnable> onFinished)
         {
+            this(message, processStillRunning, launchPrevented, false, onFinished);
+        }
+
+        /**
+         * @param message what was abandoned and why
+         * @param processStillRunning whether a launch that crossed the boundary is still running
+         * @param launchPrevented whether the abandonment took the boundary first
+         * @param timedOut whether the wait gave up because its budget ran out
+         * @param onFinished schedules the cleanup for the call's own return, or {@code null}
+         */
+        Abandoned(String message, boolean processStillRunning, boolean launchPrevented,
+            boolean timedOut, java.util.function.Consumer<Runnable> onFinished)
+        {
             super(message);
             this.processStillRunning = processStillRunning;
             this.launchPrevented = launchPrevented;
+            this.timedOut = timedOut;
             this.onFinished = onFinished;
         }
 
@@ -106,6 +123,15 @@ public final class DumpInfoRebuilder
         boolean launchPrevented()
         {
             return launchPrevented;
+        }
+
+        /**
+         * @return whether the wait gave up because its budget ran out; {@code false} for a cancel
+         *         or an interruption
+         */
+        boolean timedOut()
+        {
+            return timedOut;
         }
 
         /**
@@ -591,8 +617,7 @@ public final class DumpInfoRebuilder
     private static Path runDumpInfoOnlyUnderTimeout(
         ThickClientLaunch.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
-        java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
+        LaunchBoundary launchClaim = new LaunchBoundary();
         ctx.launchClaim = launchClaim;
         return underTimeout("the dump-info-only Designer run", timeoutMs, () -> { //$NON-NLS-1$
             BmInfobaseExtensionHelper.runDesignerDumpInfoOnly(ctx, tempDir);
@@ -607,8 +632,7 @@ public final class DumpInfoRebuilder
     private static Path runFullDumpUnderTimeout(
         ThickClientLaunch.LauncherContext ctx, Path tempDir, long timeoutMs) throws Exception
     {
-        java.util.concurrent.atomic.AtomicBoolean launchClaim =
-            new java.util.concurrent.atomic.AtomicBoolean();
+        LaunchBoundary launchClaim = new LaunchBoundary();
         ctx.launchClaim = launchClaim;
         return underTimeout("the Designer dump", timeoutMs, //$NON-NLS-1$
             () -> BmInfobaseExtensionHelper.runFullDumpUnderInfobaseLock(ctx, tempDir),
@@ -644,7 +668,7 @@ public final class DumpInfoRebuilder
      * @throws Exception when the call itself failed
      */
     static Path underTimeout(String what, long timeoutMs, PlatformRun run,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim) throws Exception
+        LaunchBoundary launchClaim) throws Exception
     {
         java.util.concurrent.ExecutorService worker = java.util.concurrent.Executors
             .newSingleThreadExecutor(runnable -> {
@@ -678,7 +702,7 @@ public final class DumpInfoRebuilder
             throw abandon(what + " did not finish within " + (timeoutMs / 1000) + "s", //$NON-NLS-1$ //$NON-NLS-2$
                 what + " did not reach its Designer run within " + (timeoutMs / 1000) //$NON-NLS-1$
                     + "s; that run was not launched", //$NON-NLS-1$
-                running, started, returned, launchClaim);
+                running, started, returned, launchClaim, true);
         }
         catch (InterruptedException interrupted)
         {
@@ -691,7 +715,7 @@ public final class DumpInfoRebuilder
             throw abandon(what + " was interrupted while it was still running", //$NON-NLS-1$
                 what + " was interrupted before the Designer run it was waiting for started; that run " //$NON-NLS-1$
                     + "was not launched", //$NON-NLS-1$
-                running, started, returned, launchClaim);
+                running, started, returned, launchClaim, false);
         }
         catch (java.util.concurrent.ExecutionException failed)
         {
@@ -739,24 +763,25 @@ public final class DumpInfoRebuilder
      * @param started whether the call began at all
      * @param returned the call's own return signal
      * @param launchClaim the launch boundary of this run, or {@code null} for a stand-in call
+     * @param timedOut whether the wait gave up because its budget ran out
      * @return the abandonment to throw
      */
     private static Abandoned abandon(String message, String preventedMessage,
         java.util.concurrent.Future<Path> running,
         java.util.concurrent.atomic.AtomicBoolean started,
         java.util.concurrent.CountDownLatch returned,
-        java.util.concurrent.atomic.AtomicBoolean launchClaim)
+        LaunchBoundary launchClaim, boolean timedOut)
     {
         // The boundary is claimed BEFORE the cancel: once the wait gives up, no new launch may
         // commit. Taking it means the worker cannot start the Designer - it exits at the
         // boundary - so nothing is running and nothing is waited for. Failing to take it means
         // the worker crossed first: the launcher call is committed, and only its own return
         // ends it.
-        boolean launchPrevented = launchClaim != null && launchClaim.compareAndSet(false, true);
+        boolean launchPrevented = launchClaim != null && launchClaim.claimStop();
         running.cancel(true);
         boolean stillRunning = !launchPrevented && started.get() && returned.getCount() > 0;
         return new Abandoned(launchPrevented ? preventedMessage : message, stillRunning, launchPrevented,
-            stillRunning ? task -> {
+            timedOut, stillRunning ? task -> {
             Thread watcher = new Thread(() -> {
                 try
                 {
@@ -1182,10 +1207,15 @@ public final class DumpInfoRebuilder
      * <p>The quick run is asked for first because the platform writes one
      * {@code ConfigDumpInfo.xml} for it in seconds, while the full dump writes the whole
      * configuration tree. The full dump runs only when the quick run finished without an error and
-     * left no file. A quick run that failed is refused with that error: a Configurator failure
-     * (credentials, a locked configuration, an unknown key) must not be followed by the longest
-     * dump while the infobase is still released. A file the quick run left before it threw is the
-     * file that is verified - the full dump is not asked for on top of it.</p>
+     * left no file. A quick run that failed is refused with that error, and a file it managed to
+     * leave before it threw is not accepted: a Configurator failure (credentials, a locked
+     * configuration, an unknown key) makes whatever bytes it left unusable, and following it with
+     * the longest dump would keep the infobase released for nothing.</p>
+     *
+     * <p>Only a file that carries a versioned {@code ConfigDumpInfo} root AND at least one record
+     * replaces the stored one: a header without records is what an interrupted dump leaves, so a
+     * count of zero - or a file that does not read - is refused with the count and the stored
+     * file stays as it was.</p>
      *
      * <p>A quick run ABANDONED by its budget is carried up as it stands rather than retried with
      * the full dump: the platform process is still running and holding the base, which is exactly
@@ -1197,36 +1227,14 @@ public final class DumpInfoRebuilder
         String stamp, String identity) throws Exception
     {
         out.sequence.add("dumpInfoOnly"); //$NON-NLS-1$
-        String fallback = null;
-        Path freshFile = null;
-        Exception quickFailure = null;
-        try
-        {
-            freshFile = producedFile(io.runDumpInfoOnly(tempDir), tempDir);
-        }
-        catch (Abandoned givenUp)
-        {
-            throw givenUp;
-        }
-        catch (Exception refused)
-        {
-            // The call returned. A file it managed to leave is still the quick run's file; what it
-            // is not is a reason to start the full dump.
-            quickFailure = refused;
-            freshFile = producedFile(null, tempDir);
-        }
+        Path freshFile = producedFile(io.runDumpInfoOnly(tempDir), tempDir);
         if (freshFile != null)
         {
-            out.rebuildPath = quickFailure == null ? PATH_DUMP_INFO_ONLY
-                : PATH_DUMP_INFO_ONLY + " (left the file, then threw: " + oneLine(quickFailure) + ")"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        else if (quickFailure != null)
-        {
-            throw quickFailure;
+            out.rebuildPath = PATH_DUMP_INFO_ONLY;
         }
         else
         {
-            fallback = "the quick dump left no " + DumpInfoProbe.FILE_NAME; //$NON-NLS-1$
+            String fallback = "the quick dump left no " + DumpInfoProbe.FILE_NAME; //$NON-NLS-1$
             out.sequence.add("dumpFull"); //$NON-NLS-1$
             out.rebuildPath = PATH_FULL + " (" + fallback + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             freshFile = producedFile(io.runFullDump(tempDir), tempDir);
@@ -1237,7 +1245,8 @@ public final class DumpInfoRebuilder
         }
 
         // Verify before anything of the stored file's is touched: a file that is not there, or not
-        // a ConfigDumpInfo root with a version, is the platform's answer and not a reason to swap.
+        // a ConfigDumpInfo root with a version, or carrying no records is the platform's answer
+        // and not a reason to swap.
         out.newFormat = DumpInfoProbe.formatOf(freshFile);
         out.records = DumpInfoProbe.recordsIn(freshFile);
         out.sequence.add("verify"); //$NON-NLS-1$
@@ -1247,6 +1256,12 @@ public final class DumpInfoRebuilder
                 + DumpInfoProbe.FILE_NAME + " at " + freshFile //$NON-NLS-1$
                 + (freshFile.toFile().isFile() ? " (not a ConfigDumpInfo root with a version)" //$NON-NLS-1$
                     : " (no such file)")); //$NON-NLS-1$
+        }
+        if (out.records <= 0)
+        {
+            throw new IllegalStateException("the Designer run's " + DumpInfoProbe.FILE_NAME + " at " //$NON-NLS-1$ //$NON-NLS-2$
+                + freshFile + " carries " + out.records + " Metadata records - a dump without " //$NON-NLS-1$ //$NON-NLS-2$
+                + "records does not replace the stored file"); //$NON-NLS-1$
         }
 
         out.sequence.add("backup"); //$NON-NLS-1$
@@ -1289,7 +1304,8 @@ public final class DumpInfoRebuilder
     /**
      * Records the format pair and rewrites the stored copy's sidecar as two attempts. The sidecar
      * is written even when the pair cannot be recorded, and a sidecar that cannot be written does
-     * not replace the pair's own failure.
+     * not replace the pair's own failure. A copy that reads no content - empty or unreadable -
+     * leaves the sidecar's content as it was and clears a load mark on it.
      *
      * @param infobaseIdentity the base the pair is for
      * @param format the dump-info format the platform wrote
@@ -1316,8 +1332,23 @@ public final class DumpInfoRebuilder
         {
             if (copy != null)
             {
-                InfobaseOutsideChange.copyOf(copy, infobaseIdentity)
-                    .writeTo(InfobaseOutsideChange.recordFileOf(copy));
+                Path record = InfobaseOutsideChange.recordFileOf(copy);
+                InfobaseOutsideChange reading = InfobaseOutsideChange.copyOf(copy, infobaseIdentity);
+                if (reading.known())
+                {
+                    reading.writeTo(record);
+                }
+                else
+                {
+                    // A copy that reads no content - empty or unreadable - names nothing to
+                    // write, so writeTo would leave the record as it was. The rebuild still loaded
+                    // this base's own dump, so a load mark no longer holds and is cleared.
+                    String notCleared = InfobaseOutsideChange.clearTheLoad(record);
+                    if (notCleared != null && copyFailure != null)
+                    {
+                        copyFailure[0] = notCleared;
+                    }
+                }
             }
         }
         catch (IOException failed)

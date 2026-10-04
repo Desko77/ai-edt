@@ -146,37 +146,100 @@ public final class DependencyGraphBuilder
         return cycles;
     }
 
-    private static void strongconnect(String node, TarjanContext ctx)
+    /**
+     * Runs Tarjan's search from one unvisited node, on an explicit stack of frames.
+     * <p>
+     * A frame is a node and the position in its successor list; descending into a successor pushes
+     * a frame, and finishing a node pops it and folds its lowlink into the parent's. The components
+     * come out in the order the recursive form gives them. The depth of the walk costs heap, not
+     * thread stack, so a chain as long as the graph does not end in {@link StackOverflowError}.
+     * </p>
+     *
+     * @param root the node to start from, not yet indexed
+     * @param ctx the search state shared across starts
+     */
+    private static void strongconnect(String root, TarjanContext ctx)
+    {
+        java.util.Deque<TarjanFrame> frames = new java.util.ArrayDeque<>();
+        frames.push(enter(root, ctx));
+        while (!frames.isEmpty())
+        {
+            TarjanFrame frame = frames.peek();
+            if (frame.next < frame.successors.size())
+            {
+                String successor = frame.successors.get(frame.next++);
+                if (!ctx.indices.containsKey(successor))
+                {
+                    frames.push(enter(successor, ctx));
+                }
+                else if (ctx.onStack.contains(successor))
+                {
+                    ctx.lowlinks.put(frame.node, Math.min(ctx.lowlinks.get(frame.node), ctx.indices.get(successor)));
+                }
+                continue;
+            }
+            frames.pop();
+            closeComponent(frame.node, ctx);
+            TarjanFrame parent = frames.peek();
+            if (parent != null)
+            {
+                ctx.lowlinks.put(parent.node, Math.min(ctx.lowlinks.get(parent.node), ctx.lowlinks.get(frame.node)));
+            }
+        }
+    }
+
+    /**
+     * Indexes a node, puts it on the component stack and opens its frame.
+     *
+     * @param node the node reached for the first time
+     * @param ctx the search state
+     * @return the frame of the node, at its first successor
+     */
+    private static TarjanFrame enter(String node, TarjanContext ctx)
     {
         ctx.indices.put(node, ctx.index);
         ctx.lowlinks.put(node, ctx.index);
         ctx.index++;
         ctx.stack.push(node);
         ctx.onStack.add(node);
-        for (String successor : ctx.adjacency.getOrDefault(node, java.util.Collections.emptyList()))
+        return new TarjanFrame(node, ctx.adjacency.getOrDefault(node, java.util.Collections.emptyList()));
+    }
+
+    /**
+     * Pops the component a finished node roots, when it roots one.
+     *
+     * @param node the node whose successors are all visited
+     * @param ctx the search state
+     */
+    private static void closeComponent(String node, TarjanContext ctx)
+    {
+        if (!ctx.lowlinks.get(node).equals(ctx.indices.get(node)))
         {
-            if (!ctx.indices.containsKey(successor))
-            {
-                strongconnect(successor, ctx);
-                ctx.lowlinks.put(node, Math.min(ctx.lowlinks.get(node), ctx.lowlinks.get(successor)));
-            }
-            else if (ctx.onStack.contains(successor))
-            {
-                ctx.lowlinks.put(node, Math.min(ctx.lowlinks.get(node), ctx.indices.get(successor)));
-            }
+            return;
         }
-        if (ctx.lowlinks.get(node).equals(ctx.indices.get(node)))
+        List<String> scc = new ArrayList<>();
+        String w;
+        do
         {
-            List<String> scc = new ArrayList<>();
-            String w;
-            do
-            {
-                w = ctx.stack.pop();
-                ctx.onStack.remove(w);
-                scc.add(w);
-            }
-            while (!w.equals(node));
-            ctx.sccs.add(scc);
+            w = ctx.stack.pop();
+            ctx.onStack.remove(w);
+            scc.add(w);
+        }
+        while (!w.equals(node));
+        ctx.sccs.add(scc);
+    }
+
+    /** A node of the search and the position reached in its successor list. */
+    private static final class TarjanFrame
+    {
+        final String node;
+        final List<String> successors;
+        int next;
+
+        TarjanFrame(String node, List<String> successors)
+        {
+            this.node = node;
+            this.successors = successors;
         }
     }
 

@@ -351,6 +351,13 @@ public enum ToolProfile
             "get_bookmarks", //$NON-NLS-1$
             "get_tasks", //$NON-NLS-1$
 
+            // cluster_admin covers these
+            "create_cluster", //$NON-NLS-1$
+            "update_cluster", //$NON-NLS-1$
+            "delete_cluster", //$NON-NLS-1$
+            "add_to_cluster", //$NON-NLS-1$
+            "remove_from_cluster", //$NON-NLS-1$
+
             // docs_lookup covers these
             "get_platform_documentation", //$NON-NLS-1$
             "get_object_help", //$NON-NLS-1$
@@ -425,6 +432,12 @@ public enum ToolProfile
      * reads of the same facade - status, branches, log, show_file_changes - stay on under all three,
      * because only the doors are named here.
      * </p>
+     * <p>
+     * {@code extension_workshop} is named as a whole: its borrow operations and
+     * {@code update_borrowed} with {@code apply=true} write the extension, and its group is one Code
+     * Review keeps on. Read-only and Debug &amp; Test switch its group off already, so under all three
+     * the facade, its reads included, is off.
+     * </p>
      *
      * @return the names no write-blocking preset may leave enabled
      */
@@ -434,9 +447,21 @@ public enum ToolProfile
         names.add("write_module_source"); //$NON-NLS-1$
         names.add("generate_event_handlers"); //$NON-NLS-1$
         names.add("extension_lifecycle"); //$NON-NLS-1$
+        // The constructors group this facade lives in is the half Code Review keeps on - a
+        // preset that promises no writes has to name the facade itself or borrow_object and
+        // update_borrowed apply=true keep writing through the group it left open.
+        names.add("extension_workshop"); //$NON-NLS-1$
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$
+        // The five write doors of the cluster facade sit in the tags-and-marks group, which every
+        // write-blocking preset keeps enabled because its reads belong there: each door is named
+        // here, or the preset writes through the one group it left open.
+        names.add("create_cluster"); //$NON-NLS-1$
+        names.add("update_cluster"); //$NON-NLS-1$
+        names.add("delete_cluster"); //$NON-NLS-1$
+        names.add("add_to_cluster"); //$NON-NLS-1$
+        names.add("remove_from_cluster"); //$NON-NLS-1$
         // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
         // send a question and whatever Naparnik's tools read to that service. A preset that blocks
         // writing switches the whole name off.

@@ -45,7 +45,7 @@ public final class ProjectMetricsCollector
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
 
     private static final Pattern YAXUNIT_PATTERN = Pattern.compile(
-        "&YaxUnitTestSuite|&Test|РегистрацияТестов", //$NON-NLS-1$
+        "&YaxUnitTestSuite|&Test|РегистрацияТестов|ИсполняемыеСценарии", //$NON-NLS-1$
         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private final IProject project;
@@ -67,6 +67,9 @@ public final class ProjectMetricsCollector
     private final List<Map<String, Object>> debtItems = new ArrayList<>();
     private final List<String> unscannedModules = new ArrayList<>();
     private boolean partial;
+
+    /** Why the marker scan produced no numbers, when it failed; <code>null</code> when it ran. */
+    private String markerScanProblem;
 
     /** Whether the MODULE scan specifically was cut short, as opposed to the call. */
     private boolean modulesPartial;
@@ -335,6 +338,9 @@ public final class ProjectMetricsCollector
         {
             Activator.logWarning("ProjectMetricsCollector: marker scan failed: " //$NON-NLS-1$
                 + e.getMessage());
+            partial = true;
+            markerScanProblem = e.getMessage() != null ? e.getMessage()
+                : e.getClass().getSimpleName();
         }
     }
 
@@ -370,6 +376,12 @@ public final class ProjectMetricsCollector
     {
         Map<String, Object> metrics = new LinkedHashMap<>();
         metrics.put("partial", partial); //$NON-NLS-1$
+        if (markerScanProblem != null)
+        {
+            // The errors block below reads as a clean zero without this: the scan failed,
+            // it did not find an empty project.
+            metrics.put("markerScanError", markerScanProblem); //$NON-NLS-1$
+        }
 
         if (objectsByType != null)
         {

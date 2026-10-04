@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
@@ -893,6 +894,49 @@ public final class BmObjectHelper
     }
 
     /**
+     * Creates a child metadata object - a recalculation, an enumeration value, a service
+     * method - through the project-aware factory, and through the raw factory when that
+     * factory cannot run.
+     *
+     * @param typeName English bare type name, e.g. {@code "EnumValue"}.
+     * @param v8Project project whose version the defaults are taken from; may be
+     *     {@code null}, which makes the factory unrunnable.
+     * @param defaultsLost told the warning when the object came from the raw factory
+     *     because the project-aware one was unreachable or failed; may be {@code null}.
+     * @return the object, or {@code null} when the type does not resolve.
+     */
+    public static MdObject createChildObject(String typeName, IV8Project v8Project,
+        Consumer<String> defaultsLost)
+    {
+        CreationOutcome creation = createInitializedObjectWithReason(typeName, v8Project);
+        MdObject created = creation.getObject();
+        if (created != null)
+        {
+            return created;
+        }
+        created = createGenericObject(typeName);
+        if (created != null && creation.isFactoryFailure() && defaultsLost != null)
+        {
+            defaultsLost.accept(creation.getDefaultsWarning());
+        }
+        return created;
+    }
+
+    /**
+     * The V8 project of a workspace project.
+     *
+     * @param project the project; may be {@code null}.
+     * @return the V8 project, or {@code null} when there is no project manager or it
+     *     does not know the project.
+     */
+    public static IV8Project v8ProjectOf(IProject project)
+    {
+        Activator activator = Activator.getDefault();
+        IV8ProjectManager manager = activator != null ? activator.getV8ProjectManager() : null;
+        return manager != null && project != null ? manager.getProject(project) : null;
+    }
+
+    /**
      * Stands in for the factory lookup while a test drives the routes on which the
      * service is missing or the factory throws. {@code null} outside tests, and the
      * lookup below asks the service registry then.
@@ -1454,10 +1498,22 @@ public final class BmObjectHelper
             {
                 continue;
             }
+            Class<?> paramType = m.getParameterTypes()[0];
+            Object converted;
             try
             {
-                Class<?> paramType = m.getParameterTypes()[0];
-                Object converted = coerceValue(obj, value, paramType);
+                converted = coerceValue(obj, value, paramType);
+            }
+            catch (IllegalArgumentException rejected)
+            {
+                // A number that does not parse, a boolean that is not one of the accepted
+                // spellings, and an enum name the type does not have all throw here, before the
+                // setter runs. The message names what was wrong. The catch after invoke is only
+                // for a value the setter received and refused.
+                return "Failed to set " + propertyName + ": " + rejected.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            try
+            {
                 if (converted == null && paramType.isPrimitive())
                 {
                     // A primitive has no null. Passing one reaches the JDK as
@@ -1605,7 +1661,7 @@ public final class BmObjectHelper
         }
         if (targetType == boolean.class || targetType == Boolean.class)
         {
-            return Boolean.valueOf(s);
+            return Boolean.valueOf(BooleanLiteral.parse(s));
         }
         if (targetType == int.class || targetType == Integer.class)
         {

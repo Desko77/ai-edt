@@ -11,12 +11,9 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
-import org.eclipse.swt.widgets.Display;
-import org.eclipse.ui.PlatformUI;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
@@ -25,6 +22,8 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FormExtensionDataPathGuard;
+import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.UiSync;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.StandardCommandRegistry;
@@ -64,9 +63,6 @@ public class EditFormTool implements IMcpTool
     private static final List<String> EDIT_OPERATIONS = Collections.unmodifiableList(Arrays.asList(
         "addField", "addGroup", "addButton", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "addTable", "addDecoration", "removeItem")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-
-    /** The helper of the request being served; see {@link #executeInternal} */
-    private BmFormHelper helper;
 
     @Override
     public String getName()
@@ -196,23 +192,33 @@ public class EditFormTool implements IMcpTool
             return buildError(unknownOperation(operation));
         }
 
-        // Execute on UI thread (BM API requires it in some EDT versions)
-        AtomicReference<String> resultRef = new AtomicReference<>();
-        Display display = PlatformUI.getWorkbench().getDisplay();
-        display.syncExec(() ->
+        // Execute on UI thread (BM API requires it in some EDT versions). UiSync.call
+        // runs the work inline on the UI thread, waits a bounded time and raises
+        // UiBusyException when the thread is wedged - a raw syncExec would block
+        // this call forever behind a modal dialog or a stuck operation. The work a
+        // timed-out call leaves queued never runs, so the refusal below is true.
+        try
         {
-            try
-            {
-                resultRef.set(executeInternal(projectName, formFqn, operation, params));
-            }
-            catch (Exception e)
-            {
-                Activator.logError("Error in edit_form", e); //$NON-NLS-1$
-                resultRef.set(buildError(e.getMessage()));
-            }
-        });
-
-        return resultRef.get();
+            return UiSync.call(() -> executeInternal(projectName, formFqn, operation, params));
+        }
+        catch (UiSync.UiOutcomeUnknownException e)
+        {
+            // The work had already started when the wait broke, so the write may have landed.
+            // The retryable busy answer would be a lie here: a repeated add/remove would race
+            // the write already running or repeat it. Answered apart, ahead of the busy catch.
+            return outcomeUnknownAnswer(e);
+        }
+        catch (UiSync.UiBusyException e)
+        {
+            // Tagged the way every other busy answer is: the caller has to see this is a
+            // retryable condition, not a failed write.
+            return uiBusyAnswer(e);
+        }
+        catch (Exception e)
+        {
+            Activator.logError("Error in edit_form", e); //$NON-NLS-1$
+            return buildError(TextSuggest.safeMessage(e));
+        }
     }
 
     /**
@@ -240,7 +246,9 @@ public class EditFormTool implements IMcpTool
     {
         // One helper per request: it holds the form the write works on and the
         // base-form attributes that write borrowed, and neither may outlive it.
-        helper = new BmFormHelper();
+        // A local, not a field: this tool is a catalog singleton, and a field here
+        // is state one request writes and the next reads.
+        BmFormHelper helper = new BmFormHelper();
         if (!helper.init())
         {
             return buildError("BmFormHelper initialization failed. " + //$NON-NLS-1$
@@ -330,22 +338,22 @@ public class EditFormTool implements IMcpTool
             switch (op)
             {
                 case "add_field": //$NON-NLS-1$
-                    return executeAddField(form, ownerObject, name, title, elementType, dataPath,
-                        parentName, beforeName, hyperlink);
+                    return executeAddField(helper, form, ownerObject, name, title, elementType,
+                        dataPath, parentName, beforeName, hyperlink);
                 case "add_group": //$NON-NLS-1$
                     return executeAddGroup(helper, form, name, title, elementType,
                         parentName, beforeName);
                 case "add_button": //$NON-NLS-1$
-                    return executeAddButton(form, name, title,
+                    return executeAddButton(helper, form, ownerObject, name, title,
                         parentName, beforeName, standardCommand, handler, commandName);
                 case "add_table": //$NON-NLS-1$
-                    return executeAddTable(form, ownerObject, name, title, dataPath,
+                    return executeAddTable(helper, form, ownerObject, name, title, dataPath,
                         parentName, beforeName, autoGenerateColumns);
                 case "add_decoration": //$NON-NLS-1$
-                    return executeAddDecoration(form, name, title, elementType,
+                    return executeAddDecoration(helper, form, name, title, elementType,
                         parentName, beforeName, picture, projectName, hyperlink);
                 case "remove_item": //$NON-NLS-1$
-                    return executeRemoveItem(form, name);
+                    return executeRemoveItem(helper, form, name);
                 default:
                     return buildError(unknownOperation(operation));
             }
@@ -378,8 +386,28 @@ public class EditFormTool implements IMcpTool
     // Operation implementations
     // -----------------------------------------------------------------------
 
-    private String executeAddField(Object form, Object ownerObject, String name, String title,
-        String fieldType, String dataPath, String parentName, String beforeName,
+    /**
+     * Adds a field to the form and answers with the add_field front-matter text. The field kind for a
+     * data-bound field with no explicit {@code elementType} follows the bound attribute's type
+     * (Boolean renders as a CheckBoxField, the way the EDT wizard renders it). Does not persist the
+     * form - the caller's transaction does.
+     *
+     * @param helper the helper of the request, which builds the field and places it
+     * @param form the form the field goes into
+     * @param ownerObject the metadata object owning the form; may be <code>null</code>
+     * @param name the element name of the field
+     * @param title the field title, or <code>null</code> to leave it untitled when data-bound
+     * @param fieldType the field kind ({@code InputField}, {@code CheckBoxField}, ...), or
+     *            <code>null</code> to pick one from the bound attribute
+     * @param dataPath the path the field binds to, or <code>null</code> for an unbound field
+     * @param parentName the container the field goes into, or <code>null</code> for the form root
+     * @param beforeName the element the field is inserted before, or <code>null</code> to append
+     * @param hyperlink whether a Label field renders as a clickable hyperlink
+     * @return the front-matter answer, never <code>null</code>
+     * @throws Exception when the model of this EDT version cannot build or place the field
+     */
+    private String executeAddField(BmFormHelper helper, Object form, Object ownerObject, String name,
+        String title, String fieldType, String dataPath, String parentName, String beforeName,
         boolean hyperlink)
         throws Exception
     {
@@ -428,15 +456,8 @@ public class EditFormTool implements IMcpTool
             helper.setDataPath(field, dataPath);
         }
 
-        Object container = resolveContainer(form, parentName);
-        if (beforeName != null && !beforeName.isEmpty())
-        {
-            helper.addToContainerBefore(container, field, beforeName);
-        }
-        else
-        {
-            helper.addToContainer(container, field);
-        }
+        Object container = resolveContainer(helper, form, parentName);
+        String siblingWarning = placeFormItem(helper, container, field, beforeName);
 
         // 1.43.x forms-completeness: a FormField placed INSIDE a Table is a column.
         // createFormField alone leaves it half-built (no contextMenu / editMode /
@@ -474,7 +495,8 @@ public class EditFormTool implements IMcpTool
                 ? "- TableColumn: Designer column defaults applied (contextMenu / editMode / " //$NON-NLS-1$
                     + "showInHeader / showInFooter / InputFieldExtInfo)\n" //$NON-NLS-1$
                 : "") +
-            "- Parent: " + (parentName != null ? parentName : "root")); //$NON-NLS-1$ //$NON-NLS-2$
+            "- Parent: " + (parentName != null ? parentName : "root"), //$NON-NLS-1$ //$NON-NLS-2$
+            siblingWarning);
     }
 
     /**
@@ -508,15 +530,13 @@ public class EditFormTool implements IMcpTool
 
         Object group = helper.createFormGroup(name, title, groupType);
 
-        Object container = resolveContainer(form, parentName);
-        if (beforeName != null && !beforeName.isEmpty())
-        {
-            helper.addToContainerBefore(container, group, beforeName);
-        }
-        else
-        {
-            helper.addToContainer(container, group);
-        }
+        Object container = resolveContainer(helper, form, parentName);
+        String siblingWarning = placeFormItem(helper, container, group, beforeName);
+        // Two warnings the answer may owe, joined into the one front-matter line the
+        // writer and the reader agree on: the group is childless, and its named
+        // sibling may not even be there.
+        String warning = siblingWarning == null ? ADD_GROUP_HAS_NO_CHILDREN_WARNING
+            : ADD_GROUP_HAS_NO_CHILDREN_WARNING + " " + siblingWarning; //$NON-NLS-1$
 
         return buildSuccess("edit_form", name, "add_group", //$NON-NLS-1$ //$NON-NLS-2$
             "Group '" + name + "' added to form successfully.\n" + //$NON-NLS-1$ //$NON-NLS-2$
@@ -524,11 +544,33 @@ public class EditFormTool implements IMcpTool
             "- Title: " + title + "\n" + //$NON-NLS-1$ //$NON-NLS-2$
             "- Type: " + groupType + "\n" + //$NON-NLS-1$ //$NON-NLS-2$
             "- Parent: " + (parentName != null ? parentName : "root"), //$NON-NLS-1$ //$NON-NLS-2$
-            ADD_GROUP_HAS_NO_CHILDREN_WARNING);
+            warning);
     }
 
-    private String executeAddButton(Object form, String name, String title,
-        String parentName, String beforeName, String standardCommand,
+    /**
+     * Adds a button to the form and answers with the add_button front-matter text. A button bound
+     * to a platform stock command is refused when the form's owner kind cannot render it, judged
+     * on the owner object resolved from the form FQN. Does not persist the form - the caller's
+     * transaction does.
+     *
+     * @param helper the helper of the request, which builds the button and places it
+     * @param form the form the button goes into
+     * @param ownerObject the metadata object owning the form (Catalog / Document / ...), already
+     *            resolved from the form FQN; may be <code>null</code> for a common form
+     * @param name the element name of the button
+     * @param title the button title, or <code>null</code> to use the name
+     * @param parentName the container the button goes into, or <code>null</code> for the form root
+     * @param beforeName the element the button is inserted before, or <code>null</code> to append
+     * @param standardCommand the platform stock command to bind, or <code>null</code> for a form
+     *            command
+     * @param handler the BSL action handler for a created command, or <code>null</code>
+     * @param existingCommandName an existing form command to bind instead of creating one, or
+     *            <code>null</code>
+     * @return the front-matter answer, never <code>null</code>
+     * @throws Exception when the model of this EDT version cannot build or place the button
+     */
+    String executeAddButton(BmFormHelper helper, Object form, Object ownerObject, String name,
+        String title, String parentName, String beforeName, String standardCommand,
         String handler, String existingCommandName) throws Exception
     {
         if (title == null || title.isEmpty())
@@ -545,7 +587,7 @@ public class EditFormTool implements IMcpTool
         boolean useStandardCommand = standardCommand != null && !standardCommand.isEmpty();
         if (useStandardCommand)
         {
-            String ownerType = readFormOwnerEClassName(form);
+            String ownerType = readOwnerEClassName(ownerObject);
             String compatErr = StandardCommandRegistry
                 .checkOwnerKindCompatibility(ownerType, standardCommand);
             if (compatErr != null)
@@ -630,7 +672,7 @@ public class EditFormTool implements IMcpTool
             }
         }
 
-        Object container = resolveContainer(form, parentName);
+        Object container = resolveContainer(helper, form, parentName);
         // #3(A) FIX: a command button targeted at a TABLE must live in the
         // table's AutoCommandBar - a Button placed directly in the table's
         // getItems() is an "Unsupported child element type" that breaks the form
@@ -650,14 +692,7 @@ public class EditFormTool implements IMcpTool
             }
         }
 
-        if (beforeName != null && !beforeName.isEmpty())
-        {
-            helper.addToContainerBefore(container, button, beforeName);
-        }
-        else
-        {
-            helper.addToContainer(container, button);
-        }
+        String siblingWarning = placeFormItem(helper, container, button, beforeName);
 
         StringBuilder body = new StringBuilder();
         body.append("Button '").append(name).append("' added to form successfully.\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -705,7 +740,7 @@ public class EditFormTool implements IMcpTool
         {
             body.append('\n').append("- delegatedToContainer: ").append(delegatedTo); //$NON-NLS-1$
         }
-        return buildSuccess("edit_form", name, "add_button", body.toString()); //$NON-NLS-1$ //$NON-NLS-2$
+        return buildSuccess("edit_form", name, "add_button", body.toString(), siblingWarning); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -791,8 +826,27 @@ public class EditFormTool implements IMcpTool
         return sb.toString();
     }
 
-    private String executeAddTable(Object form, Object ownerObject, String name, String title,
-        String dataPath, String parentName, String beforeName, boolean autoGenerateColumns)
+    /**
+     * Adds a table to the form and answers with the add_table front-matter text. A table with
+     * {@code autoGenerateColumns} and a resolvable {@code dataPath} also receives a FormField column
+     * per attribute of the bound tabular section / value-table attribute. Does not persist the form -
+     * the caller's transaction does.
+     *
+     * @param helper the helper of the request, which builds the table and places it
+     * @param form the form the table goes into
+     * @param ownerObject the metadata object owning the form; may be <code>null</code>
+     * @param name the element name of the table
+     * @param title the table title, or <code>null</code> to use the name
+     * @param dataPath the path the table binds to, or <code>null</code> for an unbound table
+     * @param parentName the container the table goes into, or <code>null</code> for the form root
+     * @param beforeName the element the table is inserted before, or <code>null</code> to append
+     * @param autoGenerateColumns whether the bound source's attributes become table columns
+     * @return the front-matter answer, never <code>null</code>
+     * @throws Exception when the model of this EDT version cannot build or place the table
+     */
+    private String executeAddTable(BmFormHelper helper, Object form, Object ownerObject, String name,
+        String title, String dataPath, String parentName, String beforeName,
+        boolean autoGenerateColumns)
         throws Exception
     {
         if (title == null || title.isEmpty())
@@ -817,15 +871,8 @@ public class EditFormTool implements IMcpTool
             helper.setDataPath(table, dataPath);
         }
 
-        Object container = resolveContainer(form, parentName);
-        if (beforeName != null && !beforeName.isEmpty())
-        {
-            helper.addToContainerBefore(container, table, beforeName);
-        }
-        else
-        {
-            helper.addToContainer(container, table);
-        }
+        Object container = resolveContainer(helper, form, parentName);
+        String siblingWarning = placeFormItem(helper, container, table, beforeName);
 
         // 1.42 (RSV 4.2 parity): auto-generate FormField columns for every
         // attribute of the underlying tabular section / form attribute. The
@@ -837,7 +884,7 @@ public class EditFormTool implements IMcpTool
         java.util.List<String> autoGenWarnings = new java.util.ArrayList<>();
         if (autoGenerateColumns && dataPath != null && !dataPath.isEmpty())
         {
-            generateColumnsForTable(form, ownerObject, table, name, dataPath, generatedColumns,
+            generateColumnsForTable(helper, form, ownerObject, table, name, dataPath, generatedColumns,
                 autoGenWarnings);
         }
 
@@ -860,7 +907,7 @@ public class EditFormTool implements IMcpTool
             body.append('\n').append("- autoGenerateColumns warning: ") //$NON-NLS-1$
                 .append(autoGenWarnings.get(0));
         }
-        return buildSuccess("edit_form", name, "add_table", body.toString()); //$NON-NLS-1$ //$NON-NLS-2$
+        return buildSuccess("edit_form", name, "add_table", body.toString(), siblingWarning); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -882,8 +929,8 @@ public class EditFormTool implements IMcpTool
      * a warning so the agent can decide whether to fall back to manual
      * addField calls.
      */
-    private void generateColumnsForTable(Object form, Object ownerObject, Object table,
-        String tableName, String dataPath, java.util.List<String> generated,
+    private void generateColumnsForTable(BmFormHelper helper, Object form, Object ownerObject,
+        Object table, String tableName, String dataPath, java.util.List<String> generated,
         java.util.List<String> warnings)
     {
         try
@@ -1245,7 +1292,26 @@ public class EditFormTool implements IMcpTool
         return null;
     }
 
-    private String executeAddDecoration(Object form, String name, String title,
+    /**
+     * Adds a decoration to the form and answers with the add_decoration front-matter text. A Picture
+     * decoration with a {@code picture} reference is validated before anything is created, and the
+     * reference is written only when the validator accepts it. Does not persist the form - the
+     * caller's transaction does.
+     *
+     * @param helper the helper of the request, which builds the decoration and places it
+     * @param form the form the decoration goes into
+     * @param name the element name of the decoration
+     * @param title the decoration text, or <code>null</code> to use the name
+     * @param decorationType {@code Label} (default) or {@code Picture}
+     * @param parentName the container the decoration goes into, or <code>null</code> for the root
+     * @param beforeName the element the decoration is inserted before, or <code>null</code> to append
+     * @param picture the picture reference for a Picture decoration, or <code>null</code>
+     * @param projectNameForPicture the project whose pictures the reference is validated against
+     * @param hyperlink whether a Label decoration renders as a clickable hyperlink
+     * @return the front-matter answer, never <code>null</code>
+     * @throws Exception when the model of this EDT version cannot build or place the decoration
+     */
+    private String executeAddDecoration(BmFormHelper helper, Object form, String name, String title,
         String decorationType, String parentName, String beforeName,
         String picture, String projectNameForPicture, boolean hyperlink) throws Exception
     {
@@ -1284,15 +1350,8 @@ public class EditFormTool implements IMcpTool
             }
         }
 
-        Object container = resolveContainer(form, parentName);
-        if (beforeName != null && !beforeName.isEmpty())
-        {
-            helper.addToContainerBefore(container, decoration, beforeName);
-        }
-        else
-        {
-            helper.addToContainer(container, decoration);
-        }
+        Object container = resolveContainer(helper, form, parentName);
+        String siblingWarning = placeFormItem(helper, container, decoration, beforeName);
 
         StringBuilder body = new StringBuilder();
         body.append("Decoration '").append(name).append("' added to form successfully.\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1310,10 +1369,19 @@ public class EditFormTool implements IMcpTool
                 : "- Hyperlink: true\n"); //$NON-NLS-1$
         }
         body.append("- Parent: ").append(parentName != null ? parentName : "root"); //$NON-NLS-1$ //$NON-NLS-2$
-        return buildSuccess("edit_form", name, "add_decoration", body.toString()); //$NON-NLS-1$ //$NON-NLS-2$
+        return buildSuccess("edit_form", name, "add_decoration", body.toString(), siblingWarning); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
-    private String executeRemoveItem(Object form, String name) throws Exception
+    /**
+     * Removes an element by name and answers with the remove_item front-matter text.
+     *
+     * @param helper the helper of the request, which finds and removes the element
+     * @param form the form the element is removed from
+     * @param name the element name to remove
+     * @return the front-matter answer, never <code>null</code>
+     * @throws Exception when the model refuses the removal
+     */
+    private String executeRemoveItem(BmFormHelper helper, Object form, String name) throws Exception
     {
         boolean removed = helper.removeItemByName(form, name);
         if (!removed)
@@ -1328,6 +1396,67 @@ public class EditFormTool implements IMcpTool
     // -----------------------------------------------------------------------
     // Helper methods
     // -----------------------------------------------------------------------
+
+    /**
+     * Places a new item in its container and answers the warning a missed {@code beforeName} owes
+     * the caller. Without the name the item is appended; with a name that matches no element of
+     * the container it also lands at the end - silently, which is what the warning corrects: the
+     * caller asked for a position, and the answer has to say the position was not taken.
+     *
+     * @param helper the helper of the request, which does the placement
+     * @param container the container the item goes into
+     * @param item the item to place
+     * @param beforeName the sibling to insert before, or <code>null</code> / empty to append
+     * @return the warning text when {@code beforeName} matched no element; <code>null</code>
+     *         otherwise
+     * @throws Exception when the model rejects the insertion
+     */
+    static String placeFormItem(BmFormHelper helper, Object container, Object item,
+        String beforeName) throws Exception
+    {
+        if (beforeName == null || beforeName.isEmpty())
+        {
+            helper.addToContainer(container, item);
+            return null;
+        }
+        return helper.addToContainerBefore(container, item, beforeName)
+            ? null : beforeNameMissedWarning(beforeName);
+    }
+
+    /**
+     * The warning an add answer carries when {@code beforeName} matched no element in the target
+     * container and the new item went to its end. One line, no quote and no backslash - the
+     * front-matter writer quotes and escapes such a value while the reader only strips the
+     * quotes, and an escape sequence would reach the caller as it stands. The name is printed
+     * through {@link #identifiersOnly}: a {@code beforeName} that reaches this warning matched no
+     * element anyway, so the characters it loses were never meaningful here.
+     *
+     * @param beforeName the sibling name the caller asked for
+     * @return the warning text, never <code>null</code>
+     */
+    static String beforeNameMissedWarning(String beforeName)
+    {
+        return "Element '" + identifiersOnly(beforeName) + "' is not in the target container, " //$NON-NLS-1$ //$NON-NLS-2$
+            + "so the new item was added at its end. Check the spelling of beforeName."; //$NON-NLS-1$
+    }
+
+    /**
+     * The text a caller-provided name leaves in an answer: quotes, backslashes and line breaks
+     * replaced with a space, so the value keeps the one-line no-quote no-backslash shape the
+     * front-matter writer and its reader agree on whatever the caller sent.
+     *
+     * @param name the value as the caller passed it; may be <code>null</code>
+     * @return the same text without quotes, backslashes and line breaks; the empty string for
+     *         <code>null</code>
+     */
+    static String identifiersOnly(String name)
+    {
+        if (name == null)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return name.replaceAll("[\"\\\\\\r\\n]+", " "); //$NON-NLS-1$ //$NON-NLS-2$
+    }
 
     /**
      * Resolves the container for adding elements.
@@ -1345,8 +1474,14 @@ public class EditFormTool implements IMcpTool
      * <p>The virtual {@code ФормаКоманды} / {@code FormCommands} bucket from
      * the structure dump is rejected with a clear message - it is the form's
      * command list, not a UI container.
+     *
+     * @param helper the helper of the request, which searches the form tree
+     * @param form the form to resolve in
+     * @param parentName the container name, or <code>null</code> / empty for the form root
+     * @return the container object, never <code>null</code>
+     * @throws Exception when the name matches nothing or names a non-container
      */
-    private Object resolveContainer(Object form, String parentName) throws Exception
+    private Object resolveContainer(BmFormHelper helper, Object form, String parentName) throws Exception
     {
         if (parentName == null || parentName.isEmpty())
         {
@@ -1360,7 +1495,7 @@ public class EditFormTool implements IMcpTool
                 + "container or to a table's command bar (e.g. " //$NON-NLS-1$
                 + "'<TableName>КоманднаяПанель')."); //$NON-NLS-1$
         }
-        Object subContainer = resolveTableSubcontainer(form, parentName);
+        Object subContainer = resolveTableSubcontainer(helper, form, parentName);
         if (subContainer != null)
         {
             return subContainer;
@@ -1381,8 +1516,14 @@ public class EditFormTool implements IMcpTool
      * {@code getCommandBar()} / {@code getContextMenu()} reflection. Returns
      * {@code null} when the name is not a recognised suffix or the table is
      * absent (callers fall back to the regular recursive search).
+     *
+     * @param helper the helper of the request, which locates the table
+     * @param form the form to resolve in
+     * @param parentName the container name that may carry a table-subcontainer suffix
+     * @return the sub-container, or <code>null</code> when the name is no recognised suffix
+     * @throws Exception when the list cannot be read
      */
-    private Object resolveTableSubcontainer(Object form, String parentName) throws Exception
+    private Object resolveTableSubcontainer(BmFormHelper helper, Object form, String parentName) throws Exception
     {
         String[][] suffixes = {
             { "КоманднаяПанель", "getCommandBar" }, //$NON-NLS-1$ //$NON-NLS-2$
@@ -1428,21 +1569,25 @@ public class EditFormTool implements IMcpTool
     }
 
     /**
-     * 1.42 (B3): reads the form's owner EClass simple name (e.g. "Document",
-     * "ExternalDataProcessor"). The form's owner is the EMF parent in the
-     * BM tree. Returns {@code null} when the form has no owner (orphan or
-     * common form) or reflection fails.
+     * 1.42 (B3): reads the form owner's EClass simple name (e.g. "Document",
+     * "ExternalDataProcessor"). The owner is the object resolved from the form FQN,
+     * not the form's EMF parent: a BM top-object form answers no {@code eContainer},
+     * so walking the containment tree from the form read null for every form and the
+     * stock-command compatibility check judged nothing. Returns {@code null} when the
+     * owner is absent (common form, resolve miss) or reflection fails.
+     *
+     * @param ownerObject the metadata object owning the form; may be <code>null</code>
+     * @return the owner's EClass simple name, or <code>null</code>
      */
-    private String readFormOwnerEClassName(Object form)
+    static String readOwnerEClassName(Object ownerObject)
     {
+        if (ownerObject == null)
+        {
+            return null;
+        }
         try
         {
-            Object container = form.getClass().getMethod("eContainer").invoke(form); //$NON-NLS-1$
-            if (container == null)
-            {
-                return null;
-            }
-            Object eClass = container.getClass().getMethod("eClass").invoke(container); //$NON-NLS-1$
+            Object eClass = ownerObject.getClass().getMethod("eClass").invoke(ownerObject); //$NON-NLS-1$
             if (eClass == null)
             {
                 return null;
@@ -1510,6 +1655,42 @@ public class EditFormTool implements IMcpTool
             .put("tool", NAME) //$NON-NLS-1$
             .put("status", "error") //$NON-NLS-1$ //$NON-NLS-2$
             .wrapContent(message);
+    }
+
+    /**
+     * The answer a wedged UI thread earns: the refusal, tagged {@code uiBusy} so the caller can tell
+     * a retryable busy condition from a failed write. Every tool that waits on the UI thread tags
+     * this condition; an untagged one reads as an error the caller must not simply repeat.
+     *
+     * @param busy the raised condition; carries the message and the tag
+     * @return the front-matter error answer, never <code>null</code>
+     */
+    static String uiBusyAnswer(UiSync.UiBusyException busy)
+    {
+        return YamlFrontMatter.create()
+            .put("tool", NAME) //$NON-NLS-1$
+            .put("status", "error") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("tag", busy.tag()) //$NON-NLS-1$
+            .wrapContent(TextSuggest.safeMessage(busy));
+    }
+
+    /**
+     * The answer a broken wait earns when the work had already started on the UI thread: the write
+     * may have landed, so unlike a busy refusal this one is tagged {@code outcomeUnknown} - not
+     * retryable - and sends the caller to read the form before deciding what is still missing.
+     *
+     * @param unknown the raised condition; carries the message and the tag
+     * @return the front-matter error answer, never <code>null</code>
+     */
+    static String outcomeUnknownAnswer(UiSync.UiOutcomeUnknownException unknown)
+    {
+        return YamlFrontMatter.create()
+            .put("tool", NAME) //$NON-NLS-1$
+            .put("status", "error") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("tag", unknown.tag()) //$NON-NLS-1$
+            .wrapContent(TextSuggest.safeMessage(unknown)
+                + " Do not retry the operation: it may have applied. Read the form with " //$NON-NLS-1$
+                + "get_form_structure first and retry only what the read shows as missing."); //$NON-NLS-1$
     }
 
     /**

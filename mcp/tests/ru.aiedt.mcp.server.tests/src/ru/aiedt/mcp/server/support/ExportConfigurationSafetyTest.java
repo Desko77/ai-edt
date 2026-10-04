@@ -348,6 +348,50 @@ public class ExportConfigurationSafetyTest
                 "Загрузка конфигурации успешно завершена\nОбновление конфигурации базы данных успешно завершено"));
     }
 
+    /**
+     * "Not completed" carries the word "completed" yet reports that the update did not
+     * finish; it is a failure, in either language.
+     */
+    @Test
+    public void aNotCompletedLineFailsTheUpdate()
+    {
+        assertEquals(DatabaseUpdateOutcome.FAILED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome("Database update not completed"));
+        assertEquals(DatabaseUpdateOutcome.FAILED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome(
+                "Обновление конфигурации базы данных не завершено"));
+    }
+
+    /**
+     * A line that names the database and the update but says nothing about a successful
+     * completion leaves the update unverified.
+     */
+    @Test
+    public void anUpdateLineWithoutACompletionWordIsUnverified()
+    {
+        assertEquals(DatabaseUpdateOutcome.UNVERIFIED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome("Database update started"));
+    }
+
+    /**
+     * A success line about something other than the database update leaves the update
+     * unverified.
+     */
+    @Test
+    public void aSuccessLineAboutSomethingElseIsUnverified()
+    {
+        assertEquals(DatabaseUpdateOutcome.UNVERIFIED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome("Configuration successfully saved"));
+    }
+
+    @Test
+    public void aCouldNotUpdateLineFailsTheUpdate()
+    {
+        assertEquals(DatabaseUpdateOutcome.FAILED,
+            BmInfobaseExtensionHelper.databaseUpdateOutcome(
+                "Не удалось обновить базу данных"));
+    }
+
     // -- the .epf/.erf dump placement --
 
     @Test

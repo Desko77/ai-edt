@@ -591,6 +591,44 @@ public class ThreeWayComparisonToolTest
     }
 
     /**
+     * A merge that was asked for and did not run answers as an error, with the state kept.
+     * <p>
+     * The refusal text already says why, and it becomes the error. Every field the successful
+     * answer carries - merged, the attribution, the restore point - stays, so the state the
+     * refusal was decided from still reaches the caller. Answering success here read as a merge
+     * that happened to any client that checks only the flag.
+     * </p>
+     */
+    @Test
+    public void aRefusedMergeAnswersAsAnErrorWithTheStateKept()
+    {
+        ru.aiedt.mcp.server.support.BmComparisonHelper.Outcome refused =
+            new ru.aiedt.mcp.server.support.BmComparisonHelper.Outcome();
+        refused.threeWay = true;
+        refused.status = "FINISHED"; //$NON-NLS-1$
+        refused.mergeRefused = "no merge was run: a blocking problem"; //$NON-NLS-1$
+
+        String answer = ThreeWayComparisonTool.answer(refused, args(), "point-7"); //$NON-NLS-1$
+
+        assertTrue("a refusal is not a success: " + answer, //$NON-NLS-1$
+            answer.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue("the refusal itself is the error text: " + answer, //$NON-NLS-1$
+            answer.contains("\"error\":\"no merge was run: a blocking problem\"")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("\"threeWay\":true")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("\"status\":\"FINISHED\"")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("\"merged\":false")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("\"mergeRefused\":\"no merge was run")); //$NON-NLS-1$
+        assertTrue("the way back still reaches the caller: " + answer, //$NON-NLS-1$
+            answer.contains("\"mergeRestorePoint\":\"point-7\"")); //$NON-NLS-1$
+
+        String merged = ThreeWayComparisonTool.answer(
+            new ru.aiedt.mcp.server.support.BmComparisonHelper.Outcome(), args(), null);
+        assertTrue("a comparison without a refusal still answers success: " + merged, //$NON-NLS-1$
+            merged.contains("\"success\":true")); //$NON-NLS-1$
+        assertFalse("and carries no error: " + merged, merged.contains("\"error\"")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * The merge entry points must stay out of reach. Checked against the class rather than the
      * source text so the test still holds if the file is reorganised.
      */

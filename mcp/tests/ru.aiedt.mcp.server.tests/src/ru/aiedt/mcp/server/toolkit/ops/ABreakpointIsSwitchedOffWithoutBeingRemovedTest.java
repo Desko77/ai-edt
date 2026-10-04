@@ -24,7 +24,9 @@ import org.eclipse.debug.core.model.ILineBreakpoint;
 import org.junit.Test;
 
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.support.BreakpointAccess;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
@@ -134,7 +136,9 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
         List<Map<String, Object>> cleared = BreakpointSetter.clearModuleSet(items, (project, module) ->
         {
             calls.add(project + "|" + module); //$NON-NLS-1$ //$NON-NLS-2$
-            return module.endsWith("Второй") ? 5 : 3; //$NON-NLS-1$
+            return module.endsWith("Второй") //$NON-NLS-1$
+                ? new BreakpointAccess.Removal(5, List.of(21, 22, 23, 24, 25)) //$NON-NLS-1$
+                : new BreakpointAccess.Removal(3, List.of(11, 12, 13)); //$NON-NLS-1$
         });
 
         assertEquals("a module named twice is cleared once", 2, calls.size()); //$NON-NLS-1$
@@ -143,6 +147,8 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
         assertEquals(2, cleared.size());
         assertEquals(3, ((Integer)cleared.get(0).get("removedCount")).intValue()); //$NON-NLS-1$
         assertEquals(5, ((Integer)cleared.get(1).get("removedCount")).intValue()); //$NON-NLS-1$
+        assertEquals("the answer names the lines the removed breakpoints sat on", //$NON-NLS-1$
+            List.of(11, 12, 13), cleared.get(0).get("removedLines")); //$NON-NLS-1$
         assertEquals("MyProject", cleared.get(0).get("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
@@ -159,7 +165,7 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
             {
                 throw new IllegalStateException("module not found"); //$NON-NLS-1$
             }
-            return 2;
+            return new BreakpointAccess.Removal(2, List.of(31, 32)); //$NON-NLS-1$
         });
 
         assertEquals(2, cleared.size());
@@ -180,13 +186,29 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
         List<Map<String, Object>> cleared = BreakpointSetter.clearModuleSet(items, (project, module) ->
         {
             calls.add(module);
-            return 1;
+            return new BreakpointAccess.Removal(1, List.of(41)); //$NON-NLS-1$
         });
 
         assertEquals("only the item with a module is cleared", 1, calls.size()); //$NON-NLS-1$
         assertEquals("CommonModule.Первый", calls.get(0)); //$NON-NLS-1$
         assertEquals(1, cleared.size());
         assertFalse("an item with no project does not name one", cleared.get(0).containsKey("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void clearingCountsBreakpointsThatCarryNoLine() throws Exception
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("MyProject", "CommonModules/Первый")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // Two line breakpoints and an exception one: three go, two lines can be named.
+        List<Map<String, Object>> cleared = BreakpointSetter.clearModuleSet(items, (project, module) ->
+            new BreakpointAccess.Removal(3, List.of(11, 12))); //$NON-NLS-1$
+
+        assertEquals("every removed breakpoint counts, also the one without a line", 3, //$NON-NLS-1$
+            ((Integer)cleared.get(0).get("removedCount")).intValue()); //$NON-NLS-1$
+        assertEquals("the lines still name only what a caller can re-arm", //$NON-NLS-1$
+            List.of(11, 12), cleared.get(0).get("removedLines")); //$NON-NLS-1$
     }
 
     @Test
@@ -197,6 +219,150 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
 
         assertTrue("the refusal says what a replacing call needs: " + answer, //$NON-NLS-1$
             answer.get("error").getAsString().contains("replaceModuleSet needs a `breakpoints` batch")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aReplacingBatchWithAnUnresolvableModuleIsRefusedWhole()
+    {
+        JsonObject answer = json(new BreakpointSetter().execute(FakeDebugToolCalls.args(
+            "projectName", "AProjectTheWorkspaceDoesNotHold", //$NON-NLS-1$ //$NON-NLS-2$
+            "replaceModuleSet", "true", //$NON-NLS-1$ //$NON-NLS-2$
+            "breakpoints", //$NON-NLS-1$
+            "[{\"module\":\"CommonModules/First/Module.bsl\",\"lineNumber\":5}," //$NON-NLS-1$
+                + "{\"module\":\"CommonModules/Missing/Module.bsl\",\"lineNumber\":6}]"))); //$NON-NLS-1$
+
+        assertEquals(false, answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(BreakpointSetter.REASON_MODULE_NOT_RESOLVED,
+            answer.get("reason").getAsString()); //$NON-NLS-1$
+        assertEquals("the refusal lists every module that does not resolve", //$NON-NLS-1$
+            List.of("CommonModules/First/Module.bsl", "CommonModules/Missing/Module.bsl"), //$NON-NLS-1$ //$NON-NLS-2$
+            strings(answer.get("modules").getAsJsonArray())); //$NON-NLS-1$
+        assertEquals("nothing was removed", 0, answer.get("removedCount").getAsInt()); //$NON-NLS-1$
+        assertFalse("nothing was cleared either", answer.has("clearedModules")); //$NON-NLS-1$
+        assertFalse("nothing was armed either", answer.has("breakpointResults")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anUnresolvableModuleIsListedOnceHoweverManyItemsNameIt()
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("P", "CommonModules/First/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(moduleItem("P", "CommonModules/First/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(moduleItem("P", "CommonModules/Second/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(null);
+        items.add(moduleItem("P", "")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> unresolvable = BreakpointSetter.unresolvableModules(items, (project, module) ->
+            module.endsWith("Second/Module.bsl")); //$NON-NLS-1$
+
+        assertEquals(List.of("CommonModules/First/Module.bsl"), unresolvable); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theSameModuleUnderTwoProjectsIsResolvedForEachProject()
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("One", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(moduleItem("Two", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> unresolvable = BreakpointSetter.unresolvableModules(items, (project, module) ->
+            "One".equals(project)); //$NON-NLS-1$
+
+        assertEquals("the copy under the second project does not resolve, and the batch has to be " //$NON-NLS-1$
+            + "refused rather than clear the first project's module: " + unresolvable, //$NON-NLS-1$
+            List.of("CommonModules/Shared/Module.bsl"), unresolvable); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theReverseOrderStillNamesTheModuleThatDoesNotResolve()
+    {
+        List<Map<String, String>> items = new ArrayList<>();
+        items.add(moduleItem("Two", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        items.add(moduleItem("One", "CommonModules/Shared/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<String> unresolvable = BreakpointSetter.unresolvableModules(items, (project, module) ->
+            "One".equals(project)); //$NON-NLS-1$
+
+        assertEquals(List.of("CommonModules/Shared/Module.bsl"), unresolvable); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aReplacingBatchThatArmedNothingAnswersWhatItRemoved()
+    {
+        List<Map<String, Object>> results = new ArrayList<>();
+        Map<String, Object> failed = new LinkedHashMap<>();
+        failed.put("index", Integer.valueOf(0)); //$NON-NLS-1$
+        failed.put("module", "CommonModules/First/Module.bsl"); //$NON-NLS-1$
+        failed.put("ok", Boolean.FALSE); //$NON-NLS-1$
+        failed.put("error", "lineNumber (or line) must be 1 or greater"); //$NON-NLS-1$
+        results.add(failed);
+        List<Map<String, Object>> cleared = new ArrayList<>();
+        Map<String, Object> clearedModule = new LinkedHashMap<>();
+        clearedModule.put("module", "CommonModules/First/Module.bsl"); //$NON-NLS-1$
+        clearedModule.put("removedCount", Integer.valueOf(2)); //$NON-NLS-1$
+        clearedModule.put("removedLines", List.of(12, 40)); //$NON-NLS-1$
+        cleared.add(clearedModule);
+
+        JsonObject answer = json(BreakpointSetter.noBreakpointSetAnswer(results, 1, 2, cleared));
+
+        assertEquals(false, answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(BreakpointSetter.REASON_NO_BREAKPOINT_SET,
+            answer.get("reason").getAsString()); //$NON-NLS-1$
+        assertEquals(0, answer.get("ok").getAsInt()); //$NON-NLS-1$
+        assertEquals(1, answer.get("fail").getAsInt()); //$NON-NLS-1$
+        assertEquals("the answer names how many breakpoints went", 2, //$NON-NLS-1$
+            answer.get("removedCount").getAsInt()); //$NON-NLS-1$
+        JsonObject module = answer.getAsJsonArray("clearedModules").get(0).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals("the answer names the lines the caller can re-arm", //$NON-NLS-1$
+            List.of(12, 40), ints(module.getAsJsonArray("removedLines"))); //$NON-NLS-1$
+        assertEquals("the per-item reason travels with the refusal", //$NON-NLS-1$
+            "lineNumber (or line) must be 1 or greater", //$NON-NLS-1$
+            answer.getAsJsonArray("breakpointResults").get(0).getAsJsonObject() //$NON-NLS-1$
+                .get("error").getAsString()); //$NON-NLS-1$
+    }
+
+    // ---- the argument the state action insists on -------------------------------------------
+
+    @Test
+    public void theStateRefusalNamesTheMissingArgument()
+    {
+        JsonObject answer = json(new BreakpointStateSetter()
+            .execute(FakeDebugToolCalls.args("breakpointId", "41"))); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(BreakpointStateSetter.REASON_MISSING_ARGUMENT,
+            answer.get("reason").getAsString()); //$NON-NLS-1$
+        assertEquals("breakpointEnabled", answer.get("argument").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void theMissingIdRefusalNamesTheMissingArgumentToo()
+    {
+        JsonObject answer = json(new BreakpointStateSetter().execute(
+            FakeDebugToolCalls.args("breakpointEnabled", "true"))); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(BreakpointStateSetter.REASON_MISSING_ARGUMENT,
+            answer.get("reason").getAsString()); //$NON-NLS-1$
+        assertEquals("breakpointId", answer.get("argument").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void theFacadeDescribesTheStateArgumentWithoutTheWordRequired()
+    {
+        JsonObject schema = JsonParser.parseString(new LaunchDebuggerTool().getInputSchema())
+            .getAsJsonObject();
+
+        String state = schema.getAsJsonObject("properties") //$NON-NLS-1$
+            .getAsJsonObject("breakpointEnabled").get("description").getAsString(); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the facade is shared by many actions, so no argument of it is Required: " //$NON-NLS-1$
+            + state, state.contains("Required")); //$NON-NLS-1$
+        assertTrue("the sentence names the action that insists on the argument", //$NON-NLS-1$
+            state.contains("set_breakpoint_state")); //$NON-NLS-1$
+        assertTrue("the sentence says the action refuses without it", //$NON-NLS-1$
+            state.contains("refuses a call without it")); //$NON-NLS-1$
+
+        String id = schema.getAsJsonObject("properties") //$NON-NLS-1$
+            .getAsJsonObject("breakpointId").get("description").getAsString(); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the id sentence carries no Required either: " + id, id.contains("Required")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     // ---- fakes -----------------------------------------------------------------------------
@@ -215,6 +381,34 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
         }
         item.put("module", module); //$NON-NLS-1$
         return item;
+    }
+
+    /**
+     * @param array what an answer carried as a list of names
+     * @return the names, for an assertEquals against a {@link List#of}
+     */
+    private static List<String> strings(com.google.gson.JsonArray array)
+    {
+        List<String> values = new ArrayList<>();
+        for (com.google.gson.JsonElement element : array)
+        {
+            values.add(element.getAsString());
+        }
+        return values;
+    }
+
+    /**
+     * @param array what an answer carried as a list of numbers
+     * @return the numbers, for an assertEquals against a {@link List#of}
+     */
+    private static List<Integer> ints(com.google.gson.JsonArray array)
+    {
+        List<Integer> values = new ArrayList<>();
+        for (com.google.gson.JsonElement element : array)
+        {
+            values.add(Integer.valueOf(element.getAsInt()));
+        }
+        return values;
     }
 
     /**

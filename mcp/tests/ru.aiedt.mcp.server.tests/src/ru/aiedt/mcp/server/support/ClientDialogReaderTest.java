@@ -19,6 +19,9 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -302,6 +305,72 @@ public class ClientDialogReaderTest
         {
             remove(empty);
             remove(kept);
+            remove(state);
+        }
+    }
+
+    /**
+     * Two reads give the script different labels for their snapshot names, so two reads writing
+     * into one receipt directory at the same time do not overwrite each other's pictures.
+     *
+     * @throws IOException when the temporary directories cannot be created
+     */
+    @Test
+    public void twoReadsNameTheirSnapshotsApart() throws IOException
+    {
+        Path images = Files.createTempDirectory("aiedt-receipts"); //$NON-NLS-1$
+        try
+        {
+            List<String> first = new ArrayList<>();
+            List<String> second = new ArrayList<>();
+            ClientDialogReader.capture(List.of(Long.valueOf(10L)), images, windowsWith(Path.of("pwsh.exe")), //$NON-NLS-1$
+                writingRunner(first, HELD_WINDOW), Path.of("reader.ps1")); //$NON-NLS-1$
+            ClientDialogReader.capture(List.of(Long.valueOf(10L)), images, windowsWith(Path.of("pwsh.exe")), //$NON-NLS-1$
+                writingRunner(second, HELD_WINDOW), Path.of("reader.ps1")); //$NON-NLS-1$
+
+            String firstLabel = argumentOf(first, "-Label"); //$NON-NLS-1$
+            String secondLabel = argumentOf(second, "-Label"); //$NON-NLS-1$
+            assertFalse(firstLabel.isBlank());
+            assertFalse("each read names its snapshots apart", firstLabel.equals(secondLabel)); //$NON-NLS-1$
+        }
+        finally
+        {
+            remove(images);
+        }
+    }
+
+    /**
+     * The temporary snapshot directories of earlier reads are removed once they are a day old; a
+     * fresh one, the current one and a directory of any other name stay.
+     *
+     * @throws IOException when the temporary directories cannot be created
+     */
+    @Test
+    public void oldTemporarySnapshotDirectoriesAreSwept() throws IOException
+    {
+        Path state = Files.createTempDirectory("aiedt-state"); //$NON-NLS-1$
+        try
+        {
+            Path old = Files.createDirectories(state.resolve("blocking-windows-old")); //$NON-NLS-1$
+            Files.write(old.resolve("blocking-a-10-0.png"), new byte[] { 1 }); //$NON-NLS-1$
+            Files.setLastModifiedTime(old, FileTime.from(Instant.now().minus(Duration.ofDays(2))));
+            Path fresh = Files.createDirectories(state.resolve("blocking-windows-fresh")); //$NON-NLS-1$
+            Path other = Files.createDirectories(state.resolve("receipts")); //$NON-NLS-1$
+            Files.setLastModifiedTime(other, FileTime.from(Instant.now().minus(Duration.ofDays(2))));
+            Path current = Files.createDirectories(state.resolve("blocking-windows-current")); //$NON-NLS-1$
+            Files.setLastModifiedTime(current, FileTime.from(Instant.now().minus(Duration.ofDays(2))));
+
+            int removed = ClientDialogReader.sweepStaleTemporaryDirectories(state, current,
+                Instant.now().minus(Duration.ofHours(24)));
+
+            assertEquals(1, removed);
+            assertFalse(Files.exists(old));
+            assertTrue(Files.exists(fresh));
+            assertTrue(Files.exists(other));
+            assertTrue(Files.exists(current));
+        }
+        finally
+        {
             remove(state);
         }
     }

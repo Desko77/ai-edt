@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 
@@ -19,6 +20,7 @@ import com._1c.g5.v8.dt.xdto.model.Package;
 import com._1c.g5.v8.dt.xdto.model.Property;
 import com._1c.g5.v8.dt.xdto.model.ValueType;
 
+import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -31,7 +33,8 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
  * XDTO package content constructor. Authors the {@code Package.xdto} schema
  * beside an {@code XDTOPackage} metadata object (create the XDTOPackage first
  * with {@code edit_metadata create_object objectType=XDTOPackage}). Content ops
- * auto-create {@code Package.xdto} on first mutation.
+ * write {@code Package.xdto} only when that object already exists; a missing
+ * object is refused and no file is created.
  *
  * <p>Operations: add_object_type, add_value_type, add_property,
  * remove_object_type, remove_value_type, remove_property, set_namespace, read.
@@ -43,6 +46,30 @@ public class XdtoWorkshopTool implements IMcpTool
     public static final String NAME = "xdto_workshop"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
+
+    /** English type prefix an {@code ownerFqn} may carry. */
+    private static final String OWNER_PREFIX = "XDTOPackage."; //$NON-NLS-1$
+
+    /** Russian type prefix an {@code ownerFqn} may carry. */
+    private static final String OWNER_PREFIX_RU = "\u041f\u0430\u043a\u0435\u0442XDTO."; //$NON-NLS-1$
+
+    /**
+     * Whether the project configuration contains the XDTO package a write is about.
+     */
+    @FunctionalInterface
+    interface PackageObjectLookup
+    {
+        /**
+         * Names the package when the configuration does not contain it.
+         *
+         * @param project the project the write is aimed at
+         * @param packageName the package name, already one path segment
+         * @return {@code null} when the object is there, otherwise the refusal
+         */
+        String missing(IProject project, String packageName);
+    }
+
+    private static volatile PackageObjectLookup packageObjectLookup = XdtoWorkshopTool::lookupPackageObject;
 
     @Override
     public String getName()
@@ -71,7 +98,8 @@ public class XdtoWorkshopTool implements IMcpTool
                     + "remove_value_type / remove_property / set_namespace / read / help",
                 true)
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("ownerFqn", "XDTOPackage.<name> (or use packageName)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("ownerFqn", //$NON-NLS-1$
+                "XDTOPackage.<name> or \u041f\u0430\u043a\u0435\u0442XDTO.<name> (or use packageName)") //$NON-NLS-1$
             .stringProperty("packageName", "XDTOPackage name (alternative to ownerFqn)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("name", //$NON-NLS-1$
                 "Name of the object type / value type / property to add or remove") //$NON-NLS-1$
@@ -80,7 +108,7 @@ public class XdtoWorkshopTool implements IMcpTool
             .stringProperty("type", //$NON-NLS-1$
                 "add_property: property type local name (e.g. 'string', 'tFoo')") //$NON-NLS-1$
             .stringProperty("typeNamespace", //$NON-NLS-1$
-                "add_property: namespace URI of 'type' (default XSD http://www.w3.org/2001/XMLSchema)") //$NON-NLS-1$
+                "add_property: namespace of type (default XSD)") //$NON-NLS-1$
             .integerProperty("lowerBound", "add_property: min occurrences (0 = optional)") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("upperBound", "add_property: max occurrences (-1 = unbounded)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("form", "add_property: Element (default) / Attribute / Text") //$NON-NLS-1$ //$NON-NLS-2$
@@ -160,8 +188,8 @@ public class XdtoWorkshopTool implements IMcpTool
         Boolean open = boolArg(params, "open"); //$NON-NLS-1$
         Boolean isAbstract = boolArg(params, "abstract"); //$NON-NLS-1$
         Boolean mixed = boolArg(params, "mixed"); //$NON-NLS-1$
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
-            pkg -> BmXdtoHelper.addObjectType(pkg, name, open, isAbstract, mixed), c.dryRun);
+        String err = mutateExisting(c,
+            pkg -> BmXdtoHelper.addObjectType(pkg, name, open, isAbstract, mixed));
         return result(err, "add_object_type", c, "object type '" + name + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
@@ -176,8 +204,8 @@ public class XdtoWorkshopTool implements IMcpTool
         String variety = JsonUtils.extractStringArgument(params, "variety"); //$NON-NLS-1$
         String itemType = JsonUtils.extractStringArgument(params, "itemType"); //$NON-NLS-1$
         String itemTypeNs = JsonUtils.extractStringArgument(params, "itemTypeNamespace"); //$NON-NLS-1$
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
-            pkg -> BmXdtoHelper.addValueType(pkg, name, variety, itemType, itemTypeNs), c.dryRun);
+        String err = mutateExisting(c,
+            pkg -> BmXdtoHelper.addValueType(pkg, name, variety, itemType, itemTypeNs));
         return result(err, "add_value_type", c, "value type '" + name + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
@@ -196,10 +224,9 @@ public class XdtoWorkshopTool implements IMcpTool
         Integer upper = intArg(params, "upperBound"); //$NON-NLS-1$
         String form = JsonUtils.extractStringArgument(params, "form"); //$NON-NLS-1$
         Boolean nillable = boolArg(params, "nillable"); //$NON-NLS-1$
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
+        String err = mutateExisting(c,
             pkg -> BmXdtoHelper.addProperty(pkg, objectType, name, type, typeNs, lower, upper, form,
-                nillable),
-            c.dryRun);
+                nillable));
         String where = objectType != null && !objectType.isEmpty() ? objectType : "package"; //$NON-NLS-1$
         return result(err, "add_property", c, "property '" + name + "' on " + where); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
@@ -217,11 +244,10 @@ public class XdtoWorkshopTool implements IMcpTool
             return ToolResult.error("name is required").toJson(); //$NON-NLS-1$
         }
         boolean[] removed = { false };
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
-            pkg -> {
-                removed[0] = BmXdtoHelper.removeObjectType(pkg, name);
-                return removed[0] ? null : BmXdtoHelper.NO_CHANGE;
-            }, c.dryRun);
+        String err = mutateExisting(c, pkg -> {
+            removed[0] = BmXdtoHelper.removeObjectType(pkg, name);
+            return removed[0] ? null : BmXdtoHelper.NO_CHANGE;
+        });
         return removeResult(err, "remove_object_type", c, removed[0], "object type '" + name + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
@@ -238,11 +264,10 @@ public class XdtoWorkshopTool implements IMcpTool
             return ToolResult.error("name is required").toJson(); //$NON-NLS-1$
         }
         boolean[] removed = { false };
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
-            pkg -> {
-                removed[0] = BmXdtoHelper.removeValueType(pkg, name);
-                return removed[0] ? null : BmXdtoHelper.NO_CHANGE;
-            }, c.dryRun);
+        String err = mutateExisting(c, pkg -> {
+            removed[0] = BmXdtoHelper.removeValueType(pkg, name);
+            return removed[0] ? null : BmXdtoHelper.NO_CHANGE;
+        });
         return removeResult(err, "remove_value_type", c, removed[0], "value type '" + name + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
@@ -260,11 +285,10 @@ public class XdtoWorkshopTool implements IMcpTool
             return ToolResult.error("name is required").toJson(); //$NON-NLS-1$
         }
         boolean[] removed = { false };
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
-            pkg -> {
-                removed[0] = BmXdtoHelper.removeProperty(pkg, objectType, name);
-                return removed[0] ? null : BmXdtoHelper.NO_CHANGE;
-            }, c.dryRun);
+        String err = mutateExisting(c, pkg -> {
+            removed[0] = BmXdtoHelper.removeProperty(pkg, objectType, name);
+            return removed[0] ? null : BmXdtoHelper.NO_CHANGE;
+        });
         return removeResult(err, "remove_property", c, removed[0], "property '" + name + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
@@ -284,22 +308,21 @@ public class XdtoWorkshopTool implements IMcpTool
                 .error("set_namespace requires namespace and/or elementFormQualified/attributeFormQualified") //$NON-NLS-1$
                 .toJson();
         }
-        String err = BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName),
-            pkg -> {
-                if (namespace != null)
-                {
-                    pkg.setNsUri(namespace);
-                }
-                if (elementFq != null)
-                {
-                    pkg.setElementFormQualified(elementFq.booleanValue());
-                }
-                if (attributeFq != null)
-                {
-                    pkg.setAttributeFormQualified(attributeFq.booleanValue());
-                }
-                return null;
-            }, c.dryRun);
+        String err = mutateExisting(c, pkg -> {
+            if (namespace != null)
+            {
+                pkg.setNsUri(namespace);
+            }
+            if (elementFq != null)
+            {
+                pkg.setElementFormQualified(elementFq.booleanValue());
+            }
+            if (attributeFq != null)
+            {
+                pkg.setAttributeFormQualified(attributeFq.booleanValue());
+            }
+            return null;
+        });
         StringBuilder note = new StringBuilder();
         if (err == null && namespace != null)
         {
@@ -385,8 +408,15 @@ public class XdtoWorkshopTool implements IMcpTool
         {
             return c.error;
         }
-        Package pkg = BmXdtoHelper.readPackage(c.project, c.packageName);
-        if (pkg == null)
+        BmXdtoHelper.SchemaRead read = BmXdtoHelper.readSchema(c.project, c.packageName);
+        if (read.loadError() != null)
+        {
+            return ToolResult.error("read failed: " + read.loadError()) //$NON-NLS-1$
+                .put("operation", "read") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("packageName", c.packageName) //$NON-NLS-1$
+                .toJson();
+        }
+        if (read.absentOrEmpty() || read.model() == null)
         {
             return ToolResult.success()
                 .put("operation", "read") //$NON-NLS-1$ //$NON-NLS-2$
@@ -394,6 +424,7 @@ public class XdtoWorkshopTool implements IMcpTool
                 .put("message", "Package.xdto is absent or empty (no schema content yet)") //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
         }
+        Package pkg = read.model();
         StringBuilder sb = new StringBuilder();
         sb.append("namespace: ").append(pkg.getNsUri()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         sb.append("objectTypes (").append(pkg.getObjects().size()).append("):\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -454,8 +485,13 @@ public class XdtoWorkshopTool implements IMcpTool
         c.dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         if (packageName == null && ownerFqn != null)
         {
-            int dot = ownerFqn.indexOf('.');
-            packageName = dot >= 0 ? ownerFqn.substring(dot + 1) : ownerFqn;
+            packageName = packageNameFromOwner(ownerFqn);
+            if (packageName == null)
+            {
+                c.error = ToolResult.error("ownerFqn must be " + OWNER_PREFIX + "<name> or " //$NON-NLS-1$ //$NON-NLS-2$
+                    + OWNER_PREFIX_RU + "<name>").toJson(); //$NON-NLS-1$
+                return c;
+            }
         }
         if (projectName == null || packageName == null || packageName.isEmpty())
         {
@@ -472,6 +508,102 @@ public class XdtoWorkshopTool implements IMcpTool
         }
         c.packageName = packageName;
         return c;
+    }
+
+    /**
+     * The package name from an owner address, when the type is an XDTO package.
+     *
+     * @param ownerFqn the address the caller gave
+     * @return the name after {@code XDTOPackage.} or {@code ПакетXDTO.}, or {@code null} when the
+     *         type is anything else. An empty name after a valid prefix is an empty string.
+     */
+    private static String packageNameFromOwner(String ownerFqn)
+    {
+        String trimmed = ownerFqn.trim();
+        String prefix = null;
+        if (trimmed.regionMatches(true, 0, OWNER_PREFIX, 0, OWNER_PREFIX.length()))
+        {
+            prefix = OWNER_PREFIX;
+        }
+        else if (trimmed.regionMatches(true, 0, OWNER_PREFIX_RU, 0, OWNER_PREFIX_RU.length()))
+        {
+            prefix = OWNER_PREFIX_RU;
+        }
+        if (prefix == null)
+        {
+            return null;
+        }
+        return trimmed.substring(prefix.length());
+    }
+
+    /**
+     * Writes the schema of a package the configuration already contains.
+     * <p>
+     * The name is checked before the object is looked up, and the object is looked up before the
+     * file is written. A missing object leaves the disk untouched. {@code set_namespace} uses this
+     * same check, so the schema is not written and then discovered to have no package object.
+     * </p>
+     *
+     * @param c the resolved call
+     * @param mutator the change to apply to the schema
+     * @return {@code null} on success, or the refusal
+     */
+    private String mutateExisting(Ctx c, Function<Package, String> mutator)
+    {
+        String refused = BmXdtoHelper.refusePackagePath(c.project, c.packageName);
+        if (refused != null)
+        {
+            return refused;
+        }
+        String missing = packageObjectLookup.missing(c.project, c.packageName);
+        if (missing != null)
+        {
+            return missing;
+        }
+        return BmXdtoHelper.mutatePackage(c.project, c.packageName, defaultNs(c.packageName), mutator,
+            c.dryRun);
+    }
+
+    /**
+     * Replaces the configuration lookup. A {@code null} argument restores the real lookup.
+     *
+     * @param replacement the lookup a test supplies, or {@code null} to restore
+     */
+    static void usePackageObjectLookupForTest(PackageObjectLookup replacement)
+    {
+        packageObjectLookup = replacement == null ? XdtoWorkshopTool::lookupPackageObject : replacement;
+    }
+
+    /**
+     * Whether {@code XDTOPackage.<packageName>} is in the project configuration.
+     * <p>
+     * The read entry resolves the owner the same way a write does and asks nothing else: no supplier
+     * lock and no adoption of an object that is not there yet. A package the configuration does not
+     * contain is refused before any schema file is created.
+     * </p>
+     *
+     * @param project the project
+     * @param packageName the package name
+     * @return {@code null} when the object is there, otherwise why it is not
+     */
+    private static String lookupPackageObject(IProject project, String packageName)
+    {
+        String fqn = OWNER_PREFIX + packageName;
+        if (Activator.getDefault() == null)
+        {
+            return "Owner not found: " + fqn; //$NON-NLS-1$
+        }
+        BmObjectHelper.Result found = BmObjectHelper.executeReadOnObject(project, fqn,
+            (tx, owner) -> null);
+        if (found != null && found.ok)
+        {
+            return null;
+        }
+        if (found != null && found.error != null && !found.error.isEmpty())
+        {
+            return found.error;
+        }
+        return "Owner not found: " + fqn; //$NON-NLS-1$
     }
 
     private static String defaultNs(String packageName)

@@ -102,11 +102,14 @@ public class ClusterTreeContent
         {
             ClusterNavigatorBridge node = (ClusterNavigatorBridge)element;
             Cluster cluster = node.getCluster();
-            if (service != null && service.hasClustersAtPath(node.getProject(), cluster.getFullPath()))
+            // Read the way the node's getChildren reads it, so a provider set up before the
+            // cluster service started still offers the nested clusters it would show.
+            IClusterManager clusters = service != null ? service : Activator.getClusterServiceStatic();
+            if (clusters != null && clusters.hasClustersAtPath(node.getProject(), cluster.getFullPath()))
             {
                 return true;
             }
-            return !cluster.isEmpty();
+            return node.holdsAResolvableObject();
         }
         if (CollectionAdapters.isCollectionAdapter(element))
         {

@@ -140,15 +140,39 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
     }
 
     /**
-     * The tool with the project's applications answered as none, which is what this test is about:
-     * the store on disk decides the prediction, and the answer must not change with whether the
-     * runtime running the test happens to offer an application manager.
+     * The tool with the project's applications answered as one: the infobase of the baseline,
+     * which a reseed now requires - a baseline is re-stamped only for an infobase the project is
+     * bound to. The application itself is a proxy over a real {@code InfobaseReference}, so the
+     * id the tool reads is the one this test named.
      */
     private static final class ProbeTool extends SyncControlTool
     {
         @Override
         IApplicationManager applicationManager()
         {
+            com._1c.g5.v8.dt.platform.services.model.InfobaseReference infobase =
+                com._1c.g5.v8.dt.platform.services.model.ModelFactory.eINSTANCE.createInfobaseReference();
+            infobase.setUuid(java.util.UUID.fromString(INFOBASE));
+            infobase.setName("Probe " + INFOBASE.substring(0, 8)); //$NON-NLS-1$
+            IApplication application = (IApplication)Proxy.newProxyInstance(
+                TheSyncStoreIsReadWhereEdtKeepsItTest.class.getClassLoader(),
+                new Class<?>[] { com.e1c.g5.dt.applications.infobases.IInfobaseApplication.class },
+                (proxy, method, args) ->
+                {
+                    if ("getInfobase".equals(method.getName())) //$NON-NLS-1$
+                    {
+                        return infobase;
+                    }
+                    if ("getId".equals(method.getName())) //$NON-NLS-1$
+                    {
+                        return "app-" + INFOBASE.substring(0, 8); //$NON-NLS-1$
+                    }
+                    if ("getName".equals(method.getName())) //$NON-NLS-1$
+                    {
+                        return infobase.getName();
+                    }
+                    return null;
+                });
             return (IApplicationManager)Proxy.newProxyInstance(
                 TheSyncStoreIsReadWhereEdtKeepsItTest.class.getClassLoader(),
                 new Class<?>[] { IApplicationManager.class },
@@ -156,7 +180,7 @@ public class TheSyncStoreIsReadWhereEdtKeepsItTest
                 {
                     if ("getApplications".equals(method.getName())) //$NON-NLS-1$
                     {
-                        return new ArrayList<IApplication>();
+                        return new ArrayList<>(java.util.List.of(application));
                     }
                     if ("getDefaultApplication".equals(method.getName())) //$NON-NLS-1$
                     {

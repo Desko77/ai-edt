@@ -13,6 +13,7 @@ import java.util.Iterator;
 import java.util.List;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EStructuralFeature;
 import org.eclipse.emf.ecore.InternalEObject;
@@ -21,6 +22,7 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import com._1c.g5.v8.bm.core.BmUriUtil;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
+import com._1c.g5.v8.bm.integration.AbstractBmTask;
 import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.metadata.mdclass.CommonPicture;
@@ -228,16 +230,13 @@ public class BmFormHelper
     }
 
     /**
-     * Resolves a form and runs a read against it inside the transaction, with no write question
-     * asked.
+     * Resolves a form and runs a read against it in a read-only task of the project's model.
      * <p>
      * A structure walk of a form whose owner is closed for vendor-support changes is a read, the
-     * way EDT reads it: the write entries below ask the support registry and refuse such a form,
+     * way EDT reads it: the write entry below asks the support registry and refuses such a form,
      * and this entry does not, so a closed configuration stays readable through
-     * {@code get_form_structure}. The transaction opens and commits the way a write's does - that is
-     * how the form model is reached, and the form is exported to disk at the end of it, the same
-     * {@code forceExport} a write performs. This entry answers without asking the support question;
-     * it does not answer without touching the file.
+     * {@code get_form_structure}. The task commits nothing and the form is not exported, so a read
+     * leaves the form file as it found it.
      * </p>
      *
      * @param project the workspace project
@@ -245,13 +244,75 @@ public class BmFormHelper
      *            {@code .Form} segment (e.g. "Catalog.Products.Form.ItemForm.Form"); use the
      *            diagnostic hint returned on "form not found" to discover the canonical FQN for
      *            borrowed forms in extensions
-     * @param action the read to execute inside the transaction
+     * @param action the read to execute inside the task; it must not change the model
      * @return result string from the action, or an error message
      */
     public String executeFormReadOperation(IProject project, String formFqn,
         FormTransactionAction action)
     {
-        return executeFormOperation(project, formFqn, false, action, false);
+        IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
+        if (bmModelManager == null)
+        {
+            return "Error: object model manager is not published as a service"; //$NON-NLS-1$
+        }
+        IBmModel bmModel = bmModelManager.getModel(project);
+        if (bmModel == null)
+        {
+            return "Error: no BM model available for project: " + project.getName(); //$NON-NLS-1$
+        }
+        return readForm(bmModel, formFqn, action);
+    }
+
+    /**
+     * Runs a form read in a read-only task of a model.
+     * <p>
+     * The form is resolved the way a write resolves it, and the action gets the read transaction
+     * and the form. Nothing is committed and nothing is exported, whatever the action returns.
+     * </p>
+     *
+     * @param model the project's model
+     * @param formFqn the address of the form, with or without the trailing {@code .Form} segment
+     * @param action the read to execute inside the task
+     * @return the action's string result, an error message, or <code>null</code>
+     */
+    String readForm(IBmModel model, String formFqn, FormTransactionAction action)
+    {
+        try
+        {
+            Object result = model.executeReadonlyTask(new AbstractBmTask<Object>("readForm") //$NON-NLS-1$
+            {
+                @Override
+                public Object execute(IBmTransaction transaction, IProgressMonitor monitor)
+                {
+                    try
+                    {
+                        Object form = resolveForm(transaction, formFqn,
+                            new java.util.concurrent.atomic.AtomicReference<>(formFqn));
+                        return form instanceof String ? form : action.execute(transaction, form);
+                    }
+                    catch (RuntimeException e)
+                    {
+                        throw e;
+                    }
+                    catch (Exception e)
+                    {
+                        throw new IllegalStateException(e);
+                    }
+                }
+            });
+            return result instanceof String ? (String)result : null;
+        }
+        catch (RuntimeException e)
+        {
+            Activator.logError("BM form read failed", e); //$NON-NLS-1$
+            Throwable root = e;
+            while (root.getCause() != null && root.getCause() != root)
+            {
+                root = root.getCause();
+            }
+            return "Error: BM API error: " //$NON-NLS-1$
+                + (root.getMessage() != null ? root.getMessage() : root.getClass().getSimpleName());
+        }
     }
 
     /**
@@ -334,47 +395,34 @@ public class BmFormHelper
     }
 
     /**
-     * dryRun-aware form write. When {@code dryRun} is true the action runs
-     * inside the BM transaction and is then rolled back (DryRunAbort), and the
-     * changes are NOT persisted to the Form.form file - so a preview leaves no
-     * garbage behind. When false, behaviour is identical to the legacy method
-     * (commit + forceExport to disk).
-     */
-    public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
-        FormTransactionAction action)
-    {
-        return executeFormOperation(project, formFqn, dryRun, action, true);
-    }
-
-    /**
-     * The one body behind the write and the read entries of this helper.
+     * dryRun-aware form write. When {@code dryRun} is true the action runs inside the BM
+     * transaction and is then rolled back (DryRunAbort), and the changes are NOT persisted to the
+     * Form.form file - so a preview leaves no garbage behind. When false, the transaction commits
+     * and the form is exported to disk.
+     * <p>
+     * The support registry is asked before the transaction opens, so a preview is judged by the
+     * same question a real call is.
+     * </p>
      *
      * @param project the workspace project
      * @param formFqn the BM top-object FQN of the form
      * @param dryRun whether the transaction commits or rolls back
      * @param action the action to execute inside the transaction
-     * @param guarded whether the support registry is asked before the transaction opens; a read
-     *        passes <code>false</code> and no question is asked of it
      * @return result string from the action, or an error message
      */
-    private String executeFormOperation(IProject project, String formFqn, boolean dryRun,
-        FormTransactionAction action, boolean guarded)
+    public String executeFormOperation(IProject project, String formFqn, boolean dryRun,
+        FormTransactionAction action)
     {
-        // The support registry is asked before the transaction opens, so a preview is judged by the
-        // same question a real call is. The address names the form itself in its Form.Name segment,
-        // and the form - a BasicForm, a metadata object of its own - is the object the registry is
-        // asked about.
-        if (guarded)
+        // The address names the form itself in its Form.Name segment, and the form - a BasicForm, a
+        // metadata object of its own - is the object the registry is asked about.
+        MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, formFqn);
+        if (notEditable.blocked)
         {
-            MetadataGuards.Verdict notEditable = ModelEditabilityGuard.checkFqn(project, formFqn);
-            if (notEditable.blocked)
-            {
-                String line = ModelEditabilityGuard.supportLockLine(notEditable);
-                return "Error: " + notEditable.error //$NON-NLS-1$
-                    + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
-                        ? "" : " - " + notEditable.hint) //$NON-NLS-1$ //$NON-NLS-2$
-                    + (line == null ? "" : "\n" + line); //$NON-NLS-1$ //$NON-NLS-2$
-            }
+            String line = ModelEditabilityGuard.supportLockLine(notEditable);
+            return "Error: " + notEditable.error //$NON-NLS-1$
+                + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
+                    ? "" : " - " + notEditable.hint) //$NON-NLS-1$ //$NON-NLS-2$
+                + (line == null ? "" : "\n" + line); //$NON-NLS-1$ //$NON-NLS-2$
         }
         beginWrite(null);
         try
@@ -417,45 +465,10 @@ public class BmFormHelper
                     if ("execute".equals(method.getName())) //$NON-NLS-1$
                     {
                         Object transaction = args[0];
-
-                        // Resolve form by FQN: transaction.getTopObjectByFqn(formFqn)
-                        Method getByFqn = txIface.getMethod("getTopObjectByFqn", String.class); //$NON-NLS-1$
-                        Object form = getByFqn.invoke(transaction, formFqn);
-                        if (form == null && !formFqn.endsWith(".Form")) //$NON-NLS-1$
+                        Object form = resolveForm(transaction, formFqn, resolvedFqn);
+                        if (form instanceof String)
                         {
-                            // Retry with the trailing ".Form" segment that the
-                            // form-model top-object is actually registered under.
-                            String withSuffix = formFqn + ".Form"; //$NON-NLS-1$
-                            Object retry = getByFqn.invoke(transaction, withSuffix);
-                            if (retry != null)
-                            {
-                                form = retry;
-                                resolvedFqn.set(withSuffix);
-                            }
-                        }
-                        if (form == null)
-                        {
-                            return "Error: Form not found by FQN: " + formFqn //$NON-NLS-1$
-                                + suggestSimilarFqns(transaction, formFqn);
-                        }
-                        // A CommonForm's plain FQN resolves to the mdclass BasicForm
-                        // wrapper, not the form.model.Form the actions call
-                        // getAttributes()/getItems() on (see unwrapBasicFormToFormModel).
-                        // Unwrap it; inert for a regular form (already a form.model.Form).
-                        if (!formIface.isInstance(form))
-                        {
-                            Object innerForm = unwrapBasicFormToFormModel(form);
-                            if (innerForm == null)
-                            {
-                                return "Error: " + formFqn + " resolves to a form container " //$NON-NLS-1$ //$NON-NLS-2$
-                                    + "with no inner Form attached - create the form first."; //$NON-NLS-1$
-                            }
-                            form = innerForm;
-                            // Persist must target the inner Form top-object FQN.
-                            if (!formFqn.endsWith(".Form")) //$NON-NLS-1$
-                            {
-                                resolvedFqn.set(formFqn + ".Form"); //$NON-NLS-1$
-                            }
+                            return form;
                         }
 
                         // L68: seed the id counter from the form's current max ID before the
@@ -615,6 +628,59 @@ public class BmFormHelper
                 : root.getClass().getSimpleName();
             return "Error: BM API error: " + rootMsg; //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Resolves the form model object an address names, inside a transaction.
+     * <p>
+     * The form-model top object is registered under the address with a trailing {@code .Form}
+     * segment while callers pass the natural one, so a miss is retried with the suffix. A
+     * CommonForm's plain address resolves to its mdclass BasicForm wrapper, not the form.model.Form
+     * the actions call {@code getAttributes()}/{@code getItems()} on, so it is unwrapped. The address
+     * that actually resolved goes to {@code resolvedFqn}: the export after a write targets it.
+     * </p>
+     *
+     * @param transaction the BM transaction, read or write
+     * @param formFqn the address the caller gave
+     * @param resolvedFqn receives the address that resolved
+     * @return the form model object, or an {@code Error:} string saying why none resolved
+     * @throws Exception when the transaction cannot be asked
+     */
+    private Object resolveForm(Object transaction, String formFqn,
+        java.util.concurrent.atomic.AtomicReference<String> resolvedFqn) throws Exception
+    {
+        Method getByFqn = txIface.getMethod("getTopObjectByFqn", String.class); //$NON-NLS-1$
+        Object form = getByFqn.invoke(transaction, formFqn);
+        if (form == null && !formFqn.endsWith(".Form")) //$NON-NLS-1$
+        {
+            String withSuffix = formFqn + ".Form"; //$NON-NLS-1$
+            Object retry = getByFqn.invoke(transaction, withSuffix);
+            if (retry != null)
+            {
+                form = retry;
+                resolvedFqn.set(withSuffix);
+            }
+        }
+        if (form == null)
+        {
+            return "Error: Form not found by FQN: " + formFqn //$NON-NLS-1$
+                + suggestSimilarFqns(transaction, formFqn);
+        }
+        if (!formIface.isInstance(form))
+        {
+            Object innerForm = unwrapBasicFormToFormModel(form);
+            if (innerForm == null)
+            {
+                return "Error: " + formFqn + " resolves to a form container " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "with no inner Form attached - create the form first."; //$NON-NLS-1$
+            }
+            form = innerForm;
+            if (!formFqn.endsWith(".Form")) //$NON-NLS-1$
+            {
+                resolvedFqn.set(formFqn + ".Form"); //$NON-NLS-1$
+            }
+        }
+        return form;
     }
 
     /**
@@ -3142,19 +3208,40 @@ public class BmFormHelper
     }
 
     /**
-     * Adds an item to a container before the element with the specified name.
-     * If the element is not found, adds to the end.
+     * Adds an item to a container before the element with the specified name. When no element
+     * carries that name, the item is added to the end and the answer says so: the caller asked
+     * for a position, and a silent fall-through to the end reads back as the position being
+     * taken. The name is matched ignoring case, the way 1C reads element names - the rest of the
+     * name-based lookups on this route already do.
      *
      * @param container the container
      * @param item the item to add
      * @param beforeName the name of the element to insert before
+     * @return true when a named sibling was found and the item went in front of it; false when
+     *         the name matched nothing and the item was appended at the end
      * @throws Exception if adding fails
      */
-    public void addToContainerBefore(Object container, Object item, String beforeName) throws Exception
+    public boolean addToContainerBefore(Object container, Object item, String beforeName) throws Exception
     {
         Object items = containerIface.getMethod("getItems").invoke(container); //$NON-NLS-1$
+        return insertBeforeNamed(items, item, beforeName);
+    }
+
+    /**
+     * Walks an item list and inserts the new item in front of the element whose name equals
+     * {@code beforeName} ignoring case, or at the end when no element carries that name.
+     *
+     * @param items the container's item list
+     * @param item the item to insert
+     * @param beforeName the name of the element to insert before
+     * @return true when a named sibling was found; false when the item went to the end
+     * @throws Exception if the list cannot be read
+     */
+    private boolean insertBeforeNamed(Object items, Object item, String beforeName) throws Exception
+    {
         int size = (Integer) items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
         int insertIndex = size; // Default: end of list
+        boolean siblingFound = false;
 
         for (int i = 0; i < size; i++)
         {
@@ -3162,9 +3249,10 @@ public class BmFormHelper
             try
             {
                 String existingName = (String) namedIface.getMethod("getName").invoke(existing); //$NON-NLS-1$
-                if (beforeName.equals(existingName))
+                if (existingName != null && beforeName.equalsIgnoreCase(existingName))
                 {
                     insertIndex = i;
+                    siblingFound = true;
                     break;
                 }
             }
@@ -3176,6 +3264,7 @@ public class BmFormHelper
 
         items.getClass().getMethod("add", Integer.TYPE, Object.class) //$NON-NLS-1$
             .invoke(items, insertIndex, item);
+        return siblingFound;
     }
 
     /**
@@ -3197,7 +3286,8 @@ public class BmFormHelper
      *                       empty to move the item to the form root
      * @param beforeName the name of the sibling to insert before, or {@code null}
      *                       to append at the end of the destination
-     * @return a short description of what moved where
+     * @return a short description of what moved where, plus a warning line when the named
+     *                       sibling was not in the destination and the item went to its end
      * @throws Exception if the model rejects the insertion
      */
     public String moveItemToContainer(Object form, String itemName, String targetName,
@@ -3238,19 +3328,41 @@ public class BmFormHelper
             // through the list's own move: a containment list holds no duplicates, so indexed add
             // throws on an element it already has and plain add quietly does nothing - which would
             // report a reorder that never happened.
-            reorderWithin(items, item, currentIndex, beforeName);
-            return "moved '" + itemName + "' within " + from; //$NON-NLS-1$ //$NON-NLS-2$
+            String description = "moved '" + itemName + "' within " + from; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!reorderWithin(items, item, currentIndex, beforeName))
+            {
+                description += missedSiblingWarning(beforeName);
+            }
+            return description;
         }
+        String description = "moved '" + itemName + "' from " + from + " to " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + (toRoot ? "the form root" : "'" + targetName + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         if (beforeName != null && !beforeName.isEmpty())
         {
-            addToContainerBefore(target, item, beforeName);
+            if (!addToContainerBefore(target, item, beforeName))
+            {
+                description += missedSiblingWarning(beforeName);
+            }
         }
         else
         {
             addToContainer(target, item);
         }
-        return "moved '" + itemName + "' from " + from + " to " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + (toRoot ? "the form root" : "'" + targetName + "'"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        return description;
+    }
+
+    /**
+     * The warning a move answer carries when {@code beforeName} matched no element in the
+     * destination and the item went to its end - the same line for a move between containers and
+     * for a reorder inside one, so the caller cannot tell the two apart by what they disclose.
+     *
+     * @param beforeName the sibling name the caller asked for
+     * @return the warning line, never <code>null</code>
+     */
+    private static String missedSiblingWarning(String beforeName)
+    {
+        return "\nWarning: element '" + beforeName + "' is not in the target " //$NON-NLS-1$ //$NON-NLS-2$
+            + "container, so the item was placed at its end."; //$NON-NLS-1$
     }
 
     /**
@@ -3261,25 +3373,35 @@ public class BmFormHelper
      * @param item         the item to reposition
      * @param currentIndex where the item sits now
      * @param beforeName   the sibling to land in front of, or {@code null} for the end
+     * @return true when no sibling was asked for or the asked one was found; false when the
+     *         name matched nothing and the item went to the end
      * @throws Exception if the list refuses the move
      */
-    private void reorderWithin(Object items, Object item, int currentIndex, String beforeName)
+    private boolean reorderWithin(Object items, Object item, int currentIndex, String beforeName)
         throws Exception
     {
         int size = (Integer)items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
-        int wanted = size - 1;
-        if (beforeName != null && !beforeName.isEmpty())
+        boolean askedForSibling = beforeName != null && !beforeName.isEmpty();
+        boolean siblingFound = true;
+        // The end is a position in its own right - the last slot as it stands - and NOT the
+        // slot in front of a sibling: passing size - 1 through reorderTargetIndex would land
+        // the item one place before the end whenever it travels forwards.
+        int targetIndex = size - 1;
+        if (askedForSibling)
         {
             int siblingIndex = indexOfNamed(items, beforeName, size);
-            wanted = siblingIndex >= 0 ? siblingIndex : size - 1;
+            siblingFound = siblingIndex >= 0;
+            if (siblingFound)
+            {
+                targetIndex = reorderTargetIndex(currentIndex, siblingIndex);
+            }
         }
-        int targetIndex = reorderTargetIndex(currentIndex, wanted);
-        if (targetIndex == currentIndex)
+        if (targetIndex != currentIndex)
         {
-            return;
+            items.getClass().getMethod("move", Integer.TYPE, Object.class) //$NON-NLS-1$
+                .invoke(items, targetIndex, item);
         }
-        items.getClass().getMethod("move", Integer.TYPE, Object.class) //$NON-NLS-1$
-            .invoke(items, targetIndex, item);
+        return siblingFound;
     }
 
     /**
@@ -3298,7 +3420,8 @@ public class BmFormHelper
     }
 
     /**
-     * Finds the position of a named element in a container's item list.
+     * Finds the position of a named element in a container's item list, matching the name
+     * ignoring case the way 1C reads element names.
      *
      * @param items the item list
      * @param name  the element name to look for
@@ -3313,7 +3436,8 @@ public class BmFormHelper
             Object existing = items.getClass().getMethod("get", Integer.TYPE).invoke(items, i); //$NON-NLS-1$
             try
             {
-                if (name.equals(namedIface.getMethod("getName").invoke(existing))) //$NON-NLS-1$
+                String existingName = (String)namedIface.getMethod("getName").invoke(existing); //$NON-NLS-1$
+                if (existingName != null && name.equalsIgnoreCase(existingName))
                 {
                     return i;
                 }
@@ -5075,7 +5199,7 @@ public class BmFormHelper
      * wait was moreover unbounded and could pin an HTTP worker thread).
      * <p>
      * A shorter 5s budget (vs the 10s metadata default) bounds the UI-thread
-     * stall: form ops run inside {@code Display.syncExec}, so this blocking wait
+     * stall: form ops run on the EDT UI thread, so this blocking wait
      * freezes the EDT UI on a stuck sync manager; the daemon finishes the save
      * in the background regardless. Returns the {@link BmExportHelper.Result} so
      * the caller can note a pending or failed flush; failures are non-fatal and

@@ -156,8 +156,29 @@ public class TheToolListHasAWeightBudgetTest
      * The hidden update_database alias is not in tools/list, so the document moves by this facade
      * only. Measured 29.09: 183217.
      * </p>
+     * <p>
+     * Raised from 183217 to 186245 for cluster_admin: the cluster facade and its schema joined the
+     * list (measured 30.09: 3028). Its five write doors are hidden under Canonical and weigh
+     * nothing here.
+     * </p>
+     * <p>
+     * And from 186245 to 186359 for runKey on launch_debugger: a launch held open by a modal
+     * question answers Pending with a key to collect what it came to, and the schema is where a
+     * client learns the key exists. Measured 30.09: 186359.
+     * </p>
+     * <p>
+     * And from 186245 to 186269 for the wording pass on audit_role_rights, the form-appearance
+     * sentences of edit_metadata and config_io: each entry stayed inside its per-tool headroom and
+     * the sum crossed the document. Measured 01.10: 186269. Both raises together land above either
+     * alone; the budget holds their sum with a small headroom.
+     * </p>
+     * <p>
+     * And from 186420 to 186760 for the itemPath of dcs_workshop remove_settings_item, which
+     * now documents addressing an item by its name beside the number: a form the operation
+     * accepts and the schema has to say. Measured 01.10: 186596.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 183217;
+    private static final int DOCUMENT_BUDGET = 186760;
 
     private LiveServer server;
 
@@ -349,6 +370,10 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
+        // First weigh of cluster_admin: six operations, the tree the read answers, the two places
+        // a create hangs a cluster, the move's model check, and the dry run that passes the same
+        // door as the delete itself.
+        BUDGETS.put("cluster_admin", Integer.valueOf(3028)); //$NON-NLS-1$
         BUDGETS.put("external_data_source_workshop", Integer.valueOf(2954)); //$NON-NLS-1$
         BUDGETS.put("support_registry", Integer.valueOf(2831)); //$NON-NLS-1$
         BUDGETS.put("xdto_workshop", Integer.valueOf(2742)); //$NON-NLS-1$

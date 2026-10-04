@@ -50,7 +50,8 @@ import java.util.concurrent.locks.ReadWriteLock;
 
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
-import java.util.function.Predicate;
+import java.util.Objects;
+import java.util.function.Function;
 
 
 
@@ -84,12 +85,14 @@ import ru.aiedt.mcp.server.folders.ClusterKeys;
 
 import ru.aiedt.mcp.server.folders.IClusterChangeObserver;
 
+import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
 
 import ru.aiedt.mcp.server.folders.model.Cluster;
 
 import ru.aiedt.mcp.server.folders.model.ClusterStore;
 
+import ru.aiedt.mcp.server.folders.repository.ClusterSaveOutcome;
 import ru.aiedt.mcp.server.folders.repository.IClusterStore;
 
 import ru.aiedt.mcp.server.folders.repository.YamlClusterStore;
@@ -427,39 +430,42 @@ public class ClusterManagerImpl
      * Creates a cluster at a path and saves it.
      * <p>
      * When the file refuses the write the cluster is not kept and listeners are not told it
-     * appeared. A full path that is already taken answers {@code null} the same way, without a write.
+     * appeared. A full path that is already taken is {@link ClusterWriteOutcome#CLUSTER_EXISTS}
+     * and does not write.
      * </p>
      *
      * @param project the project
      * @param name the cluster name
      * @param path the collection path; may be {@code null} for a root cluster
      * @param description the description; may be {@code null}
-     * @return the created cluster, or {@code null} if the full path was taken or the file was not saved
+     * @return the outcome, carrying the created cluster when the create was kept
      */
     @Override
-    public Cluster createCluster(IProject project, String name, String path, String description)
+    public ClusterWriteOutcome createCluster(IProject project, String name, String path, String description)
     {
-        Cluster created;
+        Cluster created = null;
+        ClusterSaveOutcome saved = null;
         cacheLock.writeLock().lock();
         try
         {
             ClusterStore storage = loadStorageLocked(project);
             if (storage == null)
             {
-                return null;
+                return unread();
             }
             if (storage.getClusterByFullPath(buildFullPath(path, name)) != null)
             {
-                return null;
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.CLUSTER_EXISTS);
             }
             Cluster cluster = new Cluster(name, path);
             cluster.setDescription(description);
             cluster.setOrder(nextOrderAtPath(storage, path));
             storage.addCluster(cluster);
-            if (!repository.save(project, storage))
+            saved = repository.save(project, storage);
+            if (saved.isRefused())
             {
                 projectStorageCache.remove(project.getName());
-                return null;
+                return ClusterWriteOutcome.of(saved);
             }
             created = cluster;
         }
@@ -468,67 +474,141 @@ public class ClusterManagerImpl
             cacheLock.writeLock().unlock();
         }
         fireClustersChanged(project);
-        return created;
+        return ClusterWriteOutcome.of(saved, created);
     }
 
 
 
+    /**
+     * Renames a cluster, changing only its name.
+     *
+     * @param project the project
+     * @param oldFullPath the full path of the cluster to rename
+     * @param newName the new name
+     * @return the outcome of the rename
+     */
     @Override
-
-    public boolean renameCluster(IProject project, String oldFullPath, String newName)
-
+    public ClusterWriteOutcome renameCluster(IProject project, String oldFullPath, String newName)
     {
-
-        return mutate(project, storage -> storage.renameCluster(oldFullPath, newName));
-
+        return mutate(project, storage -> {
+            Cluster cluster = storage.getClusterByFullPath(oldFullPath);
+            if (cluster == null)
+            {
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.CLUSTER_NOT_FOUND);
+            }
+            if (nameTaken(storage, cluster, newName))
+            {
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.NAME_TAKEN);
+            }
+            if (Objects.equals(cluster.getName(), newName))
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            storage.renameCluster(oldFullPath, newName);
+            return null;
+        });
     }
 
 
 
+    /**
+     * Renames a cluster and sets its description.
+     *
+     * @param project the project
+     * @param oldFullPath the full path of the cluster to update
+     * @param newName the new name
+     * @param description the new description; may be {@code null}
+     * @return the outcome of the update
+     */
     @Override
-
-    public boolean updateCluster(IProject project, String oldFullPath, String newName, String description)
-
+    public ClusterWriteOutcome updateCluster(IProject project, String oldFullPath, String newName,
+        String description)
     {
-
-        return mutate(project, storage -> storage.updateCluster(oldFullPath, newName, description));
-
+        return mutate(project, storage -> {
+            Cluster cluster = storage.getClusterByFullPath(oldFullPath);
+            if (cluster == null)
+            {
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.CLUSTER_NOT_FOUND);
+            }
+            if (nameTaken(storage, cluster, newName))
+            {
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.NAME_TAKEN);
+            }
+            boolean sameName = Objects.equals(cluster.getName(), newName);
+            boolean sameDescription = Objects.equals(cluster.getDescription(), description);
+            if (sameName && sameDescription)
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            storage.updateCluster(oldFullPath, newName, description);
+            return null;
+        });
     }
 
 
 
+    /**
+     * Deletes a cluster and any clusters nested under it.
+     *
+     * @param project the project
+     * @param fullPath the full path of the cluster to delete
+     * @return the outcome of the delete
+     */
     @Override
-
-    public boolean deleteCluster(IProject project, String fullPath)
-
+    public ClusterWriteOutcome deleteCluster(IProject project, String fullPath)
     {
-
-        return mutate(project, storage -> storage.removeCluster(fullPath));
-
+        return mutate(project, storage -> {
+            if (storage.getClusterByFullPath(fullPath) == null)
+            {
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.CLUSTER_NOT_FOUND);
+            }
+            storage.removeCluster(fullPath);
+            return null;
+        });
     }
 
 
 
+    /**
+     * Moves an object into a cluster, taking it out of any cluster it is in now.
+     *
+     * @param project the project
+     * @param objectFqn the fully qualified name of the object
+     * @param clusterFullPath the full path of the target cluster
+     * @return the outcome of the move
+     */
     @Override
-
-    public boolean addObjectToCluster(IProject project, String objectFqn, String clusterFullPath)
-
+    public ClusterWriteOutcome addObjectToCluster(IProject project, String objectFqn, String clusterFullPath)
     {
-
-        return mutate(project, storage -> storage.moveObjectToCluster(objectFqn, clusterFullPath));
-
+        return mutate(project, storage -> {
+            Cluster target = storage.getClusterByFullPath(clusterFullPath);
+            if (target == null)
+            {
+                return ClusterWriteOutcome.domain(ClusterWriteOutcome.CLUSTER_NOT_FOUND);
+            }
+            Cluster current = storage.findClusterForObject(objectFqn);
+            if (current == target)
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            storage.moveObjectToCluster(objectFqn, clusterFullPath);
+            return null;
+        });
     }
 
 
 
+    /**
+     * Removes an object from every cluster holding it.
+     *
+     * @param project the project
+     * @param objectFqn the fully qualified name of the object
+     * @return the outcome of the removal
+     */
     @Override
-
-    public boolean removeObjectFromCluster(IProject project, String objectFqn)
-
+    public ClusterWriteOutcome removeObjectFromCluster(IProject project, String objectFqn)
     {
-
-        return mutate(project, storage -> storage.removeObjectFromAllClusters(objectFqn));
-
+        return removeHeldObject(project, objectFqn);
     }
 
 
@@ -655,26 +735,39 @@ public class ClusterManagerImpl
 
 
 
+    /**
+     * Renames an object's fully qualified name in every cluster that named it.
+     *
+     * @param project the project
+     * @param oldFqn the current fully qualified name
+     * @param newFqn the fully qualified name to give it
+     * @return the outcome of the rename
+     */
     @Override
-
-    public boolean renameObject(IProject project, String oldFqn, String newFqn)
-
+    public ClusterWriteOutcome renameObject(IProject project, String oldFqn, String newFqn)
     {
-
-        return mutate(project, storage -> storage.renameObject(oldFqn, newFqn));
-
+        return mutate(project, storage -> {
+            if (!storage.renameObject(oldFqn, newFqn))
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            return null;
+        });
     }
 
 
 
+    /**
+     * Removes an object from every cluster naming it.
+     *
+     * @param project the project
+     * @param objectFqn the fully qualified name of the object
+     * @return the outcome of the removal
+     */
     @Override
-
-    public boolean removeObject(IProject project, String objectFqn)
-
+    public ClusterWriteOutcome removeObject(IProject project, String objectFqn)
     {
-
-        return mutate(project, storage -> storage.removeObjectFromAllClusters(objectFqn));
-
+        return removeHeldObject(project, objectFqn);
     }
 
 
@@ -807,46 +900,98 @@ public class ClusterManagerImpl
      * Applies an edit to a project's storage and, when the edit changed anything and the file
      * accepted the write, notifies listeners.
      * <p>
-     * The edit runs under the write lock. A save that fails drops the cached storage, so the next
-     * read reloads the file that is actually on disk, and answers {@code false} without notifying
-     * listeners.
+     * The edit runs under the write lock. It returns an outcome to stop without saving, which it
+     * must do only when it has not changed the storage. It returns {@code null} after changing the
+     * storage, and this method then saves. A save that is refused drops the cached storage, so the
+     * next read reloads the file that is actually on disk, and does not notify listeners.
      * </p>
      *
      * @param project the project
-     * @param edit the edit, returning whether it changed anything
-     * @return {@code true} only when the edit changed the storage and the file was saved
+     * @param edit the edit; a {@code null} result means the storage changed and must be saved
+     * @return the edit's outcome, or the save when the edit changed the storage
      */
-    private boolean mutate(IProject project, Predicate<ClusterStore> edit)
+    private ClusterWriteOutcome mutate(IProject project, Function<ClusterStore, ClusterWriteOutcome> edit)
     {
+        ClusterWriteOutcome outcome = null;
         boolean changed = false;
-        boolean saved = false;
         cacheLock.writeLock().lock();
         try
         {
             ClusterStore storage = loadStorageLocked(project);
             if (storage == null)
             {
-                return false;
+                return unread();
             }
-            changed = edit.test(storage);
-            if (changed)
+            ClusterWriteOutcome decided = edit.apply(storage);
+            if (decided != null)
             {
-                saved = repository.save(project, storage);
-                if (!saved)
-                {
-                    projectStorageCache.remove(project.getName());
-                }
+                return decided;
             }
+            changed = true;
+            ClusterSaveOutcome saved = repository.save(project, storage);
+            if (saved.isRefused())
+            {
+                projectStorageCache.remove(project.getName());
+            }
+            outcome = ClusterWriteOutcome.of(saved);
         }
         finally
         {
             cacheLock.writeLock().unlock();
         }
-        if (changed && saved)
+        if (changed && outcome != null && outcome.succeeded())
         {
             fireClustersChanged(project);
         }
-        return changed && saved;
+        return outcome;
+    }
+
+    /**
+     * The outcome of an edit whose clusters could not be loaded.
+     *
+     * @return a refused read
+     */
+    private static ClusterWriteOutcome unread()
+    {
+        return ClusterWriteOutcome.of(ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED));
+    }
+
+    /**
+     * Tells whether renaming {@code cluster} to {@code newName} would collide with another cluster.
+     *
+     * @param storage the project's clusters
+     * @param cluster the cluster being renamed
+     * @param newName the proposed name
+     * @return {@code true} when another cluster already holds the resulting full path
+     */
+    private static boolean nameTaken(ClusterStore storage, Cluster cluster, String newName)
+    {
+        String newFullPath = buildFullPath(cluster.getPath(), newName);
+        if (Objects.equals(newFullPath, cluster.getFullPath()))
+        {
+            return false;
+        }
+        Cluster other = storage.getClusterByFullPath(newFullPath);
+        return other != null && other != cluster;
+    }
+
+    /**
+     * Removes an object from every cluster that holds it.
+     *
+     * @param project the project
+     * @param objectFqn the fully qualified name of the object
+     * @return {@link ClusterSaveOutcome#NO_CHANGE} when the object is not held, otherwise the save
+     */
+    private ClusterWriteOutcome removeHeldObject(IProject project, String objectFqn)
+    {
+        return mutate(project, storage -> {
+            if (storage.findClusterForObject(objectFqn) == null)
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            storage.removeObjectFromAllClusters(objectFqn);
+            return null;
+        });
     }
 
 

@@ -30,6 +30,10 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import ru.aiedt.mcp.server.folders.ClusterWorkspaceProbe;
+import ru.aiedt.mcp.server.folders.model.Cluster;
+import ru.aiedt.mcp.server.folders.model.ClusterStore;
+
 /**
  * Replacing a clusters file goes through a temporary file, and a lock that cannot be taken leaves
  * the destination as it was. In one runtime an overlapping lock is reported by an exception rather
@@ -92,7 +96,9 @@ public class ARefusedLockLeavesTheFileWholeTest
             FileLock lock = channel.lock())
         {
             assertTrue(lock.isValid());
-            assertFalse(YamlClusterStore.writeChannelLocked(file, "groups: []\n")); //$NON-NLS-1$
+            ClusterSaveOutcome refused = YamlClusterStore.writeChannelLocked(file, "groups: []\n"); //$NON-NLS-1$
+            assertEquals(ClusterSaveOutcome.LOCK_REFUSED, refused.getCode());
+            assertTrue(refused.isRefused());
             // A second open cannot read the file while this lock is held. The size on this channel
             // is what a truncate-before-lock would already have driven to zero.
             assertEquals(original.length, (int)channel.size());
@@ -113,11 +119,11 @@ public class ARefusedLockLeavesTheFileWholeTest
         Path file = directory.resolve("aiedt-clusters.yaml"); //$NON-NLS-1$
         Files.writeString(file, "old-and-longer-than-the-replacement"); //$NON-NLS-1$
 
-        assertTrue(YamlClusterStore.writeChannelLocked(file, "short\n")); //$NON-NLS-1$
+        assertTrue(YamlClusterStore.writeChannelLocked(file, "short\n").isOk()); //$NON-NLS-1$
         assertEquals("short\n", Files.readString(file)); //$NON-NLS-1$
 
         String longer = "groups:\n- name: Shelf\n  path: Catalogs\n"; //$NON-NLS-1$
-        assertTrue(YamlClusterStore.writeChannelLocked(file, longer));
+        assertTrue(YamlClusterStore.writeChannelLocked(file, longer).isOk());
         assertEquals(longer, Files.readString(file));
         assertEquals(1, entries());
     }
@@ -146,7 +152,7 @@ public class ARefusedLockLeavesTheFileWholeTest
         String content = "groups:\n- name: Shelf\n"; //$NON-NLS-1$
         assertFalse(Files.exists(file));
 
-        assertTrue(YamlClusterStore.writeChannelLocked(file, content));
+        assertTrue(YamlClusterStore.writeChannelLocked(file, content).isOk());
 
         assertEquals(content, Files.readString(file));
     }
@@ -233,7 +239,7 @@ public class ARefusedLockLeavesTheFileWholeTest
         Files.writeString(file, "old"); //$NON-NLS-1$
         Files.setPosixFilePermissions(file, permissions);
 
-        assertTrue(YamlClusterStore.writeChannelLocked(file, "new")); //$NON-NLS-1$
+        assertTrue(YamlClusterStore.writeChannelLocked(file, "new").isOk()); //$NON-NLS-1$
 
         assertEquals(permissions, Files.getPosixFilePermissions(file));
     }
@@ -254,9 +260,43 @@ public class ARefusedLockLeavesTheFileWholeTest
         Files.setLastModifiedTime(stale, java.nio.file.attribute.FileTime.fromMillis(
             System.currentTimeMillis() - 2L * 24L * 60L * 60L * 1000L));
 
-        assertTrue(YamlClusterStore.writeChannelLocked(target, "content")); //$NON-NLS-1$
+        assertTrue(YamlClusterStore.writeChannelLocked(target, "content").isOk()); //$NON-NLS-1$
 
         assertFalse(Files.exists(stale));
         assertTrue(Files.exists(fresh));
+    }
+
+    /**
+     * A lock held on the clusters file makes {@link YamlClusterStore#save} refuse and leave the bytes.
+     *
+     * @throws Exception when the project or the lock cannot be opened
+     */
+    @Test
+    public void aHeldLockRefusesTheSave() throws Exception
+    {
+        ClusterWorkspaceProbe probe = ClusterWorkspaceProbe.open("AiEdtClusterLock"); //$NON-NLS-1$
+        try
+        {
+            YamlClusterStore store = new YamlClusterStore();
+            ClusterStore storage = new ClusterStore();
+            storage.addCluster(new Cluster("Shelf", "Catalogs")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(store.save(probe.project, storage).isOk());
+            byte[] original = Files.readAllBytes(probe.clustersFile());
+            storage.getGroups().get(0).addChild("Catalog.A"); //$NON-NLS-1$
+            try (FileChannel channel = FileChannel.open(probe.clustersFile(), StandardOpenOption.READ);
+                FileLock lock = channel.lock(0L, Long.MAX_VALUE, true))
+            {
+                assertTrue(lock.isValid());
+                ClusterSaveOutcome outcome = store.save(probe.project, storage);
+                assertEquals(ClusterSaveOutcome.LOCK_REFUSED, outcome.getCode());
+                assertTrue(outcome.isRefused());
+            }
+            assertEquals(new String(original, StandardCharsets.UTF_8),
+                Files.readString(probe.clustersFile()));
+        }
+        finally
+        {
+            probe.close();
+        }
     }
 }

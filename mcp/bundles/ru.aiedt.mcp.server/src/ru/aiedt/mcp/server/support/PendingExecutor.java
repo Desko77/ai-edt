@@ -26,9 +26,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * <p>
  * The emitted {@code Pending} JSON is a strict superset of what each caller
  * produced by hand - {@code operation}, {@code status="Pending"}, {@code runKey},
- * {@code elapsedMs}, {@code waitedMs}, {@code hint} - so migrating a caller to
- * this helper preserves its wire contract; domain-specific fields (a project
- * name, an output path) are appended through the {@link PendingFields} hook.
+ * {@code elapsedMs}, {@code bodyRunningMs}, {@code waitedMs}, {@code hint} - so
+ * migrating a caller to this helper preserves its wire contract; domain-specific
+ * fields (a project name, an output path) are appended through the {@link PendingFields} hook.
  * <p>
  * <b>Terminal state.</b> The registry itself guarantees every dispatched future
  * reaches a terminal cached result (success text, or an {@code "Error: ..."}
@@ -203,6 +203,11 @@ public final class PendingExecutor
      * The {@code hint} is intentionally generic; a caller that wants its own
      * wording re-puts {@code "hint"} from {@code pendingFields} (a later
      * {@link ToolResult#put} wins), since fields are applied after the defaults.
+     * <p>
+     * {@code bodyRunningMs} names how long the body itself has been executing - 0 while the run
+     * is still queued - so a repeat call into a key whose body is holding it learns that time
+     * rather than only the time since submission.
+     * </p>
      */
     public static String buildPendingJson(String operationName, String runKey,
         PendingWorkRegistry.PendingEntry entry, long softTimeoutMs, PendingFields pendingFields)
@@ -213,6 +218,7 @@ public final class PendingExecutor
             .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
             .put("runKey", runKey) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
+            .put("bodyRunningMs", entry.bodyRunningMs()) //$NON-NLS-1$
             .put("waitedMs", softTimeoutMs) //$NON-NLS-1$
             .put("hint", "Still running. Call this tool again with runKey=\"" + runKey //$NON-NLS-1$
                 + "\" to resume waiting (or with the same params - they produce the same runKey)."); //$NON-NLS-1$

@@ -1,0 +1,58 @@
+name: "Дефект / Defect"
+description: "Инструмент AI-EDT отвечает не так, как описан / An AI-EDT tool does not behave as described"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Не прикладывайте выгрузки, логи целиком, строки соединения, пути и имена объектов заказчика: замените их на `Catalog.Товары`, `C:/Projects/my-project`. / Do not attach dumps, whole logs, connection strings, paths or customer object names: use `Catalog.Items`, `C:/Projects/my-project`."
+  - type: input
+    id: tool
+    attributes:
+      label: "Инструмент и операция / Tool and operation"
+      placeholder: "edit_metadata operation=add_attribute"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: "Что произошло / What happened"
+      description: "Ответ инструмента: тег и текст ошибки дословно / The answer: error tag and text verbatim"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: "Как воспроизвести / How to reproduce"
+      description: "Вызов и аргументы на обобщенных именах / The call and its arguments on generic names"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Ожидалось / Expected"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: "Версия плагина / Plugin version"
+      description: "`version` в ответе `GET /mcp` / `version` of `GET /mcp`"
+      placeholder: "0.2.56"
+  - type: input
+    id: edt
+    attributes:
+      label: "Версия EDT / EDT version"
+      placeholder: "2026.2"
+  - type: dropdown
+    id: client
+    attributes:
+      label: "MCP-клиент / MCP client"
+      options:
+        - Claude Code
+        - Cursor
+        - "Другой / Other"
+  - type: input
+    id: platform
+    attributes:
+      label: "Платформа 1С и ОС / 1C platform and OS"
+      placeholder: "8.3.27, Windows 11"

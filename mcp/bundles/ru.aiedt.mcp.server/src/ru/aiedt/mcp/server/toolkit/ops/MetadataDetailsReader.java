@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 
@@ -24,6 +25,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.mdreport.MetadataFormatterHub;
+import ru.aiedt.mcp.server.support.BmSupportRegistryHelper;
 import ru.aiedt.mcp.server.support.ExternalProjectResolver;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -168,12 +170,14 @@ public class MetadataDetailsReader
             return "Error: unable to load configuration for project: " + projectName; //$NON-NLS-1$
         }
         String effectiveLanguage = effectiveLanguage(language, configuration);
+        Function<MdObject, String> supportMode = BmSupportRegistryHelper.userModes(project);
 
         StringBuilder builder = new StringBuilder();
         builder.append("# Metadata Object Details: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         for (String fqn : objectFqns)
         {
-            builder.append(formatObjectDetails(configuration, fqn, full, effectiveLanguage, view));
+            builder.append(formatObjectDetails(configuration, fqn, full, effectiveLanguage, view,
+                supportMode));
             builder.append(SECTION_SEPARATOR);
         }
         return builder.toString();
@@ -251,17 +255,19 @@ public class MetadataDetailsReader
      * @param full whether to dump every property
      * @param language the synonym language
      * @param view which sections to write, and whether to write only their names and sizes
+     * @param supportMode the support mode of an object, or <code>null</code> when the project is not
+     *            on support
      * @return the object's markdown, or a {@code **Error:**} line
      */
     private static String formatObjectDetails(Configuration configuration, String fqn, boolean full,
-        String language, View view)
+        String language, View view, Function<MdObject, String> supportMode)
     {
         // The configuration root is an MdObject like any other, but it lives in no
         // collection, so the Type.Name lookup below could never find it and the answer
         // was "no such object" for the one object every project certainly has. Asking
         // the model about the root - its name, synonym, default language, mobile and
         // interface properties - meant reading the .mdo by hand instead.
-        String rootAnswer = configurationRootDetails(configuration, fqn, full, language, view);
+        String rootAnswer = configurationRootDetails(configuration, fqn, full, language, view, supportMode);
         if (rootAnswer != null)
         {
             return rootAnswer;
@@ -284,7 +290,8 @@ public class MetadataDetailsReader
         {
             return "**Error:** no such object: " + fqn + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return MetadataFormatterHub.format(object, full, language, view.sections, view.outline);
+        return MetadataFormatterHub.format(object, full, language, view.sections, view.outline,
+            supportMode);
     }
 
     /**
@@ -324,11 +331,13 @@ public class MetadataDetailsReader
      * @param full whether the caller asked for the full view
      * @param language the requested language, or <code>null</code>
      * @param view the requested sections
+     * @param supportMode the support mode of an object, or <code>null</code> when the project is not
+     *            on support
      * @return the formatted root, an error naming the mismatch, or <code>null</code> when
      *         {@code fqn} does not address the root at all
      */
     private static String configurationRootDetails(Configuration configuration, String fqn,
-        boolean full, String language, View view)
+        boolean full, String language, View view, Function<MdObject, String> supportMode)
     {
         String asked = rootRequestName(fqn);
         if (asked == null)
@@ -345,7 +354,8 @@ public class MetadataDetailsReader
                 + ". This project's configuration is named " + actual //$NON-NLS-1$
                 + " - ask for Configuration." + actual + " or just Configuration.\n"; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return MetadataFormatterHub.format(configuration, full, language, view.sections, view.outline);
+        return MetadataFormatterHub.format(configuration, full, language, view.sections, view.outline,
+            supportMode);
     }
 
     /**

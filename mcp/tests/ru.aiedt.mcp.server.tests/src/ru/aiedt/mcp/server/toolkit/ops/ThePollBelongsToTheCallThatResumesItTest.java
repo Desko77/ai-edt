@@ -294,6 +294,32 @@ public class ThePollBelongsToTheCallThatResumesItTest
         assertFalse(admission.ticket().holdsPermit());
     }
 
+    /**
+     * {@code launch_debugger} {@code action=launch} polls the launch run its delegate started, and
+     * the call is weighed as an update because the same action performs one. A poll of a live
+     * launch key resumes that run, so it stays free at the limit of one permit.
+     */
+    @Test
+    public void aLaunchPollThroughTheFacadeStaysFree() throws Exception
+    {
+        PermitHold hold = holdTheOnlyPermit();
+        String key = liveForAWhile(PendingWorkRegistry.DEBUG_LAUNCH, DebugSessionStarter.NAME, 3_000L);
+        ensure(new LaunchDebuggerTool());
+        Map<String, String> arguments = Map.of("action", "launch", "runKey", key); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        ToolRoad.Admission admission = hold.road.admit(LaunchDebuggerTool.NAME, arguments);
+        assertNull("a launch poll through the facade is refused at the limit: " //$NON-NLS-1$
+            + admission.refusal(), admission.refusal());
+        assertFalse("a launch poll of a live run takes a permit", admission.ticket().holdsPermit()); //$NON-NLS-1$
+        assertEquals(0, hold.permits.availablePermits());
+        ToolRoadOutcome called = hold.road.call(LaunchDebuggerTool.NAME,
+            Map.of("action", "launch", "runKey", key), "poll-test"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertFalse("the facade was refused instead of polling its own run: " + called.refusal(), //$NON-NLS-1$
+            called.refused());
+        assertEquals("the poll started a second launch instead of resuming the run it names", //$NON-NLS-1$
+            "live", called.text()); //$NON-NLS-1$
+        assertEquals(0, hold.permits.availablePermits());
+    }
+
     private RunningBatch openBatch() throws Exception
     {
         ensure(new EditMetadataTool());

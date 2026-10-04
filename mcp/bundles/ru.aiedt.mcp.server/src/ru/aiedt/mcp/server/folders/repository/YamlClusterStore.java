@@ -562,44 +562,47 @@ public class YamlClusterStore
     /**
      * Saves a project's clusters.
      * <p>
-     * An existing file that this loader cannot parse is not replaced: the bytes stay and a copy is
-     * written beside the file, and this method answers {@code false}. A file that changed after the
-     * set was read is not replaced either - see {@link #isTheFileThatWasRead(IProject)}. Saving an
-     * empty set still deletes a file that did parse, as long as it is the one the empty set came
-     * from.
+     * An existing file that this loader cannot parse is not replaced: the bytes stay, a copy is
+     * written beside the file, and the outcome is {@link ClusterSaveOutcome#UNREADABLE_FILE}.
+     * A file that changed after the set was read is not replaced either. Saving bytes identical
+     * to the ones already read is {@link ClusterSaveOutcome#NO_CHANGE} and does not touch the file.
+     * Saving an empty set deletes a file that did parse, as long as it is the one the empty set
+     * came from. After a write, the bytes written are what the next save compares against.
      * </p>
      *
      * @param project the project
      * @param storage the clusters to save
-     * @return {@code true} on success
+     * @return what the save did
      */
     @Override
-    public boolean save(IProject project, ClusterStore storage)
+    public ClusterSaveOutcome save(IProject project, ClusterStore storage)
     {
-        if (unreadableFileBlocksSave(project))
+        ClusterSaveOutcome blocked = unreadableFileBlocksSave(project);
+        if (blocked != null)
         {
-            return false;
+            return blocked;
         }
-        if (!isTheFileThatWasRead(project))
+        ClusterSaveOutcome drift = isTheFileThatWasRead(project);
+        if (drift != null)
         {
-            return false;
+            return drift;
         }
         if (storage == null || storage.isEmpty())
         {
-            if (!deleteIfExists(project))
+            ClusterSaveOutcome deleted = deleteIfExists(project);
+            if (deleted.isRefused() || deleted.isNoChange())
             {
-                return false;
+                return deleted;
             }
-            rememberWhatTheFileHolds(project);
-            return true;
+            rememberWritten(project, null);
+            return ClusterSaveOutcome.ok();
         }
         String content = dump(sortForOutput(storage));
-        if (!saveWithLock(project, content))
+        if (writesTheBytesAlreadyRead(project, content.getBytes(StandardCharsets.UTF_8)))
         {
-            return false;
+            return ClusterSaveOutcome.noChange();
         }
-        rememberWhatTheFileHolds(project);
-        return true;
+        return saveWithLock(project, content);
     }
 
     /**
@@ -618,52 +621,78 @@ public class YamlClusterStore
      * </p>
      *
      * @param project the project
-     * @return {@code true} when the write may go ahead
+     * @return the refusal, or {@code null} when the write may go ahead
      */
-    private boolean isTheFileThatWasRead(IProject project)
+    private ClusterSaveOutcome isTheFileThatWasRead(IProject project)
     {
         String onDisk = diskFingerprint(clustersFile(project));
         if (onDisk == null)
         {
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " could not be read before writing it; the write was refused"); //$NON-NLS-1$
-            return false;
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED);
         }
         String read = loadedFingerprints.get(project.getName());
         if (read == null ? NO_FILE_FINGERPRINT.equals(onDisk) : read.equals(onDisk))
         {
-            return true;
+            return null;
         }
         if (read == null)
         {
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " exists on disk and this store has not read it; the write was refused and the file " //$NON-NLS-1$
                 + "was left as it is"); //$NON-NLS-1$
-            return false;
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.NOT_READ_BY_THIS_STORE);
         }
         Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
             + " changed on disk after it was read; the write was refused and the file was left as " //$NON-NLS-1$
             + "it is"); //$NON-NLS-1$
-        return false;
+        return ClusterSaveOutcome.refused(ClusterSaveOutcome.CHANGED_ON_DISK);
     }
 
     /**
-     * Records what the file holds after a write that changed or removed it, so the next save compares
-     * against what is really there.
+     * Records the bytes this store just wrote, or records that the file is gone.
+     * <p>
+     * The digest is taken from those bytes. The file is not read back: a write that lands between
+     * the replacement and a later read is someone else's content, and the next save has to notice
+     * that it is not what this store wrote.
+     * </p>
      *
      * @param project the project
+     * @param written the bytes just written, or {@code null} when the file was removed
      */
-    private void rememberWhatTheFileHolds(IProject project)
+    private void rememberWritten(IProject project, byte[] written)
     {
-        String onDisk = diskFingerprint(clustersFile(project));
-        if (onDisk == null)
+        rememberFingerprint(project, written == null ? NO_FILE_FINGERPRINT : fingerprint(written));
+    }
+
+    /**
+     * Tells whether the bytes about to be written are the bytes the set was read from.
+     *
+     * @param project the project
+     * @param bytes the bytes that would be written
+     * @return {@code true} when writing them would not change the file
+     */
+    private boolean writesTheBytesAlreadyRead(IProject project, byte[] bytes)
+    {
+        String read = loadedFingerprints.get(project.getName());
+        return read != null && read.equals(fingerprint(bytes));
+    }
+
+    /**
+     * The text of an exception to keep with a refused write.
+     *
+     * @param failure the exception
+     * @return its message, or {@link Throwable#toString()} when it has none
+     */
+    private static String exceptionText(Throwable failure)
+    {
+        String message = failure.getMessage();
+        if (message == null || message.isEmpty())
         {
-            forgetFingerprint(project);
+            return failure.toString();
         }
-        else
-        {
-            rememberFingerprint(project, onDisk);
-        }
+        return message;
     }
 
     /**
@@ -705,14 +734,16 @@ public class YamlClusterStore
 
 
 
+    /**
+     * Deletes a project's clusters file.
+     *
+     * @param project the project
+     * @return {@code true} if the file is gone afterwards
+     */
     @Override
-
     public boolean delete(IProject project)
-
     {
-
-        return deleteIfExists(project);
-
+        return deleteIfExists(project).succeeded();
     }
 
 
@@ -802,9 +833,9 @@ public class YamlClusterStore
      * </p>
      *
      * @param project the project
-     * @return {@code true} when the save must stop and leave the file as it is
+     * @return the refusal, or {@code null} when the save may go ahead
      */
-    private boolean unreadableFileBlocksSave(IProject project)
+    private ClusterSaveOutcome unreadableFileBlocksSave(IProject project)
     {
         IFile file = clustersFile(project);
         IPath location = file.getLocation();
@@ -815,7 +846,7 @@ public class YamlClusterStore
         Path path = location.toFile().toPath();
         if (Files.notExists(path))
         {
-            return false;
+            return null;
         }
         byte[] bytes;
         try
@@ -826,14 +857,15 @@ public class YamlClusterStore
         {
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " before writing it; the write was refused", e); //$NON-NLS-1$
-            return true;
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED, exceptionText(e));
         }
         if (bytes.length == 0 || parses(bytes))
         {
-            return false;
+            return null;
         }
-        backupUnreadable(project, path, bytes);
-        return true;
+        Path backup = backupUnreadable(project, path, bytes);
+        return ClusterSaveOutcome.refused(ClusterSaveOutcome.UNREADABLE_FILE,
+            backup == null ? null : backup.toString());
     }
 
     /**
@@ -841,30 +873,30 @@ public class YamlClusterStore
      *
      * @param project the project, for diagnostics
      * @param file the workspace file
-     * @return {@code true} when the save must be refused
+     * @return the refusal, or {@code null} when the save may go ahead
      */
-    private boolean unreadableWorkspaceFileBlocksSave(IProject project, IFile file)
+    private ClusterSaveOutcome unreadableWorkspaceFileBlocksSave(IProject project, IFile file)
     {
         if (!file.exists())
         {
-            return false;
+            return null;
         }
         try (InputStream in = file.getContents())
         {
             byte[] bytes = in.readAllBytes();
             if (bytes.length == 0 || parses(bytes))
             {
-                return false;
+                return null;
             }
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " could not be parsed; the write was refused"); //$NON-NLS-1$
-            return true;
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.UNREADABLE_FILE);
         }
         catch (CoreException | IOException e)
         {
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " before writing it; the write was refused", e); //$NON-NLS-1$
-            return true;
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED, exceptionText(e));
         }
     }
 
@@ -901,8 +933,9 @@ public class YamlClusterStore
      * @param project the project, for the log line
      * @param file the clusters file on disk
      * @param bytes the bytes to copy
+     * @return the backup path when a copy is there, or {@code null} when the copy could not be written
      */
-    private static void backupUnreadable(IProject project, Path file, byte[] bytes)
+    private static Path backupUnreadable(IProject project, Path file, byte[] bytes)
     {
         Path backup = file.resolveSibling(ClusterKeys.CLUSTERS_FILE + ".bak"); //$NON-NLS-1$
         try
@@ -912,17 +945,20 @@ public class YamlClusterStore
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " could not be parsed; the write was refused and a copy kept at " //$NON-NLS-1$
                 + backup.getFileName());
+            return backup;
         }
         catch (FileAlreadyExistsException e)
         {
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " is still unreadable; the existing backup was preserved at " //$NON-NLS-1$
                 + backup.getFileName());
+            return backup;
         }
         catch (IOException e)
         {
             Activator.logError("Could not back up unreadable aiedt-clusters.yaml for " //$NON-NLS-1$
                 + project.getName(), e);
+            return null;
         }
     }
 
@@ -1023,79 +1059,55 @@ public class YamlClusterStore
 
 
     /**
-
      * Writes the content by replacing the file under an exclusive lock. When the file has no location
-
      * on disk, writes through the workspace instead. A lock that cannot be taken refuses the write.
-
+     * <p>
+     * A write that succeeds is remembered from the bytes handed to the channel, not from a later
+     * read of the file.
+     * </p>
      *
-
      * @param project the project
-
      * @param content the YAML to write
-
-     * @return <code>true</code> on success
-
+     * @return what the write did
      */
-
-    private boolean saveWithLock(IProject project, String content)
-
+    private ClusterSaveOutcome saveWithLock(IProject project, String content)
     {
-
         IFile clustersFile = clustersFile(project);
-
         IPath location = clustersFile.getLocation();
-
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         if (location == null)
-
         {
-
-            return saveDirectly(project, clustersFile, content);
-
+            ClusterSaveOutcome direct = saveDirectly(project, clustersFile, content);
+            if (direct.isOk())
+            {
+                rememberWritten(project, bytes);
+            }
+            return direct;
         }
-
         Path osPath = location.toFile().toPath();
-
         try
-
         {
-
             if (osPath.getParent() != null)
-
             {
-
                 Files.createDirectories(osPath.getParent());
-
             }
-
-            if (!writeChannelLocked(osPath, content))
-
+            ClusterSaveOutcome written = writeChannelLocked(osPath, content);
+            if (written.isRefused())
             {
-
                 Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
-
-                    + " could not be locked or opened for writing; the write was refused"); //$NON-NLS-1$
-
-                return false;
-
+                    + " could not be locked or opened for writing (" + written.getCode() //$NON-NLS-1$
+                    + "); the write was refused"); //$NON-NLS-1$
+                return written;
             }
-
+            rememberWritten(project, bytes);
             clustersFile.refreshLocal(IResource.DEPTH_ZERO, null);
-
-            return true;
-
+            return ClusterSaveOutcome.ok();
         }
-
         catch (IOException | CoreException e)
-
         {
-
             Activator.logError("Failed to write aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
-
-            return false;
-
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, exceptionText(e));
         }
-
     }
 
 
@@ -1105,7 +1117,7 @@ public class YamlClusterStore
      * replaces the destination atomically after that probe succeeds.
      * <p>
      * The lock is taken on the destination as it stands. A lock another process holds, or one this
-     * process already holds, answers {@code false} and leaves the destination byte for byte. The lock
+     * process already holds, refuses the write and leaves the destination byte for byte. The lock
      * is released before the move, so it is an availability probe rather than synchronization around
      * replacement. The bytes are forced to the temporary file first, and only an atomic replacement
      * makes them visible; an unavailable destination is retried and never falls back to a delete-first
@@ -1114,11 +1126,12 @@ public class YamlClusterStore
      *
      * @param osPath the file's location on disk
      * @param content the YAML to write
-     * @return {@code true} if the destination was replaced, {@code false} if the lock could not be taken
+     * @return {@link ClusterSaveOutcome#ok()} when the destination was replaced, or a
+     *         {@link ClusterSaveOutcome#LOCK_REFUSED} or {@link ClusterSaveOutcome#ACCESS_DENIED} refusal
      * @throws IOException if staging or replacing fails; the destination is left as it was when the
      *             failure happens before the replace
      */
-    static boolean writeChannelLocked(Path osPath, String content) throws IOException
+    static ClusterSaveOutcome writeChannelLocked(Path osPath, String content) throws IOException
     {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         Path directory = osPath.getParent();
@@ -1133,12 +1146,13 @@ public class YamlClusterStore
         try
         {
             writeForced(temporary, bytes);
-            if (!tryLockWithoutTruncating(osPath))
+            ClusterSaveOutcome lock = tryLockWithoutTruncating(osPath);
+            if (lock.isRefused())
             {
-                return false;
+                return lock;
             }
             moveReplacing(temporary, osPath);
-            return true;
+            return ClusterSaveOutcome.ok();
         }
         catch (IOException e)
         {
@@ -1261,18 +1275,21 @@ public class YamlClusterStore
      * Takes an exclusive lock on {@code osPath} without truncating it.
      * <p>
      * A missing destination needs no lock and is left absent until the atomic move. An existing file
-     * is opened for write without {@code TRUNCATE_EXISTING}.
+     * is opened for write without {@code TRUNCATE_EXISTING}. A read-only file refuses with
+     * {@link ClusterSaveOutcome#ACCESS_DENIED}. A lock that is already held refuses with
+     * {@link ClusterSaveOutcome#LOCK_REFUSED}.
      * </p>
      *
      * @param osPath the destination
-     * @return {@code true} when the lock was taken and released, {@code false} when it could not be taken
-     * @throws IOException when the file cannot be created or opened for a reason other than access
+     * @return {@link ClusterSaveOutcome#ok()} when the lock was taken and released or was not needed,
+     *         otherwise the refusal
+     * @throws IOException when the file cannot be opened for a reason other than access
      */
-    private static boolean tryLockWithoutTruncating(Path osPath) throws IOException
+    private static ClusterSaveOutcome tryLockWithoutTruncating(Path osPath) throws IOException
     {
         if (Files.notExists(osPath))
         {
-            return true;
+            return ClusterSaveOutcome.ok();
         }
         try
         {
@@ -1283,20 +1300,20 @@ public class YamlClusterStore
                     FileLock lock = channel.tryLock();
                     if (lock == null)
                     {
-                        return false;
+                        return ClusterSaveOutcome.refused(ClusterSaveOutcome.LOCK_REFUSED);
                     }
                     lock.release();
-                    return true;
+                    return ClusterSaveOutcome.ok();
                 }
                 catch (OverlappingFileLockException overlapping)
                 {
-                    return false;
+                    return ClusterSaveOutcome.refused(ClusterSaveOutcome.LOCK_REFUSED);
                 }
             }
         }
         catch (AccessDeniedException denied)
         {
-            return false;
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.ACCESS_DENIED);
         }
     }
 
@@ -1362,115 +1379,64 @@ public class YamlClusterStore
 
 
     /**
-
      * Writes the content through the workspace, creating the settings folder and file as needed.
-
      *
-
      * @param project the project
-
      * @param clustersFile the target file
-
      * @param content the YAML to write
-
-     * @return <code>true</code> on success
-
+     * @return what the write did
      */
-
-    private boolean saveDirectly(IProject project, IFile clustersFile, String content)
-
+    private ClusterSaveOutcome saveDirectly(IProject project, IFile clustersFile, String content)
     {
-
         try
-
         {
-
             ensureSettingsFolder(project);
-
             InputStream source = new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
-
             if (clustersFile.exists())
-
             {
-
                 clustersFile.setContents(source, true, false, null);
-
             }
-
             else
-
             {
-
                 clustersFile.create(source, true, null);
-
             }
-
-            return true;
-
+            return ClusterSaveOutcome.ok();
         }
-
         catch (CoreException e)
-
         {
-
             Activator.logError("Failed to write aiedt-clusters.yaml through the workspace for " //$NON-NLS-1$
-
                 + project.getName(), e);
-
-            return false;
-
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, exceptionText(e));
         }
-
     }
 
 
 
     /**
-
      * Deletes the clusters file if it is there.
-
      *
-
      * @param project the project
-
-     * @return <code>true</code> if the file is gone afterwards
-
+     * @return {@link ClusterSaveOutcome#ok()} when the file was deleted,
+     *         {@link ClusterSaveOutcome#noChange()} when it was already absent, or a
+     *         {@link ClusterSaveOutcome#WRITE_FAILED} refusal
      */
-
-    private boolean deleteIfExists(IProject project)
-
+    private ClusterSaveOutcome deleteIfExists(IProject project)
     {
-
         IFile file = clustersFile(project);
-
         if (!file.exists())
-
         {
-
-            return true;
-
+            return ClusterSaveOutcome.noChange();
         }
-
         try
-
         {
-
             file.delete(true, null);
-
-            return true;
-
+            return ClusterSaveOutcome.ok();
         }
-
         catch (CoreException e)
-
         {
-
             Activator.logError("Failed to delete aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
-
-            return false;
-
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, exceptionText(e));
         }
-
     }
 
 

@@ -129,5 +129,72 @@ class AMethodDeclaredOverSeveralLinesIsStillRead(unittest.TestCase):
         self.assertEqual([], empty, "methods whose body came back empty: %s" % empty)
 
 
+
+class BranchReadsStayWithTheirBranch(unittest.TestCase):
+    """What a dispatch branch reads belongs to that operation, not to every operation of the facade."""
+
+    SOURCE = (
+        'public String execute(Map<String, String> params) {\n'
+        '    String projectName = JsonUtils.extractStringArgument(params, "projectName");\n'
+        '    switch (operation) {\n'
+        '        case "backup":\n'
+        '            return runBackup(params);\n'
+        '        case "restore":\n'
+        '            return runRestore(params);\n'
+        '        case "route":\n'
+        '            return route(params);\n'
+        '        case "list":\n'
+        '            return list(projectName);\n'
+        '    }\n'
+        '}\n'
+        '\n'
+        'private String runBackup(Map<String, String> params) {\n'
+        '    return write(params);\n'
+        '}\n'
+        '\n'
+        'private String write(Map<String, String> params) {\n'
+        '    return JsonUtils.extractStringArgument(params, "backupTo");\n'
+        '}\n'
+        '\n'
+        'private String runRestore(Map<String, String> params) {\n'
+        '    return JsonUtils.extractStringArgument(params, "path");\n'
+        '}\n'
+        '\n'
+        'private static String route(Map<String, String> params) {\n'
+        '    Map<String, String> forwarded = new HashMap<>(params);\n'
+        '    return new SyncControlTool().execute(forwarded);\n'
+        '}\n')
+
+    def setUp(self):
+        self.dispatch = MODULE.dispatch_body(self.SOURCE)
+        self.branches = MODULE.branches(self.dispatch)
+
+    def deep(self, operation):
+        return MODULE.branch_deep_reads(self.branches[operation], self.SOURCE, self.dispatch)
+
+    def test_only_what_is_read_before_the_switch_is_common(self):
+        common = MODULE.facade_common_reads(self.SOURCE, set(), dispatch=self.dispatch)
+        self.assertEqual({"projectName"}, common)
+
+    def test_a_branch_reads_what_its_helpers_read_further_down(self):
+        self.assertEqual({"backupTo"}, self.deep("backup"))
+
+    def test_a_branch_does_not_read_another_branchs_parameters(self):
+        self.assertNotIn("path", self.deep("backup"))
+        self.assertEqual(set(), self.deep("list"))
+
+    def test_a_helper_handing_the_map_to_a_tool_reads_that_tools_schema(self):
+        self.assertIn("infobaseUuid", self.deep("route"))
+
+    def test_the_infobase_facade_lists_no_other_operations_parameters(self):
+        """The case this was found on, checked against the file it was found in."""
+        rows = MODULE.collect()
+        applications = set(rows["InfobaseAdminFacadeTool:get_applications"]["parameters"])
+        self.assertEqual(set(), applications & {"backupTo", "cancel", "path", "syncOperation"})
+        sync = set(rows["InfobaseAdminFacadeTool:sync_control"]["parameters"])
+        self.assertIn("infobaseUuid", sync)
+        self.assertNotIn("backupTo", sync)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -61,7 +61,7 @@ public class ListInterceptorsTool implements IMcpTool
      */
     static final String CHANGE_AND_VALIDATE = "changeAndValidate"; //$NON-NLS-1$
 
-    private static final Pattern ANNOTATION_PATTERN = Pattern.compile(
+    static final Pattern ANNOTATION_PATTERN = Pattern.compile(
         // &Перед / &После / &Вместо / &ИзменениеИКонтроль / English equivalents
         "&\\s*(Перед|После|Вместо" //$NON-NLS-1$
             + "|ИзменениеИКонтроль" //$NON-NLS-1$
@@ -71,8 +71,10 @@ public class ListInterceptorsTool implements IMcpTool
             + "|Procedure|Function)\\s+(\\w+)", //$NON-NLS-1$
         // UNICODE_CHARACTER_CLASS is not optional here: without it Java's \w is ASCII-only, so the
         // handler name - Cyrillic in every real 1C codebase - matches nothing and the whole pattern
-        // fails. The tool then walks every file and reports zero interceptors.
-        Pattern.MULTILINE | Pattern.UNICODE_CHARACTER_CLASS);
+        // fails. The tool then walks every file and reports zero interceptors. 1C reads the
+        // annotation and the keyword without case, Cyrillic included, hence UNICODE_CASE.
+        Pattern.MULTILINE | Pattern.UNICODE_CHARACTER_CLASS | Pattern.CASE_INSENSITIVE
+            | Pattern.UNICODE_CASE);
 
     @Override
     public String getName()
@@ -165,8 +167,60 @@ public class ListInterceptorsTool implements IMcpTool
         }
 
         List<String> allowedKinds = parseKindFilter(kindFilterCsv);
-        List<Map<String, Object>> hits = new ArrayList<>();
-        int[] scanned = { 0 };
+        Scan scan = scan(project, baseProject, allowedKinds, maxResults);
+        if (scan.error != null)
+        {
+            return ToolResult.error("Workspace traversal failed: " + scan.error).toJson(); //$NON-NLS-1$
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("projectName", projectName); //$NON-NLS-1$
+        body.put("filesScanned", scan.filesScanned); //$NON-NLS-1$
+        body.put("interceptorsFound", scan.hits.size()); //$NON-NLS-1$
+        body.put("truncated", scan.truncated); //$NON-NLS-1$
+        summarise(body, baseProject == null ? null : baseProjectName, scan.hits);
+        body.put("interceptors", scan.hits); //$NON-NLS-1$
+        body.put("hint", "kind=before/after/around/changeAndValidate maps to Russian " //$NON-NLS-1$ //$NON-NLS-2$
+            + "&Перед/&После/&Вместо/&ИзменениеИКонтроль and their English aliases.");
+        return ToolResult.success().put("listInterceptors", body).toJson(); //$NON-NLS-1$
+    }
+
+    /** One scan's answer: the entries, how many modules were read, and why nothing more came. */
+    public static final class Scan
+    {
+        /** The interceptor entries, in scan order. */
+        public final List<Map<String, Object>> hits = new ArrayList<>();
+
+        /** How many modules were read. */
+        public int filesScanned;
+
+        /** Why the walk stopped early. Null when it ran to the end. */
+        public String error;
+
+        /** Whether more entries were found than the cap; those past it are not in the hits. */
+        public boolean truncated;
+    }
+
+    /**
+     * Scans a project's modules for interceptors, optionally validating each against a base.
+     * <p>
+     * The one scan behind this tool's own answer and behind {@code extension_workshop
+     * update_borrowed}, which classifies the same interceptors among everything else the
+     * extension borrowed. Reaching for the entries here, rather than parsing this tool's JSON,
+     * keeps the two answers built from one walk.
+     * </p>
+     *
+     * @param project the extension project to scan
+     * @param baseProject the base to validate against, or null for no validation
+     * @param allowedKinds the kinds to keep, or null for all of them
+     * @param maxResults the cap on entries, already defaulted by the caller; one entry past it is
+     *        looked for, so that {@link Scan#truncated} says whether there are more
+     * @return the scan's answer
+     */
+    public static Scan scan(IProject project, IProject baseProject, List<String> allowedKinds,
+        int maxResults)
+    {
+        Scan scan = new Scan();
+        int lookFor = maxResults < Integer.MAX_VALUE ? maxResults + 1 : maxResults;
         try
         {
             project.accept(new IResourceVisitor()
@@ -174,15 +228,16 @@ public class ListInterceptorsTool implements IMcpTool
                 @Override
                 public boolean visit(IResource resource)
                 {
-                    if (hits.size() >= maxResults)
+                    if (scan.hits.size() >= lookFor)
                     {
                         return false;
                     }
                     if (resource.getType() == IResource.FILE
                         && "bsl".equalsIgnoreCase(resource.getFileExtension())) //$NON-NLS-1$
                     {
-                        scanned[0]++;
-                        scanFile((IFile) resource, allowedKinds, hits, maxResults, baseProject);
+                        scan.filesScanned++;
+                        scanFile((IFile) resource, allowedKinds, scan.hits, lookFor,
+                            baseProject);
                     }
                     return true;
                 }
@@ -190,19 +245,14 @@ public class ListInterceptorsTool implements IMcpTool
         }
         catch (Exception e)
         {
-            return ToolResult.error("Workspace traversal failed: " //$NON-NLS-1$
-                + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName())).toJson();
+            scan.error = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
         }
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("projectName", projectName); //$NON-NLS-1$
-        body.put("filesScanned", scanned[0]); //$NON-NLS-1$
-        body.put("interceptorsFound", hits.size()); //$NON-NLS-1$
-        body.put("truncated", hits.size() >= maxResults); //$NON-NLS-1$
-        summarise(body, baseProject == null ? null : baseProjectName, hits);
-        body.put("interceptors", hits); //$NON-NLS-1$
-        body.put("hint", "kind=before/after/around/changeAndValidate maps to Russian " //$NON-NLS-1$ //$NON-NLS-2$
-            + "&Перед/&После/&Вместо/&ИзменениеИКонтроль and their English aliases.");
-        return ToolResult.success().put("listInterceptors", body).toJson(); //$NON-NLS-1$
+        if (scan.hits.size() > maxResults)
+        {
+            scan.hits.subList(maxResults, scan.hits.size()).clear();
+            scan.truncated = true;
+        }
+        return scan;
     }
 
     /**
@@ -420,17 +470,18 @@ public class ListInterceptorsTool implements IMcpTool
      * @param methodName the method.
      * @return the lines between the declaration and its end, or <code>null</code> when not found
      */
-    private static String bodyOf(String source, String methodName)
+    static String bodyOf(String source, String methodName)
     {
         if (source == null || methodName == null || methodName.isEmpty())
         {
             return null;
         }
         String[] lines = source.split("\r?\n", -1); //$NON-NLS-1$
-        Pattern start = Pattern.compile("(?i)^\\s*(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
-            + Pattern.quote(methodName) + "\\s*\\("); //$NON-NLS-1$
+        Pattern start = Pattern.compile("^\\s*(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
+            + Pattern.quote(methodName) + "\\s*\\(", Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE); //$NON-NLS-1$
         Pattern end = Pattern.compile(
-            "(?i)^\\s*(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)\\s*$"); //$NON-NLS-1$
+            "^\\s*(?:КонецПроцедуры|КонецФункции|EndProcedure|EndFunction)\\s*$", //$NON-NLS-1$
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         int from = -1;
         for (int i = 0; i < lines.length; i++)
         {
@@ -521,19 +572,25 @@ public class ListInterceptorsTool implements IMcpTool
     }
 
     /**
-     * True when {@code src} declares a {@code Процедура/Функция/Procedure/Function}
-     * named exactly {@code method} (case-insensitive on the keyword, exact on the name).
+     * True when {@code src} declares a {@code Процедура/Функция/Procedure/Function} named
+     * {@code method}. Both the keyword and the name are compared without case, Cyrillic included,
+     * as 1C reads them.
+     *
+     * @param src the module text
+     * @param method the method name
+     * @return whether the module declares the method
      */
-    private static boolean methodDeclared(String src, String method)
+    static boolean methodDeclared(String src, String method)
     {
         if (src == null || method == null || method.isEmpty())
         {
             return false;
         }
         Pattern p = Pattern.compile(
-            "(?im)^\\s*(?:&[^\\n]*\\r?\\n\\s*)*" //$NON-NLS-1$
+            "^\\s*(?:&[^\\n]*\\r?\\n\\s*)*" //$NON-NLS-1$
                 + "(?:Процедура|Функция|Procedure|Function)\\s+" //$NON-NLS-1$
-                + Pattern.quote(method) + "\\s*\\("); //$NON-NLS-1$
+                + Pattern.quote(method) + "\\s*\\(", //$NON-NLS-1$
+            Pattern.MULTILINE | Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
         return p.matcher(src).find();
     }
 

@@ -71,6 +71,7 @@ public class ACreatedSchemaIsNotALostWriteTest
         result.directSave.ok = false;
         result.directSave.error = "the file could not be written"; //$NON-NLS-1$
         BmDcsHelper.noteDiskSave(result, true);
+        assertFalse("a failed save has to refuse the call", result.ok); //$NON-NLS-1$
         assertTrue("a failed save has to be named", //$NON-NLS-1$
             result.tags.containsKey("diskSaveFailed")); //$NON-NLS-1$
     }

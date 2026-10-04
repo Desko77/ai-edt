@@ -39,7 +39,10 @@ import ru.aiedt.mcp.server.support.DebugSessionBook;
  *
  * <p>The request goes to one thread when {@code threadId} names one and to every thread of the
  * session otherwise, and falls back to the debug target itself when the target exposes no thread at
- * all. {@code canSuspend} is read for the report but not used as a gate: whether a 1C thread answers
+ * all. A named thread decides the answer on its own state: a session already stopped on another
+ * thread is not read as a stop of the named one, which would answer {@code paused} about a thread
+ * that is still running. A thread of another session is refused before anything is asked of it.
+ * {@code canSuspend} is read for the report but not used as a gate: whether a 1C thread answers
  * it truthfully is not established, and refusing on an unverified answer would refuse the pause on
  * every client where the feature is wanted. A request the platform rejects answers {@code error} and
  * names each refusal, so a refusal is never reported as an armed request.</p>
@@ -72,6 +75,15 @@ public final class DebugPauser implements IMcpTool
      * </p>
      */
     private static final int DEFAULT_TIMEOUT = 5;
+
+    /**
+     * How often a named thread is re-read while waiting for it to stop, in milliseconds.
+     * <p>
+     * The named thread is judged on its own state rather than on the registry's snapshot, so the
+     * wait polls the thread rather than parking on the registry's monitor.
+     * </p>
+     */
+    private static final long NAMED_THREAD_STEP_MS = 100L;
 
     @Override
     public String getName()
@@ -156,12 +168,17 @@ public final class DebugPauser implements IMcpTool
                     .put("threadId", threadId) //$NON-NLS-1$
                     .toJson();
             }
+            ToolResult foreign = DebugThreadOwnership.refusal(only, applicationId, threadId);
+            if (foreign != null)
+            {
+                return foreign.put(KEY_OUTCOME, OUTCOME_ERROR).toJson();
+            }
         }
 
         try
         {
             ToolResult result = pause(registry, applicationId,
-                DebugSessionBook.findActiveTarget(applicationId), only, timeout);
+                DebugSessionBook.findActiveTarget(applicationId), only, threadId, timeout);
             if (autoResolved)
             {
                 result.put("autoResolved", true); //$NON-NLS-1$
@@ -186,14 +203,10 @@ public final class DebugPauser implements IMcpTool
     }
 
     /**
-     * Pauses the session the address resolves to.
+     * Pauses the session the address resolves to, with the thread id left unnamed.
      * <p>
-     * The three resolution steps are ordered by what they cost the caller. A session that is already
-     * suspended is answered from the registry, so a pause over a client that stopped at a breakpoint
-     * reports the stop it has rather than asking again. Otherwise the request goes to the thread the
-     * caller named, or to every thread of the session, or - when the target exposes none - to the
-     * target itself, which stands for the session as a whole. Then the platform is given
-     * {@code timeoutSeconds} to report a suspend.
+     * The seam the tests drive; the caller named no thread id, so an answer built from a thread the
+     * registry registered resolves its id from what the registry holds.
      * </p>
      *
      * @param registry the session registry
@@ -208,9 +221,45 @@ public final class DebugPauser implements IMcpTool
     static ToolResult pause(DebugSessionBook registry, String applicationId, IDebugTarget target,
         IThread only, int timeoutSeconds) throws Exception
     {
+        return pause(registry, applicationId, target, only, -1L, timeoutSeconds);
+    }
+
+    /**
+     * Pauses the session the address resolves to.
+     * <p>
+     * The resolution steps are ordered by what they cost the caller. A thread the caller named
+     * decides on its own state - a snapshot of another thread of the same session says nothing about
+     * the named one, and answering from it would report a stop that did not happen. A call that
+     * named no thread is answered from the registry when the session is already suspended, so a
+     * pause over a client that stopped at a breakpoint reports the stop it has rather than asking
+     * again. Otherwise the request goes to the thread the caller named, or to every thread of the
+     * session, or - when the target exposes none - to the target itself, which stands for the
+     * session as a whole. Then the platform is given {@code timeoutSeconds} to report a suspend.
+     * </p>
+     *
+     * @param registry the session registry
+     * @param applicationId the application to pause
+     * @param target the session's live debug target, or <code>null</code> when there is none - the
+     *            seam a test drives against a target it built
+     * @param only the one thread to ask, or <code>null</code> for every thread of the session
+     * @param namedThreadId the id the caller named the thread by, or a value at most zero when the
+     *            call named no thread
+     * @param timeoutSeconds how long to wait for the suspend to arrive, in seconds
+     * @return the answer, without the asides {@link #execute} adds
+     * @throws Exception when the session stopped and its stack could not be read
+     */
+    static ToolResult pause(DebugSessionBook registry, String applicationId, IDebugTarget target,
+        IThread only, long namedThreadId, int timeoutSeconds) throws Exception
+    {
         if (target == null || target.isTerminated())
         {
             return terminated(applicationId, target != null);
+        }
+
+        if (only != null)
+        {
+            return pauseNamedThread(registry, applicationId, target, only, namedThreadId,
+                timeoutSeconds);
         }
 
         DebugSessionBook.SuspendSnapshot arrived = registry.getSnapshot(applicationId);
@@ -237,13 +286,7 @@ public final class DebugPauser implements IMcpTool
         }
         if (armed.isEmpty())
         {
-            return ToolResult.error("The debug session refused every suspend request: " //$NON-NLS-1$
-                + describe(refused) + ". The session is alive, so this is a state it will not stop in, " //$NON-NLS-1$
-                + "not a missing launch.")
-                .put(KEY_OUTCOME, OUTCOME_ERROR)
-                .put("applicationId", applicationId) //$NON-NLS-1$
-                .put("refused", refused) //$NON-NLS-1$
-                .hint("launch_debugger", Map.of("action", "debug_status")); //$NON-NLS-1$ //$NON-NLS-2$
+            return allRefused(applicationId, refused);
         }
 
         try
@@ -291,6 +334,163 @@ public final class DebugPauser implements IMcpTool
     {
         return SuspendWaiter.buildSnapshotResult(snapshot, registry, applicationId, false)
             .put(KEY_OUTCOME, OUTCOME_PAUSED);
+    }
+
+    /**
+     * Pauses the thread the caller named, judged on that thread's own state.
+     * <p>
+     * A snapshot the registry holds for the application may describe another thread, and answering
+     * from it would report a stop that did not happen: the named thread that is already suspended is
+     * answered as such with {@code alreadySuspended: true} and nothing is asked of it, and one that
+     * is running receives the suspend request and is watched until it stops, the wait runs out or
+     * the session ends.
+     * </p>
+     *
+     * @param registry the session registry
+     * @param applicationId the application to pause
+     * @param target the session's live debug target
+     * @param thread the thread the caller named
+     * @param namedThreadId the id the caller named it by, or a value at most zero
+     * @param timeoutSeconds how long to wait for the thread to suspend, in seconds
+     * @return the answer
+     * @throws Exception when the thread stopped and its stack could not be read
+     */
+    private static ToolResult pauseNamedThread(DebugSessionBook registry, String applicationId,
+        IDebugTarget target, IThread thread, long namedThreadId, int timeoutSeconds)
+        throws Exception
+    {
+        if (threadSuspended(thread))
+        {
+            return pausedThread(registry, applicationId, thread, namedThreadId, true);
+        }
+
+        List<Map<String, Object>> armed = new ArrayList<>();
+        List<Map<String, Object>> refused = new ArrayList<>();
+        place(thread, thread.getName(), armed, refused);
+        if (armed.isEmpty())
+        {
+            return allRefused(applicationId, refused);
+        }
+
+        long deadline = System.currentTimeMillis() + timeoutSeconds * 1000L;
+        while (!threadSuspended(thread))
+        {
+            if (target.isTerminated())
+            {
+                return terminated(applicationId, true);
+            }
+            if (System.currentTimeMillis() >= deadline)
+            {
+                ToolResult armedAnswer = ToolResult.success()
+                    .put(KEY_OUTCOME, OUTCOME_REQUEST_ARMED)
+                    .put("applicationId", applicationId) //$NON-NLS-1$
+                    .put("waitedSeconds", timeoutSeconds) //$NON-NLS-1$
+                    .put("armed", armed) //$NON-NLS-1$
+                    .put("note", "The suspend request was accepted on the named thread and it did " //$NON-NLS-1$
+                        + "not stop within " + timeoutSeconds + " seconds - what a thread with no " //$NON-NLS-1$
+                        + "BSL running answers. The request stands: call wait_for_break to block " //$NON-NLS-1$
+                        + "until it lands, or call pause_thread again.")
+                    .hint("launch_debugger", Map.of("action", "wait_for_break")); //$NON-NLS-1$ //$NON-NLS-2$
+                if (namedThreadId > 0)
+                {
+                    armedAnswer.put("threadId", namedThreadId); //$NON-NLS-1$
+                }
+                return armedAnswer;
+            }
+            Thread.sleep(NAMED_THREAD_STEP_MS);
+        }
+        return pausedThread(registry, applicationId, thread, namedThreadId, false);
+    }
+
+    /**
+     * The answer for a named thread that is suspended: the shared body built from the thread itself,
+     * echoing the id the caller named.
+     *
+     * @param registry the session registry
+     * @param applicationId the application that suspended
+     * @param thread the suspended thread the caller named
+     * @param namedThreadId the id the caller named it by, or a value at most zero
+     * @param alreadySuspended whether the thread was suspended before anything was asked
+     * @return the answer
+     * @throws Exception when the stack of the suspended thread cannot be read
+     */
+    private static ToolResult pausedThread(DebugSessionBook registry, String applicationId,
+        IThread thread, long namedThreadId, boolean alreadySuspended) throws Exception
+    {
+        ToolResult result = SuspendWaiter.buildThreadResult(
+            idFor(registry, applicationId, thread, namedThreadId), thread, registry, applicationId,
+            false).put(KEY_OUTCOME, OUTCOME_PAUSED);
+        if (alreadySuspended)
+        {
+            result.put("alreadySuspended", Boolean.TRUE); //$NON-NLS-1$
+        }
+        return result;
+    }
+
+    /**
+     * The id the answer names a suspended thread by: the one the caller named, or - when the call
+     * reached this tool without one - the id the registry issued for this thread, registering the
+     * stop first when nothing else had.
+     *
+     * @param registry the session registry
+     * @param applicationId the application that suspended
+     * @param thread the suspended thread
+     * @param namedThreadId the id the caller named, or a value at most zero
+     * @return the id to answer with, or -1 when neither the caller nor the registry has one
+     */
+    private static long idFor(DebugSessionBook registry, String applicationId, IThread thread,
+        long namedThreadId)
+    {
+        if (namedThreadId > 0)
+        {
+            return namedThreadId;
+        }
+        DebugSessionBook.SuspendSnapshot recorded = registry.getSnapshot(applicationId);
+        if (recorded != null && recorded.thread == thread)
+        {
+            return recorded.threadId;
+        }
+        registry.injectSuspend(applicationId, thread);
+        recorded = registry.getSnapshot(applicationId);
+        return recorded != null && recorded.thread == thread ? recorded.threadId : -1L;
+    }
+
+    /**
+     * Whether the thread reports itself suspended. A thread that cannot answer reads as running: the
+     * wait around this question is what a stopped client answers eventually, and a thread that went
+     * with its session is settled by the terminated check beside it.
+     *
+     * @param thread the thread to read
+     * @return whether it reports itself suspended
+     */
+    private static boolean threadSuspended(IThread thread)
+    {
+        try
+        {
+            return thread.isSuspended();
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * The answer for a session that refused every suspend request.
+     *
+     * @param applicationId the application that was addressed
+     * @param refused the refused requests, each naming its thread and why it refused
+     * @return the answer
+     */
+    private static ToolResult allRefused(String applicationId, List<Map<String, Object>> refused)
+    {
+        return ToolResult.error("The debug session refused every suspend request: " //$NON-NLS-1$
+            + describe(refused) + ". The session is alive, so this is a state it will not stop in, " //$NON-NLS-1$
+            + "not a missing launch.")
+            .put(KEY_OUTCOME, OUTCOME_ERROR)
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("refused", refused) //$NON-NLS-1$
+            .hint("launch_debugger", Map.of("action", "debug_status")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**

@@ -148,9 +148,9 @@ public class InsightsFacadeTool implements IMcpTool
                 "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
                     + "Omit to keep every kind.") //$NON-NLS-1$
             .integerProperty("maxNodes", //$NON-NLS-1$
-                "dependency_graph: cap on nodes visited by the BFS (default 200).") //$NON-NLS-1$
+                "dependency_graph: node cap, default 200, at most 2000.") //$NON-NLS-1$
             .integerProperty("maxEdges", //$NON-NLS-1$
-                "dependency_graph: cap on edges returned (default 500).") //$NON-NLS-1$
+                "dependency_graph: edge cap, default 500, at most 5000.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
                 "compare_configurations: projects / files. Required for that operation. The " //$NON-NLS-1$
                     + "answer's failed / failedCount name what the comparison could not read.") //$NON-NLS-1$

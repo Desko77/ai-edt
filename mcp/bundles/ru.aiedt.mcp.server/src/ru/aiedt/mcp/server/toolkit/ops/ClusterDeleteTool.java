@@ -1,0 +1,45 @@
+/**
+ * AI-EDT - 1C AI tools for EDT
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server.toolkit.ops;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * {@code delete_cluster} - the write door of the cluster facade's delete operation, kept as a real
+ * tool so a preset can switch it by name and the group table can list it.
+ *
+ * <p>The {@code cluster_admin} facade folds it in and the Canonical preset hides it, so a client
+ * sees one entry point per job; the old name stays callable the way every facade-covered alias
+ * does. The operation itself lives in {@link ClusterAdminFacadeTool} - this only names the door.
+ * A dry run passes the same door: the operation is a write even when it writes nothing.</p>
+ */
+public class ClusterDeleteTool
+    extends ClusterAdminFacadeTool
+{
+    @Override
+    public String getName()
+    {
+        return DOOR_DELETE;
+    }
+
+    @Override
+    public String getDescription()
+    {
+        return "Delete a cluster with its nested clusters. Alias of " //$NON-NLS-1$
+            + "cluster_admin operation=delete_cluster - the facade is the way to call it. " //$NON-NLS-1$
+            + "dryRun counts what would be removed and writes nothing."; //$NON-NLS-1$
+    }
+
+    @Override
+    public String execute(Map<String, String> params)
+    {
+        Map<String, String> call = new LinkedHashMap<>(params);
+        call.put("operation", DOOR_DELETE); //$NON-NLS-1$
+        return super.execute(call);
+    }
+}
