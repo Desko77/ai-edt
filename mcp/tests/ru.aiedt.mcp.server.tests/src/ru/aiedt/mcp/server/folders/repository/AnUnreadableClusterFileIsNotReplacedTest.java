@@ -16,8 +16,9 @@ import static org.junit.Assert.assertTrue;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
+import ru.aiedt.mcp.server.support.UnwritableRecord;
+
 import org.junit.After;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -227,7 +228,10 @@ public class AnUnreadableClusterFileIsNotReplacedTest
     }
 
     /**
-     * A settings path that is a file, not a folder, makes the write fail and keeps the exception text.
+     * A settings path that is a file, not a folder, refuses the save and keeps the exception text.
+     * The code names the step that met the obstacle: WRITE_FAILED when no file was ever seen to
+     * read, READ_FAILED when the path under a file answered as unreadable. Nothing is written
+     * either way.
      *
      * @throws Exception when the stand-in file cannot be written
      */
@@ -242,23 +246,25 @@ public class AnUnreadableClusterFileIsNotReplacedTest
 
         ClusterSaveOutcome outcome = store.save(probe.project, storage);
 
-        assertEquals(ClusterSaveOutcome.WRITE_FAILED, outcome.getCode());
-        assertTrue(outcome.isRefused());
+        assertTrue(outcome.explanation(), outcome.isRefused());
+        assertTrue(outcome.explanation(),
+            ClusterSaveOutcome.WRITE_FAILED.equals(outcome.getCode())
+                || ClusterSaveOutcome.READ_FAILED.equals(outcome.getCode()));
         assertNotNull(outcome.getDetail());
         assertFalse(outcome.getDetail().isEmpty());
         assertTrue(outcome.explanation().contains(outcome.getDetail()));
     }
 
     /**
-     * A read-only clusters file is refused as access denied and left unchanged.
+     * A clusters file the file system will not let the store write is refused and left unchanged.
+     * Windows answers ACCESS_DENIED from opening the read-only file; a POSIX system answers
+     * WRITE_FAILED from the replacement the directory's permissions refuse.
      *
      * @throws Exception when the file cannot be written
      */
     @Test
-    public void aReadOnlyFileIsAccessDenied() throws Exception
+    public void aClustersFileTheStoreCannotWriteIsRefused() throws Exception
     {
-        java.nio.file.Path projectDir = probe.project.getLocation().toFile().toPath();
-        Assume.assumeTrue(Files.getFileStore(projectDir).supportsFileAttributeView("dos")); //$NON-NLS-1$
         String original = "groups:\n" //$NON-NLS-1$
             + "- children:\n" //$NON-NLS-1$
             + "  - Catalog.A\n" //$NON-NLS-1$
@@ -269,17 +275,19 @@ public class AnUnreadableClusterFileIsNotReplacedTest
         ClusterStore loaded = store.load(probe.project);
         loaded.getGroups().get(0).setName("Renamed"); //$NON-NLS-1$
         java.nio.file.Path file = probe.clustersFile();
-        Files.setAttribute(file, "dos:readonly", Boolean.TRUE); //$NON-NLS-1$
+        UnwritableRecord unwritable = UnwritableRecord.of(file);
         try
         {
             ClusterSaveOutcome outcome = store.save(probe.project, loaded);
-            assertEquals(ClusterSaveOutcome.ACCESS_DENIED, outcome.getCode());
-            assertTrue(outcome.isRefused());
+            assertTrue(outcome.explanation(), outcome.isRefused());
+            assertTrue(outcome.explanation(),
+                ClusterSaveOutcome.ACCESS_DENIED.equals(outcome.getCode())
+                    || ClusterSaveOutcome.WRITE_FAILED.equals(outcome.getCode()));
             assertTrue(Files.readString(file).contains("name: Shelf")); //$NON-NLS-1$
         }
         finally
         {
-            Files.setAttribute(file, "dos:readonly", Boolean.FALSE); //$NON-NLS-1$
+            unwritable.close();
         }
     }
 }
