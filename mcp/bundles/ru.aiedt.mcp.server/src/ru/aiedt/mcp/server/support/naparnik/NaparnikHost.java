@@ -211,7 +211,7 @@ public interface NaparnikHost
     }
 
     /**
-     * One question, as the 9-argument request of 1.0.7 carries it.
+     * One question, as the 9-argument request of 1.0.7 and 1.0.8 carries it.
      * <p>
      * A new conversation has a null session and {@code forceNew}. A continuation carries the
      * conversation and the message it replies to, and is not forced new. {@code skillName} and
