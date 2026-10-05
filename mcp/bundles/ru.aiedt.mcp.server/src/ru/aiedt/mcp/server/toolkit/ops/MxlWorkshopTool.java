@@ -16,6 +16,7 @@ import java.util.Map;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
 
+import com._1c.g5.v8.dt.metadata.mdclass.CommonTemplate;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
 import com.google.gson.JsonSyntaxException;
@@ -76,7 +77,7 @@ public class MxlWorkshopTool implements IMcpTool
                 true)
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("ownerFqn", //$NON-NLS-1$
-                "Object FQN that owns the template (Catalog.X / Document.X / DataProcessor.X)") //$NON-NLS-1$
+                "Template owner FQN (Catalog.X / Document.X), or CommonTemplate.X itself") //$NON-NLS-1$
             .stringProperty("templateName", "Template name") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("templateType", //$NON-NLS-1$
                 "SpreadsheetDocument (default) / TextDocument / DataCompositionSchema / etc.") //$NON-NLS-1$
@@ -1412,11 +1413,33 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     /**
-     * Locates the named Template MdObject inside the owner. Throws when the
-     * owner has no Templates collection or the named template is missing.
+     * Locates the template a call addresses.
+     * <p>
+     * A common template is a top-level object that is the template itself: it has no owner and no
+     * Templates collection, so {@code ownerFqn=CommonTemplate.X} with {@code templateName=X}
+     * addresses the object the FQN resolved to. Every other owner holds its templates in a
+     * collection, and the name is looked up there.
+     * </p>
+     *
+     * @param owner the object {@code ownerFqn} resolved to
+     * @param templateName the template's name
+     * @return the template
+     * @throws RuntimeException when the owner holds no templates, the named template is missing,
+     *         or the name does not match the common template the FQN addresses
      */
-    private static MdObject resolveTemplate(MdObject owner, String templateName)
+    static MdObject resolveTemplate(MdObject owner, String templateName)
     {
+        if (owner instanceof CommonTemplate)
+        {
+            // Exact case: the write operations build the template folder from the caller's name.
+            if (!owner.getName().equals(templateName))
+            {
+                throw new RuntimeException("ownerFqn addresses the common template '" //$NON-NLS-1$
+                    + owner.getName() + "', which is the template itself: pass templateName='" //$NON-NLS-1$
+                    + owner.getName() + "', got '" + templateName + "'."); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return owner;
+        }
         @SuppressWarnings("unchecked")
         EList<MdObject> templates = (EList<MdObject>) invokeListGetter(owner, "getTemplates"); //$NON-NLS-1$
         if (templates == null)
