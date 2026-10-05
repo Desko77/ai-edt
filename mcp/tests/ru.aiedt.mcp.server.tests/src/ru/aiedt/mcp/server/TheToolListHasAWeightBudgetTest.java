@@ -177,8 +177,14 @@ public class TheToolListHasAWeightBudgetTest
      * now documents addressing an item by its name beside the number: a form the operation
      * accepts and the schema has to say. Measured 01.10: 186596.
      * </p>
+     * <p>
+     * And from 186760 to 187133 for the three row operations of mxl_workshop: count, formatFrom,
+     * and the sentences row, fromRow and toRow gained naming them. A row shift moves every holder
+     * of its number, and the schema is where a client learns the arguments exist. Measured 05.10:
+     * 187133.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186760;
+    private static final int DOCUMENT_BUDGET = 187133;
 
     private LiveServer server;
 

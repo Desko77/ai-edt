@@ -59,8 +59,13 @@ import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.ColumnsArea;
 import com._1c.g5.v8.dt.moxel.NamedItem;
 import com._1c.g5.v8.dt.moxel.NamedItemCells;
+import com._1c.g5.v8.dt.moxel.NamedItemDataSource;
+import com._1c.g5.v8.dt.moxel.NamedItemEmbeddedTable;
 import com._1c.g5.v8.dt.moxel.RectArea;
 import com._1c.g5.v8.dt.moxel.RowsArea;
+import com._1c.g5.v8.dt.moxel.RowGroup;
+import com._1c.g5.v8.dt.moxel.RowMerge;
+import com._1c.g5.v8.dt.moxel.ViewSettings;
 import com._1c.g5.v8.dt.moxel.content.Area;
 import com._1c.g5.v8.dt.moxel.Rect;
 import com._1c.g5.v8.dt.moxel.Row;
@@ -3137,6 +3142,1150 @@ public final class BmTemplateHelper
             return false;
         }
         return doc.getNamedItems().removeKey(name) != null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Row operations: insert_rows / delete_rows / copy_rows
+    // -----------------------------------------------------------------------
+
+    /**
+     * What a row operation did, and what it left behind.
+     * <p>
+     * Every counter describes the model the operation reached: rows that changed their number,
+     * merges whose row span grew or shrank, the merges, named areas and drawings a deletion took
+     * entirely. {@code lastRow} is the document's last row, 1-based, after the operation. A refusal
+     * sets {@code error} instead and leaves the model exactly as it was.
+     * </p>
+     */
+    public static final class RowOutcome
+    {
+        /** Rows that changed their number. */
+        public int shiftedRows;
+
+        /** Merges, whole-row merges included, whose row span grew or shrank. */
+        public int resizedMerges;
+
+        /** Merges the deletion took entirely. */
+        public int removedMerges;
+
+        /** Named areas whose row bounds moved, by name. */
+        public final List<String> resizedNamedAreas = new ArrayList<>();
+
+        /** Named areas the deletion took entirely, by name. */
+        public final List<String> removedNamedAreas = new ArrayList<>();
+
+        /** Drawings the deletion took entirely, by id. */
+        public final List<Integer> removedDrawings = new ArrayList<>();
+
+        /** The document's last row, 1-based, after the operation. */
+        public int lastRow;
+
+        /** Why nothing happened, when nothing did. */
+        public String error;
+    }
+
+    /**
+     * A row span an element of the model occupies: 0-based, both ends inclusive.
+     */
+    private static final class RowSpan
+    {
+        private int begin;
+
+        private int end;
+    }
+
+    /**
+     * The canonical spelling of a {@code formatFrom} value, or <code>null</code> for a word the row
+     * operations do not know.
+     *
+     * @param formatFrom the value as the caller wrote it; empty means the default
+     * @return {@code above}, {@code below}, {@code none}, or <code>null</code>
+     */
+    public static String canonicalFormatFrom(String formatFrom)
+    {
+        if (formatFrom == null || formatFrom.trim().isEmpty())
+        {
+            return "above"; //$NON-NLS-1$
+        }
+        String folded = formatFrom.trim().toLowerCase(java.util.Locale.ROOT);
+        if ("above".equals(folded) || "below".equals(folded) || "none".equals(folded)) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            return folded;
+        }
+        return null;
+    }
+
+    /**
+     * Inserts rows before a row, shifting everything from that row down.
+     * <p>
+     * Everything that carries a row number moves with the shift: the rows with their cells and
+     * notes, the merges and whole-row merges, the named areas, the row groups, the drawings, the
+     * print and repeat areas, the declared height and the saved view rows. An element the
+     * insertion point falls inside - a merge, an area, a group, a drawing - grows by the count
+     * instead of moving. The new rows take the row format and the cell formats from the row
+     * {@code formatFrom} names; text, parameters and details are never copied, and a source that
+     * has neither a format nor a formatted cell leaves the new rows empty rather than materialized.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row the row the new rows land before, 1-based; the last row + 1 appends
+     * @param count how many rows to insert, 1 or more
+     * @param formatFrom above (the default, and none at row 1), below, or none
+     * @return what the operation did, or {@code error} saying why it did nothing
+     */
+    public static RowOutcome insertRows(SpreadsheetDocument doc, int row, int count, String formatFrom)
+    {
+        RowOutcome outcome = new RowOutcome();
+        String canonical = canonicalFormatFrom(formatFrom);
+        if (row < 1 || count < 1)
+        {
+            outcome.error = "row and count must be 1-based positive integers - got row=" //$NON-NLS-1$
+                + row + ", count=" + count; //$NON-NLS-1$
+            return outcome;
+        }
+        if (canonical == null)
+        {
+            outcome.error = "formatFrom must be one of above, below, none - got: " + formatFrom; //$NON-NLS-1$
+            return outcome;
+        }
+        if (doc == null)
+        {
+            outcome.error = "no spreadsheet to change"; //$NON-NLS-1$
+            return outcome;
+        }
+        int lastRow = lastRowOf(doc);
+        if (row > lastRow + 1)
+        {
+            outcome.error = "row " + row + " is past the end - the document runs to row " + lastRow //$NON-NLS-1$ //$NON-NLS-2$
+                + ", and " + (lastRow + 1) + " is the first row past it"; //$NON-NLS-1$ //$NON-NLS-2$
+            return outcome;
+        }
+        int at = row - 1;
+        EMap<Integer, Row> rows = doc.getRows();
+        Row formatSource = null;
+        if ("below".equals(canonical)) //$NON-NLS-1$
+        {
+            formatSource = rows.get(Integer.valueOf(at));
+        }
+        else if ("above".equals(canonical) && at > 0) //$NON-NLS-1$
+        {
+            formatSource = rows.get(Integer.valueOf(at - 1));
+        }
+        int rowFormat = formatSource == null ? 0 : formatSource.getFormatIndex();
+        List<int[]> cellFormats = new ArrayList<>();
+        if (formatSource != null)
+        {
+            for (Map.Entry<Integer, Cell> held : formatSource.getCells())
+            {
+                if (held != null && held.getKey() != null && held.getValue() != null
+                    && held.getValue().getFormatIndex() != 0)
+                {
+                    cellFormats.add(new int[] { held.getKey().intValue(),
+                        held.getValue().getFormatIndex() });
+                }
+            }
+        }
+        outcome.shiftedRows = shiftRowsDown(doc, at, count);
+        if (rowFormat != 0 || !cellFormats.isEmpty())
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Row fresh = MoxelFactory.eINSTANCE.createRow();
+                fresh.setFormatIndex(rowFormat);
+                for (int[] cell : cellFormats)
+                {
+                    Cell created = MoxelFactory.eINSTANCE.createCell();
+                    created.setFormatIndex(cell[1]);
+                    fresh.getCells().put(Integer.valueOf(cell[0]), created);
+                }
+                rows.put(Integer.valueOf(at + i), fresh);
+            }
+        }
+        moveMerges(doc.getMerges(), true, at, count, outcome);
+        moveMerges(doc.getUnmerges(), true, at, count, null);
+        moveRowMerges(doc.getRowMerges(), true, at, count, outcome);
+        moveRowGroups(doc.getRowGroups(), true, at, count);
+        moveNamedItems(doc, true, at, count, outcome);
+        moveDrawings(doc, true, at, count, outcome);
+        moveDocumentAreas(doc, true, at, count);
+        moveViewRows(doc, true, at, count);
+        moveHeight(doc, true, at, count);
+        outcome.lastRow = lastRowOf(doc);
+        return outcome;
+    }
+
+    /**
+     * Deletes rows, shifting everything below them up.
+     * <p>
+     * The rows go with their cells and their notes. A merge, a named area, a row group or a drawing
+     * that lies entirely inside the deleted range goes with them and is named in the outcome; one
+     * the range cuts in half shrinks by the rows it lost; one below moves up. The print and repeat
+     * areas, the declared height and the saved view rows move the same way.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param row the first row to delete, 1-based
+     * @param count how many rows to delete, 1 or more
+     * @return what the operation did, or {@code error} saying why it did nothing
+     */
+    public static RowOutcome deleteRows(SpreadsheetDocument doc, int row, int count)
+    {
+        RowOutcome outcome = new RowOutcome();
+        if (row < 1 || count < 1)
+        {
+            outcome.error = "row and count must be 1-based positive integers - got row=" //$NON-NLS-1$
+                + row + ", count=" + count; //$NON-NLS-1$
+            return outcome;
+        }
+        if (doc == null)
+        {
+            outcome.error = "no spreadsheet to change"; //$NON-NLS-1$
+            return outcome;
+        }
+        int lastRow = lastRowOf(doc);
+        if (row + count - 1 > lastRow)
+        {
+            outcome.error = "rows " + row + ".." + (row + count - 1) //$NON-NLS-1$ //$NON-NLS-2$
+                + " run past the end - the document runs to row " + lastRow; //$NON-NLS-1$
+            return outcome;
+        }
+        int first = row - 1;
+        outcome.shiftedRows = removeRowsAndShiftUp(doc, first, first + count - 1);
+        moveMerges(doc.getMerges(), false, first, count, outcome);
+        moveMerges(doc.getUnmerges(), false, first, count, null);
+        moveRowMerges(doc.getRowMerges(), false, first, count, outcome);
+        moveRowGroups(doc.getRowGroups(), false, first, count);
+        moveNamedItems(doc, false, first, count, outcome);
+        moveDrawings(doc, false, first, count, outcome);
+        moveDocumentAreas(doc, false, first, count);
+        moveViewRows(doc, false, first, count);
+        moveHeight(doc, false, first, count);
+        outcome.lastRow = lastRowOf(doc);
+        return outcome;
+    }
+
+    /**
+     * Replaces rows with a copy of other rows, with no shift.
+     * <p>
+     * A copy carries the row format and the cells whole - text, parameter, detail and format, notes
+     * included. Merges that lie entirely inside the source rows repeat over the target, and merges
+     * that lie entirely inside the replaced target rows come off first; a merge the target range
+     * cuts in half stays as it is. Named areas are neither copied nor moved. The target may run
+     * past the current end of the document, which then grows to hold it.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param fromRow the first source row, 1-based
+     * @param toRow the first target row, 1-based
+     * @param count how many rows replace and are replaced, 1 or more
+     * @return what the operation did, or {@code error} saying why it did nothing
+     */
+    public static RowOutcome copyRows(SpreadsheetDocument doc, int fromRow, int toRow, int count)
+    {
+        RowOutcome outcome = new RowOutcome();
+        if (fromRow < 1 || toRow < 1 || count < 1)
+        {
+            outcome.error = "fromRow, toRow and count must be 1-based positive integers - got " //$NON-NLS-1$
+                + "fromRow=" + fromRow + ", toRow=" + toRow + ", count=" + count; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            return outcome;
+        }
+        if (doc == null)
+        {
+            outcome.error = "no spreadsheet to change"; //$NON-NLS-1$
+            return outcome;
+        }
+        int lastRow = lastRowOf(doc);
+        if (fromRow + count - 1 > lastRow)
+        {
+            outcome.error = "the source rows " + fromRow + ".." + (fromRow + count - 1) //$NON-NLS-1$ //$NON-NLS-2$
+                + " run past the end - the document runs to row " + lastRow; //$NON-NLS-1$
+            return outcome;
+        }
+        if (fromRow <= toRow + count - 1 && toRow <= fromRow + count - 1)
+        {
+            outcome.error = "the source rows " + fromRow + ".." + (fromRow + count - 1) //$NON-NLS-1$ //$NON-NLS-2$
+                + " and the target rows " + toRow + ".." + (toRow + count - 1) //$NON-NLS-1$ //$NON-NLS-2$
+                + " overlap - a row cannot be its own replacement"; //$NON-NLS-1$
+            return outcome;
+        }
+        int delta = toRow - fromRow;
+        int sourceFirst = fromRow - 1;
+        int targetFirst = toRow - 1;
+        EMap<Integer, Row> rows = doc.getRows();
+        List<Row> copies = new ArrayList<>();
+        for (int i = 0; i < count; i++)
+        {
+            Row original = rows.get(Integer.valueOf(sourceFirst + i));
+            copies.add(original == null ? null : (Row)EcoreUtil.copy(original));
+        }
+        for (int i = 0; i < count; i++)
+        {
+            rows.removeKey(Integer.valueOf(targetFirst + i));
+        }
+        for (int i = 0; i < copies.size(); i++)
+        {
+            Row copy = copies.get(i);
+            if (copy == null)
+            {
+                // The source row is absent, so the replaced row is absent too: an empty row is
+                // what the model shows for a row that was never written.
+                continue;
+            }
+            rows.put(Integer.valueOf(targetFirst + i), copy);
+            repointNoteRows(copy, targetFirst + i, delta);
+        }
+        replaceMergesOverRange(doc, sourceFirst, targetFirst, count, outcome);
+        if (doc.getHeight() > 0)
+        {
+            doc.setHeight(Math.max(doc.getHeight(), targetFirst + count));
+        }
+        outcome.lastRow = lastRowOf(doc);
+        return outcome;
+    }
+
+    /**
+     * The document's last row, 1-based: the highest row anything of the model reaches.
+     * <p>
+     * Every holder of a row number counts - the rows themselves, merges, named areas, row groups,
+     * drawings, the print and repeat areas, and the declared height. A row past the content sits in
+     * the model all the same, and an operation that asked about "the last row" has to see it.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @return the last row, 1-based; 0 when nothing reaches any row
+     */
+    private static int lastRowOf(SpreadsheetDocument doc)
+    {
+        int maxKey = -1;
+        for (Map.Entry<Integer, Row> held : doc.getRows())
+        {
+            if (held != null && held.getKey() != null)
+            {
+                maxKey = Math.max(maxKey, held.getKey().intValue());
+            }
+        }
+        maxKey = Math.max(maxKey, rectBottomOf(doc.getMerges()));
+        maxKey = Math.max(maxKey, rectBottomOf(doc.getUnmerges()));
+        for (RowMerge merge : doc.getRowMerges())
+        {
+            if (merge != null)
+            {
+                maxKey = Math.max(maxKey, merge.getEnd());
+            }
+        }
+        for (RowGroup group : doc.getRowGroups())
+        {
+            if (group != null)
+            {
+                maxKey = Math.max(maxKey, group.getEnd());
+            }
+        }
+        for (Drawing drawing : doc.getDrawings())
+        {
+            if (drawing == null || drawing.getPosition() == null)
+            {
+                continue;
+            }
+            maxKey = Math.max(maxKey, pointRowOf(drawing.getPosition().getBegin()));
+            maxKey = Math.max(maxKey, pointRowOf(drawing.getPosition().getEnd()));
+        }
+        for (Map.Entry<String, NamedItem> held : doc.getNamedItems())
+        {
+            RowSpan span = spanOf(areaOf(held == null ? null : held.getValue()));
+            if (span != null)
+            {
+                maxKey = Math.max(maxKey, span.end);
+            }
+        }
+        maxKey = Math.max(maxKey, spanBottomOf(doc.getPrintArea()));
+        maxKey = Math.max(maxKey, spanBottomOf(doc.getRepeatRows()));
+        if (doc.getHeight() > maxKey + 1)
+        {
+            maxKey = doc.getHeight() - 1;
+        }
+        return maxKey + 1;
+    }
+
+    /**
+     * The bottom row of the highest merge in a list, 0-based.
+     *
+     * @param merges the merges; may hold <code>null</code>s
+     * @return the highest bottom, or -1 when no merge has a position
+     */
+    private static int rectBottomOf(EList<Merge> merges)
+    {
+        int bottom = -1;
+        for (Merge merge : merges)
+        {
+            if (merge == null || merge.getPosition() == null)
+            {
+                continue;
+            }
+            bottom = Math.max(bottom, rowBoundsOf(merge.getPosition())[1]);
+        }
+        return bottom;
+    }
+
+    /**
+     * The row a drawing point names, 0-based; a point that names none reads as no row at all.
+     *
+     * @param point the point, or <code>null</code>
+     * @return the row, or -1
+     */
+    private static int pointRowOf(SpreadsheetPoint point)
+    {
+        if (point == null || point.getCell() == null)
+        {
+            return -1;
+        }
+        return point.getCell().getY();
+    }
+
+    /**
+     * The row span of an area, or <code>null</code> when the area holds no rows.
+     * <p>
+     * A columns area has none by construction; an area kind this class does not recognize has none
+     * because nothing about it can be read.
+     * </p>
+     *
+     * @param area the area, or <code>null</code>
+     * @return the span, 0-based with both ends inclusive, or <code>null</code>
+     */
+    private static RowSpan spanOf(Area area)
+    {
+        if (area instanceof RowsArea)
+        {
+            RowSpan span = new RowSpan();
+            span.begin = ((RowsArea)area).getBegin();
+            span.end = ((RowsArea)area).getEnd();
+            return span;
+        }
+        if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
+        {
+            RowSpan span = new RowSpan();
+            span.begin = rowBoundsOf(((RectArea)area).getPosition())[0];
+            span.end = rowBoundsOf(((RectArea)area).getPosition())[1];
+            return span;
+        }
+        return null;
+    }
+
+    /**
+     * The rows a rectangle spans, normalized: the model carries a signed height, and a rectangle
+     * written with a negative one means the same rows either way.
+     *
+     * @param position the rectangle
+     * @return the first row and the last row, 0-based and inclusive
+     */
+    private static int[] rowBoundsOf(Rect position)
+    {
+        int top = position.getY();
+        int bottom = top + position.getHeight();
+        return new int[] { Math.min(top, bottom), Math.max(top, bottom) };
+    }
+
+    /**
+     * The bottom row of an area, for the extent.
+     *
+     * @param area the area, or <code>null</code>
+     * @return the bottom row, 0-based, or -1 when the area holds no rows
+     */
+    private static int spanBottomOf(Area area)
+    {
+        RowSpan span = spanOf(area);
+        return span == null ? -1 : span.end;
+    }
+
+    /**
+     * Writes a row span back into the area it was read from.
+     *
+     * @param area the area the span was read from
+     * @param span the span to write, 0-based with both ends inclusive
+     */
+    private static void writeSpan(Area area, RowSpan span)
+    {
+        if (area instanceof RowsArea)
+        {
+            ((RowsArea)area).setBegin(span.begin);
+            ((RowsArea)area).setEnd(span.end);
+        }
+        else if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
+        {
+            Rect position = ((RectArea)area).getPosition();
+            position.setY(span.begin);
+            position.setHeight(span.end - span.begin);
+        }
+    }
+
+    /**
+     * The area of a named item, for the item kinds that carry one.
+     *
+     * @param item the named item, or <code>null</code>
+     * @return the area, or <code>null</code> when this kind of item places nothing
+     */
+    private static Area areaOf(NamedItem item)
+    {
+        if (item instanceof NamedItemCells)
+        {
+            return ((NamedItemCells)item).getArea();
+        }
+        if (item instanceof NamedItemDataSource)
+        {
+            return ((NamedItemDataSource)item).getArea();
+        }
+        if (item instanceof NamedItemEmbeddedTable)
+        {
+            return ((NamedItemEmbeddedTable)item).getArea();
+        }
+        return null;
+    }
+
+    /**
+     * Moves every row from a 0-based key down, freeing the keys the move empties.
+     *
+     * @param doc the spreadsheet
+     * @param fromKey the first 0-based key to move
+     * @param count how far down each row moves
+     * @return how many rows moved
+     */
+    private static int shiftRowsDown(SpreadsheetDocument doc, int fromKey, int count)
+    {
+        EMap<Integer, Row> rows = doc.getRows();
+        List<Integer> moving = new ArrayList<>();
+        for (Map.Entry<Integer, Row> held : rows)
+        {
+            if (held != null && held.getKey() != null && held.getKey().intValue() >= fromKey)
+            {
+                moving.add(held.getKey());
+            }
+        }
+        // Highest key first: a row is out of the map before the key it lands on is read again.
+        Collections.sort(moving, Collections.reverseOrder());
+        int shifted = 0;
+        for (Integer key : moving)
+        {
+            // The row is read before the removal: an entry taken out of a containment map hands
+            // back its value detached, not the object the key held, so removeKey's return is not
+            // the row to re-put.
+            Row row = rows.get(key);
+            if (row == null)
+            {
+                continue;
+            }
+            rows.removeKey(key);
+            rows.put(Integer.valueOf(key.intValue() + count), row);
+            repointNoteRows(row, key.intValue() + count, 0);
+            shifted++;
+        }
+        return shifted;
+    }
+
+    /**
+     * Removes the rows of a 0-based range and moves every row below it up.
+     *
+     * @param doc the spreadsheet
+     * @param firstKey the first 0-based key to remove
+     * @param lastKey the last 0-based key to remove, inclusive
+     * @return how many rows below the range moved up
+     */
+    private static int removeRowsAndShiftUp(SpreadsheetDocument doc, int firstKey, int lastKey)
+    {
+        EMap<Integer, Row> rows = doc.getRows();
+        List<Integer> keys = new ArrayList<>();
+        for (Map.Entry<Integer, Row> held : rows)
+        {
+            if (held != null && held.getKey() != null)
+            {
+                keys.add(held.getKey());
+            }
+        }
+        Collections.sort(keys);
+        int removed = lastKey - firstKey + 1;
+        int shifted = 0;
+        for (Integer key : keys)
+        {
+            if (key.intValue() < firstKey)
+            {
+                continue;
+            }
+            // The same rule as in shiftRowsDown: the row is read before the removal, because a
+            // containment map's removeKey does not hand back the object the key held.
+            Row row = rows.get(key);
+            if (row == null)
+            {
+                continue;
+            }
+            rows.removeKey(key);
+            if (key.intValue() > lastKey)
+            {
+                rows.put(Integer.valueOf(key.intValue() - removed), row);
+                repointNoteRows(row, key.intValue() - removed, 0);
+                shifted++;
+            }
+            // A row inside the range is dropped with its cells and their notes.
+        }
+        return shifted;
+    }
+
+    /**
+     * Points a row's cell notes at the row the row now sits on, and moves their own position along.
+     *
+     * @param row the row that moved
+     * @param rowKey the row's new 0-based key
+     * @param delta how far the row moved, for the note's own position
+     */
+    private static void repointNoteRows(Row row, int rowKey, int delta)
+    {
+        if (row == null)
+        {
+            return;
+        }
+        for (Map.Entry<Integer, Cell> held : row.getCells())
+        {
+            Cell cell = held == null ? null : held.getValue();
+            if (cell == null || cell.getNoteDrawing() == null)
+            {
+                continue;
+            }
+            cell.getNoteDrawing().setCellRowIndex(rowKey);
+            moveNotePosition(cell.getNoteDrawing(), delta);
+        }
+    }
+
+    /**
+     * Moves a note drawing's own anchor by a row delta, when it carries one.
+     *
+     * @param note the note drawing
+     * @param delta how far to move, in rows
+     */
+    private static void moveNotePosition(Drawing note, int delta)
+    {
+        if (delta == 0 || note.getPosition() == null)
+        {
+            return;
+        }
+        movePointRow(note.getPosition().getBegin(), delta);
+        movePointRow(note.getPosition().getEnd(), delta);
+    }
+
+    /**
+     * Moves a drawing point's cell by a row delta.
+     *
+     * @param point the point, or <code>null</code>
+     * @param delta how far to move, in rows
+     */
+    private static void movePointRow(SpreadsheetPoint point, int delta)
+    {
+        if (point == null || point.getCell() == null)
+        {
+            return;
+        }
+        point.getCell().setY(Math.max(0, point.getCell().getY() + delta));
+    }
+
+    /**
+     * Moves the merges of a list over an insertion or a deletion of rows.
+     *
+     * @param merges the merges to move
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @param outcome where the counters land, or <code>null</code> to move silently
+     */
+    private static void moveMerges(EList<Merge> merges, boolean inserting, int at, int count,
+        RowOutcome outcome)
+    {
+        java.util.Iterator<Merge> each = merges.iterator();
+        while (each.hasNext())
+        {
+            Merge merge = each.next();
+            if (merge == null || merge.getPosition() == null)
+            {
+                continue;
+            }
+            Rect position = merge.getPosition();
+            int begin = rowBoundsOf(position)[0];
+            int end = rowBoundsOf(position)[1];
+            RowSpan moved = movedSpan(begin, end, inserting, at, count);
+            if (moved == null)
+            {
+                each.remove();
+                if (outcome != null)
+                {
+                    outcome.removedMerges++;
+                }
+                continue;
+            }
+            if (moved.begin != begin || moved.end != end)
+            {
+                position.setY(moved.begin);
+                position.setHeight(moved.end - moved.begin);
+                if (outcome != null)
+                {
+                    outcome.resizedMerges++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Moves the whole-row merges over an insertion or a deletion of rows.
+     *
+     * @param rowMerges the merges to move
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @param outcome where the counters land, or <code>null</code> to move silently
+     */
+    private static void moveRowMerges(EList<RowMerge> rowMerges, boolean inserting, int at,
+        int count, RowOutcome outcome)
+    {
+        List<RowMerge> gone = new ArrayList<>();
+        for (RowMerge merge : rowMerges)
+        {
+            if (merge == null)
+            {
+                continue;
+            }
+            RowSpan moved = movedSpan(merge.getBegin(), merge.getEnd(), inserting, at, count);
+            if (moved == null)
+            {
+                gone.add(merge);
+            }
+            else if (moved.begin != merge.getBegin() || moved.end != merge.getEnd())
+            {
+                merge.setBegin(moved.begin);
+                merge.setEnd(moved.end);
+                if (outcome != null)
+                {
+                    outcome.resizedMerges++;
+                }
+            }
+        }
+        if (!gone.isEmpty())
+        {
+            rowMerges.removeAll(gone);
+            if (outcome != null)
+            {
+                outcome.removedMerges += gone.size();
+            }
+        }
+    }
+
+    /**
+     * Moves the row groups over an insertion or a deletion of rows.
+     *
+     * @param rowGroups the groups to move
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     */
+    private static void moveRowGroups(EList<RowGroup> rowGroups, boolean inserting, int at, int count)
+    {
+        List<RowGroup> gone = new ArrayList<>();
+        for (RowGroup group : rowGroups)
+        {
+            if (group == null)
+            {
+                continue;
+            }
+            RowSpan moved = movedSpan(group.getBegin(), group.getEnd(), inserting, at, count);
+            if (moved == null)
+            {
+                gone.add(group);
+            }
+            else if (moved.begin != group.getBegin() || moved.end != group.getEnd())
+            {
+                group.setBegin(moved.begin);
+                group.setEnd(moved.end);
+            }
+        }
+        if (!gone.isEmpty())
+        {
+            rowGroups.removeAll(gone);
+        }
+    }
+
+    /**
+     * Moves the named items' areas over an insertion or a deletion of rows.
+     *
+     * @param doc the spreadsheet holding the named items
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @param outcome where the names land, or <code>null</code> to move silently
+     */
+    private static void moveNamedItems(SpreadsheetDocument doc, boolean inserting, int at,
+        int count, RowOutcome outcome)
+    {
+        EMap<String, NamedItem> items = doc.getNamedItems();
+        List<String> gone = new ArrayList<>();
+        for (Map.Entry<String, NamedItem> held : items)
+        {
+            if (held == null || held.getKey() == null)
+            {
+                continue;
+            }
+            Area area = areaOf(held.getValue());
+            RowSpan span = spanOf(area);
+            if (span == null)
+            {
+                continue;
+            }
+            RowSpan moved = movedSpan(span.begin, span.end, inserting, at, count);
+            if (moved == null)
+            {
+                gone.add(held.getKey());
+            }
+            else if (moved.begin != span.begin || moved.end != span.end)
+            {
+                writeSpan(area, moved);
+                if (outcome != null)
+                {
+                    outcome.resizedNamedAreas.add(held.getKey());
+                }
+            }
+        }
+        for (String name : gone)
+        {
+            items.removeKey(name);
+            if (outcome != null)
+            {
+                outcome.removedNamedAreas.add(name);
+            }
+        }
+    }
+
+    /**
+     * Moves the drawings over an insertion or a deletion of rows.
+     * <p>
+     * A drawing the deleted range swallows goes away and is named by id; one it cuts in half keeps
+     * its top anchor and loses the rows that went; one below moves up. A drawing with no anchor at
+     * all is left alone - there is nothing to reason with.
+     * </p>
+     *
+     * @param doc the spreadsheet holding the drawings
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @param outcome where the ids land, or <code>null</code> to move silently
+     */
+    private static void moveDrawings(SpreadsheetDocument doc, boolean inserting, int at, int count,
+        RowOutcome outcome)
+    {
+        List<Drawing> gone = new ArrayList<>();
+        for (Drawing drawing : doc.getDrawings())
+        {
+            if (drawing == null || drawing.getPosition() == null)
+            {
+                continue;
+            }
+            SpreadsheetPoint begin = drawing.getPosition().getBegin();
+            SpreadsheetPoint end = drawing.getPosition().getEnd();
+            int beginRow = pointRowOf(begin);
+            int endRow = pointRowOf(end);
+            if (beginRow < 0 && endRow < 0)
+            {
+                continue;
+            }
+            int from = beginRow < 0 ? endRow : beginRow;
+            int to = endRow < 0 ? beginRow : endRow;
+            RowSpan moved = movedSpan(Math.min(from, to), Math.max(from, to), inserting, at, count);
+            if (moved == null)
+            {
+                gone.add(drawing);
+                if (outcome != null)
+                {
+                    outcome.removedDrawings.add(Integer.valueOf(drawing.getDrawingId()));
+                }
+                continue;
+            }
+            setPointRow(begin, moved.begin);
+            setPointRow(end, moved.end);
+        }
+        if (!gone.isEmpty())
+        {
+            doc.getDrawings().removeAll(gone);
+        }
+    }
+
+    /**
+     * Points a drawing anchor at a row.
+     *
+     * @param point the anchor, or <code>null</code>
+     * @param row the 0-based row to point at
+     */
+    private static void setPointRow(SpreadsheetPoint point, int row)
+    {
+        if (point != null && point.getCell() != null)
+        {
+            point.getCell().setY(row);
+        }
+    }
+
+    /**
+     * Moves the document's print and repeat areas over an insertion or a deletion of rows.
+     * <p>
+     * An area the deleted range swallows is cleared: the document then prints the way it does with
+     * no area named, which is what nothing selected reads as.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     */
+    private static void moveDocumentAreas(SpreadsheetDocument doc, boolean inserting, int at,
+        int count)
+    {
+        if (spanGone(doc.getPrintArea(), inserting, at, count))
+        {
+            doc.setPrintArea(null);
+        }
+        if (spanGone(doc.getRepeatRows(), inserting, at, count))
+        {
+            doc.setRepeatRows(null);
+        }
+    }
+
+    /**
+     * Whether a deletion took the area entirely.
+     *
+     * @param area the area, or <code>null</code>
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @return <code>true</code> only when the area is gone
+     */
+    private static boolean spanGone(Area area, boolean inserting, int at, int count)
+    {
+        RowSpan span = spanOf(area);
+        if (span == null)
+        {
+            return false;
+        }
+        RowSpan moved = movedSpan(span.begin, span.end, inserting, at, count);
+        if (moved == null)
+        {
+            return true;
+        }
+        if (moved.begin != span.begin || moved.end != span.end)
+        {
+            writeSpan(area, moved);
+        }
+        return false;
+    }
+
+    /**
+     * Moves the saved view rows over an insertion or a deletion of rows.
+     * <p>
+     * These are where the interactive editor looked - the current row, the fixed row, the fixation
+     * points, the top of the screen - and the selection. A row operation that leaves them behind
+     * would point the editor at content that moved, so they travel with it. A view the document
+     * never saved is not there to move.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     */
+    private static void moveViewRows(SpreadsheetDocument doc, boolean inserting, int at, int count)
+    {
+        ViewSettings view = doc.getViewSettings();
+        if (view == null)
+        {
+            return;
+        }
+        view.setCurrentRow(movedRowPointer(view.getCurrentRow(), inserting, at, count));
+        view.setFixedRow(movedRowPointer(view.getFixedRow(), inserting, at, count));
+        view.setFixationPointRow(movedRowPointer(view.getFixationPointRow(), inserting, at, count));
+        view.setTopFixationPointRow(
+            movedRowPointer(view.getTopFixationPointRow(), inserting, at, count));
+        view.setScreenBeginPointRow(
+            movedRowPointer(view.getScreenBeginPointRow(), inserting, at, count));
+        EList<Area> selection = view.getSelection();
+        if (selection.isEmpty())
+        {
+            return;
+        }
+        List<Area> kept = new ArrayList<>();
+        for (Area area : selection)
+        {
+            RowSpan span = spanOf(area);
+            if (span == null)
+            {
+                kept.add(area);
+                continue;
+            }
+            RowSpan moved = movedSpan(span.begin, span.end, inserting, at, count);
+            if (moved != null)
+            {
+                if (moved.begin != span.begin || moved.end != span.end)
+                {
+                    writeSpan(area, moved);
+                }
+                kept.add(area);
+            }
+        }
+        if (kept.size() != selection.size())
+        {
+            selection.clear();
+            selection.addAll(kept);
+        }
+    }
+
+    /**
+     * Where a single row pointer lands after rows were inserted or deleted.
+     *
+     * @param row the pointer, 0-based
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @return the row the pointer lands on
+     */
+    private static int movedRowPointer(int row, boolean inserting, int at, int count)
+    {
+        if (inserting)
+        {
+            return row >= at ? row + count : row;
+        }
+        if (row < at)
+        {
+            return row;
+        }
+        return row > at + count - 1 ? row - count : at;
+    }
+
+    /**
+     * Moves the declared height over an insertion or a deletion of rows.
+     * <p>
+     * A height of zero is nothing declared, and stays that way: the document then sizes itself by
+     * its content, which the operation just changed.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     */
+    private static void moveHeight(SpreadsheetDocument doc, boolean inserting, int at, int count)
+    {
+        int height = doc.getHeight();
+        if (height <= 0)
+        {
+            return;
+        }
+        if (inserting)
+        {
+            if (at <= height)
+            {
+                doc.setHeight(height + count);
+            }
+            return;
+        }
+        if (at <= height - 1)
+        {
+            int within = Math.min(at + count - 1, height - 1) - at + 1;
+            doc.setHeight(Math.max(0, height - within));
+        }
+    }
+
+    /**
+     * Where a row span lands after rows were inserted or deleted.
+     * <p>
+     * Insertion: a span at or past the point moves down, a span the point falls inside grows, a
+     * span above stays. Deletion: a span above stays, a span below moves up, a span the range
+     * swallows is gone, and a span the range cuts shrinks by the rows it lost.
+     * </p>
+     *
+     * @param begin the span's first row, 0-based inclusive
+     * @param end the span's last row, 0-based inclusive
+     * @param inserting whether rows were inserted or deleted
+     * @param at the 0-based row the change starts at
+     * @param count how many rows were inserted or deleted
+     * @return where the span landed, or <code>null</code> when a deletion took it entirely
+     */
+    private static RowSpan movedSpan(int begin, int end, boolean inserting, int at, int count)
+    {
+        RowSpan moved = new RowSpan();
+        if (inserting)
+        {
+            moved.begin = begin >= at ? begin + count : begin;
+            moved.end = end >= at ? end + count : end;
+            return moved;
+        }
+        int last = at + count - 1;
+        if (end < at)
+        {
+            moved.begin = begin;
+            moved.end = end;
+        }
+        else if (begin > last)
+        {
+            moved.begin = begin - count;
+            moved.end = end - count;
+        }
+        else if (begin >= at && end <= last)
+        {
+            return null;
+        }
+        else
+        {
+            int lost = Math.min(end, last) - Math.max(begin, at) + 1;
+            moved.begin = begin < at ? begin : at;
+            moved.end = moved.begin + (end - begin - lost);
+        }
+        return moved;
+    }
+
+    /**
+     * Replaces the merges over the target range of a row copy with copies of the source merges.
+     *
+     * @param doc the spreadsheet holding the merges
+     * @param sourceFirst the source range's first 0-based row
+     * @param targetFirst the target range's first 0-based row
+     * @param count how many rows the ranges hold
+     * @param outcome where the removals are counted
+     */
+    private static void replaceMergesOverRange(SpreadsheetDocument doc, int sourceFirst,
+        int targetFirst, int count, RowOutcome outcome)
+    {
+        int sourceLast = sourceFirst + count - 1;
+        int targetLast = targetFirst + count - 1;
+        java.util.Iterator<Merge> each = doc.getMerges().iterator();
+        while (each.hasNext())
+        {
+            Merge merge = each.next();
+            if (merge == null || merge.getPosition() == null)
+            {
+                continue;
+            }
+            Rect position = merge.getPosition();
+            int begin = rowBoundsOf(position)[0];
+            int end = rowBoundsOf(position)[1];
+            if (begin >= targetFirst && end <= targetLast)
+            {
+                each.remove();
+                outcome.removedMerges++;
+            }
+        }
+        for (Merge merge : new ArrayList<>(doc.getMerges()))
+        {
+            if (merge == null || merge.getPosition() == null)
+            {
+                continue;
+            }
+            Rect position = merge.getPosition();
+            int begin = rowBoundsOf(position)[0];
+            int end = rowBoundsOf(position)[1];
+            if (begin >= sourceFirst && end <= sourceLast)
+            {
+                Merge copy = (Merge)EcoreUtil.copy(merge);
+                copy.getPosition().setY(begin + (targetFirst - sourceFirst));
+                doc.getMerges().add(copy);
+            }
+        }
     }
 
     /**

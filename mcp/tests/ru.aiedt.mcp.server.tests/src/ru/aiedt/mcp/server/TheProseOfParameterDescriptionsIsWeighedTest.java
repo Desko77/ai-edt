@@ -627,6 +627,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And for the itemPath of dcs_workshop remove_settings_item, which now documents
      * addressing an item by its name beside the number. Measured 01.10: 103553.
      * </p>
+     * <p>
+     * And for the three row operations of mxl_workshop: the sentences of count, formatFrom, row,
+     * fromRow and toRow. Measured 05.10: 103953.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 103640;
+    private static final int DOCUMENT_PROSE = 103953;
 }

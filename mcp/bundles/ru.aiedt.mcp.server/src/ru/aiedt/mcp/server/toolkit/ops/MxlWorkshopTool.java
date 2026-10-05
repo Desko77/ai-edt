@@ -58,10 +58,10 @@ public class MxlWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "MXL spreadsheet template constructor. 12 operations: create_template, " //$NON-NLS-1$
+        return "MXL spreadsheet template constructor. 15 operations: create_template, " //$NON-NLS-1$
             + "set_cell, format_cells, merge_cells, draw, add_drawing, remove_drawing, " //$NON-NLS-1$
             + "read_template, add_named_area, list_named_areas, remove_named_area, " //$NON-NLS-1$
-            + "check_print_width. " //$NON-NLS-1$
+            + "insert_rows, delete_rows, copy_rows, check_print_width. " //$NON-NLS-1$
             + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
             + "SpreadsheetDocument model directly. Coordinates are 1-based. " //$NON-NLS-1$
             + "check_print_width reads the model alone: whether the print area fits the sheet " //$NON-NLS-1$
@@ -73,7 +73,7 @@ public class MxlWorkshopTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / check_print_width / help", //$NON-NLS-1$
+                "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / insert_rows / delete_rows / copy_rows / check_print_width / help", //$NON-NLS-1$
                 true)
             .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("ownerFqn", //$NON-NLS-1$
@@ -81,7 +81,9 @@ public class MxlWorkshopTool implements IMcpTool
             .stringProperty("templateName", "Template name") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("templateType", //$NON-NLS-1$
                 "SpreadsheetDocument (default) / TextDocument / DataCompositionSchema / etc.") //$NON-NLS-1$
-            .integerProperty("row", "Cell row (1-based)") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("row", //$NON-NLS-1$
+                "Cell row (1-based); insert_rows puts the new rows before it, delete_rows " //$NON-NLS-1$
+                    + "removes from it") //$NON-NLS-1$
             .integerProperty("col", "Cell column (1-based)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("text", "Cell text content") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("fillType", //$NON-NLS-1$
@@ -97,10 +99,16 @@ public class MxlWorkshopTool implements IMcpTool
             .stringProperty("areaKind", //$NON-NLS-1$
                 "add_named_area: columns (default for a load template), rows, or rect. Bounds come " //$NON-NLS-1$
                 + "from fromRow/fromCol/toRow/toCol; columns reads the column pair, rows the row pair.") //$NON-NLS-1$
-            .integerProperty("fromRow", "Merge range from-row") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("fromRow", "Merge range from-row; copy_rows: first source row") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("fromCol", "Merge range from-col") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("toRow", "Merge range to-row") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("toRow", "Merge range to-row; copy_rows: first target row") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("toCol", "Merge range to-col") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("count", //$NON-NLS-1$
+                "insert_rows / delete_rows / copy_rows: how many rows (default 1)") //$NON-NLS-1$
+            .stringProperty("formatFrom", //$NON-NLS-1$
+                "insert_rows: where the new rows take the row format and cell formats from - " //$NON-NLS-1$
+                    + "above (default, and none at row 1), below or none. Text and parameters " //$NON-NLS-1$
+                    + "are not copied") //$NON-NLS-1$
             .stringProperty("layout", //$NON-NLS-1$
                 "JSON layout for draw: {cells:[{row,col,text}],merges:[{from,to}]}") //$NON-NLS-1$
             .stringProperty("drawingType", //$NON-NLS-1$
@@ -229,6 +237,12 @@ public class MxlWorkshopTool implements IMcpTool
                 return opListNamedAreas(params);
             case "remove_named_area": //$NON-NLS-1$
                 return opRemoveNamedArea(params);
+            case "insert_rows": //$NON-NLS-1$
+                return opInsertRows(params);
+            case "delete_rows": //$NON-NLS-1$
+                return opDeleteRows(params);
+            case "copy_rows": //$NON-NLS-1$
+                return opCopyRows(params);
             case "read_template": //$NON-NLS-1$
                 return opReadTemplate(params);
             case "check_print_width": //$NON-NLS-1$
@@ -532,6 +546,291 @@ public class MxlWorkshopTool implements IMcpTool
             failOnPersist(r, persistErrorRef[0]);
         }
         return formatResult(r, "remove_named_area"); //$NON-NLS-1$
+    }
+
+    /**
+     * Inserts rows with a shift: everything from the named row down moves by the count.
+     * <p>
+     * The bounds, the extent check and the formatFrom word are refused before the model is opened,
+     * so a bad call cannot leave a half-shifted template behind. What shifted, and what the shift
+     * resized, is answered in the counters of the row outcome.
+     * </p>
+     *
+     * @param params the call's arguments
+     * @return the result as JSON
+     */
+    private String opInsertRows(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("insert_rows"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        int row = JsonUtils.extractIntArgument(params, "row", -1); //$NON-NLS-1$
+        int count = JsonUtils.extractIntArgument(params, "count", 1); //$NON-NLS-1$
+        String formatFrom = JsonUtils.extractStringArgument(params, "formatFrom"); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String canonicalFormat = BmTemplateHelper.canonicalFormatFrom(formatFrom);
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
+        }
+        if (row < 1)
+        {
+            return ToolResult.error("row (>=1) is required").put("operation", "insert_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        if (count < 1)
+        {
+            return ToolResult.error("count must be 1 or greater - got: " + count) //$NON-NLS-1$
+                .put("operation", "insert_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (canonicalFormat == null)
+        {
+            return ToolResult.error("formatFrom must be one of above, below, none - got: " //$NON-NLS-1$
+                + formatFrom).put("operation", "insert_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        final int rowF = row;
+        final int countF = count;
+        final String formatF = canonicalFormat;
+        final String[] persistErrorRef = { null };
+        final String[] contentErrorRef = { null };
+        final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, rowF, countF,
+                    formatF);
+                outcomeRef[0] = outcome;
+                if (outcome.error != null)
+                {
+                    contentErrorRef[0] = outcome.error;
+                    return outcome.error;
+                }
+                if (!dryRun)
+                {
+                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                        templateName, doc);
+                    if (pErr != null)
+                    {
+                        persistErrorRef[0] = pErr;
+                    }
+                }
+                return "inserted " + countF + " row(s) before row " + rowF; //$NON-NLS-1$ //$NON-NLS-2$
+            });
+        if (contentErrorRef[0] != null)
+        {
+            return ToolResult.error(contentErrorRef[0]).put("operation", "insert_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (persistErrorRef[0] != null && r.tags != null)
+        {
+            failOnPersist(r, persistErrorRef[0]);
+        }
+        if (r.ok && r.tags != null && outcomeRef[0] != null)
+        {
+            r.tags.put("row", Integer.valueOf(row)); //$NON-NLS-1$
+            applyRowOutcome(r.tags, outcomeRef[0], count);
+        }
+        return formatResult(r, "insert_rows"); //$NON-NLS-1$
+    }
+
+    /**
+     * Deletes rows with a shift: the rows below move up by the count.
+     * <p>
+     * A range that runs past the end of the document is refused before anything moves. Merges,
+     * named areas and drawings the range swallows are removed and named in the answer - a removal
+     * that is not an error still has to be visible.
+     * </p>
+     *
+     * @param params the call's arguments
+     * @return the result as JSON
+     */
+    private String opDeleteRows(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("delete_rows"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        int row = JsonUtils.extractIntArgument(params, "row", -1); //$NON-NLS-1$
+        int count = JsonUtils.extractIntArgument(params, "count", 1); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
+        }
+        if (row < 1)
+        {
+            return ToolResult.error("row (>=1) is required").put("operation", "delete_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        if (count < 1)
+        {
+            return ToolResult.error("count must be 1 or greater - got: " + count) //$NON-NLS-1$
+                .put("operation", "delete_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        final int rowF = row;
+        final int countF = count;
+        final String[] persistErrorRef = { null };
+        final String[] contentErrorRef = { null };
+        final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, rowF, countF);
+                outcomeRef[0] = outcome;
+                if (outcome.error != null)
+                {
+                    contentErrorRef[0] = outcome.error;
+                    return outcome.error;
+                }
+                if (!dryRun)
+                {
+                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                        templateName, doc);
+                    if (pErr != null)
+                    {
+                        persistErrorRef[0] = pErr;
+                    }
+                }
+                return "deleted " + countF + " row(s) from row " + rowF; //$NON-NLS-1$ //$NON-NLS-2$
+            });
+        if (contentErrorRef[0] != null)
+        {
+            return ToolResult.error(contentErrorRef[0]).put("operation", "delete_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (persistErrorRef[0] != null && r.tags != null)
+        {
+            failOnPersist(r, persistErrorRef[0]);
+        }
+        if (r.ok && r.tags != null && outcomeRef[0] != null)
+        {
+            r.tags.put("row", Integer.valueOf(row)); //$NON-NLS-1$
+            applyRowOutcome(r.tags, outcomeRef[0], count);
+        }
+        return formatResult(r, "delete_rows"); //$NON-NLS-1$
+    }
+
+    /**
+     * Replaces rows with a copy of other rows: no shift, the target becomes what the source is.
+     * <p>
+     * The source range is checked against the document and both ranges against each other before
+     * anything is written. The target may run past the current end - the document grows to hold it.
+     * </p>
+     *
+     * @param params the call's arguments
+     * @return the result as JSON
+     */
+    private String opCopyRows(Map<String, String> params)
+    {
+        if (!BmTemplateHelper.cellOpsAvailable())
+        {
+            return mxlApiNotFound("copy_rows"); //$NON-NLS-1$
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        int fromRow = JsonUtils.extractIntArgument(params, "fromRow", -1); //$NON-NLS-1$
+        int toRow = JsonUtils.extractIntArgument(params, "toRow", -1); //$NON-NLS-1$
+        int count = JsonUtils.extractIntArgument(params, "count", 1); //$NON-NLS-1$
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
+        }
+        if (fromRow < 1 || toRow < 1)
+        {
+            return ToolResult.error("fromRow (>=1) and toRow (>=1) are required") //$NON-NLS-1$
+                .put("operation", "copy_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (count < 1)
+        {
+            return ToolResult.error("count must be 1 or greater - got: " + count) //$NON-NLS-1$
+                .put("operation", "copy_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        final int fromRowF = fromRow;
+        final int toRowF = toRow;
+        final int countF = count;
+        final String[] persistErrorRef = { null };
+        final String[] contentErrorRef = { null };
+        final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.copyRows(doc, fromRowF,
+                    toRowF, countF);
+                outcomeRef[0] = outcome;
+                if (outcome.error != null)
+                {
+                    contentErrorRef[0] = outcome.error;
+                    return outcome.error;
+                }
+                if (!dryRun)
+                {
+                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                        templateName, doc);
+                    if (pErr != null)
+                    {
+                        persistErrorRef[0] = pErr;
+                    }
+                }
+                return "copied " + countF + " row(s) from row " + fromRowF + " to row " + toRowF; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            });
+        if (contentErrorRef[0] != null)
+        {
+            return ToolResult.error(contentErrorRef[0]).put("operation", "copy_rows").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (persistErrorRef[0] != null && r.tags != null)
+        {
+            failOnPersist(r, persistErrorRef[0]);
+        }
+        if (r.ok && r.tags != null && outcomeRef[0] != null)
+        {
+            r.tags.put("fromRow", Integer.valueOf(fromRow)); //$NON-NLS-1$
+            r.tags.put("toRow", Integer.valueOf(toRow)); //$NON-NLS-1$
+            applyRowOutcome(r.tags, outcomeRef[0], count);
+        }
+        return formatResult(r, "copy_rows"); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts what a row operation did into the answer, beside the operation's own arguments.
+     *
+     * @param tags the answer's tags
+     * @param outcome what the operation did
+     * @param count the count the call named
+     */
+    static void applyRowOutcome(Map<String, Object> tags, BmTemplateHelper.RowOutcome outcome,
+        int count)
+    {
+        tags.put("count", Integer.valueOf(count)); //$NON-NLS-1$
+        tags.put("shiftedRows", Integer.valueOf(outcome.shiftedRows)); //$NON-NLS-1$
+        tags.put("resizedMerges", Integer.valueOf(outcome.resizedMerges)); //$NON-NLS-1$
+        tags.put("removedMerges", Integer.valueOf(outcome.removedMerges)); //$NON-NLS-1$
+        tags.put("resizedNamedAreas", outcome.resizedNamedAreas); //$NON-NLS-1$
+        tags.put("removedNamedAreas", outcome.removedNamedAreas); //$NON-NLS-1$
+        tags.put("removedDrawings", outcome.removedDrawings); //$NON-NLS-1$
+        tags.put("lastRow", Integer.valueOf(outcome.lastRow)); //$NON-NLS-1$
     }
 
     /**
@@ -1574,6 +1873,18 @@ public class MxlWorkshopTool implements IMcpTool
                 + "drawings[{id}]. Indices are 1-based (row 1 = top, col 1 = left), the inverse of " //$NON-NLS-1$
                 + "set_cell/merge_cells - safe to round-trip a read result back into a write. " //$NON-NLS-1$
                 + "Args: ownerFqn, templateName, [language default 'ru']\n\n"); //$NON-NLS-1$
+            sb.append("- insert_rows - inserts count rows before row (1-based; the last row + 1 " //$NON-NLS-1$
+                + "appends). formatFrom: above (default, and none at row 1) / below / none - the " //$NON-NLS-1$
+                + "new rows take the row format and the cell formats, never text or parameters. " //$NON-NLS-1$
+                + "Everything at row and below shifts down: rows, merges, named areas, row " //$NON-NLS-1$
+                + "groups, drawings, the print and repeat areas\n"); //$NON-NLS-1$
+            sb.append("- delete_rows - removes count rows from row (1-based); the rows below shift " //$NON-NLS-1$
+                + "up. Merges, named areas and drawings lying entirely inside the range go with " //$NON-NLS-1$
+                + "them and are named in the answer; partial overlaps shrink\n"); //$NON-NLS-1$
+            sb.append("- copy_rows - replaces count rows at toRow with a copy of the rows at " //$NON-NLS-1$
+                + "fromRow: row format, cells with text, parameter, detail and format, and the " //$NON-NLS-1$
+                + "merges inside the source. No shift; source and target ranges must not overlap; " //$NON-NLS-1$
+                + "named areas are neither copied nor moved\n"); //$NON-NLS-1$
             sb.append("- check_print_width - reads the model alone (read-only): whether the print area " //$NON-NLS-1$
                 + "fits the sheet by width. Args: ownerFqn, templateName, " //$NON-NLS-1$
                 + "[smallScalePercent 10..100 default 75]. Answers verdict fits / borderline / " //$NON-NLS-1$
@@ -1674,6 +1985,7 @@ public class MxlWorkshopTool implements IMcpTool
             "merge_cells", "draw", //$NON-NLS-1$ //$NON-NLS-2$
             "add_drawing", "remove_drawing", "read_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "add_named_area", "list_named_areas", "remove_named_area", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "insert_rows", "delete_rows", "copy_rows", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "check_print_width")) //$NON-NLS-1$
         {
             m.put(op, op);
