@@ -626,7 +626,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (outcome.error != null)
                 {
                     contentErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    abortOnRefusal(outcome.error);
                 }
                 if (!dryRun)
                 {
@@ -710,7 +710,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (outcome.error != null)
                 {
                     contentErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    abortOnRefusal(outcome.error);
                 }
                 if (!dryRun)
                 {
@@ -797,7 +797,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (outcome.error != null)
                 {
                     contentErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    abortOnRefusal(outcome.error);
                 }
                 if (!dryRun)
                 {
@@ -893,7 +893,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (outcome.error != null)
                 {
                     contentErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    abortOnRefusal(outcome.error);
                 }
                 if (!dryRun)
                 {
@@ -979,7 +979,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (outcome.error != null)
                 {
                     contentErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    abortOnRefusal(outcome.error);
                 }
                 if (!dryRun)
                 {
@@ -1068,7 +1068,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (outcome.error != null)
                 {
                     contentErrorRef[0] = outcome.error;
-                    return outcome.error;
+                    abortOnRefusal(outcome.error);
                 }
                 if (!dryRun)
                 {
@@ -1139,6 +1139,26 @@ public class MxlWorkshopTool implements IMcpTool
         tags.put("removedDrawings", outcome.removedDrawings); //$NON-NLS-1$
         tags.put("removedDataSources", Integer.valueOf(outcome.removedDataSources)); //$NON-NLS-1$
         tags.put("lastColumn", Integer.valueOf(outcome.lastColumn)); //$NON-NLS-1$
+    }
+
+    /**
+     * Aborts the write transaction when an operation refused the change.
+     * <p>
+     * A refusal is decided once the model is open, and a callback that returned its text would
+     * leave the transaction to commit: opening a template without a spreadsheet attaches one on
+     * the way in, so the caller would read an error about a template the refused call replaced
+     * anyway. The exception unwinds the callback and rolls the transaction back, the way every
+     * other failed write of this facade does.
+     * </p>
+     *
+     * @param refusal the operation's refusal text, or <code>null</code> when it applied the change
+     */
+    static void abortOnRefusal(String refusal)
+    {
+        if (refusal != null)
+        {
+            throw new IllegalArgumentException(refusal);
+        }
     }
 
     /**

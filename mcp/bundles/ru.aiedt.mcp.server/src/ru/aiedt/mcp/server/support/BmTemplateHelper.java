@@ -3168,7 +3168,7 @@ public final class BmTemplateHelper
         /** Merges the deletion took entirely. */
         public int removedMerges;
 
-        /** Named areas whose bounds on the axis moved, by name. */
+        /** Named areas whose span on the axis grew or shrank, by name. */
         public final List<String> resizedNamedAreas = new ArrayList<>();
 
         /** Named areas the deletion took entirely, by name. */
@@ -3445,9 +3445,9 @@ public final class BmTemplateHelper
      * A copy carries the row format and the cells whole - text, parameter, detail and format, notes
      * included. Merges that lie entirely inside the source rows repeat over the target, and merges
      * that lie entirely inside the replaced target rows come off first; whole-row merges are
-     * included in both; a merge the target range cuts in half stays as it is. Named areas are
-     * neither copied nor moved. The target may run past the current end of the document, which then
-     * grows to hold it.
+     * included in both; a merge the target range cuts in half stays as it is. The unmerge
+     * exceptions ride the same way, uncounted. Named areas are neither copied nor moved. The
+     * target may run past the current end of the document, which then grows to hold it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3683,12 +3683,14 @@ public final class BmTemplateHelper
      * Replaces columns with a copy of other columns, with no shift.
      * <p>
      * A copy carries the column entry of every set whole - the width lives in the format it points
-     * at - and the cells of every row whole: text, parameter, detail and format, notes included.
-     * Merges that lie entirely inside the source columns repeat over the target, and merges that
-     * lie entirely inside the replaced target columns come off first; whole-column merges are
-     * included in both; a merge the target range cuts in half stays as it is. Named areas are
-     * neither copied nor moved. The target may run past the current end of the document, which then
-     * grows to hold it.
+     * at - and the cells of every row whole: text, parameter, detail and format, notes included. An
+     * entry the copy writes past a set's declared size grows that size to the last column written;
+     * a set that declares no size is left declaring none. Merges that lie entirely inside the
+     * source columns repeat over the target, and merges that lie entirely inside the replaced
+     * target columns come off first; whole-column merges are included in both; a merge the target
+     * range cuts in half stays as it is. The unmerge exceptions ride the same way, uncounted.
+     * Named areas are neither copied nor moved. The target may run past the current end of the
+     * document, which then grows to hold it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3742,6 +3744,7 @@ public final class BmTemplateHelper
             {
                 entries.removeKey(Integer.valueOf(targetFirst + i));
             }
+            int written = -1;
             for (int i = 0; i < copies.size(); i++)
             {
                 Column copy = copies.get(i);
@@ -3753,6 +3756,15 @@ public final class BmTemplateHelper
                     continue;
                 }
                 entries.put(Integer.valueOf(targetFirst + i), copy);
+                written = Math.max(written, targetFirst + i);
+            }
+            // An entry written past the set's declared extent leaves the set claiming to end
+            // before its own entry, so the extent grows to the last column written. A set that
+            // declares no size keeps declaring none: 0 reads as not declared, not as empty.
+            int size = set.getSize();
+            if (size > 0 && written >= size)
+            {
+                set.setSize(written + 1);
             }
         }
         for (Row row : doc.getRows().values())
@@ -3814,8 +3826,9 @@ public final class BmTemplateHelper
      * The document's last row, 1-based: the highest row anything of the model reaches.
      * <p>
      * Every holder of a row number counts - the rows themselves, merges, named areas, row groups,
-     * drawings, the print and repeat areas, and the declared height. A row past the content sits in
-     * the model all the same, and an operation that asked about "the last row" has to see it.
+     * drawings, the areas the drawings read their data from, the print and repeat areas, and the
+     * declared height. A row past the content sits in the model all the same, and an operation
+     * that asked about "the last row" has to see it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3856,6 +3869,14 @@ public final class BmTemplateHelper
             maxKey = Math.max(maxKey, pointAtOf(drawing.getPosition().getBegin(), Axis.ROW));
             maxKey = Math.max(maxKey, pointAtOf(drawing.getPosition().getEnd(), Axis.ROW));
         }
+        for (DrawingsDataSource source : doc.getDrawingDataSources())
+        {
+            Span span = spanOf(source == null ? null : source.getArea(), Axis.ROW);
+            if (span != null)
+            {
+                maxKey = Math.max(maxKey, span.end);
+            }
+        }
         for (Map.Entry<String, NamedItem> held : doc.getNamedItems())
         {
             Span span = spanOf(areaOf(held == null ? null : held.getValue()), Axis.ROW);
@@ -3877,9 +3898,9 @@ public final class BmTemplateHelper
      * The document's last column, 1-based: the highest column anything of the model reaches.
      * <p>
      * Every holder of a column number counts - the cells of every row, the entries and the declared
-     * size of every column set, merges, named areas, column groups, drawings, and the print and
-     * repeat areas. A column past the content sits in the model all the same, and an operation that
-     * asked about "the last column" has to see it.
+     * size of every column set, merges, named areas, column groups, drawings, the areas the
+     * drawings read their data from, and the print and repeat areas. A column past the content sits
+     * in the model all the same, and an operation that asked about "the last column" has to see it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3926,6 +3947,14 @@ public final class BmTemplateHelper
             }
             maxKey = Math.max(maxKey, pointAtOf(drawing.getPosition().getBegin(), Axis.COLUMN));
             maxKey = Math.max(maxKey, pointAtOf(drawing.getPosition().getEnd(), Axis.COLUMN));
+        }
+        for (DrawingsDataSource source : doc.getDrawingDataSources())
+        {
+            Span span = spanOf(source == null ? null : source.getArea(), Axis.COLUMN);
+            if (span != null)
+            {
+                maxKey = Math.max(maxKey, span.end);
+            }
         }
         for (Map.Entry<String, NamedItem> held : doc.getNamedItems())
         {
@@ -4570,7 +4599,7 @@ public final class BmTemplateHelper
             if (moved.begin != begin || moved.end != end)
             {
                 writeRect(position, moved, axis);
-                if (outcome != null)
+                if (outcome != null && spanLengthChanged(begin, end, moved.begin, moved.end))
                 {
                     outcome.resizedMerges++;
                 }
@@ -4604,9 +4633,11 @@ public final class BmTemplateHelper
             }
             else if (moved.begin != merge.getBegin() || moved.end != merge.getEnd())
             {
+                boolean lengthChanged = spanLengthChanged(merge.getBegin(), merge.getEnd(),
+                    moved.begin, moved.end);
                 merge.setBegin(moved.begin);
                 merge.setEnd(moved.end);
-                if (outcome != null)
+                if (outcome != null && lengthChanged)
                 {
                     outcome.resizedMerges++;
                 }
@@ -4648,9 +4679,11 @@ public final class BmTemplateHelper
             }
             else if (moved.begin != merge.getBegin() || moved.end != merge.getEnd())
             {
+                boolean lengthChanged = spanLengthChanged(merge.getBegin(), merge.getEnd(),
+                    moved.begin, moved.end);
                 merge.setBegin(moved.begin);
                 merge.setEnd(moved.end);
-                if (outcome != null)
+                if (outcome != null && lengthChanged)
                 {
                     outcome.resizedMerges++;
                 }
@@ -4770,7 +4803,8 @@ public final class BmTemplateHelper
             else if (moved.begin != span.begin || moved.end != span.end)
             {
                 writeSpan(area, moved, axis);
-                if (outcome != null)
+                if (outcome != null && spanLengthChanged(span.begin, span.end, moved.begin,
+                    moved.end))
                 {
                     outcome.resizedNamedAreas.add(held.getKey());
                 }
@@ -5193,11 +5227,35 @@ public final class BmTemplateHelper
     }
 
     /**
+     * Whether a move changed how long a span runs, as opposed to where it runs.
+     * <p>
+     * A shift translates every element past the point by the same distance, so an answer that
+     * counted a translated element as a resized one would name everything below an insertion as
+     * resized. What the counters report is the change a reader can see: the span now covers more
+     * or fewer positions than it did.
+     * </p>
+     *
+     * @param beginBefore the span's first position before the move, 0-based inclusive
+     * @param endBefore the span's last position before the move, 0-based inclusive
+     * @param beginAfter the span's first position after the move
+     * @param endAfter the span's last position after the move
+     * @return whether the length the span covers changed
+     */
+    private static boolean spanLengthChanged(int beginBefore, int endBefore, int beginAfter,
+        int endAfter)
+    {
+        return endAfter - beginAfter != endBefore - beginBefore;
+    }
+
+    /**
      * Replaces the merges over the target range of a copy with copies of the source merges.
      * <p>
      * Both kinds of merge take part: the rectangular ones anchored to cells, and the whole-row or
      * whole-column ones. A merge fully inside the replaced target comes off; one fully inside the
-     * source repeats over the target; one the target range cuts in half stays as it is.
+     * source repeats over the target; one the target range cuts in half stays as it is. The
+     * unmerge exceptions take the same ride over the same ranges, without landing in the
+     * outcome's counters: an unmerge is the exception its merge carves out, and a copy that moved
+     * the merge leaves the exception claiming cells the merge no longer covers.
      * </p>
      *
      * @param doc the spreadsheet holding the merges
@@ -5210,9 +5268,45 @@ public final class BmTemplateHelper
     private static void replaceMergesOverRange(SpreadsheetDocument doc, int sourceFirst,
         int targetFirst, int count, ShiftOutcome outcome, Axis axis)
     {
+        replaceRectMergeListOverRange(doc.getMerges(), sourceFirst, targetFirst, count, outcome,
+            axis);
+        replaceRectMergeListOverRange(doc.getUnmerges(), sourceFirst, targetFirst, count, null,
+            axis);
+        if (axis == Axis.ROW)
+        {
+            replaceRowMergesOverRange(doc.getRowMerges(), sourceFirst, targetFirst, count,
+                outcome);
+        }
+        else
+        {
+            replaceColumnMergesOverRange(doc.getColumnMerges(), sourceFirst, targetFirst, count,
+                outcome);
+        }
+    }
+
+    /**
+     * Replaces the rectangular merge entries of one list over the target range of a copy with
+     * copies of the source entries.
+     * <p>
+     * An entry fully inside the replaced target comes off; one fully inside the source repeats
+     * over the target; one the target range cuts in half stays as it is. Removals are counted
+     * only when the caller passes an outcome: the unmerge exceptions ride the same ranges but the
+     * answer's counters speak about merges.
+     * </p>
+     *
+     * @param merges the rectangular merge entries to replace
+     * @param sourceFirst the source range's first 0-based position on the axis
+     * @param targetFirst the target range's first 0-based position on the axis
+     * @param count how many positions the ranges hold
+     * @param outcome where the removals are counted, or <code>null</code> to replace silently
+     * @param axis the axis the copy runs over
+     */
+    private static void replaceRectMergeListOverRange(EList<Merge> merges, int sourceFirst,
+        int targetFirst, int count, ShiftOutcome outcome, Axis axis)
+    {
         int sourceLast = sourceFirst + count - 1;
         int targetLast = targetFirst + count - 1;
-        java.util.Iterator<Merge> each = doc.getMerges().iterator();
+        java.util.Iterator<Merge> each = merges.iterator();
         while (each.hasNext())
         {
             Merge merge = each.next();
@@ -5226,10 +5320,13 @@ public final class BmTemplateHelper
             if (begin >= targetFirst && end <= targetLast)
             {
                 each.remove();
-                outcome.removedMerges++;
+                if (outcome != null)
+                {
+                    outcome.removedMerges++;
+                }
             }
         }
-        for (Merge merge : new ArrayList<>(doc.getMerges()))
+        for (Merge merge : new ArrayList<>(merges))
         {
             if (merge == null || merge.getPosition() == null)
             {
@@ -5242,18 +5339,8 @@ public final class BmTemplateHelper
             {
                 Merge copy = (Merge)EcoreUtil.copy(merge);
                 shiftRect(copy.getPosition(), targetFirst - sourceFirst, axis);
-                doc.getMerges().add(copy);
+                merges.add(copy);
             }
-        }
-        if (axis == Axis.ROW)
-        {
-            replaceRowMergesOverRange(doc.getRowMerges(), sourceFirst, targetFirst, count,
-                outcome);
-        }
-        else
-        {
-            replaceColumnMergesOverRange(doc.getColumnMerges(), sourceFirst, targetFirst, count,
-                outcome);
         }
     }
 

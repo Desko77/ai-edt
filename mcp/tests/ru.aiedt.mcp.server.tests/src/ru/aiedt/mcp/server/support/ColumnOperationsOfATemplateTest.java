@@ -23,6 +23,7 @@ import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Column;
 import com._1c.g5.v8.dt.moxel.Columns;
 import com._1c.g5.v8.dt.moxel.DrawingsDataSource;
+import com._1c.g5.v8.dt.moxel.Merge;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.Rect;
 import com._1c.g5.v8.dt.moxel.RectArea;
@@ -148,6 +149,19 @@ public class ColumnOperationsOfATemplateTest
         cell.setY(row);
         point.setCell(cell);
         return point;
+    }
+
+    /** An unmerge exception over 1-based rows and columns, built the way a merge is. */
+    private static Merge unmergeOver(int fromRow, int fromCol, int toRow, int toCol)
+    {
+        Merge unmerge = MoxelFactory.eINSTANCE.createMerge();
+        Rect rect = MoxelFactory.eINSTANCE.createRect();
+        rect.setX(fromCol - 1);
+        rect.setY(fromRow - 1);
+        rect.setWidth(toCol - fromCol);
+        rect.setHeight(toRow - fromRow);
+        unmerge.setPosition(rect);
+        return unmerge;
     }
 
     /** Inserting in the middle moves the columns to the right and leaves the ones left alone. */
@@ -703,6 +717,139 @@ public class ColumnOperationsOfATemplateTest
         assertTrue("a source whose area the deletion took is gone", //$NON-NLS-1$
             doc.getDrawingDataSources().isEmpty());
         assertEquals("and is counted", 1, removed.removedDataSources); //$NON-NLS-1$
+    }
+
+    /** A data area past the last cell holds the end of the document the area defines. */
+    @Test
+    public void aDataAreaPastTheCellsHoldsTheEndOfTheDocument()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B"); //$NON-NLS-1$ //$NON-NLS-2$
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(2);
+        position.setY(0);
+        position.setWidth(3);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(1);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome inserted = BmTemplateHelper.insertColumns(doc, 4, 1,
+            "none"); //$NON-NLS-1$
+
+        assertNull("a column inside the data area is inside the document", inserted.error); //$NON-NLS-1$
+        assertEquals("the document runs to the column the area now does", 6, //$NON-NLS-1$
+            inserted.lastColumn);
+        assertEquals("the area grew over the inserted column without moving", 4, //$NON-NLS-1$
+            position.getWidth());
+
+        BmTemplateHelper.ColumnOutcome deleted = BmTemplateHelper.deleteColumns(doc, 4, 1);
+
+        assertNull(deleted.error);
+        assertEquals("and back to the column it ends at after the deletion", 5, //$NON-NLS-1$
+            deleted.lastColumn);
+        assertEquals(3, position.getWidth());
+    }
+
+    /** A merge and an area wholly right of an insertion move; one the point lands inside resizes. */
+    @Test
+    public void aMergeAndAnAreaWhollyRightOfThePointMoveUnresized()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.mergeCells(doc, 1, 4, 1, 5);
+        com._1c.g5.v8.dt.moxel.ColumnMerge wholeColumns =
+            MoxelFactory.eINSTANCE.createColumnMerge();
+        wholeColumns.setBegin(6);
+        wholeColumns.setEnd(7);
+        doc.getColumnMerges().add(wholeColumns);
+        BmTemplateHelper.addNamedArea(doc, "Право", "columns", 0, 8, 0, 9); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.ColumnOutcome moved = BmTemplateHelper.insertColumns(doc, 2, 1, "none"); //$NON-NLS-1$
+
+        assertNull(moved.error);
+        assertEquals("a merge wholly right of the point only moved", 0, moved.resizedMerges); //$NON-NLS-1$
+        assertFalse("and so did the area, without being named", //$NON-NLS-1$
+            moved.resizedNamedAreas.contains("Право")); //$NON-NLS-1$
+        assertEquals("the merge sits where the shift put it", Integer.valueOf(5), //$NON-NLS-1$
+            onlyMerge(doc).get("fromCol")); //$NON-NLS-1$
+        assertEquals("the whole-column merge moved uncounted", 7, doc.getColumnMerges().get(0) //$NON-NLS-1$
+            .getBegin());
+        assertEquals("the area moved to where its columns went", Integer.valueOf(9), //$NON-NLS-1$
+            areaNamed(doc, "Право").get("fromCol")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.ColumnOutcome grown = BmTemplateHelper.insertColumns(doc, 6, 1, "none"); //$NON-NLS-1$
+
+        assertNull(grown.error);
+        assertEquals("the point now lands inside the merge, which grows", 1, grown.resizedMerges); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome areaGrown = BmTemplateHelper.insertColumns(doc, 11, 1,
+            "none"); //$NON-NLS-1$
+
+        assertNull(areaGrown.error);
+        assertEquals(0, areaGrown.resizedMerges);
+        assertTrue("the point now lands inside the area, which is named", //$NON-NLS-1$
+            areaGrown.resizedNamedAreas.contains("Право")); //$NON-NLS-1$
+    }
+
+    /** Copying past a set's declared size grows the set; a set declaring none keeps declaring none. */
+    @Test
+    public void copyingPastTheDeclaredSizeGrowsTheSet()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A"); //$NON-NLS-1$
+        Columns declared = setWithColumn(doc, 1, 5);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.copyColumns(doc, 1, 4, 1);
+
+        assertNull(outcome.error);
+        assertEquals("the declared size grew to the column past the last one written", 4, //$NON-NLS-1$
+            declared.getSize());
+        assertEquals("and the copied entry sits inside the declared extent", 5, //$NON-NLS-1$
+            declared.getColumns().get(Integer.valueOf(3)).getFormatIndex());
+
+        Columns undeclared = MoxelFactory.eINSTANCE.createColumns();
+        undeclared.setSize(0);
+        Column column = MoxelFactory.eINSTANCE.createColumn();
+        column.setFormatIndex(6);
+        undeclared.getColumns().put(Integer.valueOf(0), column);
+        doc.getAllColumns().add(undeclared);
+
+        BmTemplateHelper.ColumnOutcome untouched = BmTemplateHelper.copyColumns(doc, 1, 6, 1);
+
+        assertNull(untouched.error);
+        assertEquals("a set that declares no size keeps declaring none", 0, //$NON-NLS-1$
+            undeclared.getSize());
+        assertEquals("while the entry itself still lands where the copy put it", 6, //$NON-NLS-1$
+            undeclared.getColumns().get(Integer.valueOf(5)).getFormatIndex());
+    }
+
+    /** An unmerge exception repeats over the target columns the way its merge does, uncounted. */
+    @Test
+    public void unmergeExceptionsRepeatOverTheTargetColumns()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E", "F"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        doc.getUnmerges().add(unmergeOver(1, 2, 2, 3));
+        doc.getUnmerges().add(unmergeOver(1, 5, 1, 5));
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.copyColumns(doc, 2, 5, 2);
+
+        assertNull(outcome.error);
+        assertEquals("the counters stay about merges", 0, outcome.removedMerges); //$NON-NLS-1$
+        assertEquals("the target exception came off and the source one repeated over it", 2, //$NON-NLS-1$
+            doc.getUnmerges().size());
+        boolean kept = false;
+        boolean repeated = false;
+        for (Merge unmerge : doc.getUnmerges())
+        {
+            kept |= unmerge.getPosition().getX() == 1
+                && unmerge.getPosition().getWidth() == 1;
+            repeated |= unmerge.getPosition().getX() == 4
+                && unmerge.getPosition().getWidth() == 1;
+        }
+        assertTrue("the source exception stays where it was", kept); //$NON-NLS-1$
+        assertTrue("and a copy of it, not the target's own exception, sits on the target columns", //$NON-NLS-1$
+            repeated);
     }
 
     /** Copying replaces the target columns with what the source columns are, whole. */

@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -148,6 +149,32 @@ public class MxlRowContractTest
         assertTrue(((java.util.List<?>)tags.get("removedDrawings")).contains(Integer.valueOf(7))); //$NON-NLS-1$
         assertTrue(((java.util.List<?>)tags.get("removedNamedAreas")).contains("Низ")); //$NON-NLS-1$
         assertTrue(((java.util.List<?>)tags.get("resizedNamedAreas")).contains("Шапка")); //$NON-NLS-1$
+    }
+
+    /**
+     * A refusal leaves the write by exception, so the transaction rolls back with it.
+     * <p>
+     * The six row and column handlers call this from inside the write callback: returning the
+     * refusal text instead would let the transaction commit a model the call opened on the way in.
+     * What a workspace run then keeps untouched is read off the code; this is the part a plain
+     * test reaches.
+     * </p>
+     */
+    @Test
+    public void aRefusalAbortsTheWrite()
+    {
+        try
+        {
+            MxlWorkshopTool.abortOnRefusal("row 9 is past the end"); //$NON-NLS-1$
+            fail("a refusal has to leave the write by exception, not by return"); //$NON-NLS-1$
+        }
+        catch (IllegalArgumentException refusal)
+        {
+            assertEquals("the refusal text travels with the exception", "row 9 is past the end", //$NON-NLS-1$ //$NON-NLS-2$
+                refusal.getMessage());
+        }
+        // An applied change passes through: the write runs on and commits.
+        MxlWorkshopTool.abortOnRefusal(null);
     }
 
     private static Map<String, String> rowCall(String operation)

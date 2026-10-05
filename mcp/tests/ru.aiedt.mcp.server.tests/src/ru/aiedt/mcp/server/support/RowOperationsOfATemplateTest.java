@@ -24,6 +24,7 @@ import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Column;
 import com._1c.g5.v8.dt.moxel.Columns;
 import com._1c.g5.v8.dt.moxel.DrawingsDataSource;
+import com._1c.g5.v8.dt.moxel.Merge;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
 import com._1c.g5.v8.dt.moxel.Rect;
 import com._1c.g5.v8.dt.moxel.RectArea;
@@ -134,6 +135,19 @@ public class RowOperationsOfATemplateTest
         cell.setY(row);
         point.setCell(cell);
         return point;
+    }
+
+    /** An unmerge exception over 1-based rows and columns, built the way a merge is. */
+    private static Merge unmergeOver(int fromRow, int fromCol, int toRow, int toCol)
+    {
+        Merge unmerge = MoxelFactory.eINSTANCE.createMerge();
+        Rect rect = MoxelFactory.eINSTANCE.createRect();
+        rect.setX(fromCol - 1);
+        rect.setY(fromRow - 1);
+        rect.setWidth(toCol - fromCol);
+        rect.setHeight(toRow - fromRow);
+        unmerge.setPosition(rect);
+        return unmerge;
     }
 
     /** Inserting in the middle moves the rows below and leaves the rows above alone. */
@@ -656,6 +670,102 @@ public class RowOperationsOfATemplateTest
         assertTrue("a source whose area the deletion took is gone", //$NON-NLS-1$
             doc.getDrawingDataSources().isEmpty());
         assertEquals("and is counted", 1, removed.removedDataSources); //$NON-NLS-1$
+    }
+
+    /** A data area past the last cell holds the end of the document the area defines. */
+    @Test
+    public void aDataAreaPastTheCellsHoldsTheEndOfTheDocument()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B"); //$NON-NLS-1$ //$NON-NLS-2$
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(0);
+        position.setY(2);
+        position.setWidth(1);
+        position.setHeight(3);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(1);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.RowOutcome inserted = BmTemplateHelper.insertRows(doc, 4, 1, "none"); //$NON-NLS-1$
+
+        assertNull("a row inside the data area is inside the document", inserted.error); //$NON-NLS-1$
+        assertEquals("the document runs to the row the area now does", 6, inserted.lastRow); //$NON-NLS-1$
+        assertEquals("the area grew over the inserted row without moving", 4, position.getHeight()); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome deleted = BmTemplateHelper.deleteRows(doc, 4, 1);
+
+        assertNull(deleted.error);
+        assertEquals("and back to the row it ends at after the deletion", 5, deleted.lastRow); //$NON-NLS-1$
+        assertEquals(3, position.getHeight());
+    }
+
+    /** A merge and an area wholly below an insertion move; one the point lands inside resizes. */
+    @Test
+    public void aMergeAndAnAreaWhollyBelowThePointMoveUnresized()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.mergeCells(doc, 4, 1, 5, 1);
+        RowMerge wholeRows = MoxelFactory.eINSTANCE.createRowMerge();
+        wholeRows.setBegin(6);
+        wholeRows.setEnd(7);
+        doc.getRowMerges().add(wholeRows);
+        BmTemplateHelper.addNamedArea(doc, "Низ", "rows", 8, 0, 9, 0); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.RowOutcome moved = BmTemplateHelper.insertRows(doc, 2, 1, "none"); //$NON-NLS-1$
+
+        assertNull(moved.error);
+        assertEquals("a merge wholly below the point only moved", 0, moved.resizedMerges); //$NON-NLS-1$
+        assertFalse("and so did the area, without being named", //$NON-NLS-1$
+            moved.resizedNamedAreas.contains("Низ")); //$NON-NLS-1$
+        assertEquals("the merge sits where the shift put it", Integer.valueOf(5), //$NON-NLS-1$
+            onlyMerge(doc).get("fromRow")); //$NON-NLS-1$
+        assertEquals("the whole-row merge moved uncounted", 7, doc.getRowMerges().get(0) //$NON-NLS-1$
+            .getBegin());
+        assertEquals("the area moved to where its rows went", Integer.valueOf(9), //$NON-NLS-1$
+            areaNamed(doc, "Низ").get("fromRow")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.RowOutcome grown = BmTemplateHelper.insertRows(doc, 6, 1, "none"); //$NON-NLS-1$
+
+        assertNull(grown.error);
+        assertEquals("the point now lands inside the merge, which grows", 1, grown.resizedMerges); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome areaGrown = BmTemplateHelper.insertRows(doc, 11, 1, "none"); //$NON-NLS-1$
+
+        assertNull(areaGrown.error);
+        assertEquals(0, areaGrown.resizedMerges);
+        assertTrue("the point now lands inside the area, which is named", //$NON-NLS-1$
+            areaGrown.resizedNamedAreas.contains("Низ")); //$NON-NLS-1$
+    }
+
+    /** An unmerge exception repeats over the target rows the way its merge does, uncounted. */
+    @Test
+    public void unmergeExceptionsRepeatOverTheTargetRows()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B", "C", "D", "E", "F"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        doc.getUnmerges().add(unmergeOver(2, 1, 3, 1));
+        doc.getUnmerges().add(unmergeOver(5, 1, 5, 1));
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.copyRows(doc, 2, 5, 2);
+
+        assertNull(outcome.error);
+        assertEquals("the counters stay about merges", 0, outcome.removedMerges); //$NON-NLS-1$
+        assertEquals("the target exception came off and the source one repeated over it", 2, //$NON-NLS-1$
+            doc.getUnmerges().size());
+        boolean kept = false;
+        boolean repeated = false;
+        for (Merge unmerge : doc.getUnmerges())
+        {
+            kept |= unmerge.getPosition().getY() == 1
+                && unmerge.getPosition().getHeight() == 1;
+            repeated |= unmerge.getPosition().getY() == 4
+                && unmerge.getPosition().getHeight() == 1;
+        }
+        assertTrue("the source exception stays where it was", kept); //$NON-NLS-1$
+        assertTrue("and a copy of it, not the target's own exception, sits on the target rows", //$NON-NLS-1$
+            repeated);
     }
 
     /** Copying replaces the target rows with what the source rows are, whole. */
