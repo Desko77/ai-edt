@@ -313,8 +313,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised by 534 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
         // add_breakpoint (measured 29.09: 4720).
         PROSE.put("launch_debugger", Integer.valueOf(4720));
-        // Each argument is one sentence naming the unit the call takes. Measured 4039 bytes.
-        PROSE.put("mxl_workshop", Integer.valueOf(4039));
+        // Each argument is one sentence naming the unit the call takes, and the row and column
+        // operations share the sentences of count, formatFrom and the coordinate pairs. Measured
+        // 05.10: 4820.
+        PROSE.put("mxl_workshop", Integer.valueOf(4820));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
         PROSE.put("project_admin", Integer.valueOf(1767));
@@ -631,6 +633,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And for the three row operations of mxl_workshop: the sentences of count, formatFrom, row,
      * fromRow and toRow. Measured 05.10: 103953.
      * </p>
+     * <p>
+     * And for the three column operations of the same facade: the sentences col, fromCol and toCol
+     * gained, and count and formatFrom gained the column half of theirs. Measured 05.10: 104346.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 103953;
+    private static final int DOCUMENT_PROSE = 104346;
 }
