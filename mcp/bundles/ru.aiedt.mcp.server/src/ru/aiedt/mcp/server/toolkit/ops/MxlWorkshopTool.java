@@ -1116,6 +1116,7 @@ public class MxlWorkshopTool implements IMcpTool
         tags.put("resizedNamedAreas", outcome.resizedNamedAreas); //$NON-NLS-1$
         tags.put("removedNamedAreas", outcome.removedNamedAreas); //$NON-NLS-1$
         tags.put("removedDrawings", outcome.removedDrawings); //$NON-NLS-1$
+        tags.put("removedDataSources", Integer.valueOf(outcome.removedDataSources)); //$NON-NLS-1$
         tags.put("lastRow", Integer.valueOf(outcome.lastRow)); //$NON-NLS-1$
     }
 
@@ -1136,6 +1137,7 @@ public class MxlWorkshopTool implements IMcpTool
         tags.put("resizedNamedAreas", outcome.resizedNamedAreas); //$NON-NLS-1$
         tags.put("removedNamedAreas", outcome.removedNamedAreas); //$NON-NLS-1$
         tags.put("removedDrawings", outcome.removedDrawings); //$NON-NLS-1$
+        tags.put("removedDataSources", Integer.valueOf(outcome.removedDataSources)); //$NON-NLS-1$
         tags.put("lastColumn", Integer.valueOf(outcome.lastColumn)); //$NON-NLS-1$
     }
 

@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -16,12 +17,19 @@ import java.util.Map;
 
 import org.junit.Test;
 
+import com._1c.g5.v8.dt.mcore.McoreFactory;
+import com._1c.g5.v8.dt.mcore.Point;
 import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Column;
 import com._1c.g5.v8.dt.moxel.Columns;
+import com._1c.g5.v8.dt.moxel.DrawingsDataSource;
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
+import com._1c.g5.v8.dt.moxel.Rect;
+import com._1c.g5.v8.dt.moxel.RectArea;
 import com._1c.g5.v8.dt.moxel.Row;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
+import com._1c.g5.v8.dt.moxel.SpreadsheetPoint;
+import com._1c.g5.v8.dt.moxel.SpreadsheetRect;
 import com._1c.g5.v8.dt.moxel.ViewSettings;
 
 /**
@@ -107,6 +115,39 @@ public class ColumnOperationsOfATemplateTest
     {
         assertNotNull("the call has to say why it did nothing", outcome.error); //$NON-NLS-1$
         assertEquals("a refused call is not allowed to touch the document", before, readOf(doc)); //$NON-NLS-1$
+    }
+
+    /** The named area's reading, or a failure naming the area that is not there. */
+    private static Map<String, Object> areaNamed(SpreadsheetDocument doc, String name)
+    {
+        for (Map<String, Object> area : BmTemplateHelper.listNamedAreas(doc))
+        {
+            if (name.equals(area.get("name"))) //$NON-NLS-1$
+            {
+                return area;
+            }
+        }
+        throw new AssertionError("no area named " + name); //$NON-NLS-1$
+    }
+
+    /** A note anchor whose begin and end both sit on one 0-based row and column. */
+    private static SpreadsheetRect anchorAt(int row, int col)
+    {
+        SpreadsheetRect rect = MoxelFactory.eINSTANCE.createSpreadsheetRect();
+        rect.setBegin(pointAt(row, col));
+        rect.setEnd(pointAt(row, col));
+        return rect;
+    }
+
+    /** A drawing point pinned to one 0-based row and column. */
+    private static SpreadsheetPoint pointAt(int row, int col)
+    {
+        SpreadsheetPoint point = MoxelFactory.eINSTANCE.createSpreadsheetPoint();
+        Point cell = McoreFactory.eINSTANCE.createPoint();
+        cell.setX(col);
+        cell.setY(row);
+        point.setCell(cell);
+        return point;
     }
 
     /** Inserting in the middle moves the columns to the right and leaves the ones left alone. */
@@ -316,6 +357,67 @@ public class ColumnOperationsOfATemplateTest
         assertEquals(Integer.valueOf(3), area.get("toRow")); //$NON-NLS-1$
     }
 
+    /** The column past a rectangular area is not the area's: either operation changes nothing. */
+    @Test
+    public void aColumnPastARectangleLeavesIt()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E", "F"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+        BmTemplateHelper.addNamedArea(doc, "Блок", "rect", 1, 2, 3, 4); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.ColumnOutcome afterInsert = BmTemplateHelper.insertColumns(doc, 5, 1,
+            "none"); //$NON-NLS-1$
+
+        assertNull(afterInsert.error);
+        assertFalse("the column past the area does not stretch it", //$NON-NLS-1$
+            afterInsert.resizedNamedAreas.contains("Блок")); //$NON-NLS-1$
+        Map<String, Object> area = areaNamed(doc, "Блок"); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(2), area.get("fromCol")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(4), area.get("toCol")); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome afterDelete = BmTemplateHelper.deleteColumns(doc, 5, 1);
+
+        assertNull(afterDelete.error);
+        area = areaNamed(doc, "Блок"); //$NON-NLS-1$
+        assertEquals("the column past the area does not shrink it either", Integer.valueOf(2), //$NON-NLS-1$
+            area.get("fromCol")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(4), area.get("toCol")); //$NON-NLS-1$
+    }
+
+    /** Inserting over the rectangle's last column stretches it by the count. */
+    @Test
+    public void insertingOverTheLastColumnOfARectangleStretchesIt()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addNamedArea(doc, "Блок", "rect", 1, 1, 3, 2); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.insertColumns(doc, 2, 2, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertTrue(outcome.resizedNamedAreas.contains("Блок")); //$NON-NLS-1$
+        Map<String, Object> area = areaNamed(doc, "Блок"); //$NON-NLS-1$
+        assertEquals("the first column of the area stays", Integer.valueOf(1), //$NON-NLS-1$
+            area.get("fromCol")); //$NON-NLS-1$
+        assertEquals("and the last one stretches by the count", Integer.valueOf(4), //$NON-NLS-1$
+            area.get("toCol")); //$NON-NLS-1$
+        assertEquals("the document ends where the area now does", 4, outcome.lastColumn); //$NON-NLS-1$
+    }
+
+    /** Deleting the rectangle's last column takes exactly that column off the area. */
+    @Test
+    public void deletingTheLastColumnOfARectangleShrinksIt()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addNamedArea(doc, "Блок", "rect", 1, 1, 3, 3); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 3, 1);
+
+        assertNull(outcome.error);
+        Map<String, Object> area = areaNamed(doc, "Блок"); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(1), area.get("fromCol")); //$NON-NLS-1$
+        assertEquals("the area lost the column it lost", Integer.valueOf(2), area.get("toCol")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the document ends where the area now does", 2, outcome.lastColumn); //$NON-NLS-1$
+    }
+
     /** A row with its own column set shifts with the document's set, each set once. */
     @Test
     public void aRowWithItsOwnColumnSetShiftsBothSetsOnce()
@@ -506,6 +608,28 @@ public class ColumnOperationsOfATemplateTest
         assertEquals(4, doc.getViewSettings().getCurrentColumn());
     }
 
+    /** The frozen column count grows only from a change the frozen prefix itself reaches. */
+    @Test
+    public void theFrozenColumnPrefixGrowsOnlyFromInside()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        ViewSettings view = MoxelFactory.eINSTANCE.createViewSettings();
+        view.setFixedColumn(2);
+        doc.setViewSettings(view);
+
+        assertNull(BmTemplateHelper.insertColumns(doc, 3, 1, "none").error); //$NON-NLS-1$
+        assertEquals("an insertion right below the prefix leaves the count", 2, doc //$NON-NLS-1$
+            .getViewSettings().getFixedColumn());
+
+        assertNull(BmTemplateHelper.insertColumns(doc, 2, 2, "none").error); //$NON-NLS-1$
+        assertEquals("one inside the prefix grows it by the count", 4, doc.getViewSettings() //$NON-NLS-1$
+            .getFixedColumn());
+
+        assertNull(BmTemplateHelper.deleteColumns(doc, 2, 1).error);
+        assertEquals("and a deletion inside it takes one off", 3, doc.getViewSettings() //$NON-NLS-1$
+            .getFixedColumn());
+    }
+
     /** A note belongs to its cell and follows the column the cell lands on. */
     @Test
     public void aCellNoteFollowsItsColumn()
@@ -520,6 +644,65 @@ public class ColumnOperationsOfATemplateTest
         assertNull(outcome.error);
         assertEquals("the note points at the column its cell moved to", 2, //$NON-NLS-1$
             noted.getNoteDrawing().getCellColumnIndex());
+    }
+
+    /** The note's own anchors ride with the column, not just the column index they name. */
+    @Test
+    public void aNotesAnchorsMoveWithItsColumn()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Cell noted = rowAt(doc, 1).getCells().get(Integer.valueOf(1));
+        noted.setNoteDrawing(MoxelFactory.eINSTANCE.createCommentDrawing());
+        noted.getNoteDrawing().setCellColumnIndex(1);
+        noted.getNoteDrawing().setPosition(anchorAt(0, 1));
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.insertColumns(doc, 1, 1, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertEquals(2, noted.getNoteDrawing().getCellColumnIndex());
+        assertEquals("the begin anchor moved right with the column", 2, noted.getNoteDrawing() //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getX());
+        assertEquals("and so did the end anchor", 2, noted.getNoteDrawing().getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getX());
+
+        BmTemplateHelper.ColumnOutcome deleted = BmTemplateHelper.deleteColumns(doc, 1, 1);
+
+        assertNull(deleted.error);
+        assertEquals(1, noted.getNoteDrawing().getCellColumnIndex());
+        assertEquals("the anchors move back left on a deletion", 1, noted.getNoteDrawing() //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getX());
+    }
+
+    /** A drawing reads its data from an area, and that area rides with the columns. */
+    @Test
+    public void aDrawingDataSourceRidesWithTheColumns()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(1);
+        position.setY(0);
+        position.setWidth(2);
+        position.setHeight(2);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(1);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.insertColumns(doc, 1, 1, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertEquals("the area the drawing reads moved right with the columns", 2, //$NON-NLS-1$
+            position.getX());
+        assertEquals(0, outcome.removedDataSources);
+
+        BmTemplateHelper.ColumnOutcome removed = BmTemplateHelper.deleteColumns(doc, 3, 2);
+
+        assertNull(removed.error);
+        assertTrue("a source whose area the deletion took is gone", //$NON-NLS-1$
+            doc.getDrawingDataSources().isEmpty());
+        assertEquals("and is counted", 1, removed.removedDataSources); //$NON-NLS-1$
     }
 
     /** Copying replaces the target columns with what the source columns are, whole. */
@@ -577,6 +760,39 @@ public class ColumnOperationsOfATemplateTest
             }
         }
         assertTrue("the copy of the source merge sits on the target columns", repeated); //$NON-NLS-1$
+    }
+
+    /** A whole-column merge repeats over the target like any other merge a copy replaces. */
+    @Test
+    public void wholeColumnMergesRepeatOverTheTarget()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B"); //$NON-NLS-1$ //$NON-NLS-2$
+        com._1c.g5.v8.dt.moxel.ColumnMerge source =
+            MoxelFactory.eINSTANCE.createColumnMerge();
+        source.setBegin(0);
+        source.setEnd(1);
+        doc.getColumnMerges().add(source);
+        com._1c.g5.v8.dt.moxel.ColumnMerge replaced =
+            MoxelFactory.eINSTANCE.createColumnMerge();
+        replaced.setBegin(3);
+        replaced.setEnd(4);
+        doc.getColumnMerges().add(replaced);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.copyColumns(doc, 1, 4, 2);
+
+        assertNull(outcome.error);
+        assertEquals("the whole-column merge inside the replaced target came off", 1, //$NON-NLS-1$
+            outcome.removedMerges);
+        assertEquals("and the source one repeated over it", 2, doc.getColumnMerges().size()); //$NON-NLS-1$
+        boolean sourceKept = false;
+        boolean repeated = false;
+        for (com._1c.g5.v8.dt.moxel.ColumnMerge merge : doc.getColumnMerges())
+        {
+            sourceKept |= merge.getBegin() == 0 && merge.getEnd() == 1;
+            repeated |= merge.getBegin() == 3 && merge.getEnd() == 4;
+        }
+        assertTrue("the source merge stays where it was", sourceKept); //$NON-NLS-1$
+        assertTrue("and its copy sits on the target columns", repeated); //$NON-NLS-1$
     }
 
     /** The target may run past the current end; the document grows to hold it. */

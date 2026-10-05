@@ -41,6 +41,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.metadata.mdclass.TemplateType;
 import com._1c.g5.v8.dt.moxel.Cell;
 import com._1c.g5.v8.dt.moxel.Drawing;
+import com._1c.g5.v8.dt.moxel.DrawingsDataSource;
 import com._1c.g5.v8.dt.moxel.Format;
 import com._1c.g5.v8.dt.moxel.Merge;
 import com._1c.g5.v8.dt.moxel.Column;
@@ -3176,6 +3177,9 @@ public final class BmTemplateHelper
         /** Drawings the deletion took entirely, by id. */
         public final List<Integer> removedDrawings = new ArrayList<>();
 
+        /** Drawing data sources the deletion took entirely, by count. */
+        public int removedDataSources;
+
         /** Why nothing happened, when nothing did. */
         public String error;
     }
@@ -3282,12 +3286,13 @@ public final class BmTemplateHelper
      * Inserts rows before a row, shifting everything from that row down.
      * <p>
      * Everything that carries a row number moves with the shift: the rows with their cells and
-     * notes, the merges and whole-row merges, the named areas, the row groups, the drawings, the
-     * print and repeat areas, the declared height and the saved view rows. An element the
-     * insertion point falls inside - a merge, an area, a group, a drawing - grows by the count
-     * instead of moving. The new rows take the row format and the cell formats from the row
-     * {@code formatFrom} names; text, parameters and details are never copied, and a source that
-     * has neither a format nor a formatted cell leaves the new rows empty rather than materialized.
+     * notes, the merges and whole-row merges, the named areas, the row groups, the drawings and
+     * their data source areas, the print and repeat areas, the declared height and the saved view
+     * rows. An element the insertion point falls inside - a merge, an area, a group, a drawing -
+     * grows by the count instead of moving. The new rows take the row format, the cell formats and
+     * the column set of their own from the row {@code formatFrom} names; text, parameters and
+     * details are never copied, and a source that has none of the three leaves the new rows empty
+     * rather than materialized.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3335,6 +3340,7 @@ public final class BmTemplateHelper
             formatSource = rows.get(Integer.valueOf(at - 1));
         }
         int rowFormat = formatSource == null ? 0 : formatSource.getFormatIndex();
+        Columns formatColumns = formatSource == null ? null : formatSource.getColumns();
         List<int[]> cellFormats = new ArrayList<>();
         if (formatSource != null)
         {
@@ -3349,12 +3355,15 @@ public final class BmTemplateHelper
             }
         }
         outcome.shiftedRows = shiftRowsDown(doc, at, count);
-        if (rowFormat != 0 || !cellFormats.isEmpty())
+        if (rowFormat != 0 || !cellFormats.isEmpty() || formatColumns != null)
         {
             for (int i = 0; i < count; i++)
             {
                 Row fresh = MoxelFactory.eINSTANCE.createRow();
                 fresh.setFormatIndex(rowFormat);
+                // The set is shared, not copied: it is the same columns the source row reads its
+                // column formats from, and one set serves every row that reaches for it.
+                fresh.setColumns(formatColumns);
                 for (int[] cell : cellFormats)
                 {
                     Cell created = MoxelFactory.eINSTANCE.createCell();
@@ -3370,6 +3379,7 @@ public final class BmTemplateHelper
         moveRowGroups(doc.getRowGroups(), true, at, count);
         moveNamedItems(doc, true, at, count, outcome, Axis.ROW);
         moveDrawings(doc, true, at, count, outcome, Axis.ROW);
+        moveDrawingDataSources(doc, true, at, count, outcome, Axis.ROW);
         moveDocumentAreas(doc, true, at, count, Axis.ROW);
         moveViewPointers(doc, true, at, count, Axis.ROW);
         moveHeight(doc, true, at, count);
@@ -3382,7 +3392,8 @@ public final class BmTemplateHelper
      * <p>
      * The rows go with their cells and their notes. A merge, a named area, a row group or a drawing
      * that lies entirely inside the deleted range goes with them and is named in the outcome; one
-     * the range cuts in half shrinks by the rows it lost; one below moves up. The print and repeat
+     * the range cuts in half shrinks by the rows it lost; one below moves up. A drawing data source
+     * whose area the range takes entirely goes too, counted in the outcome. The print and repeat
      * areas, the declared height and the saved view rows move the same way.
      * </p>
      *
@@ -3420,6 +3431,7 @@ public final class BmTemplateHelper
         moveRowGroups(doc.getRowGroups(), false, first, count);
         moveNamedItems(doc, false, first, count, outcome, Axis.ROW);
         moveDrawings(doc, false, first, count, outcome, Axis.ROW);
+        moveDrawingDataSources(doc, false, first, count, outcome, Axis.ROW);
         moveDocumentAreas(doc, false, first, count, Axis.ROW);
         moveViewPointers(doc, false, first, count, Axis.ROW);
         moveHeight(doc, false, first, count);
@@ -3432,9 +3444,10 @@ public final class BmTemplateHelper
      * <p>
      * A copy carries the row format and the cells whole - text, parameter, detail and format, notes
      * included. Merges that lie entirely inside the source rows repeat over the target, and merges
-     * that lie entirely inside the replaced target rows come off first; a merge the target range
-     * cuts in half stays as it is. Named areas are neither copied nor moved. The target may run
-     * past the current end of the document, which then grows to hold it.
+     * that lie entirely inside the replaced target rows come off first; whole-row merges are
+     * included in both; a merge the target range cuts in half stays as it is. Named areas are
+     * neither copied nor moved. The target may run past the current end of the document, which then
+     * grows to hold it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3512,12 +3525,12 @@ public final class BmTemplateHelper
      * Everything that carries a column number moves with the shift: the cells of every row with
      * their notes, the entries of every column set - a set shared by several rows shifts once -
      * with the declared size the set counts to, the merges and whole-column merges, the named
-     * areas, the column groups, the drawings, the print and repeat areas and the saved view
-     * columns. An element the insertion point falls inside - a merge, an area, a group, a drawing -
-     * grows by the count instead of moving. The new columns take the column format and the cell
-     * formats from the column {@code formatFrom} names; text, parameters and details are never
-     * copied, and a source that has neither a formatted column nor a formatted cell leaves the new
-     * columns empty rather than materialized.
+     * areas, the column groups, the drawings and their data source areas, the print and repeat
+     * areas and the saved view columns. An element the insertion point falls inside - a merge, an
+     * area, a group, a drawing - grows by the count instead of moving. The new columns take the
+     * column format and the cell formats from the column {@code formatFrom} names; text, parameters
+     * and details are never copied, and a source that has neither a formatted column nor a
+     * formatted cell leaves the new columns empty rather than materialized.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3607,6 +3620,7 @@ public final class BmTemplateHelper
         moveColumnGroups(doc.getColumnGroups(), true, at, count);
         moveNamedItems(doc, true, at, count, outcome, Axis.COLUMN);
         moveDrawings(doc, true, at, count, outcome, Axis.COLUMN);
+        moveDrawingDataSources(doc, true, at, count, outcome, Axis.COLUMN);
         moveDocumentAreas(doc, true, at, count, Axis.COLUMN);
         moveViewPointers(doc, true, at, count, Axis.COLUMN);
         outcome.lastColumn = lastColumnOf(doc);
@@ -3619,8 +3633,9 @@ public final class BmTemplateHelper
      * The cells of the range go with their notes, and so do the entries the range holds in every
      * column set. A merge, a named area, a column group or a drawing that lies entirely inside the
      * deleted range goes with them and is named in the outcome; one the range cuts in half shrinks
-     * by the columns it lost; one to the right moves left. The print and repeat areas, the declared
-     * set sizes and the saved view columns move the same way.
+     * by the columns it lost; one to the right moves left. A drawing data source whose area the
+     * range takes entirely goes too, counted in the outcome. The print and repeat areas, the
+     * declared set sizes and the saved view columns move the same way.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3657,6 +3672,7 @@ public final class BmTemplateHelper
         moveColumnGroups(doc.getColumnGroups(), false, first, count);
         moveNamedItems(doc, false, first, count, outcome, Axis.COLUMN);
         moveDrawings(doc, false, first, count, outcome, Axis.COLUMN);
+        moveDrawingDataSources(doc, false, first, count, outcome, Axis.COLUMN);
         moveDocumentAreas(doc, false, first, count, Axis.COLUMN);
         moveViewPointers(doc, false, first, count, Axis.COLUMN);
         outcome.lastColumn = lastColumnOf(doc);
@@ -3669,9 +3685,10 @@ public final class BmTemplateHelper
      * A copy carries the column entry of every set whole - the width lives in the format it points
      * at - and the cells of every row whole: text, parameter, detail and format, notes included.
      * Merges that lie entirely inside the source columns repeat over the target, and merges that
-     * lie entirely inside the replaced target columns come off first; a merge the target range cuts
-     * in half stays as it is. Named areas are neither copied nor moved. The target may run past the
-     * current end of the document, which then grows to hold it.
+     * lie entirely inside the replaced target columns come off first; whole-column merges are
+     * included in both; a merge the target range cuts in half stays as it is. Named areas are
+     * neither copied nor moved. The target may run past the current end of the document, which then
+     * grows to hold it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -4001,19 +4018,51 @@ public final class BmTemplateHelper
         }
         if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
         {
+            int[] bounds = areaBoundsOf(((RectArea)area).getPosition(), axis);
+            if (bounds == null)
+            {
+                return null;
+            }
             Span span = new Span();
-            span.begin = boundsOf(((RectArea)area).getPosition(), axis)[0];
-            span.end = boundsOf(((RectArea)area).getPosition(), axis)[1];
+            span.begin = bounds[0];
+            span.end = bounds[1];
             return span;
         }
         return null;
     }
 
     /**
-     * The positions a rectangle spans on an axis, normalized: the model carries a signed extent,
-     * and a rectangle written with a negative one means the same positions either way.
+     * The positions a rectangular AREA spans on an axis, normalized.
+     * <p>
+     * An area's rectangle carries a COUNT of positions in its width and height - the platform
+     * copies a UI rectangle's width and height into it unchanged, and those count cells - while a
+     * merge's rectangle carries the cells after the first. Reading an area with the merge rule
+     * stretches its far end past the area by one, so the two readings live apart.
+     * </p>
      *
-     * @param position the rectangle
+     * @param position the area's rectangle
+     * @param axis the axis to measure on
+     * @return the near position and the far one, 0-based and inclusive; <code>null</code> when the
+     *         rectangle holds no positions on the axis
+     */
+    private static int[] areaBoundsOf(Rect position, Axis axis)
+    {
+        int near = axis == Axis.COLUMN ? position.getX() : position.getY();
+        int extent = axis == Axis.COLUMN ? position.getWidth() : position.getHeight();
+        int count = Math.abs(extent);
+        if (count < 1)
+        {
+            return null;
+        }
+        int begin = Math.min(near, near + extent);
+        return new int[] { begin, begin + count - 1 };
+    }
+
+    /**
+     * The positions a MERGE rectangle spans on an axis, normalized: the model carries a signed
+     * extent, and a rectangle written with a negative one means the same positions either way.
+     *
+     * @param position the merge's rectangle
      * @param axis the axis to measure on
      * @return the near position and the far one, 0-based and inclusive
      */
@@ -4025,9 +4074,9 @@ public final class BmTemplateHelper
     }
 
     /**
-     * Writes a rectangle's span on an axis back into it.
+     * Writes a MERGE rectangle's span on an axis back into it, as the cells after the first.
      *
-     * @param position the rectangle the span was read from
+     * @param position the merge's rectangle the span was read from
      * @param span the span to write, 0-based with both ends inclusive
      * @param axis the axis to write on
      */
@@ -4042,6 +4091,29 @@ public final class BmTemplateHelper
         {
             position.setY(span.begin);
             position.setHeight(span.end - span.begin);
+        }
+    }
+
+    /**
+     * Writes a rectangular AREA's span on an axis back into it, as the count of positions it holds
+     * - the counterpart of {@link #areaBoundsOf}, kept apart from the merge writing the same
+     * rectangle class carries.
+     *
+     * @param position the area's rectangle the span was read from
+     * @param span the span to write, 0-based with both ends inclusive
+     * @param axis the axis to write on
+     */
+    private static void writeAreaRect(Rect position, Span span, Axis axis)
+    {
+        if (axis == Axis.COLUMN)
+        {
+            position.setX(span.begin);
+            position.setWidth(span.end - span.begin + 1);
+        }
+        else
+        {
+            position.setY(span.begin);
+            position.setHeight(span.end - span.begin + 1);
         }
     }
 
@@ -4098,7 +4170,7 @@ public final class BmTemplateHelper
         }
         else if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
         {
-            writeRect(((RectArea)area).getPosition(), span, axis);
+            writeAreaRect(((RectArea)area).getPosition(), span, axis);
         }
     }
 
@@ -4136,7 +4208,7 @@ public final class BmTemplateHelper
     private static int shiftRowsDown(SpreadsheetDocument doc, int fromKey, int count)
     {
         return shiftEntriesRight(doc.getRows(), fromKey, count,
-            (row, newKey) -> repointNoteRows(row, newKey, 0));
+            (row, newKey) -> repointNoteRows(row, newKey, count));
     }
 
     /**
@@ -4149,8 +4221,9 @@ public final class BmTemplateHelper
      */
     private static int removeRowsAndShiftUp(SpreadsheetDocument doc, int firstKey, int lastKey)
     {
+        int removed = lastKey - firstKey + 1;
         return removeEntriesAndShiftLeft(doc.getRows(), firstKey, lastKey,
-            (row, newKey) -> repointNoteRows(row, newKey, 0));
+            (row, newKey) -> repointNoteRows(row, newKey, -removed));
     }
 
     /**
@@ -4295,7 +4368,7 @@ public final class BmTemplateHelper
                 continue;
             }
             shifted += shiftEntriesRight(row.getCells(), fromKey, count,
-                (cell, newKey) -> repointNoteColumns(cell, newKey, 0));
+                (cell, newKey) -> repointNoteColumns(cell, newKey, count));
         }
         return shifted;
     }
@@ -4311,6 +4384,7 @@ public final class BmTemplateHelper
      */
     private static int removeColumnsAndShiftLeft(SpreadsheetDocument doc, int firstKey, int lastKey)
     {
+        int removed = lastKey - firstKey + 1;
         int shifted = 0;
         for (Columns set : columnSetsOf(doc))
         {
@@ -4329,7 +4403,7 @@ public final class BmTemplateHelper
                 continue;
             }
             shifted += removeEntriesAndShiftLeft(row.getCells(), firstKey, lastKey,
-                (cell, newKey) -> repointNoteColumns(cell, newKey, 0));
+                (cell, newKey) -> repointNoteColumns(cell, newKey, -removed));
         }
         return shifted;
     }
@@ -4767,6 +4841,58 @@ public final class BmTemplateHelper
     }
 
     /**
+     * Moves the drawing data sources' areas over an insertion or a deletion on an axis.
+     * <p>
+     * A chart or a pivot reads its data from an area, and that area travels with the rows and
+     * columns the operation moves - a source left behind keeps the drawing reading the cells that
+     * moved away. A deletion that takes an area entirely takes the source with it: the model
+     * requires an area on every source, so none is left behind empty.
+     * </p>
+     *
+     * @param doc the spreadsheet holding the data sources
+     * @param inserting whether positions were inserted or deleted
+     * @param at the 0-based position the change starts at
+     * @param count how many positions were inserted or deleted
+     * @param outcome where the counter lands, or <code>null</code> to move silently
+     * @param axis the axis the shift runs over
+     */
+    private static void moveDrawingDataSources(SpreadsheetDocument doc, boolean inserting, int at,
+        int count, ShiftOutcome outcome, Axis axis)
+    {
+        List<DrawingsDataSource> gone = new ArrayList<>();
+        for (DrawingsDataSource source : doc.getDrawingDataSources())
+        {
+            if (source == null)
+            {
+                continue;
+            }
+            Area area = source.getArea();
+            Span span = spanOf(area, axis);
+            if (span == null)
+            {
+                continue;
+            }
+            Span moved = movedSpan(span.begin, span.end, inserting, at, count);
+            if (moved == null)
+            {
+                gone.add(source);
+            }
+            else if (moved.begin != span.begin || moved.end != span.end)
+            {
+                writeSpan(area, moved, axis);
+            }
+        }
+        if (!gone.isEmpty())
+        {
+            doc.getDrawingDataSources().removeAll(gone);
+            if (outcome != null)
+            {
+                outcome.removedDataSources += gone.size();
+            }
+        }
+    }
+
+    /**
      * Points a drawing anchor at a position on an axis.
      *
      * @param point the anchor, or <code>null</code>
@@ -4855,10 +4981,10 @@ public final class BmTemplateHelper
     /**
      * Moves the saved view positions over an insertion or a deletion on an axis.
      * <p>
-     * These are where the interactive editor looked - the current position, the fixed one, the
-     * fixation points, the top of the screen - and the selection. An operation that leaves them
-     * behind would point the editor at content that moved, so they travel with it. A view the
-     * document never saved is not there to move.
+     * These are where the interactive editor looked - the current position, the fixation points,
+     * the top of the screen - together with the count of frozen rows or columns and the selection.
+     * An operation that leaves them behind would point the editor at content that moved, so they
+     * travel with it. A view the document never saved is not there to move.
      * </p>
      *
      * @param doc the spreadsheet
@@ -4878,7 +5004,7 @@ public final class BmTemplateHelper
         if (axis == Axis.COLUMN)
         {
             view.setCurrentColumn(movedPointer(view.getCurrentColumn(), inserting, at, count));
-            view.setFixedColumn(movedPointer(view.getFixedColumn(), inserting, at, count));
+            view.setFixedColumn(movedCount(view.getFixedColumn(), inserting, at, count));
             view.setFixationPointColumn(
                 movedPointer(view.getFixationPointColumn(), inserting, at, count));
             view.setTopFixationPointColumn(
@@ -4889,7 +5015,7 @@ public final class BmTemplateHelper
         else
         {
             view.setCurrentRow(movedPointer(view.getCurrentRow(), inserting, at, count));
-            view.setFixedRow(movedPointer(view.getFixedRow(), inserting, at, count));
+            view.setFixedRow(movedCount(view.getFixedRow(), inserting, at, count));
             view.setFixationPointRow(movedPointer(view.getFixationPointRow(), inserting, at, count));
             view.setTopFixationPointRow(
                 movedPointer(view.getTopFixationPointRow(), inserting, at, count));
@@ -4947,6 +5073,40 @@ public final class BmTemplateHelper
             return at;
         }
         return at > from + count - 1 ? at - count : from;
+    }
+
+    /**
+     * Where a COUNT of leading positions lands after positions were inserted or deleted on its
+     * axis.
+     * <p>
+     * The saved fixation counts the frozen rows or columns of a prefix that starts at the top or
+     * the left; it is not a pointer into the sheet. Nothing frozen stays nothing, and only a
+     * change the prefix itself reaches can change the number: a change inside it grows or shrinks
+     * it, one past it leaves it alone.
+     * </p>
+     *
+     * @param count the number of frozen positions
+     * @param inserting whether positions were inserted or deleted
+     * @param from the 0-based position the change starts at
+     * @param changed how many positions were inserted or deleted
+     * @return the number of frozen positions after the change
+     */
+    private static int movedCount(int count, boolean inserting, int from, int changed)
+    {
+        if (count < 1)
+        {
+            return 0;
+        }
+        if (inserting)
+        {
+            return from < count ? count + changed : count;
+        }
+        if (from < count)
+        {
+            int within = Math.min(from + changed - 1, count - 1) - from + 1;
+            return Math.max(0, count - within);
+        }
+        return count;
     }
 
     /**
@@ -5034,6 +5194,11 @@ public final class BmTemplateHelper
 
     /**
      * Replaces the merges over the target range of a copy with copies of the source merges.
+     * <p>
+     * Both kinds of merge take part: the rectangular ones anchored to cells, and the whole-row or
+     * whole-column ones. A merge fully inside the replaced target comes off; one fully inside the
+     * source repeats over the target; one the target range cuts in half stays as it is.
+     * </p>
      *
      * @param doc the spreadsheet holding the merges
      * @param sourceFirst the source range's first 0-based position on the axis
@@ -5078,6 +5243,101 @@ public final class BmTemplateHelper
                 Merge copy = (Merge)EcoreUtil.copy(merge);
                 shiftRect(copy.getPosition(), targetFirst - sourceFirst, axis);
                 doc.getMerges().add(copy);
+            }
+        }
+        if (axis == Axis.ROW)
+        {
+            replaceRowMergesOverRange(doc.getRowMerges(), sourceFirst, targetFirst, count,
+                outcome);
+        }
+        else
+        {
+            replaceColumnMergesOverRange(doc.getColumnMerges(), sourceFirst, targetFirst, count,
+                outcome);
+        }
+    }
+
+    /**
+     * Replaces the whole-row merges over the target range of a copy with copies of the source ones.
+     *
+     * @param rowMerges the whole-row merges the document holds
+     * @param sourceFirst the source range's first 0-based row
+     * @param targetFirst the target range's first 0-based row
+     * @param count how many rows the ranges hold
+     * @param outcome where the removals are counted
+     */
+    private static void replaceRowMergesOverRange(EList<RowMerge> rowMerges, int sourceFirst,
+        int targetFirst, int count, ShiftOutcome outcome)
+    {
+        java.util.Iterator<RowMerge> each = rowMerges.iterator();
+        while (each.hasNext())
+        {
+            RowMerge merge = each.next();
+            if (merge == null)
+            {
+                continue;
+            }
+            if (merge.getBegin() >= targetFirst && merge.getEnd() <= targetFirst + count - 1)
+            {
+                each.remove();
+                outcome.removedMerges++;
+            }
+        }
+        for (RowMerge merge : new ArrayList<>(rowMerges))
+        {
+            if (merge == null)
+            {
+                continue;
+            }
+            if (merge.getBegin() >= sourceFirst && merge.getEnd() <= sourceFirst + count - 1)
+            {
+                RowMerge copy = MoxelFactory.eINSTANCE.createRowMerge();
+                copy.setBegin(merge.getBegin() + targetFirst - sourceFirst);
+                copy.setEnd(merge.getEnd() + targetFirst - sourceFirst);
+                rowMerges.add(copy);
+            }
+        }
+    }
+
+    /**
+     * Replaces the whole-column merges over the target range of a copy with copies of the source
+     * ones.
+     *
+     * @param columnMerges the whole-column merges the document holds
+     * @param sourceFirst the source range's first 0-based column
+     * @param targetFirst the target range's first 0-based column
+     * @param count how many columns the ranges hold
+     * @param outcome where the removals are counted
+     */
+    private static void replaceColumnMergesOverRange(EList<ColumnMerge> columnMerges,
+        int sourceFirst, int targetFirst, int count, ShiftOutcome outcome)
+    {
+        java.util.Iterator<ColumnMerge> each = columnMerges.iterator();
+        while (each.hasNext())
+        {
+            ColumnMerge merge = each.next();
+            if (merge == null)
+            {
+                continue;
+            }
+            if (merge.getBegin() >= targetFirst && merge.getEnd() <= targetFirst + count - 1)
+            {
+                each.remove();
+                outcome.removedMerges++;
+            }
+        }
+        for (ColumnMerge merge : new ArrayList<>(columnMerges))
+        {
+            if (merge == null)
+            {
+                continue;
+            }
+            if (merge.getBegin() >= sourceFirst && merge.getEnd() <= sourceFirst + count - 1)
+            {
+                ColumnMerge copy = MoxelFactory.eINSTANCE.createColumnMerge();
+                copy.setBegin(merge.getBegin() + targetFirst - sourceFirst);
+                copy.setEnd(merge.getEnd() + targetFirst - sourceFirst);
+                columnMerges.add(copy);
             }
         }
     }
