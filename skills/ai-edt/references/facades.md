@@ -708,3 +708,36 @@ kept. `set_cell` refuses text together with `parameter`, and a parameter name wi
 `format_cells` refuses `fillType` and `parameter`. A non-numeric `borderWidth`, `scale`, `copies`,
 `perPage` or `margin`, and a `margin` outside the `int` range, are refused; `fontSize` and `margin`
 take fractional numbers.
+
+`insert_rows`, `delete_rows` and `copy_rows` work in whole rows. `insert_rows` puts `count` rows
+before `row` (the last row + 1 appends) and shifts everything from that row down - the rows with
+their cells and notes, the merges and whole-row merges, the named areas, the row groups, the
+drawings, the print and repeat areas, the declared height and the saved view rows; a merge, an area,
+a group or a drawing the point falls inside grows instead of moving. `formatFrom` says where the new
+rows take the row format and the cell formats from - above (the default, and none at row 1), below
+or none - and text, parameters and details are never copied. `delete_rows` removes `count` rows from
+`row`; merges, named areas and drawings lying entirely inside the range go with them and are named in
+the answer, partial overlaps shrink. `copy_rows` replaces the `count` rows at `toRow` with a copy of
+the rows at `fromRow` - row format, cells with text, parameter, detail and format, notes, and the
+merges fully inside the source repeated over the target while the merges fully inside the replaced
+target come off first. There is no shift, an overlap of the two ranges is refused, named areas are
+neither copied nor moved, and the target may run past the current end. The answer carries
+`shiftedRows`, `resizedMerges`, `removedMerges`, `resizedNamedAreas`, `removedNamedAreas`,
+`removedDrawings` and `lastRow`.
+
+`insert_columns`, `delete_columns` and `copy_columns` work in whole columns. `insert_columns` puts
+`count` columns before `col` (the last column + 1 appends) and shifts everything from that column
+right - the cells of every row with their notes, the column sets with their declared size (a set
+shared by several rows shifts once), the merges and whole-column merges, the named areas, the
+column groups, the drawings, the print and repeat areas and the saved view columns; a merge, an area,
+a group or a drawing the point falls inside grows instead of moving. `formatFrom` says where the new
+columns take the column format and the cell formats from - left (the default, and none at column 1),
+right or none - and text, parameters and details are never copied. `delete_columns` removes `count`
+columns from `col`; merges, named areas and drawings lying entirely inside the range go with them and
+are named in the answer, partial overlaps shrink. `copy_columns` replaces the `count` columns at
+`toCol` with a copy of the columns at `fromCol` - the column width and format, the cells with text,
+parameter, detail and format, the notes, and the merges fully inside the source repeated over the
+target while the merges fully inside the replaced target come off first. There is no shift, an overlap
+of the two ranges is refused, named areas are neither copied nor moved, and the target may run past
+the current end. The answer carries `shiftedColumns`, `resizedMerges`, `removedMerges`,
+`resizedNamedAreas`, `removedNamedAreas`, `removedDrawings` and `lastColumn`.

@@ -177,8 +177,20 @@ public class TheToolListHasAWeightBudgetTest
      * now documents addressing an item by its name beside the number: a form the operation
      * accepts and the schema has to say. Measured 01.10: 186596.
      * </p>
+     * <p>
+     * And from 186760 to 187133 for the three row operations of mxl_workshop: count, formatFrom,
+     * and the sentences row, fromRow and toRow gained naming them. A row shift moves every holder
+     * of its number, and the schema is where a client learns the arguments exist. Measured 05.10:
+     * 187133.
+     * </p>
+     * <p>
+     * And from 187133 to 187572 for the three column operations of mxl_workshop: the sentences
+     * col, fromCol and toCol gained naming them, and the operation list and the facade
+     * description gained the three names. A column shift moves every holder of its number the
+     * same way. Measured 05.10: 187572.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186760;
+    private static final int DOCUMENT_BUDGET = 187572;
 
     private LiveServer server;
 
@@ -365,8 +377,8 @@ public class TheToolListHasAWeightBudgetTest
         // (measured 29.09: 7998).
         BUDGETS.put("launch_debugger", Integer.valueOf(7998)); //$NON-NLS-1$
         // The entry names the operations and the model; what each argument takes is the schema's
-        // to say. Measured 7813 bytes.
-        BUDGETS.put("mxl_workshop", Integer.valueOf(7813)); //$NON-NLS-1$
+        // to say. Measured 05.10, with the column operations beside the row ones: 8769.
+        BUDGETS.put("mxl_workshop", Integer.valueOf(8769)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
