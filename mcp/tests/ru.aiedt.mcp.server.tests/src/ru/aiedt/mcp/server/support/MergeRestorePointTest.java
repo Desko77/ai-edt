@@ -10,13 +10,18 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
@@ -37,6 +42,8 @@ import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 import ru.aiedt.mcp.server.toolkit.ops.GitFileRestore;
+import ru.aiedt.mcp.server.toolkit.ops.GitMergePointCreateTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitMergePointDeleteTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitTool;
 import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
 
@@ -47,7 +54,9 @@ import ru.aiedt.mcp.server.toolkit.ops.ThreeWayComparisonTool;
  * <p>The repository and the project are real. The comparison itself cannot run here - the other
  * side is not a configuration - so the tests show the point is taken before that attempt, that a
  * point which cannot be taken stops the call before the attempt, and that restoring the point
- * returns the files and leaves {@code git diff} empty.</p>
+ * returns the files and leaves {@code git diff} empty. Taking and dropping a point answer to doors
+ * of their own, a restore that stops halfway still cleans up, and a file that already matches the
+ * point is not rewritten.</p>
  */
 public class MergeRestorePointTest
 {
@@ -136,9 +145,12 @@ public class MergeRestorePointTest
         Files.writeString(module(copyProject), PROBE, StandardCharsets.UTF_8);
         Files.writeString(platform(copyProject), PLATFORM, StandardCharsets.UTF_8);
         Files.deleteIfExists(added(copyProject));
+        MergeRestorePoint.refreshCalls = 0;
         McpToolCatalog catalog = McpToolCatalog.getInstance();
         catalog.register(new GitTool());
         catalog.register(new GitFileRestore());
+        catalog.register(new GitMergePointCreateTool());
+        catalog.register(new GitMergePointDeleteTool());
     }
 
     @After
@@ -304,10 +316,323 @@ public class MergeRestorePointTest
         assertArrayEquals(MERGED.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(gitProject)));
     }
 
+    /**
+     * Taking a point answers to a door of its own: with that door unregistered - which is what a
+     * preset that disables it looks like to the gate - the create call is refused even while the
+     * delete door is registered, and nothing is recorded.
+     */
+    @Test
+    public void anUnregisteredCreateDoorRecordsNothing() throws Exception
+    {
+        dropEveryRestorePoint();
+        Files.writeString(module(gitProject), MERGED, StandardCharsets.UTF_8);
+        int before = MergeRestorePoint.idsFor(GIT_PROJECT).size();
+        McpToolCatalog.getInstance().clear();
+        McpToolCatalog.getInstance().register(new GitMergePointDeleteTool());
+        String answer = new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT)); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("git_create_merge_restore_point")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("is disabled and was not executed")); //$NON-NLS-1$
+        assertEquals(before, MergeRestorePoint.idsFor(GIT_PROJECT).size());
+        assertNull(noRestoreRefs());
+        assertArrayEquals(MERGED.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(gitProject)));
+    }
+
+    /**
+     * Dropping a point answers to a door of its own as well: with only that door unregistered, the
+     * delete call is refused and the point stays - both the ref and the index entry.
+     */
+    @Test
+    public void anUnregisteredDeleteDoorDropsNothing() throws Exception
+    {
+        McpToolCatalog.getInstance().unregister(GitMergePointDeleteTool.DOOR);
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        String answer = new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(answer, answer.contains("git_delete_merge_restore_point")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("is disabled and was not executed")); //$NON-NLS-1$
+        assertTrue(Files.isRegularFile(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            assertNotNull(git.getRepository().resolve(GitRepositoryAccess.restoreRef(pointId)));
+        }
+    }
+
+    /**
+     * Deleting a git point removes the ref and the index entry, touches no project file, and the
+     * id no longer resolves for the project.
+     */
+    @Test
+    public void deletingAGitPointRemovesTheRefAndTheIndexEntry() throws Exception
+    {
+        int before = MergeRestorePoint.idsFor(GIT_PROJECT).size();
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            assertNotNull(git.getRepository().resolve(GitRepositoryAccess.restoreRef(pointId)));
+        }
+        JsonObject dropped = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(dropped.toString(), dropped.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("git", dropped.get("kind").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            assertNull(git.getRepository().resolve(GitRepositoryAccess.restoreRef(pointId)));
+        }
+        assertFalse(Files.exists(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(before, MergeRestorePoint.idsFor(GIT_PROJECT).size());
+    }
+
+    /**
+     * Deleting a copy point removes the copied directory and the index entry.
+     */
+    @Test
+    public void deletingACopyPointRemovesTheCopyAndTheIndexEntry() throws Exception
+    {
+        int before = MergeRestorePoint.idsFor(COPY_PROJECT).size();
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Path copyDir = Path.of(created.get("copyPath").getAsString()); //$NON-NLS-1$
+        assertTrue(Files.isDirectory(copyDir));
+        JsonObject dropped = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(dropped.toString(), dropped.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("copy", dropped.get("kind").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(Files.exists(copyDir));
+        assertFalse(Files.exists(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(before, MergeRestorePoint.idsFor(COPY_PROJECT).size());
+    }
+
+    /**
+     * A point belongs to the project it was taken for: both the restore and the delete of another
+     * project's point are refused and nothing changes on either side.
+     */
+    @Test
+    public void aPointOfAnotherProjectIsRefusedForRestoreAndDelete() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(copyProject), MERGED, StandardCharsets.UTF_8);
+        String restore = new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(restore, restore.contains("No merge restore point")); //$NON-NLS-1$
+        assertArrayEquals(MERGED.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(copyProject)));
+        String drop = new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId)); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(drop, drop.contains("No merge restore point")); //$NON-NLS-1$
+        assertTrue(Files.isRegularFile(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A restore that stops halfway - here one file of the point is missing from the copy - still
+     * names the file it did not put back, still removes the files the point does not hold, and
+     * still refreshes the workspace. The files it already handled stay handled.
+     */
+    @Test
+    public void aPartialRestoreStillCleansUpAndRefreshes() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(copyProject), MERGED, StandardCharsets.UTF_8);
+        Files.writeString(added(copyProject), "// added\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        Files.deleteIfExists(Path.of(created.get("copyPath").getAsString()).resolve("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(restored.toString(), restored.get("error").getAsString().contains("src/Module.bsl")); //$NON-NLS-1$
+        assertEquals(List.of("src/Module.bsl"), strings(restored, "unrestoredFiles")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(strings(restored, "removedFiles").contains("src/Added.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(restored.toString(), restored.get("restoredFiles").toString().contains("DT-INF/PROJECT.PMF") //$NON-NLS-1$ //$NON-NLS-2$
+            || restored.get("unchangedFiles").toString().contains("DT-INF/PROJECT.PMF")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the workspace was not refreshed after a partial restore", //$NON-NLS-1$
+            MergeRestorePoint.refreshCalls > 0);
+        assertArrayEquals(MERGED.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(copyProject)));
+        assertFalse(Files.exists(added(copyProject)));
+    }
+
+    /**
+     * A restore does not rewrite a file whose bytes already match the point: a second restore with
+     * nothing changed on disk writes no file, and only a file that changed is written again.
+     */
+    @Test
+    public void aGitRestoreDoesNotRewriteAFileThatAlreadyMatches() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT))); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(gitProject), MERGED, StandardCharsets.UTF_8);
+        JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(strings(restored, "restoredFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        FileTime moduleTime = mtime(module(gitProject));
+        FileTime platformTime = mtime(platform(gitProject));
+        JsonObject again = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(strings(again, "restoredFiles").isEmpty()); //$NON-NLS-1$
+        assertFalse(strings(again, "unchangedFiles").isEmpty()); //$NON-NLS-1$
+        assertEquals(moduleTime, mtime(module(gitProject)));
+        assertEquals(platformTime, mtime(platform(gitProject)));
+
+        Files.writeString(module(gitProject), MERGED, StandardCharsets.UTF_8);
+        FileTime rewritten = mtime(module(gitProject));
+        JsonObject third = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(third.toString(), third.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(List.of("src/Module.bsl"), strings(third, "restoredFiles")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(platformTime, mtime(platform(gitProject)));
+        assertTrue(mtime(module(gitProject)).compareTo(rewritten) >= 0);
+        assertArrayEquals(PROBE.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(gitProject)));
+    }
+
+    /**
+     * The same rule for a copy point: a second restore with nothing changed on disk writes no
+     * file.
+     */
+    @Test
+    public void aCopyRestoreDoesNotRewriteAFileThatAlreadyMatches() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(copyProject), MERGED, StandardCharsets.UTF_8);
+        JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+        FileTime moduleTime = mtime(module(copyProject));
+        JsonObject again = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(strings(again, "restoredFiles").isEmpty()); //$NON-NLS-1$
+        assertEquals(moduleTime, mtime(module(copyProject)));
+        assertArrayEquals(PROBE.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(copyProject)));
+    }
+
+    /**
+     * A failed index write names the storage directory and the reason, drops the ref it had
+     * already written, and the merge does not start.
+     */
+    @Test
+    public void aFailedIndexLeavesNoRefAndStartsNoMerge() throws Exception
+    {
+        dropEveryRestorePoint();
+        Path blocked = Files.createTempFile("aiedt-merge-block", ".txt"); //$NON-NLS-1$ //$NON-NLS-2$
+        Path saved = MergeRestorePoint.storageRoot;
+        MergeRestorePoint.storageRoot = blocked;
+        try
+        {
+            byte[] before = Files.readAllBytes(module(gitProject));
+            String answer = compare(GIT_PROJECT, "MERGE"); //$NON-NLS-1$
+            assertTrue(answer, answer.contains("No merge was started")); //$NON-NLS-1$
+            assertTrue(answer, answer.contains("\"mergeStarted\":false")); //$NON-NLS-1$
+            String plain = answer.replace("\\\\", "\\"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(plain, plain.contains(blocked.toString()));
+            assertFalse(answer, answer.contains("mergeRestorePoint")); //$NON-NLS-1$
+            assertNull(answer, noRestoreRefs());
+            assertArrayEquals(before, Files.readAllBytes(module(gitProject)));
+        }
+        finally
+        {
+            MergeRestorePoint.storageRoot = saved;
+            Files.deleteIfExists(blocked);
+        }
+    }
+
     private static String compare(String projectName, String intent)
     {
         return new ThreeWayComparisonTool().execute(Map.of("projectName", projectName, //$NON-NLS-1$
             "otherPath", "no such directory", "intent", intent)); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
+    /**
+     * Whether the repository holds no merge restore ref at all.
+     *
+     * @return the refusal text when a ref is still there, or {@code null} when none is
+     */
+    private static String noRestoreRefs()
+    {
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            var refs = git.getRepository().getRefDatabase().getRefsByPrefix("refs/aiedt/merge-restore/"); //$NON-NLS-1$
+            return refs.isEmpty() ? null : refs.toString();
+        }
+        catch (Exception e)
+        {
+            return "the repository could not be read: " + e; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Removes every point of both projects - the refs, the copies and the index entries - so a test
+     * that asserts on the absence of points starts from none. The store is shared by the whole
+     * class and other tests leave their points behind.
+     *
+     * @throws Exception when the repository or the store cannot be written
+     */
+    private static void dropEveryRestorePoint() throws Exception
+    {
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            for (var ref : git.getRepository().getRefDatabase().getRefsByPrefix("refs/aiedt/merge-restore/")) //$NON-NLS-1$
+            {
+                GitRepositoryAccess.deleteRestoreRef(git.getRepository(),
+                    ref.getName().substring("refs/aiedt/merge-restore/".length())); //$NON-NLS-1$
+            }
+        }
+        Path points = store.resolve("points"); //$NON-NLS-1$
+        if (Files.isDirectory(points))
+        {
+            try (var files = Files.list(points))
+            {
+                for (Path file : files.toList())
+                {
+                    Files.deleteIfExists(file);
+                }
+            }
+        }
+    }
+
+    /**
+     * The strings of one array field of an answer.
+     *
+     * @param answer the answer JSON
+     * @param field the array field
+     * @return its values, in order
+     */
+    private static List<String> strings(JsonObject answer, String field)
+    {
+        List<String> values = new ArrayList<>();
+        for (var element : answer.getAsJsonArray(field))
+        {
+            values.add(element.getAsString());
+        }
+        return values;
+    }
+
+    /**
+     * When a file was last changed.
+     *
+     * @param file the file
+     * @return its modification time
+     * @throws Exception when the file cannot be read
+     */
+    private static FileTime mtime(Path file) throws Exception
+    {
+        return Files.readAttributes(file, BasicFileAttributes.class).lastModifiedTime();
     }
 
     private static JsonObject json(String answer)

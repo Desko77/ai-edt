@@ -51,7 +51,8 @@ public class FoldPresetHazardTest
         "config_io", //$NON-NLS-1$
         List.of("unpack_external_binary", "import_configuration_from_binary"), //$NON-NLS-1$
         "git", //$NON-NLS-1$
-        List.of("git_commit", "git_checkout", "git_revert_file"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        List.of("git_commit", "git_checkout", "git_revert_file", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "git_create_merge_restore_point", "git_delete_merge_restore_point"), //$NON-NLS-1$ //$NON-NLS-2$
         "launch_debugger", //$NON-NLS-1$
         List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
             "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
@@ -73,10 +74,11 @@ public class FoldPresetHazardTest
      * taken away. The composite also gates its own two internal calls, which no facade fold can see.
      * </p>
      * <p>
-     * {@code git/git_commit}, {@code git/git_checkout} and {@code git/git_revert_file}: the facade
-     * reads under every preset, and its writes are the names a read-only preset disables, so each
-     * is gate-checked by that name before a file is staged, the work tree is switched, or a file
-     * is overwritten.
+     * {@code git/git_commit}, {@code git/git_checkout}, {@code git/git_revert_file},
+     * {@code git/git_create_merge_restore_point} and {@code git/git_delete_merge_restore_point}:
+     * the facade reads under every preset, and its writes are the names a read-only preset
+     * disables, so each is gate-checked by that name before a file is staged, the work tree is
+     * switched, a file is overwritten, or a merge restore point is taken or dropped.
      * </p>
      * <p>
      * The five {@code cluster_admin/<door>} pairs are the same arrangement: the facade reads under
@@ -94,6 +96,7 @@ public class FoldPresetHazardTest
         "config_io/unpack_external_binary", //$NON-NLS-1$
         "config_io/import_configuration_from_binary", //$NON-NLS-1$
         "git/git_commit", "git/git_checkout", "git/git_revert_file", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "git/git_create_merge_restore_point", "git/git_delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
         "cluster_admin/create_cluster", "cluster_admin/update_cluster", "cluster_admin/delete_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "cluster_admin/add_to_cluster", "cluster_admin/remove_from_cluster"); //$NON-NLS-1$ //$NON-NLS-2$
 

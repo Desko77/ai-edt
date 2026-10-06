@@ -150,6 +150,8 @@ import ru.aiedt.mcp.server.toolkit.ops.GitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitCommitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitFileRestore;
 import ru.aiedt.mcp.server.toolkit.ops.GitCheckoutTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitMergePointCreateTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitMergePointDeleteTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectsLister;
 import ru.aiedt.mcp.server.toolkit.ops.MxlWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.NaparnikTool;
@@ -1494,6 +1496,8 @@ public class McpHttpEndpoint
             new GitCommitTool(),
             new GitCheckoutTool(),
             new GitFileRestore(),
+            new GitMergePointCreateTool(),
+            new GitMergePointDeleteTool(),
             new CodeTextSearcher(),
             new DcsSearchTool(),
             new MethodSourceReader(),

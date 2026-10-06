@@ -16,6 +16,7 @@ import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
@@ -54,6 +55,12 @@ public final class MergeRestorePoint
      * A test points this at a directory of its own, or at a file so creating the directory fails.
      */
     static Path storageRoot;
+
+    /**
+     * How many times {@link #refresh(IProject, Restored)} has run. A test resets this and reads it
+     * back, because the refresh has no other visible effect a headless run can observe.
+     */
+    static int refreshCalls;
 
     private static final String FORMAT = "V1"; //$NON-NLS-1$
 
@@ -97,10 +104,31 @@ public final class MergeRestorePoint
         /** Project-relative files written back. */
         public List<String> restoredFiles = new ArrayList<>();
 
+        /** Project-relative files the point holds whose bytes on disk already matched it. */
+        public List<String> unchangedFiles = new ArrayList<>();
+
         /** Project-relative files removed because the point does not have them. */
         public List<String> removedFiles = new ArrayList<>();
 
+        /** Project-relative files the point holds that were not put back. */
+        public List<String> unrestoredFiles = new ArrayList<>();
+
         /** Why the restore did not finish. Files already written stay written. */
+        public String error;
+    }
+
+    /**
+     * A point that was deleted, or the reason it was not.
+     */
+    public static final class Deleted
+    {
+        /** The point that was deleted. */
+        public String pointId;
+
+        /** {@code git} or {@code copy}, when a point was deleted. */
+        public String kind;
+
+        /** Why nothing was deleted. */
         public String error;
     }
 
@@ -242,6 +270,9 @@ public final class MergeRestorePoint
                 .put("projectName", projectName) //$NON-NLS-1$
                 .put("pointId", restored.pointId) //$NON-NLS-1$
                 .put("restoredFiles", restored.restoredFiles) //$NON-NLS-1$
+                .put("unchangedFiles", restored.unchangedFiles) //$NON-NLS-1$
+                .put("unrestoredFiles", restored.unrestoredFiles) //$NON-NLS-1$
+                .put("removedFiles", restored.removedFiles) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
@@ -250,9 +281,116 @@ public final class MergeRestorePoint
             .put("pointId", restored.pointId) //$NON-NLS-1$
             .put("restoredFiles", restored.restoredFiles) //$NON-NLS-1$
             .put("restoredCount", restored.restoredFiles.size()) //$NON-NLS-1$
+            .put("unchangedFiles", restored.unchangedFiles) //$NON-NLS-1$
             .put("removedFiles", restored.removedFiles) //$NON-NLS-1$
             .put("note", "Project files were restored. " + INFOBASE_NOT_ROLLED_BACK) //$NON-NLS-1$ //$NON-NLS-2$
             .toJson();
+    }
+
+    /**
+     * Deletes a recorded point and renders the answer a git call returns.
+     *
+     * @param project the project whose point is deleted
+     * @param pointId the point, required
+     * @return the answer JSON
+     */
+    public static String deleteJson(IProject project, String pointId)
+    {
+        Deleted deleted = delete(project, pointId);
+        String projectName = project == null ? null : project.getName();
+        if (deleted.error != null)
+        {
+            return ToolResult.error(deleted.error)
+                .put("operation", "delete_merge_restore_point") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("projectName", projectName) //$NON-NLS-1$
+                .toJson();
+        }
+        return ToolResult.success()
+            .put("operation", "delete_merge_restore_point") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("pointId", deleted.pointId) //$NON-NLS-1$
+            .put("kind", deleted.kind) //$NON-NLS-1$
+            .put("note", "The restore point was deleted. The project files were not touched.") //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
+
+    /**
+     * Deletes a recorded point: the ref that keeps the commit, or the copy directory, and the index
+     * entry. The project files are not touched, and neither is the infobase.
+     *
+     * @param project the project whose point is deleted
+     * @param pointId the point, required; a point of another project is not resolved
+     * @return what was deleted, or why nothing was
+     */
+    public static synchronized Deleted delete(IProject project, String pointId)
+    {
+        Deleted deleted = new Deleted();
+        if (pointId == null || pointId.isBlank())
+        {
+            deleted.error = "delete_merge_restore_point requires pointId - the point to delete. " //$NON-NLS-1$
+                + "The latest point is not picked for you here: name what goes."; //$NON-NLS-1$
+            return deleted;
+        }
+        if (project == null || !project.isAccessible() || project.getLocation() == null)
+        {
+            deleted.error = "the project is not accessible. Nothing was deleted."; //$NON-NLS-1$
+            return deleted;
+        }
+        Record record;
+        try
+        {
+            record = resolve(project.getName(), pointId);
+        }
+        catch (IOException e)
+        {
+            Activator.logError("merge restore point could not be read", e); //$NON-NLS-1$
+            deleted.error = "the restore point could not be read (" + e.getMessage() //$NON-NLS-1$
+                + "). Nothing was deleted."; //$NON-NLS-1$
+            return deleted;
+        }
+        if (record == null)
+        {
+            deleted.error = "No merge restore point " + pointId.trim() + " exists for this project. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Nothing was deleted."; //$NON-NLS-1$
+            return deleted;
+        }
+        deleted.pointId = record.pointId;
+        deleted.kind = record.kind;
+        if ("git".equals(record.kind)) //$NON-NLS-1$
+        {
+            try (GitRepositoryAccess.Resolved resolved = GitRepositoryAccess.of(project))
+            {
+                if (resolved.error != null)
+                {
+                    deleted.error = resolved.error + " Nothing was deleted."; //$NON-NLS-1$
+                    return deleted;
+                }
+                GitRepositoryAccess.deleteRestoreRef(resolved.repository, record.pointId);
+            }
+            catch (Exception e)
+            {
+                Activator.logError("merge restore ref could not be deleted", e); //$NON-NLS-1$
+                deleted.error = "the restore ref could not be deleted (" + e.getMessage() //$NON-NLS-1$
+                    + "). The index entry was kept."; //$NON-NLS-1$
+                return deleted;
+            }
+        }
+        else
+        {
+            deleteTree(record.copyPath == null ? null : Path.of(record.copyPath));
+        }
+        try
+        {
+            deleteRecord(record.pointId);
+        }
+        catch (IOException e)
+        {
+            Activator.logError("merge restore point entry could not be deleted", e); //$NON-NLS-1$
+            deleted.error = "the point was deleted, but its index entry could not be (" //$NON-NLS-1$
+                + e.getMessage() + ")"; //$NON-NLS-1$
+            return deleted;
+        }
+        return deleted;
     }
 
     /**
@@ -328,7 +466,8 @@ public final class MergeRestorePoint
         {
             GitRepositoryAccess.deleteRestoreRef(resolved.repository, pointId);
             Activator.logError("merge restore point was not recorded", e); //$NON-NLS-1$
-            created.error = "the restore point could not be recorded (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            created.error = "the restore point index could not be written to " + storageDescription() //$NON-NLS-1$
+                + " (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             return created;
         }
         created.pointId = pointId;
@@ -370,7 +509,9 @@ public final class MergeRestorePoint
         {
             deleteTree(copy);
             Activator.logError("merge restore copy failed", e); //$NON-NLS-1$
-            created.error = "the project directory could not be copied (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            created.error = "the project directory could not be copied to " //$NON-NLS-1$
+                + (copy == null ? storageDescription() : copy.toString())
+                + " (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             return created;
         }
         created.pointId = pointId;
@@ -384,7 +525,11 @@ public final class MergeRestorePoint
      * Writes each file from the restore commit, then removes project files the point does not have.
      * The blob of a point holds the work-tree bytes as they were read, so they are written as stored
      * by {@link GitFileRestore#putBytes}; the checkout line-ending rule {@code revert_file} applies
-     * to a commit blob is not applied to them.
+     * to a commit blob is not applied to them. A file whose bytes on disk already match the point is
+     * not rewritten.
+     *
+     * <p>A file that cannot be put back stops the loop there; the cleanup and the workspace refresh
+     * still run, so the extras of the merge do not stay beside a half-restored point.</p>
      *
      * @param project the project
      * @param record the point
@@ -406,38 +551,44 @@ public final class MergeRestorePoint
                 String repoPath = GitRepositoryAccess.repoPath(project, repository, relative);
                 if (repoPath == null)
                 {
-                    restored.error = relative + " is outside the git work tree. Nothing further was written."; //$NON-NLS-1$
-                    return restored;
+                    restored.error = relative + " is outside the git work tree."; //$NON-NLS-1$
+                    break;
                 }
                 PreviousRevision revision = GitDiffUtils.revisionAt(repository, repoPath, record.commit);
                 if (!revision.isFound() || revision.bytes() == null)
                 {
-                    restored.error = relative + " is not in the restore point. Nothing further was written."; //$NON-NLS-1$
-                    return restored;
+                    restored.error = relative + " is not in the restore point."; //$NON-NLS-1$
+                    break;
+                }
+                if (alreadyOnDisk(repository, repoPath, revision.bytes()))
+                {
+                    restored.unchangedFiles.add(relative);
+                    continue;
                 }
                 String problem = GitFileRestore.putBytes(project, repository, repoPath, revision.bytes(), false);
                 if (problem != null)
                 {
                     restored.error = problem;
-                    return restored;
+                    break;
                 }
                 restored.restoredFiles.add(relative);
             }
-            restored.removedFiles.addAll(deleteExtras(projectDirectory(project), record.files));
-            refresh(project);
-            return restored;
         }
         catch (Exception e)
         {
             Activator.logError("merge restore failed", e); //$NON-NLS-1$
-            restored.error = "the restore failed (" + e.getMessage() + "). Nothing further was written."; //$NON-NLS-1$ //$NON-NLS-2$
-            return restored;
+            restored.error = "the restore failed (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
         }
+        finish(project, record, restored);
+        return restored;
     }
 
     /**
      * Copies the saved project directory back over the project, then removes files the point does
-     * not have.
+     * not have. A file whose bytes on disk already match the point is not rewritten.
+     *
+     * <p>A file that cannot be put back stops the loop there; the cleanup and the workspace refresh
+     * still run, so the extras of the merge do not stay beside a half-restored point.</p>
      *
      * @param project the project
      * @param record the point
@@ -460,17 +611,22 @@ public final class MergeRestorePoint
                 Path from = copy.resolve(relative);
                 if (!Files.isRegularFile(from))
                 {
-                    restored.error = relative + " is missing from the restore copy. Nothing further was written."; //$NON-NLS-1$
-                    return restored;
+                    restored.error = relative + " is missing from the restore copy."; //$NON-NLS-1$
+                    break;
+                }
+                Path to = projectDir.resolve(relative);
+                if (Files.isRegularFile(to) && Arrays.equals(Files.readAllBytes(from), Files.readAllBytes(to)))
+                {
+                    restored.unchangedFiles.add(relative);
+                    continue;
                 }
                 org.eclipse.core.resources.IFile file = project.getFile(relative);
                 if (EditorBuffer.hasUnsavedChanges(file))
                 {
                     restored.error = "An editor holds unsaved changes for " + relative //$NON-NLS-1$
-                        + ". The editor's buffer is kept. Nothing further was written."; //$NON-NLS-1$
-                    return restored;
+                        + ". The editor's buffer is kept."; //$NON-NLS-1$
+                    break;
                 }
-                Path to = projectDir.resolve(relative);
                 if (to.getParent() != null)
                 {
                     Files.createDirectories(to.getParent());
@@ -478,16 +634,74 @@ public final class MergeRestorePoint
                 Files.copy(from, to, StandardCopyOption.REPLACE_EXISTING);
                 restored.restoredFiles.add(relative);
             }
-            restored.removedFiles.addAll(deleteExtras(projectDir, record.files));
-            refresh(project);
-            return restored;
         }
-        catch (IOException | CoreException e)
+        catch (IOException e)
         {
             Activator.logError("merge restore from copy failed", e); //$NON-NLS-1$
-            restored.error = "the restore failed (" + e.getMessage() + "). Nothing further was written."; //$NON-NLS-1$ //$NON-NLS-2$
-            return restored;
+            restored.error = "the restore failed (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
         }
+        finish(project, record, restored);
+        return restored;
+    }
+
+    /**
+     * Completes a restore after its loop: names the files of the point that were not put back,
+     * removes the project files the point does not hold, and makes the workspace notice. A restore
+     * that stopped halfway runs this as well - the caller asked for the point, and half of it with
+     * the extras of the merge still lying beside it is further from the point than half of it alone.
+     *
+     * @param project the project
+     * @param record the point
+     * @param restored the answer being filled in
+     */
+    private static void finish(IProject project, Record record, Restored restored)
+    {
+        Set<String> settled = new HashSet<>(restored.restoredFiles);
+        settled.addAll(restored.unchangedFiles);
+        for (String relative : record.files)
+        {
+            if (!settled.contains(relative))
+            {
+                restored.unrestoredFiles.add(relative);
+            }
+        }
+        try
+        {
+            restored.removedFiles.addAll(deleteExtras(projectDirectory(project), record.files));
+        }
+        catch (IOException e)
+        {
+            Activator.logError("merge restore cleanup failed", e); //$NON-NLS-1$
+            if (restored.error == null)
+            {
+                restored.error = "the cleanup after the restore failed (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        refresh(project, restored);
+    }
+
+    /**
+     * Whether the work-tree file already holds exactly these bytes, so a restore would rewrite it
+     * with what it already has.
+     *
+     * @param repository the repository
+     * @param repoPath the work-tree-relative path
+     * @param bytes the bytes the point holds
+     * @return {@code true} when the file on disk matches the point
+     * @throws IOException when the file cannot be read
+     */
+    private static boolean alreadyOnDisk(Repository repository, String repoPath, byte[] bytes) throws IOException
+    {
+        Path disk = repository.getWorkTree().toPath();
+        for (String segment : repoPath.split("/")) //$NON-NLS-1$
+        {
+            disk = disk.resolve(segment);
+        }
+        if (!Files.isRegularFile(disk))
+        {
+            return false;
+        }
+        return Arrays.equals(bytes, Files.readAllBytes(disk));
     }
 
     /**
@@ -909,14 +1123,56 @@ public final class MergeRestorePoint
     }
 
     /**
-     * Makes the workspace notice the restored files.
+     * Makes the workspace notice the restored files. Counted, because a partial restore has to run
+     * it too and no other visible state says it happened.
      *
      * @param project the project
-     * @throws CoreException when the refresh fails
+     * @param restored the answer being filled in; a failed refresh becomes its error when it has
+     *            none yet
      */
-    private static void refresh(IProject project) throws CoreException
+    private static void refresh(IProject project, Restored restored)
     {
-        project.refreshLocal(IResource.DEPTH_INFINITE, null);
+        refreshCalls++;
+        try
+        {
+            project.refreshLocal(IResource.DEPTH_INFINITE, null);
+        }
+        catch (CoreException e)
+        {
+            Activator.logError("merge restore refresh failed", e); //$NON-NLS-1$
+            if (restored.error == null)
+            {
+                restored.error = "the workspace refresh after the restore failed (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+    }
+
+    /**
+     * Deletes one index entry.
+     *
+     * @param pointId the point
+     * @throws IOException when the entry cannot be deleted
+     */
+    private static void deleteRecord(String pointId) throws IOException
+    {
+        Path dir = pointsDirOrNull();
+        if (dir == null)
+        {
+            return;
+        }
+        Files.deleteIfExists(dir.resolve(pointId + ".txt")); //$NON-NLS-1$
+    }
+
+    /**
+     * The storage root as a refusal names it. Never fails on its own: a refusal about a storage
+     * that cannot even be named would hide the reason it was being named.
+     *
+     * @return the root path, or a stand-in when there is none
+     */
+    private static String storageDescription()
+    {
+        Path root = storageRoot != null ? storageRoot : defaultStorageRoot();
+        return root == null ? "the workspace storage" : root.toString(); //$NON-NLS-1$
     }
 
     /**

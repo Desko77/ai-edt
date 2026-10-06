@@ -127,11 +127,14 @@ public enum ToolCategory
 
     /** The repository the project lives in: reading it now, writing it in later stages. */
     VCS("vcs", "Version Control", //$NON-NLS-1$ //$NON-NLS-2$
-        "Git status, branches, history, file diff and restoring one file, inside the IDE", //$NON-NLS-1$
+        "Git status, branches, history, file diff, restoring one file and merge restore points, " //$NON-NLS-1$
+            + "inside the IDE", //$NON-NLS-1$
         "git", //$NON-NLS-1$
         "git_commit", //$NON-NLS-1$
         "git_checkout", //$NON-NLS-1$
-        "git_revert_file"), //$NON-NLS-1$
+        "git_revert_file", //$NON-NLS-1$
+        "git_create_merge_restore_point", //$NON-NLS-1$
+        "git_delete_merge_restore_point"), //$NON-NLS-1$
 
     /** Everything that drives a debug session, including the two ways of ending one. */
     DEBUG("debug", "Debug & Profiling", //$NON-NLS-1$ //$NON-NLS-2$

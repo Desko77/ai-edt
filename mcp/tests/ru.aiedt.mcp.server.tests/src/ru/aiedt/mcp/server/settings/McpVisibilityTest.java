@@ -55,15 +55,17 @@ public class McpVisibilityTest
         assertNotNull(unlisted);
         assertFalse("CANONICAL must hide something, or it is just ALL_TOOLS", unlisted.isEmpty()); //$NON-NLS-1$
 
-        // The exact membership: 7 from code_search, 3 from git, 18 from launch_debugger, 2 from
+        // The exact membership: 7 from code_search, 5 from git, 18 from launch_debugger, 2 from
         // yaxunit_tests, 7 from extension_workshop, 6 from diagnostics, 10 from project_admin,
         // 11 from infobase_admin, 6 from config_io, 9 from insights, 3 from security_audit, 4 from
         // workspace_marks, 2 from docs_lookup, 3 from edit_metadata, 5 from cluster_admin.
         // Pinning the size catches an accidental add or drop.
-        assertEquals(96, unlisted.size());
+        assertEquals(98, unlisted.size());
 
         // A standalone from each facade is hidden.
         assertTrue(unlisted.contains("git_revert_file")); //$NON-NLS-1$ // git
+        assertTrue(unlisted.contains("git_create_merge_restore_point")); //$NON-NLS-1$ // git
+        assertTrue(unlisted.contains("git_delete_merge_restore_point")); //$NON-NLS-1$ // git
         assertTrue(unlisted.contains("create_cluster")); //$NON-NLS-1$ // cluster_admin
         assertTrue(unlisted.contains("remove_from_cluster")); //$NON-NLS-1$ // cluster_admin
         assertTrue(unlisted.contains("search_in_code")); //$NON-NLS-1$ // code_search

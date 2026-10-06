@@ -589,18 +589,25 @@ answer advises `revalidate_objects`: the model still holds the previous state un
 
 `create_merge_restore_point` records the project files as a restore point and answers `pointId`,
 `kind` (a commit, or a copy of every file) with `commit` or `copyPath`, `files` and `fileCount`. A
-point that cannot be taken answers `mergeStarted: false`. `restore_merge_point` takes `pointId`,
-the project's latest point when it is left out, and puts those files back, listing `restoredFiles`
-with `restoredCount` and the files the point does not hold in `removedFiles`. It needs no
-repository: a project outside git is served from a copy of its directory. See
+point that cannot be taken answers `mergeStarted: false` and names the storage directory and the
+reason. `restore_merge_point` takes `pointId`, the project's latest point when it is left out, and
+puts those files back, listing `restoredFiles` with `restoredCount`, the files whose bytes already
+matched in `unchangedFiles`, and the files the point does not hold in `removedFiles`. A file that
+already matches the point is not rewritten. A restore that stops halfway still names what it did
+not put back in `unrestoredFiles`, still removes the extras and still refreshes the workspace. It
+needs no repository: a project outside git is served from a copy of its directory.
+`delete_merge_restore_point` takes a required `pointId` and drops that point - the ref or the copy
+and the index entry; no project file is touched, and a point of another project is refused. See
 `expected-behavior.md` for what such a point covers.
 
-The writes `commit`, `checkout`, `revert_file` and `restore_merge_point` are switched by presets
-under the names `git_commit`, `git_checkout` and `git_revert_file`: under Read-only the facade still
-reads and each write is refused before a file is staged or restored; `restore_merge_point` passes
-through the `git_revert_file` door as well, and `create_merge_restore_point` writes nothing into the
-work tree but starts a ref in the repository or a copy of the project directory, and no preset
-switches it off. All three names are also callable on their own as aliases of the operation.
+The writes `commit`, `checkout`, `revert_file`, `restore_merge_point`, `create_merge_restore_point`
+and `delete_merge_restore_point` are switched by presets under the names `git_commit`,
+`git_checkout`, `git_revert_file`, `git_create_merge_restore_point` and
+`git_delete_merge_restore_point`: under Read-only the facade still reads and each write is refused
+before a file is staged or restored or a point is taken or dropped; `restore_merge_point` passes
+through the `git_revert_file` door, and taking a point writes nothing into the work tree but starts
+a ref in the repository or a copy of the project directory. All five names are also callable on
+their own as aliases of the operation.
 
 ## Tools that stand on their own
 

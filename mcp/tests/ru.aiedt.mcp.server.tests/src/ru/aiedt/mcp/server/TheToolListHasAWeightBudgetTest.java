@@ -189,8 +189,15 @@ public class TheToolListHasAWeightBudgetTest
      * description gained the three names. A column shift moves every holder of its number the
      * same way. Measured 05.10: 187572.
      * </p>
+     * <p>
+     * And from 187572 to 187873 for delete_merge_restore_point on git: the facade description
+     * gained the deletion and the rule that a file matching the point is not rewritten, the
+     * operation list gained the name, and pointId names the deletion beside the restore. The git
+     * entry stayed inside its per-tool headroom; the sum crossed the document. Measured 06.10:
+     * 187873.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 187572;
+    private static final int DOCUMENT_BUDGET = 187873;
 
     private LiveServer server;
 
