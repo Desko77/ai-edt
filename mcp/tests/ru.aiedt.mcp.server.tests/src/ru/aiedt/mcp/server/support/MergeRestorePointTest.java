@@ -14,12 +14,10 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.nio.file.attribute.DosFileAttributeView;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -36,7 +34,6 @@ import org.eclipse.jgit.lib.ObjectId;
 import org.eclipse.jgit.lib.RefUpdate;
 import org.junit.After;
 import org.junit.AfterClass;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -152,6 +149,7 @@ public class MergeRestorePointTest
         MergeRestorePoint.refreshCalls = 0;
         MergeRestorePoint.contentComparisons = 0;
         MergeRestorePoint.refreshFailureForTest = null;
+        MergeRestorePoint.deleteRefusalForTest = null;
         GitRepositoryAccess.deleteRefResultForTest = null;
         McpToolCatalog catalog = McpToolCatalog.getInstance();
         catalog.register(new GitTool());
@@ -578,15 +576,14 @@ public class MergeRestorePointTest
     @Test
     public void aCopyPointWhoseDirectorySurvivesIsNotReportedDeleted() throws Exception
     {
-        Assume.assumeTrue("a read-only file does not block deletion on this file system", //$NON-NLS-1$
-            readOnlyBlocksDelete());
         JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
             "projectName", COPY_PROJECT))); //$NON-NLS-1$
         assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
         String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
         Path copyDir = Path.of(created.get("copyPath").getAsString()); //$NON-NLS-1$
         assertTrue(Files.isDirectory(copyDir));
-        refuseDeletion(copyDir.resolve("src/Module.bsl")); //$NON-NLS-1$
+        Path heldFile = copyDir.resolve("src/Module.bsl"); //$NON-NLS-1$
+        MergeRestorePoint.deleteRefusalForTest = path -> path.equals(heldFile);
         try
         {
             JsonObject dropped = json(new GitTool().execute(Map.of("operation", //$NON-NLS-1$
@@ -600,7 +597,7 @@ public class MergeRestorePointTest
         }
         finally
         {
-            allowDeletion(copyDir.resolve("src/Module.bsl")); //$NON-NLS-1$
+            MergeRestorePoint.deleteRefusalForTest = null;
         }
         JsonObject again = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
             "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
@@ -719,8 +716,6 @@ public class MergeRestorePointTest
     @Test
     public void aStuckExtraBesideAPartialRestoreIsNamedToo() throws Exception
     {
-        Assume.assumeTrue("a read-only file does not block deletion on this file system", //$NON-NLS-1$
-            readOnlyBlocksDelete());
         JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
             "projectName", COPY_PROJECT))); //$NON-NLS-1$
         assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
@@ -729,7 +724,8 @@ public class MergeRestorePointTest
         Files.writeString(added(copyProject), "// added\n", StandardCharsets.UTF_8); //$NON-NLS-1$
         Files.writeString(stuck(copyProject), "// stuck\n", StandardCharsets.UTF_8); //$NON-NLS-1$
         Files.deleteIfExists(Path.of(created.get("copyPath").getAsString()).resolve("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
-        refuseDeletion(stuck(copyProject));
+        Path heldFile = stuck(copyProject);
+        MergeRestorePoint.deleteRefusalForTest = path -> path.equals(heldFile);
         try
         {
             JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
@@ -749,7 +745,7 @@ public class MergeRestorePointTest
         }
         finally
         {
-            allowDeletion(stuck(copyProject));
+            MergeRestorePoint.deleteRefusalForTest = null;
             Files.deleteIfExists(stuck(copyProject));
         }
     }
@@ -761,14 +757,13 @@ public class MergeRestorePointTest
     @Test
     public void aStuckExtraAloneMakesTheRestoreAnError() throws Exception
     {
-        Assume.assumeTrue("a read-only file does not block deletion on this file system", //$NON-NLS-1$
-            readOnlyBlocksDelete());
         JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
             "projectName", COPY_PROJECT))); //$NON-NLS-1$
         assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
         String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
         Files.writeString(stuck(copyProject), "// stuck\n", StandardCharsets.UTF_8); //$NON-NLS-1$
-        refuseDeletion(stuck(copyProject));
+        Path heldFile = stuck(copyProject);
+        MergeRestorePoint.deleteRefusalForTest = path -> path.equals(heldFile);
         try
         {
             JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
@@ -786,7 +781,7 @@ public class MergeRestorePointTest
         }
         finally
         {
-            allowDeletion(stuck(copyProject));
+            MergeRestorePoint.deleteRefusalForTest = null;
             Files.deleteIfExists(stuck(copyProject));
         }
     }
@@ -989,64 +984,6 @@ public class MergeRestorePointTest
     private static Path stuck(IProject project)
     {
         return project.getLocation().toFile().toPath().resolve("src/Stuck.bsl"); //$NON-NLS-1$
-    }
-
-    /**
-     * Whether this file system refuses to delete a read-only file. Windows does; a POSIX system
-     * removes it when the directory allows writing, and a test that needs the refusal is skipped
-     * there.
-     *
-     * @return {@code true} when the read-only file could not be deleted
-     */
-    private static boolean readOnlyBlocksDelete() throws IOException
-    {
-        Path probe = Files.createTempFile("aiedt-merge-hold", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
-        DosFileAttributeView view = Files.getFileAttributeView(probe, DosFileAttributeView.class);
-        if (view == null)
-        {
-            Files.deleteIfExists(probe);
-            return false;
-        }
-        view.setReadOnly(true);
-        try
-        {
-            Files.deleteIfExists(probe);
-            return false;
-        }
-        catch (IOException refused)
-        {
-            return true;
-        }
-        finally
-        {
-            view.setReadOnly(false);
-            Files.deleteIfExists(probe);
-        }
-    }
-
-    /**
-     * Makes a file refuse deletion on a file system where {@link #readOnlyBlocksDelete()} said it
-     * would.
-     *
-     * @param file the file
-     */
-    private static void refuseDeletion(Path file) throws IOException
-    {
-        Files.getFileAttributeView(file, DosFileAttributeView.class).setReadOnly(true);
-    }
-
-    /**
-     * Returns a file to normal deletion, when {@link #refuseDeletion(Path)} was used on it.
-     *
-     * @param file the file
-     */
-    private static void allowDeletion(Path file) throws IOException
-    {
-        DosFileAttributeView view = Files.getFileAttributeView(file, DosFileAttributeView.class);
-        if (view != null)
-        {
-            view.setReadOnly(false);
-        }
     }
 
     private static IProject openProject(String name, Path location) throws Exception

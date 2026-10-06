@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.support;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -24,6 +25,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
@@ -78,6 +80,12 @@ public final class MergeRestorePoint
      * its content being read, and this count is the proof.
      */
     static int contentComparisons;
+
+    /**
+     * Paths a test refuses to delete, so a deletion that fails runs on every file system alike - a
+     * read-only file stops a deletion on Windows only. {@code null} deletes for real.
+     */
+    static Predicate<Path> deleteRefusalForTest;
 
     /** The buffer a point's bytes are compared against a file through. */
     private static final int COMPARE_BUFFER = 8192;
@@ -1121,6 +1129,23 @@ public final class MergeRestorePoint
     }
 
     /**
+     * Deletes one path, the way both the copy deletion and the extras cleanup do. A test may
+     * refuse a path here, so a deletion that fails is the same on every file system.
+     *
+     * @param path the file or empty directory to delete
+     * @return whether the path was there to delete
+     * @throws IOException when the path cannot be deleted, or a test refused it
+     */
+    private static boolean delete(Path path) throws IOException
+    {
+        if (deleteRefusalForTest != null && deleteRefusalForTest.test(path))
+        {
+            throw new AccessDeniedException(path.toString());
+        }
+        return Files.deleteIfExists(path);
+    }
+
+    /**
      * Deletes regular files under the project that the point does not hold. Git metadata is left
      * alone. A file that cannot be deleted does not stop the others: it is named with the reason in
      * {@link Restored#cleanupFailures}, and the files that did go are still returned - the answer
@@ -1181,7 +1206,7 @@ public final class MergeRestorePoint
             }
             try
             {
-                if (Files.deleteIfExists(file))
+                if (delete(file))
                 {
                     removed.add(relative);
                 }
@@ -1218,7 +1243,7 @@ public final class MergeRestorePoint
             {
                 try
                 {
-                    Files.deleteIfExists(path);
+                    delete(path);
                 }
                 catch (IOException e)
                 {
