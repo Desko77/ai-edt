@@ -1074,4 +1074,24 @@ public class ColumnOperationsOfATemplateTest
         assertTrue("the one column the area held is gone, and the area with it", //$NON-NLS-1$
             deleted.removedNamedAreas.contains("Ячейка")); //$NON-NLS-1$
     }
+
+    /** An empty template answers both axes the same: the first position is open, the second is not. */
+    @Test
+    public void anEmptyTemplateTakesColumnOneAndRefusesColumnTwo()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        doc.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        doc.getRows().put(Integer.valueOf(1), MoxelFactory.eINSTANCE.createRow());
+        doc.setColumns(MoxelFactory.eINSTANCE.createColumns());
+
+        BmTemplateHelper.ColumnOutcome refused = BmTemplateHelper.insertColumns(doc, 2, 1,
+            "none"); //$NON-NLS-1$
+        assertNotNull("a column set of size 0 does not make column 2 a column of the document", //$NON-NLS-1$
+            refused.error);
+        assertTrue(refused.error.contains("past the end")); //$NON-NLS-1$
+        assertNull("column 1 is the first column an empty document takes", //$NON-NLS-1$
+            BmTemplateHelper.insertColumns(doc, 1, 1, "none").error); //$NON-NLS-1$
+        assertNotNull("and the bare row entries do not open row 2 either", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, 2, 1, "none").error); //$NON-NLS-1$
+    }
 }

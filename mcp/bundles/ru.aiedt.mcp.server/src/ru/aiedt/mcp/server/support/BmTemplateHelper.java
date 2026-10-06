@@ -3829,10 +3829,12 @@ public final class BmTemplateHelper
     /**
      * The document's last row, 1-based: the highest row anything of the model reaches.
      * <p>
-     * Every holder of a row number counts - the rows themselves, merges, named areas, row groups,
-     * drawings, the areas the drawings read their data from, the print and repeat areas, and the
-     * declared height. A row past the content sits in the model all the same, and an operation
-     * that asked about "the last row" has to see it.
+     * Every holder of a row number counts - the rows that carry content, merges, named areas, row
+     * groups, drawings, the areas the drawings read their data from, the print and repeat areas,
+     * and the declared height. A row past the content sits in the model all the same, and an
+     * operation that asked about "the last row" has to see it. A bare row entry - no row format,
+     * no cells, no column set of its own - is the placeholder an empty template carries, not
+     * content, and does not hold the end.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3843,7 +3845,7 @@ public final class BmTemplateHelper
         int maxKey = -1;
         for (Map.Entry<Integer, Row> held : doc.getRows())
         {
-            if (held != null && held.getKey() != null)
+            if (held != null && held.getKey() != null && rowCarriesContent(held.getValue()))
             {
                 maxKey = Math.max(maxKey, held.getKey().intValue());
             }
@@ -3896,6 +3898,28 @@ public final class BmTemplateHelper
             maxKey = doc.getHeight() - 1;
         }
         return maxKey + 1;
+    }
+
+    /**
+     * Whether a row entry holds anything a reader could see: a row format of its own, cells, or
+     * a column set with a declared size or entries. A row with none of the three is the
+     * placeholder an empty template file carries, not content.
+     *
+     * @param row the row, or <code>null</code>
+     * @return <code>true</code> when the row carries content
+     */
+    private static boolean rowCarriesContent(Row row)
+    {
+        if (row == null)
+        {
+            return false;
+        }
+        if (row.getFormatIndex() != 0 || !row.getCells().isEmpty())
+        {
+            return true;
+        }
+        Columns set = row.getColumns();
+        return set != null && (set.getSize() > 0 || !set.getColumns().isEmpty());
     }
 
     /**

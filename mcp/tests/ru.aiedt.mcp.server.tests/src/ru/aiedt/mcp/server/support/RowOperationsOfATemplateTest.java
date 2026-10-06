@@ -31,6 +31,7 @@ import com._1c.g5.v8.dt.moxel.RectArea;
 import com._1c.g5.v8.dt.moxel.Row;
 import com._1c.g5.v8.dt.moxel.RowGroup;
 import com._1c.g5.v8.dt.moxel.RowMerge;
+import com._1c.g5.v8.dt.moxel.RowsArea;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
 import com._1c.g5.v8.dt.moxel.SpreadsheetPoint;
 import com._1c.g5.v8.dt.moxel.SpreadsheetRect;
@@ -975,5 +976,76 @@ public class RowOperationsOfATemplateTest
         assertNull(deleted.error);
         assertTrue("the one row the area held is gone, and the area with it", //$NON-NLS-1$
             deleted.removedNamedAreas.contains("Объект")); //$NON-NLS-1$
+    }
+
+    /** The bare row entries an empty template carries are not content: row 1 is open, row 2 is not. */
+    @Test
+    public void anEmptyTemplatesBareRowsDoNotHoldTheEnd()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        doc.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        doc.getRows().put(Integer.valueOf(1), MoxelFactory.eINSTANCE.createRow());
+
+        BmTemplateHelper.RowOutcome refused = BmTemplateHelper.insertRows(doc, 2, 1, "none"); //$NON-NLS-1$
+        assertNotNull("a bare row entry does not make row 2 a row of the document", //$NON-NLS-1$
+            refused.error);
+        assertTrue(refused.error.contains("past the end")); //$NON-NLS-1$
+
+        assertNull("row 1 is the first row an empty document takes", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, 1, 1, "none").error); //$NON-NLS-1$
+        assertNotNull("and an insertion that materialized nothing opened nothing", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, 2, 1, "none").error); //$NON-NLS-1$
+    }
+
+    /** A row format and a cell are content; a bare row entry is what does not count. */
+    @Test
+    public void aRowWithAFormatOrACellHoldsTheEnd()
+    {
+        SpreadsheetDocument byFormat = emptyDocument();
+        Row formatted = MoxelFactory.eINSTANCE.createRow();
+        formatted.setFormatIndex(3);
+        byFormat.getRows().put(Integer.valueOf(4), formatted);
+        assertNull("a row with a row format of its own runs the document to it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byFormat, 5, 1, "none").error); //$NON-NLS-1$
+
+        SpreadsheetDocument byCell = emptyDocument();
+        Row withCell = MoxelFactory.eINSTANCE.createRow();
+        withCell.getCells().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createCell());
+        byCell.getRows().put(Integer.valueOf(4), withCell);
+        assertNull("a row with a cell runs the document to it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byCell, 5, 1, "none").error); //$NON-NLS-1$
+    }
+
+    /** The declared height, the print area and the drawings hold the end over bare rows, as over content. */
+    @Test
+    public void theHeightThePrintAreaAndTheDrawingsHoldTheEndOverBareRows()
+    {
+        SpreadsheetDocument byHeight = emptyDocument();
+        byHeight.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        byHeight.setHeight(5);
+        assertNotNull("row 7 is past the declared height of 5", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byHeight, 7, 1, "none").error); //$NON-NLS-1$
+        assertNull("and row 6 appends to it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byHeight, 6, 1, "none").error); //$NON-NLS-1$
+
+        SpreadsheetDocument byPrintArea = emptyDocument();
+        byPrintArea.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        RowsArea print = MoxelFactory.eINSTANCE.createRowsArea();
+        print.setBegin(2);
+        print.setEnd(3);
+        byPrintArea.setPrintArea(print);
+        assertNotNull("row 6 is past the print area over rows 3..4", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byPrintArea, 6, 1, "none").error); //$NON-NLS-1$
+        assertNull("and row 4 is inside it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byPrintArea, 4, 1, "none").error); //$NON-NLS-1$
+
+        SpreadsheetDocument byDrawing = emptyDocument();
+        byDrawing.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        BmTemplateHelper.addDrawing(byDrawing, "Line", 4, 1, 5, 2, 0, 0, 0, 0, -1, null, //$NON-NLS-1$
+            null, null);
+        assertNotNull("row 7 is past the drawing over rows 4..5", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byDrawing, 7, 1, "none").error); //$NON-NLS-1$
+        assertNull("and row 5 is inside it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byDrawing, 5, 1, "none").error); //$NON-NLS-1$
     }
 }
