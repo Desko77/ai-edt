@@ -371,7 +371,7 @@ public final class BmFormGeneratorHelper
         try
         {
             // --- ScriptVariant (from configuration, default RUSSIAN) ----------
-            Object scriptVariant = resolveScriptVariant(config);
+            Object scriptVariant = BslScriptLanguage.platformVariant(config);
 
             // --- Platform Version (the wizard's IV8Project.getVersion) --------
             Object version = resolveProjectVersion(project);
@@ -751,35 +751,6 @@ public final class BmFormGeneratorHelper
             }
         }
         return null;
-    }
-
-    /**
-     * Reads {@code configuration.getScriptVariant()}; defaults to the
-     * {@code RUSSIAN} constant of the {@code ScriptVariant} enum when the
-     * configuration is null or exposes no value.
-     */
-    private static Object resolveScriptVariant(Configuration config)
-    {
-        try
-        {
-            if (config != null)
-            {
-                Object sv = config.getScriptVariant();
-                if (sv != null)
-                {
-                    return sv;
-                }
-            }
-            // Default to RUSSIAN via the mdclass enum.
-            Class<?> svClass =
-                Class.forName("com._1c.g5.v8.dt.metadata.mdclass.ScriptVariant"); //$NON-NLS-1$
-            return resolveEnumConstant(svClass, "RUSSIAN"); //$NON-NLS-1$
-        }
-        catch (Exception e)
-        {
-            Activator.logWarning("resolveScriptVariant failed: " + e.getMessage()); //$NON-NLS-1$
-            return null;
-        }
     }
 
     /**

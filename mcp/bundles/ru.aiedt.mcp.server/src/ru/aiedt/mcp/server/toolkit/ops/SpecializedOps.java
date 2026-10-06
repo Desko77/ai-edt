@@ -31,6 +31,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.Task;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BmExportHelper;
@@ -596,15 +597,16 @@ final class SpecializedOps
             ? regCfgProvider.getConfiguration(project) : null;
         final List<String> created = new ArrayList<>();
         final Map<String, Object> readBack = new LinkedHashMap<>();
-        String taskFqn = linkedTaskFqn(regConfig, ownerFqn);
-        if (taskFqn == null)
+        IProject baseProject = BmCommonModuleGuards.parentProjectOf(project);
+        Configuration baseConfig = baseProject != null && regCfgProvider != null
+            ? regCfgProvider.getConfiguration(baseProject) : null;
+        LinkedTask target = linkedTaskOf(regConfig, baseConfig, ownerFqn);
+        if (target.refusal != null)
         {
-            return ToolResult.error("BusinessProcess " + ownerFqn //$NON-NLS-1$
-                + " has no linked Task; set its 'task' property first " //$NON-NLS-1$
-                + "(set_object_reference property=task). Nothing was changed.").toJson(); //$NON-NLS-1$
+            return ToolResult.error(target.refusal).toJson();
         }
 
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, taskFqn, dryRun,
+        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, target.fqn, dryRun,
             (tx, owner) -> {
                 Task task = taskOf(owner, ownerFqn);
                 InformationRegister writtenRegister = null;
@@ -826,34 +828,81 @@ final class SpecializedOps
             + " is neither. Nothing was changed."); //$NON-NLS-1$
     }
 
+    /** The write target of a task-addressing call, or the refusal that stops it. */
+    static final class LinkedTask
+    {
+        /** The FQN to write through; null when the call is refused. */
+        final String fqn;
+
+        /** Why the call is refused; null when a target was found. */
+        final String refusal;
+
+        LinkedTask(String fqn, String refusal)
+        {
+            this.fqn = fqn;
+            this.refusal = refusal;
+        }
+    }
+
     /**
      * The object the addressing write opens its transaction on: the Task itself, or the Task a
      * BusinessProcess is linked to. The transaction exports its own object to disk, so a write
      * opened on the BusinessProcess would leave the changed Task in the model only.
+     * <p>
+     * The BusinessProcess is looked up in the project's own configuration first and in the base
+     * configuration its extension adopts second, because a business process of the base
+     * configuration is not in the extension's own lists. An address that names no business process
+     * in either is refused rather than written through: the write would land on the BusinessProcess
+     * itself and export an object the caller never named.
+     * </p>
      *
-     * @param config the configuration, or null when it is not available
+     * @param ownConfig the project's own configuration, or null when it is not available
+     * @param baseConfig the base configuration of an extension project, or null when there is none
      * @param ownerFqn the owner the caller named
      * @return the FQN to write through; {@code ownerFqn} itself when it is not a BusinessProcess
-     *         or the BusinessProcess is not found (the transaction then reports it), and null when
-     *         the BusinessProcess has no linked Task
+     *         (the transaction then reports an owner it cannot use), and a refusal when the
+     *         BusinessProcess is missing from both configurations or has no linked Task
      */
-    static String linkedTaskFqn(Configuration config, String ownerFqn)
+    static LinkedTask linkedTaskOf(Configuration ownConfig, Configuration baseConfig,
+        String ownerFqn)
     {
         String normalized = MetadataTypeCatalog.normalizeFqn(ownerFqn.trim());
         String[] parts = normalized.split("\\.", 2); //$NON-NLS-1$
-        if (config == null || parts.length != 2 || !"BusinessProcess".equals(parts[0])) //$NON-NLS-1$
+        if (parts.length != 2 || !"BusinessProcess".equals(parts[0])) //$NON-NLS-1$
         {
-            return ownerFqn;
+            return new LinkedTask(ownerFqn, null);
         }
-        for (BusinessProcess process : config.getBusinessProcesses())
+        boolean anyConfig = false;
+        for (Configuration config : new Configuration[] {ownConfig, baseConfig})
         {
-            if (process.getName() != null && process.getName().equalsIgnoreCase(parts[1]))
+            if (config == null)
             {
+                continue;
+            }
+            anyConfig = true;
+            for (BusinessProcess process : config.getBusinessProcesses())
+            {
+                if (process.getName() == null || !process.getName().equalsIgnoreCase(parts[1]))
+                {
+                    continue;
+                }
                 Task task = process.getTask();
-                return task != null && task.getName() != null ? "Task." + task.getName() : null; //$NON-NLS-1$
+                return task != null && task.getName() != null
+                    ? new LinkedTask("Task." + task.getName(), null) //$NON-NLS-1$
+                    : new LinkedTask(null, "BusinessProcess " + ownerFqn //$NON-NLS-1$
+                        + " has no linked Task; set its 'task' property first " //$NON-NLS-1$
+                        + "(set_object_reference property=task). Nothing was changed."); //$NON-NLS-1$
             }
         }
-        return ownerFqn;
+        if (!anyConfig)
+        {
+            return new LinkedTask(null, "The configuration of the project is not available, so " //$NON-NLS-1$
+                + "the Task linked to " + ownerFqn + " cannot be resolved. Nothing was changed."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return new LinkedTask(null, "BusinessProcess " + ownerFqn + " was not found in the " //$NON-NLS-1$ //$NON-NLS-2$
+            + "configuration" //$NON-NLS-1$
+            + (baseConfig != null ? " or in the base configuration the extension adopts" : "") //$NON-NLS-1$ //$NON-NLS-2$
+            + ". Nothing was changed."); //$NON-NLS-1$
     }
 
     /**

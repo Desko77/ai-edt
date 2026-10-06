@@ -7,7 +7,9 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -48,20 +50,34 @@ public class ARouteWriteReachesTheObjectItChangesTest
     }
 
     /**
-     * A business process is written through its task, in any spelling of the address; a task
-     * and an unknown business process are written as named.
+     * A business process is written through its task, in any spelling of the address; a task is
+     * written as named.
      */
     @Test
     public void theAddressingIsWrittenThroughTheLinkedTask()
     {
         Configuration configuration = model();
         assertEquals("Task.Задача", //$NON-NLS-1$
-            SpecializedOps.linkedTaskFqn(configuration, "BusinessProcess.Маршрут")); //$NON-NLS-1$
+            SpecializedOps.linkedTaskOf(configuration, null, "BusinessProcess.Маршрут").fqn); //$NON-NLS-1$
         assertEquals("Task.Задача", //$NON-NLS-1$
-            SpecializedOps.linkedTaskFqn(configuration, "БизнесПроцесс.маршрут")); //$NON-NLS-1$
-        assertEquals("Task.Задача", SpecializedOps.linkedTaskFqn(configuration, "Task.Задача")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("BusinessProcess.Нет", //$NON-NLS-1$
-            SpecializedOps.linkedTaskFqn(configuration, "BusinessProcess.Нет")); //$NON-NLS-1$
+            SpecializedOps.linkedTaskOf(configuration, null, "БизнесПроцесс.маршрут").fqn); //$NON-NLS-1$
+        assertEquals("Task.Задача", //$NON-NLS-1$
+            SpecializedOps.linkedTaskOf(configuration, null, "Task.Задача").fqn); //$NON-NLS-1$
+    }
+
+    /**
+     * A business process neither configuration holds is refused rather than written through as
+     * named: the write would land on the business process itself and export an object the caller
+     * never named.
+     */
+    @Test
+    public void anUnknownBusinessProcessIsRefused()
+    {
+        SpecializedOps.LinkedTask miss =
+            SpecializedOps.linkedTaskOf(model(), null, "BusinessProcess.Нет"); //$NON-NLS-1$
+        assertNull(miss.fqn);
+        assertTrue(miss.refusal, miss.refusal.contains("BusinessProcess.Нет")); //$NON-NLS-1$
+        assertTrue(miss.refusal, miss.refusal.contains("Nothing was changed")); //$NON-NLS-1$
     }
 
     /**
@@ -70,7 +86,31 @@ public class ARouteWriteReachesTheObjectItChangesTest
     @Test
     public void aBusinessProcessWithoutATaskHasNothingToWriteThrough()
     {
-        assertNull(SpecializedOps.linkedTaskFqn(model(), "BusinessProcess.БезЗадачи")); //$NON-NLS-1$
+        SpecializedOps.LinkedTask bare =
+            SpecializedOps.linkedTaskOf(model(), null, "BusinessProcess.БезЗадачи"); //$NON-NLS-1$
+        assertNull(bare.fqn);
+        assertTrue(bare.refusal, bare.refusal.contains("has no linked Task")); //$NON-NLS-1$
+    }
+
+    /**
+     * A business process of the base configuration is reached through the extension's own
+     * configuration and the base one it adopts.
+     */
+    @Test
+    public void aBaseConfigurationBusinessProcessIsReachedThroughTheBase()
+    {
+        Configuration own = MdClassFactory.eINSTANCE.createConfiguration();
+        own.setName("Ext"); //$NON-NLS-1$
+        SpecializedOps.LinkedTask target =
+            SpecializedOps.linkedTaskOf(own, model(), "BusinessProcess.Маршрут"); //$NON-NLS-1$
+        assertNull(target.refusal);
+        assertEquals("Task.Задача", target.fqn); //$NON-NLS-1$
+
+        SpecializedOps.LinkedTask nowhere =
+            SpecializedOps.linkedTaskOf(own, model(), "BusinessProcess.Другой"); //$NON-NLS-1$
+        assertNull(nowhere.fqn);
+        assertNotNull(nowhere.refusal);
+        assertTrue(nowhere.refusal, nowhere.refusal.contains("base configuration")); //$NON-NLS-1$
     }
 
     /**

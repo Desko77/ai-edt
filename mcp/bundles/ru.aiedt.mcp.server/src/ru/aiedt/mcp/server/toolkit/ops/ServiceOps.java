@@ -1369,8 +1369,7 @@ final class ServiceOps
         {
             existing = ""; //$NON-NLS-1$
         }
-        if (existing.contains("Функция " + handler) //$NON-NLS-1$
-            || existing.contains("Function " + handler)) //$NON-NLS-1$
+        if (declaresHandlerFunction(existing, handler, moduleFile.getFullPath().toString()))
         {
             return moduleFile.getFullPath().toString();
         }
@@ -1401,6 +1400,30 @@ final class ServiceOps
             moduleFile.create(stream, true, null);
         }
         return moduleFile.getFullPath().toString();
+    }
+
+    /**
+     * Whether the HTTP service module already declares the handler, answered by the methods the
+     * module declares rather than by a search in its text.
+     *
+     * @param moduleText the module as it stands, or an empty string when it has no file
+     * @param handler the handler name the request named
+     * @param modulePath the module's workspace path, for the refusal text
+     * @return true when a function of that name is declared
+     */
+    private static boolean declaresHandlerFunction(String moduleText, String handler,
+        String modulePath)
+    {
+        try
+        {
+            return BslMethodDeclarations.declaresFunction(moduleText, handler);
+        }
+        catch (BslMethodDeclarations.ParseFailure unparsable)
+        {
+            throw new RuntimeException("the handler stub was not written: " + modulePath //$NON-NLS-1$
+                + " " + unparsable.getMessage() //$NON-NLS-1$
+                + ", so the handlers it already declares cannot be told apart"); //$NON-NLS-1$
+        }
     }
 
     private static String appendWebServiceHandlerStubIfMissing(IProject project, String serviceName,

@@ -25,6 +25,8 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BslScriptLanguage;
+import ru.aiedt.mcp.server.support.HandlerStubPlacement;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.UiSync;
@@ -149,16 +151,20 @@ public class GenerateEventHandlersTool implements IMcpTool
         }
         Set<String> requested = parseEvents(JsonUtils.extractStringArgument(params, "events")); //$NON-NLS-1$
         String mode = orDefault(JsonUtils.extractStringArgument(params, "mode"), "stub"); //$NON-NLS-1$ //$NON-NLS-2$
+        BslScriptLanguage language = BslScriptLanguage.of(config);
         StringBuilder bsl = new StringBuilder();
         List<String> generated = new ArrayList<>();
+        List<String> procedures = new ArrayList<>();
         for (EventDef def : available)
         {
             if (requested != null && !requested.isEmpty() && !requested.contains(def.name))
             {
                 continue;
             }
-            bsl.append(renderEvent(def, "full".equalsIgnoreCase(mode))).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            String procedure = renderEvent(def, "full".equalsIgnoreCase(mode), language); //$NON-NLS-1$
+            bsl.append(procedure).append("\n\n"); //$NON-NLS-1$
             generated.add(def.name);
+            procedures.add(procedure);
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("objectFqn", objectFqn); //$NON-NLS-1$
@@ -171,7 +177,7 @@ public class GenerateEventHandlersTool implements IMcpTool
         if (writeToModule)
         {
             appendToModule(project, objectFqn, handlerModulePath(objectFqn, kind), generated,
-                bsl.toString(), skipExisting, result);
+                procedures, language, skipExisting, result);
         }
 
         ToolResult tr = ToolResult.success();
@@ -197,12 +203,14 @@ public class GenerateEventHandlersTool implements IMcpTool
      * @param handlerModule the module path under src/ from {@link #handlerModulePath}, or null when
      *            the object type has no folder
      * @param generated the names of the handlers rendered above
-     * @param bsl the rendered text
+     * @param procedures the rendered handlers, aligned with {@code generated}
+     * @param language the language the module's directives are written in
      * @param skipExisting whether a handler already present in the module is left alone
      * @param result the answer being assembled
      */
     private static void appendToModule(IProject project, String objectFqn, String handlerModule,
-        List<String> generated, String bsl, boolean skipExisting, Map<String, Object> result)
+        List<String> generated, List<String> procedures, BslScriptLanguage language,
+        boolean skipExisting, Map<String, Object> result)
     {
         if (handlerModule == null)
         {
@@ -227,25 +235,16 @@ public class GenerateEventHandlersTool implements IMcpTool
 
         List<String> alreadyThere = new ArrayList<>();
         StringBuilder toWrite = new StringBuilder();
-        for (String name : generated)
+        for (int i = 0; i < generated.size(); i++)
         {
+            String name = generated.get(i);
             boolean present = existing != null && declares(existing, name);
             if (present && skipExisting)
             {
                 alreadyThere.add(name);
                 continue;
             }
-            int at = bsl.indexOf("Процедура " + name); //$NON-NLS-1$
-            if (at < 0)
-            {
-                at = bsl.indexOf("Функция " + name); //$NON-NLS-1$
-            }
-            if (at < 0)
-            {
-                continue;
-            }
-            int end = bsl.indexOf("\n\n", at);
-            toWrite.append(end < 0 ? bsl.substring(at) : bsl.substring(at, end)).append("\n\n"); //$NON-NLS-1$
+            toWrite.append(procedures.get(i)).append("\n\n"); //$NON-NLS-1$
         }
 
         result.put("skippedAsAlreadyPresent", alreadyThere); //$NON-NLS-1$
@@ -258,11 +257,18 @@ public class GenerateEventHandlersTool implements IMcpTool
             return;
         }
 
+        HandlerStubPlacement.Plan placement =
+            HandlerStubPlacement.plan(existing, toWrite.toString(), language);
         Map<String, String> writeParams = new LinkedHashMap<>();
         writeParams.put("projectName", project.getName()); //$NON-NLS-1$
         writeParams.put("modulePath", modulePath); //$NON-NLS-1$
-        writeParams.put("mode", ModuleSourceWriter.MODE_APPEND); //$NON-NLS-1$
-        writeParams.put("content", toWrite.toString()); //$NON-NLS-1$
+        writeParams.put("mode", placement.insertBeforeLine == null //$NON-NLS-1$
+            ? ModuleSourceWriter.MODE_APPEND : ModuleSourceWriter.MODE_INSERT_BEFORE);
+        if (placement.insertBeforeLine != null)
+        {
+            writeParams.put("line", String.valueOf(placement.insertBeforeLine)); //$NON-NLS-1$
+        }
+        writeParams.put("content", placement.text);
         String answer = new ModuleSourceWriter().execute(writeParams);
         boolean wrote = answer != null && !answer.contains("\"success\": false") //$NON-NLS-1$
             && !answer.startsWith("Error:"); //$NON-NLS-1$
@@ -276,16 +282,20 @@ public class GenerateEventHandlersTool implements IMcpTool
     }
 
     /**
-     * Whether a module already declares a method by this name.
+     * Whether a module already declares a procedure by this name.
+     * <p>
+     * A procedure only: an object-module event handler is a procedure, so a function of the same
+     * name is a different method and does not make the handler present.
+     * </p>
      *
      * @param moduleText the module as it stands
      * @param methodName the handler name
-     * @return <code>true</code> when the module declares it
+     * @return <code>true</code> when the module declares the procedure
      */
     static boolean declares(String moduleText, String methodName)
     {
         return java.util.regex.Pattern
-            .compile("^\\s*(Процедура|Функция|Procedure|Function)\\s+" + java.util.regex.Pattern.quote(methodName) //$NON-NLS-1$
+            .compile("^\\s*(Процедура|Procedure)\\s+" + java.util.regex.Pattern.quote(methodName) //$NON-NLS-1$
                 + "\\s*\\(", //$NON-NLS-1$
                 java.util.regex.Pattern.MULTILINE | java.util.regex.Pattern.CASE_INSENSITIVE
                     | java.util.regex.Pattern.UNICODE_CHARACTER_CLASS)
@@ -294,7 +304,8 @@ public class GenerateEventHandlersTool implements IMcpTool
     }
 
     /**
-     * Renders one handler as it belongs in an object module.
+     * Renders one handler as it belongs in an object module, in the language the configuration
+     * writes.
      * <p>
      * Without a compilation directive. These events live in the object module, which is server-side
      * by nature and where {@code &НаСервере} is not merely redundant but not allowed - it belongs to
@@ -305,22 +316,36 @@ public class GenerateEventHandlersTool implements IMcpTool
      *
      * @param def the event
      * @param full whether to write the typical body rather than a marker
+     * @param language the language of the keywords
      * @return the handler text
      */
-    static String renderEvent(EventDef def, boolean full)
+    static String renderEvent(EventDef def, boolean full, BslScriptLanguage language)
     {
         StringBuilder sb = new StringBuilder();
-        sb.append("Процедура ").append(def.name).append("(").append(def.signature).append(")\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        sb.append(language.procedure()).append(" ").append(def.name).append("(") //$NON-NLS-1$ //$NON-NLS-2$
+            .append(def.signature).append(")\n"); //$NON-NLS-1$
         if (full && def.fullBody != null)
         {
             sb.append(def.fullBody);
         }
         else
         {
-            sb.append("    // TODO: реализовать обработчик ").append(def.name).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            sb.append("    ").append(language.todoComment(def.name)).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        sb.append("КонецПроцедуры"); //$NON-NLS-1$
+        sb.append(language.endProcedure());
         return sb.toString();
+    }
+
+    /**
+     * Renders one handler in Russian, the language of a configuration that says nothing else.
+     *
+     * @param def the event
+     * @param full whether to write the typical body rather than a marker
+     * @return the handler text
+     */
+    static String renderEvent(EventDef def, boolean full)
+    {
+        return renderEvent(def, full, BslScriptLanguage.RUSSIAN);
     }
 
     /** English event names (the tool description / lifecycle) -> BSL names. */

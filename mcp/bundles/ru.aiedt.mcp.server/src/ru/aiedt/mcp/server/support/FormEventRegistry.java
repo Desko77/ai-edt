@@ -190,21 +190,42 @@ public final class FormEventRegistry
     }
 
     /**
-     * Generates the BSL handler stub:
+     * Generates the BSL handler stub in Russian, the language of a configuration that says nothing
+     * else:
      * <pre>
      * &amp;НаКлиенте
      * Процедура ИмяОбработчика(параметры)
      *
      * КонецПроцедуры
      * </pre>
+     *
+     * @param handlerName the handler the stub declares
+     * @param spec the event the handler answers
+     * @return the stub text
      */
     public static String generateBslStub(String handlerName, EventSpec spec)
     {
+        return generateBslStub(handlerName, spec, BslScriptLanguage.RUSSIAN);
+    }
+
+    /**
+     * Generates the BSL handler stub in the language the configuration writes. The compilation
+     * directive and the parameter names are the event's own; the procedure keywords are the
+     * language's.
+     *
+     * @param handlerName the handler the stub declares
+     * @param spec the event the handler answers
+     * @param language the language of the keywords
+     * @return the stub text
+     */
+    public static String generateBslStub(String handlerName, EventSpec spec,
+        BslScriptLanguage language)
+    {
         StringBuilder sb = new StringBuilder();
         sb.append('\n').append(spec.directive).append('\n');
-        sb.append("Процедура ").append(handlerName).append("("); //$NON-NLS-1$ //$NON-NLS-2$
+        sb.append(language.procedure()).append(" ").append(handlerName).append("("); //$NON-NLS-1$ //$NON-NLS-2$
         sb.append(spec.signature);
-        sb.append(")\n").append("    \n").append("КонецПроцедуры\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        sb.append(")\n").append("    \n").append(language.endProcedure()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         return sb.toString();
     }
 }

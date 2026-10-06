@@ -6,19 +6,23 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
+
+import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmRouteMapHelper;
+import ru.aiedt.mcp.server.support.BslScriptLanguage;
+import ru.aiedt.mcp.server.support.HandlerStubPlacement;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
 /**
@@ -117,7 +121,11 @@ final class RouteMapOps
                 + "declares cannot be told apart and would be written twice"; //$NON-NLS-1$
             Activator.logWarning("create_route_map: " + unreadable); //$NON-NLS-1$
         }
-        HandlerStubs stubs = planHandlerStubs(wr.handlers, moduleText);
+        IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
+        Configuration config =
+            configProvider != null ? configProvider.getConfiguration(project) : null;
+        BslScriptLanguage language = BslScriptLanguage.of(config);
+        HandlerStubs stubs = planHandlerStubs(wr.handlers, moduleText, language);
         if (dryRun)
         {
             ToolResult preview = ToolResult.success()
@@ -134,15 +142,20 @@ final class RouteMapOps
                 .put("previewXml", wr.xml) //$NON-NLS-1$
                 .put("message", "Preview: generated Flowchart.scheme (no changes applied). " //$NON-NLS-1$
                     + "Run without dryRun to write it, then update_database to verify."); //$NON-NLS-1$
-            if (unreadable != null)
+            if (stubs.error != null)
+            {
+                preview.put("stubWriteFailed", stubs.error); //$NON-NLS-1$
+            }
+            else if (unreadable != null)
             {
                 preview.put("stubWriteFailed", unreadable); //$NON-NLS-1$
             }
             return preview.toJson();
         }
-        String stubFailure = stubs.names.isEmpty() ? null
+        String stubFailure = stubs.error != null ? stubs.error
+            : stubs.names.isEmpty() ? null
             : unreadable != null ? unreadable
-            : appendToModule(project, modulePath, stubs.text.toString());
+            : appendToModule(project, modulePath, moduleText, stubs.text.toString(), language);
         ToolResult result = ToolResult.success()
             .put("operation", "create_route_map") //$NON-NLS-1$ //$NON-NLS-2$
             .put("ownerFqn", bpFqn) //$NON-NLS-1$
@@ -160,7 +173,6 @@ final class RouteMapOps
                 + (wr.replaced ? ", replacing the route map that was there" : "") //$NON-NLS-1$ //$NON-NLS-2$
                 + (stubFailure != null
                     ? ". The handler procedures were NOT written to " + modulePath //$NON-NLS-1$
-                        + " - the scheme names handlers the module does not declare" //$NON-NLS-1$
                     : "") //$NON-NLS-1$
                 + ". Run get_project_errors then update_database to verify."); //$NON-NLS-1$
         if (stubFailure != null)
@@ -179,15 +191,12 @@ final class RouteMapOps
         final List<String> alreadyPresent = new ArrayList<>();
         /** The procedures to append, one blank line apart. */
         final StringBuilder text = new StringBuilder();
+        /** Why no procedure can be written, or null when the plan is sound. */
+        String error;
     }
 
     /**
-     * Decides which handler procedures a written route map still needs.
-     * <p>
-     * A handler the module already declares is left alone, and a name given to several events is
-     * written once, with the parameters of the first event that names it. Names are compared
-     * without regard to case, as the platform binds them.
-     * </p>
+     * Decides which handler procedures a written route map still needs, in Russian.
      *
      * @param handlers the handlers written into the scheme, as {point, event, handler}
      * @param moduleText the object module as it stands, or null when there is none
@@ -195,30 +204,72 @@ final class RouteMapOps
      */
     static HandlerStubs planHandlerStubs(List<Map<String, String>> handlers, String moduleText)
     {
+        return planHandlerStubs(handlers, moduleText, BslScriptLanguage.RUSSIAN);
+    }
+
+    /**
+     * Decides which handler procedures a written route map still needs.
+     * <p>
+     * A handler the module already declares is left alone, and a name given to several events is
+     * written once - but only when those events hand their handler the same number of parameters.
+     * A name shared by events of different arity is a name the platform cannot bind to one
+     * procedure, so the plan refuses, naming both events and their signatures. Names are compared
+     * without regard to case, as the platform binds them.
+     * </p>
+     *
+     * @param handlers the handlers written into the scheme, as {point, event, handler}
+     * @param moduleText the object module as it stands, or null when there is none
+     * @param language the language the procedures' keywords are written in
+     * @return the procedures to write and the names already declared
+     */
+    static HandlerStubs planHandlerStubs(List<Map<String, String>> handlers, String moduleText,
+        BslScriptLanguage language)
+    {
         HandlerStubs plan = new HandlerStubs();
-        Set<String> seen = new HashSet<>();
+        Map<String, String> firstSpellingByName = new LinkedHashMap<>();
+        Map<String, String> firstEventByName = new LinkedHashMap<>();
+        Map<String, Integer> arityByName = new HashMap<>();
         for (Map<String, String> entry : handlers)
         {
             String handler = entry.get("handler"); //$NON-NLS-1$
-            if (handler == null || !seen.add(handler.toLowerCase(Locale.ROOT)))
+            String parameters = BmRouteMapHelper.handlerParameters(entry.get("event")); //$NON-NLS-1$
+            if (handler == null || parameters == null)
             {
                 continue;
             }
+            String key = handler.toLowerCase(Locale.ROOT);
+            Integer arity = Integer.valueOf(parameters.split(",").length); //$NON-NLS-1$
+            Integer known = arityByName.get(key);
+            if (known == null)
+            {
+                arityByName.put(key, arity);
+                firstSpellingByName.put(key, handler);
+                firstEventByName.put(key, entry.get("event")); //$NON-NLS-1$
+            }
+            else if (!known.equals(arity))
+            {
+                plan.error = "route handler '" + handler + "' answers events " //$NON-NLS-1$ //$NON-NLS-2$
+                    + firstEventByName.get(key) + " (" //$NON-NLS-1$
+                    + BmRouteMapHelper.handlerParameters(firstEventByName.get(key))
+                    + ") and " + entry.get("event") + " (" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    + parameters + "), whose handlers take different numbers of parameters; " //$NON-NLS-1$
+                    + "give each event a handler of its own. Nothing was written to the module."; //$NON-NLS-1$
+                return plan;
+            }
+        }
+        for (Map.Entry<String, String> named : firstSpellingByName.entrySet())
+        {
+            String handler = named.getValue();
             if (moduleText != null && GenerateEventHandlersTool.declares(moduleText, handler))
             {
                 plan.alreadyPresent.add(handler);
                 continue;
             }
-            String stub = BmRouteMapHelper.handlerStub(handler, entry.get("event")); //$NON-NLS-1$
+            String stub = BmRouteMapHelper.handlerStub(handler, firstEventByName.get(named.getKey()),
+                language);
             if (stub == null)
             {
                 continue;
-            }
-            if (plan.names.isEmpty() && moduleText != null && !moduleText.trim().isEmpty())
-            {
-                // Measured: the writer appends by lines and drops the module's trailing blank line,
-                // so without this the first procedure follows the last one with no line between.
-                plan.text.append("\n"); //$NON-NLS-1$
             }
             plan.names.add(handler);
             plan.text.append(stub).append("\n\n"); //$NON-NLS-1$
@@ -227,21 +278,34 @@ final class RouteMapOps
     }
 
     /**
-     * Appends procedures to a module through the module writer, which creates the module when it
+     * Writes procedures into a module through the module writer, which creates the module when it
      * has no file yet.
+     * <p>
+     * The text goes where {@link HandlerStubPlacement} puts it: into the module's handler region,
+     * into a new one, or into the whole shape when the module is empty.
+     * </p>
      *
      * @param project the project that owns the module
      * @param modulePath the module path under src/, e.g. {@code BusinessProcesses/X/ObjectModule.bsl}
-     * @param text the procedures to append
-     * @return the writer's refusal, or null when the text was appended
+     * @param moduleText the module as it was read, or null when it has no file
+     * @param text the procedures to write
+     * @param language the language the module's directives are written in
+     * @return the writer's refusal, or null when the text was written
      */
-    private static String appendToModule(IProject project, String modulePath, String text)
+    private static String appendToModule(IProject project, String modulePath, String moduleText,
+        String text, BslScriptLanguage language)
     {
+        HandlerStubPlacement.Plan placement = HandlerStubPlacement.plan(moduleText, text, language);
         Map<String, String> writeParams = new LinkedHashMap<>();
         writeParams.put("projectName", project.getName()); //$NON-NLS-1$
         writeParams.put("modulePath", modulePath); //$NON-NLS-1$
-        writeParams.put("mode", ModuleSourceWriter.MODE_APPEND); //$NON-NLS-1$
-        writeParams.put("content", text); //$NON-NLS-1$
+        writeParams.put("mode", placement.insertBeforeLine == null //$NON-NLS-1$
+            ? ModuleSourceWriter.MODE_APPEND : ModuleSourceWriter.MODE_INSERT_BEFORE);
+        if (placement.insertBeforeLine != null)
+        {
+            writeParams.put("line", String.valueOf(placement.insertBeforeLine)); //$NON-NLS-1$
+        }
+        writeParams.put("content", placement.text); //$NON-NLS-1$
         ModuleSourceWriter writer = new ModuleSourceWriter();
         String answer = writer.execute(writeParams);
         if (answer == null)
