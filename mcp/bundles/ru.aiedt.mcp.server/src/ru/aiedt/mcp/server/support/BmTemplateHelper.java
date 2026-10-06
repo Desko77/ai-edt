@@ -4047,6 +4047,52 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The offset a drawing point carries inside its position on an axis; a point with no offset
+     * recorded reads as 0, the near edge of the position.
+     *
+     * @param point the anchor, or <code>null</code>
+     * @param axis the axis to read
+     * @return the offset, or 0
+     */
+    private static int pointOffsetOf(SpreadsheetPoint point, Axis axis)
+    {
+        if (point == null || point.getOffset() == null)
+        {
+            return 0;
+        }
+        return axis == Axis.COLUMN ? point.getOffset().getX() : point.getOffset().getY();
+    }
+
+    /**
+     * Sets the offset a drawing point carries inside its position on an axis.
+     *
+     * @param point the anchor, or <code>null</code>
+     * @param offset the offset to write
+     * @param axis the axis to write
+     */
+    private static void setPointOffset(SpreadsheetPoint point, int offset, Axis axis)
+    {
+        if (point == null)
+        {
+            return;
+        }
+        Point off = point.getOffset();
+        if (off == null)
+        {
+            off = McoreFactory.eINSTANCE.createPoint();
+            point.setOffset(off);
+        }
+        if (axis == Axis.COLUMN)
+        {
+            off.setX(offset);
+        }
+        else
+        {
+            off.setY(offset);
+        }
+    }
+
+    /**
      * The span of an area on an axis, or <code>null</code> when the area holds none there.
      * <p>
      * A columns area holds no rows and a rows area holds no columns, by construction; an area kind
@@ -4804,8 +4850,13 @@ public final class BmTemplateHelper
      * Moves the drawings over an insertion or a deletion on an axis.
      * <p>
      * A drawing the deleted range swallows goes away and is named by id; one it cuts in half keeps
-     * its near anchor and loses the positions that went; one past the range moves toward it. A
-     * drawing with no anchor at all is left alone - there is nothing to reason with.
+     * its near anchor and loses the positions that went; one past the range moves toward it. An end
+     * anchor with no offset stands on the near edge of its position, so it reaches no position of
+     * its own: an end on the first position past the deleted range with an offset of 0 means the
+     * drawing lay in the range whole, and it goes away with it. An anchor whose position was
+     * deleted re-anchors at the near edge of the first surviving position with an offset of 0, so
+     * the begin never ends up past the end. A drawing with no anchor at all is left alone - there
+     * is nothing to reason with.
      * </p>
      *
      * @param doc the spreadsheet holding the drawings
@@ -4833,6 +4884,14 @@ public final class BmTemplateHelper
             {
                 continue;
             }
+            int endOffset = pointOffsetOf(end, axis);
+            if (!inserting && beginAt >= 0 && beginAt <= endAt
+                && (endOffset != 0 || endAt > beginAt))
+            {
+                moveDrawingOverDeletion(drawing, begin, end, beginAt, endAt, endOffset,
+                    at, count, outcome, axis, gone);
+                continue;
+            }
             int from = beginAt < 0 ? endAt : beginAt;
             int to = endAt < 0 ? beginAt : endAt;
             Span moved = movedSpan(Math.min(from, to), Math.max(from, to), inserting, at, count);
@@ -4851,6 +4910,74 @@ public final class BmTemplateHelper
         if (!gone.isEmpty())
         {
             doc.getDrawings().removeAll(gone);
+        }
+    }
+
+    /**
+     * Moves one drawing over a deletion on an axis, by the positions its anchors occupy rather
+     * than the ones they name.
+     * <p>
+     * An end anchor with an offset of 0 stands on the near edge of its position and occupies none
+     * of it, so the last position the drawing occupies is the one before. A drawing whose occupied
+     * span the deleted range swallows whole goes away and is named by id; one cut at the begin
+     * re-anchors its begin at the near edge of the first surviving position; one cut at the end
+     * ends at the near edge of that same position.
+     * </p>
+     *
+     * @param drawing the drawing to move
+     * @param begin the drawing's begin anchor
+     * @param end the drawing's end anchor
+     * @param beginAt the position the begin anchor names on the axis, 0-based
+     * @param endAt the position the end anchor names on the axis, 0-based
+     * @param endOffset the end anchor's offset inside its position on the axis
+     * @param at the 0-based position the deletion starts at
+     * @param count how many positions were deleted
+     * @param outcome where the id lands, or <code>null</code> to move silently
+     * @param axis the axis the shift runs over
+     * @param gone where a drawing the range swallowed is collected
+     */
+    private static void moveDrawingOverDeletion(Drawing drawing,
+        SpreadsheetPoint begin, SpreadsheetPoint end, int beginAt, int endAt, int endOffset,
+        int at, int count, ShiftOutcome outcome, Axis axis, List<Drawing> gone)
+    {
+        int last = at + count - 1;
+        int occupiedEnd = endOffset == 0 ? endAt - 1 : endAt;
+        if (beginAt > last)
+        {
+            setPointAt(begin, beginAt - count, axis);
+            setPointAt(end, endAt - count, axis);
+        }
+        else if (occupiedEnd < at)
+        {
+            // The drawing ends at or over the near edge of the first deleted position: nothing
+            // of it lay in the range, and nothing moves.
+        }
+        else if (beginAt >= at && occupiedEnd <= last)
+        {
+            gone.add(drawing);
+            if (outcome != null)
+            {
+                outcome.removedDrawings.add(Integer.valueOf(drawing.getDrawingId()));
+            }
+        }
+        else if (beginAt >= at)
+        {
+            // The positions the begin was anchored in are gone: the drawing starts where the
+            // first surviving position starts.
+            setPointAt(begin, at, axis);
+            setPointOffset(begin, 0, axis);
+            setPointAt(end, endAt - count, axis);
+        }
+        else if (occupiedEnd <= last)
+        {
+            // The positions the end was anchored in are gone: the drawing ends where the first
+            // surviving position starts.
+            setPointAt(end, at, axis);
+            setPointOffset(end, 0, axis);
+        }
+        else
+        {
+            setPointAt(end, endAt - count, axis);
         }
     }
 

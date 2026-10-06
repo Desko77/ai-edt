@@ -1048,4 +1048,68 @@ public class RowOperationsOfATemplateTest
         assertNull("and row 5 is inside it", //$NON-NLS-1$
             BmTemplateHelper.insertRows(byDrawing, 5, 1, "none").error); //$NON-NLS-1$
     }
+
+    /**
+     * An end anchor with no offset stands on the top edge of its row, so a drawing ending on the
+     * first surviving row with an offset of 0 lay in the deleted range whole - it goes with the
+     * rows and is named by id.
+     */
+    @Test
+    public void aDrawingEndingOnTheFirstSurvivingRowWithNoOffsetGoesWithTheDeletion()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 8, 1, 9, 2, 3, 0, 0, 0, -1, null, //$NON-NLS-1$
+            null, null);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing occupied only the deleted row and went with it", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawings().isEmpty());
+    }
+
+    /** A drawing with a nonzero end offset on a surviving row shrinks the way it did. */
+    @Test
+    public void aDrawingWithAnEndOffsetOnASurvivingRowShrinksAsBefore()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 6, 1, 9, 2, 2, 0, 5, 0, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 7, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lost rows but was not taken whole", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin above the range keeps its row", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getY());
+        assertEquals("and its offset", 2, doc.getDrawings().get(0).getPosition().getBegin() //$NON-NLS-1$
+            .getOffset().getY());
+        assertEquals("the end moved up by the count", 6, doc.getDrawings().get(0).getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getY());
+        assertEquals("and kept its offset on the surviving row", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getEnd().getOffset().getY());
+    }
+
+    /** A begin anchor whose row was deleted re-anchors at the top of the first surviving row. */
+    @Test
+    public void aDrawingWhoseBeginRowWentStartsAtTheEdgeOfTheSurvivor()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 8, 1, 9, 2, 3, 0, 2, 0, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin stands on the first surviving row", 7, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getY());
+        assertEquals("with no offset - the row its offset reached into is gone", 0, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getBegin().getOffset().getY());
+        assertEquals("the end stands on the same row", 7, doc.getDrawings().get(0).getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getY());
+        assertEquals("keeping its offset, so the begin is not below the end", 2, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getEnd().getOffset().getY());
+    }
 }

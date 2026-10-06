@@ -1094,4 +1094,68 @@ public class ColumnOperationsOfATemplateTest
         assertNotNull("and the bare row entries do not open row 2 either", //$NON-NLS-1$
             BmTemplateHelper.insertRows(doc, 2, 1, "none").error); //$NON-NLS-1$
     }
+
+    /**
+     * An end anchor with no offset stands on the left edge of its column, so a drawing ending on
+     * the first surviving column with an offset of 0 lay in the deleted range whole - it goes with
+     * the columns and is named by id.
+     */
+    @Test
+    public void aDrawingEndingOnTheFirstSurvivingColumnWithNoOffsetGoesWithTheDeletion()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 8, 2, 9, 0, 3, 0, 0, -1, null, //$NON-NLS-1$
+            null, null);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing occupied only the deleted column and went with it", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawings().isEmpty());
+    }
+
+    /** A drawing with a nonzero end offset on a surviving column shrinks the way it did. */
+    @Test
+    public void aDrawingWithAnEndOffsetOnASurvivingColumnShrinksAsBefore()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 1, 6, 2, 9, 0, 2, 0, 5, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 7, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lost columns but was not taken whole", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin left of the range keeps its column", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getX());
+        assertEquals("and its offset", 2, doc.getDrawings().get(0).getPosition().getBegin() //$NON-NLS-1$
+            .getOffset().getX());
+        assertEquals("the end moved left by the count", 6, doc.getDrawings().get(0).getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getX());
+        assertEquals("and kept its offset on the surviving column", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getEnd().getOffset().getX());
+    }
+
+    /** A begin anchor whose column was deleted re-anchors at the left edge of the first survivor. */
+    @Test
+    public void aDrawingWhoseBeginColumnWentStartsAtTheEdgeOfTheSurvivor()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 1, 8, 2, 9, 0, 3, 0, 2, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin stands on the first surviving column", 7, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getX());
+        assertEquals("with no offset - the column its offset reached into is gone", 0, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getBegin().getOffset().getX());
+        assertEquals("the end stands on the same column", 7, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getEnd().getCell().getX());
+        assertEquals("keeping its offset, so the begin is not right of the end", 2, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getEnd().getOffset().getX());
+    }
 }
