@@ -179,6 +179,10 @@ public class ToolProfileTest
         assertTrue(disabled.contains("update_database")); //$NON-NLS-1$
         assertTrue(disabled.contains("delete_infobase")); //$NON-NLS-1$
         assertTrue(disabled.contains("delete_project")); //$NON-NLS-1$
+        assertTrue(disabled.contains("create_project")); //$NON-NLS-1$
+        assertTrue(disabled.contains("import_configuration_from_binary")); //$NON-NLS-1$
+        assertTrue(disabled.contains("branch_infobase")); //$NON-NLS-1$
+        assertTrue(disabled.contains("create_launch_config")); //$NON-NLS-1$
         assertTrue(disabled.contains("install_extension")); //$NON-NLS-1$
         assertTrue(disabled.contains("set_infobase_credentials")); //$NON-NLS-1$
         assertTrue(disabled.contains("register_infobase")); //$NON-NLS-1$

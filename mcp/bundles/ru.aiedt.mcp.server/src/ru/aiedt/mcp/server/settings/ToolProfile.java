@@ -388,11 +388,15 @@ public enum ToolProfile
             "create_infobase", //$NON-NLS-1$
             "delete_infobase", //$NON-NLS-1$
             "delete_project", //$NON-NLS-1$
+            "create_project", //$NON-NLS-1$
             "import_configuration_from_xml", //$NON-NLS-1$
+            "import_configuration_from_binary", //$NON-NLS-1$
             "install_extension", //$NON-NLS-1$
             "uninstall_extension", //$NON-NLS-1$
             "set_infobase_credentials", //$NON-NLS-1$
             "register_infobase", //$NON-NLS-1$
+            "branch_infobase", //$NON-NLS-1$
+            "create_launch_config", //$NON-NLS-1$
             "sync_control", //$NON-NLS-1$
             "resync_to_disk", //$NON-NLS-1$
             "restart_edt", //$NON-NLS-1$
