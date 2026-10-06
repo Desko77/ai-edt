@@ -41,6 +41,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmDcsHelper;
 import ru.aiedt.mcp.server.support.DcsSchemaRestorer;
 import ru.aiedt.mcp.server.support.DcsSettingsImpact;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
@@ -73,6 +74,31 @@ public class DcsWorkshopTool implements IMcpTool
     private static final String DESTINATION_EXPRESSION = "destinationExpression"; //$NON-NLS-1$
 
     public static final String NAME = "dcs_workshop"; //$NON-NLS-1$
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it, and a preset that blocks writing disables it, which the gate in {@code execute}
+     * asks about before the first action of a writing call.
+     */
+    static final String WRITE_DOOR = "dcs_workshop_writes"; //$NON-NLS-1$
+
+    /**
+     * Says whether the active preset blocks this facade's writes.
+     * <p>
+     * Every catalogued operation mutates the schema or its settings; a {@code dryRun} preview
+     * rolls its transaction back and persists nothing, so it is not a write the preset has an
+     * opinion about. Package visibility: the tests hold the decision to the same presets the
+     * flow asks.
+     * </p>
+     *
+     * @param dryRun whether the call previews only
+     * @return the gate's rejection text, or {@code null} when the operation may run
+     */
+    static String presetWriteGate(boolean dryRun)
+    {
+        return dryRun ? null : ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+    }
 
     /**
      * Single source of truth for schema-mutation operations: op name -> handler
@@ -369,6 +395,17 @@ public class DcsWorkshopTool implements IMcpTool
             return ToolResult.error("Unknown operation '" + op //$NON-NLS-1$
                 + "'. Call operation=help for the full list. Did you mean: " + suggest(op) + "?") //$NON-NLS-1$ //$NON-NLS-2$
                 .toJson();
+        }
+
+        // Every catalogued operation writes the schema or the settings (help answered above). A
+        // preset that blocks writing is asked before the UI thread is taken and a BM transaction
+        // opened; a dryRun preview rolls its transaction back and persists nothing, so it goes
+        // through.
+        String presetGate = presetWriteGate(
+            JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
+        if (presetGate != null)
+        {
+            return ToolResult.error(presetGate).put("operation", op).toJson(); //$NON-NLS-1$
         }
 
         AtomicReference<String> resultRef = new AtomicReference<>();

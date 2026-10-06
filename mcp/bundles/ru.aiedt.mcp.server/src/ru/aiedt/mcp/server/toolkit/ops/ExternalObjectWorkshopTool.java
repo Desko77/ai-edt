@@ -19,6 +19,7 @@ import ru.aiedt.mcp.server.support.BmExternalObjectProjectHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.ToolGate;
 
 /**
  * Creates External Data Processor (.epf) and External Report (.erf) DT projects so
@@ -34,6 +35,14 @@ import ru.aiedt.mcp.server.support.TextSuggest;
 public class ExternalObjectWorkshopTool implements IMcpTool
 {
     public static final String NAME = "external_object_workshop"; //$NON-NLS-1$
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it, and a preset that blocks writing disables it, which the gate in {@code execute}
+     * asks about before the first action of a writing call.
+     */
+    static final String WRITE_DOOR = "external_object_workshop_writes"; //$NON-NLS-1$
 
     @Override
     public String getName()
@@ -117,6 +126,17 @@ public class ExternalObjectWorkshopTool implements IMcpTool
         if (operation == null || operation.isEmpty())
         {
             operation = "create"; //$NON-NLS-1$
+        }
+        // Every operation but help creates a project or imports into one, and neither has a
+        // preview: a preset that blocks writing is asked before the workspace is read or a
+        // Designer is started.
+        if (!"help".equals(operation)) //$NON-NLS-1$
+        {
+            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).put("operation", operation).toJson(); //$NON-NLS-1$
+            }
         }
         switch (operation)
         {

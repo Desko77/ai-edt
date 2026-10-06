@@ -28,6 +28,7 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.BmXdtoHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ToolGate;
 
 /**
  * XDTO package content constructor. Authors the {@code Package.xdto} schema
@@ -44,6 +45,14 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
 public class XdtoWorkshopTool implements IMcpTool
 {
     public static final String NAME = "xdto_workshop"; //$NON-NLS-1$
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it, and a preset that blocks writing disables it, which the gate in {@code execute}
+     * asks about before the first action of a writing call.
+     */
+    static final String WRITE_DOOR = "xdto_workshop_writes"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
@@ -148,6 +157,18 @@ public class XdtoWorkshopTool implements IMcpTool
         {
             return ToolResult.error("Unknown operation: " + op //$NON-NLS-1$
                 + ". Available: " + String.join(", ", OPS.keySet())).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        // A preset that blocks writing is asked before the runtime is probed or the project is
+        // read. The read operation and a dryRun preview (which writes nothing) go through; every
+        // other operation mutates the package schema.
+        if (!"read".equals(op) //$NON-NLS-1$
+            && !JsonUtils.extractBooleanArgument(params, "dryRun", false)) //$NON-NLS-1$
+        {
+            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).put("operation", op).toJson(); //$NON-NLS-1$
+            }
         }
         if (!BmXdtoHelper.xdtoApiAvailable())
         {

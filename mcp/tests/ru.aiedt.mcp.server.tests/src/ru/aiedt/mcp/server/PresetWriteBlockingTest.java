@@ -47,13 +47,22 @@ public class PresetWriteBlockingTest
      * file put back and a merge restore point taken or dropped each have to be named by hand, or
      * the preset writes through the one group it left open.
      * </p>
+     * <p>
+     * The {@code *_writes} names are the constructor doors: capability names, registered nowhere,
+     * that each constructor facade asks about before its first write. Code Review keeps the
+     * constructors group on so a review can read what a constructor would produce, which is why
+     * the writes of each facade have to be named here by hand.
+     * </p>
      */
     private static final List<String> COMPOSITE_WRITERS =
         Arrays.asList("write_module_source", "generate_event_handlers", "extension_lifecycle",
             "naparnik", "project_admin", "infobase_admin", "config_io", "git_commit", "git_checkout",
             "git_revert_file", "git_create_merge_restore_point", "git_delete_merge_restore_point",
             "create_cluster", "update_cluster", "delete_cluster",
-            "add_to_cluster", "remove_from_cluster");
+            "add_to_cluster", "remove_from_cluster",
+            "edit_form_writes", "edit_metadata_writes", "dcs_workshop_writes", "mxl_workshop_writes",
+            "xdto_workshop_writes", "external_object_workshop_writes",
+            "external_data_source_workshop_writes");
 
     /** Agent composites that only read or only return text, and may stay on under any preset. */
     private static final List<String> NON_WRITING_COMPOSITES =

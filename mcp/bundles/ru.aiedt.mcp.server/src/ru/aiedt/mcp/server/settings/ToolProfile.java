@@ -441,6 +441,16 @@ public enum ToolProfile
      * Review keeps on. Read-only and Debug &amp; Test switch its group off already, so under all three
      * the facade, its reads included, is off.
      * </p>
+     * <p>
+     * The seven {@code *_writes} names are capability names, not tools: nothing registers them and
+     * no group lists them, so they have no checkbox and no wire name. Each is the write half of a
+     * constructor facade - the reads of that facade and its {@code dryRun} previews stay on under
+     * every preset, and the facade asks {@code ToolGate.gateIfPresetDisabled} about the name before
+     * its first write, which is what keeps Code Review's promise while it leaves the constructors
+     * group on to read what they would produce. They are deliberately not separate door tools: a
+     * door tool is a callable name a client can be told about, and these carry no operation of
+     * their own.
+     * </p>
      *
      * @return the names no write-blocking preset may leave enabled
      */
@@ -454,6 +464,16 @@ public enum ToolProfile
         // preset that promises no writes has to name the facade itself or borrow_object and
         // update_borrowed apply=true keep writing through the group it left open.
         names.add("extension_workshop"); //$NON-NLS-1$
+        // The write halves of the constructor facades (capability names, not tools - see the
+        // class javadoc above). Code Review keeps their group on; the facades gate their writes
+        // on these names and leave their reads and dryRun previews alone.
+        names.add("edit_form_writes"); //$NON-NLS-1$
+        names.add("edit_metadata_writes"); //$NON-NLS-1$
+        names.add("dcs_workshop_writes"); //$NON-NLS-1$
+        names.add("mxl_workshop_writes"); //$NON-NLS-1$
+        names.add("xdto_workshop_writes"); //$NON-NLS-1$
+        names.add("external_object_workshop_writes"); //$NON-NLS-1$
+        names.add("external_data_source_workshop_writes"); //$NON-NLS-1$
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$
@@ -501,8 +521,9 @@ public enum ToolProfile
     }
 
     /**
-     * @return everything that writes, launches or debugs - the constructors excepted, since reading
-     *         what they would produce is part of a review
+     * @return everything that writes, launches or debugs - the constructors' reads and previews
+     *         excepted, since reading what they would produce is part of a review; their writes are
+     *         the {@code *_writes} capability names {@link #writersOutsideWriteGroups()} adds
      */
     private static Set<String> codeReviewDisabled()
     {

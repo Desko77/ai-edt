@@ -41,6 +41,7 @@ import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ToolGate;
 
 /**
  * External data source (ВнешнийИсточникДанных) content constructor. Builds the
@@ -71,6 +72,14 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
 public class ExternalDataSourceWorkshopTool implements IMcpTool
 {
     public static final String NAME = "external_data_source_workshop"; //$NON-NLS-1$
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it, and a preset that blocks writing disables it, which the gate in {@code execute}
+     * asks about before the first action of a writing call.
+     */
+    static final String WRITE_DOOR = "external_data_source_workshop_writes"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOps();
 
@@ -157,6 +166,19 @@ public class ExternalDataSourceWorkshopTool implements IMcpTool
         {
             return ToolResult.error("Unknown operation: " + op //$NON-NLS-1$
                 + ". Available: " + String.join(", ", OPS.keySet()) + ", help").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+
+        // A preset that blocks writing is asked before the project is read or a BM transaction
+        // opened. The list operation reads, and a dryRun preview rolls its transaction back and
+        // persists nothing; every other operation mutates the external data source.
+        if (!"list".equals(op) //$NON-NLS-1$
+            && !JsonUtils.extractBooleanArgument(params, "dryRun", false)) //$NON-NLS-1$
+        {
+            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).put("operation", op).toJson(); //$NON-NLS-1$
+            }
         }
         switch (op)
         {

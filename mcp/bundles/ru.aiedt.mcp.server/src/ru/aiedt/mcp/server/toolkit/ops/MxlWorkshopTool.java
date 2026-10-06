@@ -31,6 +31,7 @@ import ru.aiedt.mcp.server.support.BmTemplateHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TemplatePrintWidth;
+import ru.aiedt.mcp.server.support.ToolGate;
 
 /**
  * MXL spreadsheet template constructor.
@@ -46,6 +47,24 @@ import ru.aiedt.mcp.server.support.TemplatePrintWidth;
 public class MxlWorkshopTool implements IMcpTool
 {
     public static final String NAME = "mxl_workshop"; //$NON-NLS-1$
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it, and a preset that blocks writing disables it, which the gate in {@code execute}
+     * asks about before the first action of a writing call.
+     */
+    static final String WRITE_DOOR = "mxl_workshop_writes"; //$NON-NLS-1$
+
+    /**
+     * The operations of this facade that read the template and write nothing, so a
+     * write-blocking preset lets them run. {@code help} is answered above, before the catalog is
+     * consulted.
+     */
+    private static final java.util.Set<String> READ_OPERATIONS = java.util.Set.of(
+        "read_template", //$NON-NLS-1$
+        "list_named_areas", //$NON-NLS-1$
+        "check_print_width"); //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
@@ -223,6 +242,18 @@ public class MxlWorkshopTool implements IMcpTool
                 + ". Available: " + String.join(", ", OPS.keySet())).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
+        // A preset that blocks writing is asked before the project is read or a BM transaction
+        // opened. The three reading operations and a dryRun preview (which rolls its transaction
+        // back and persists nothing) go through; every other operation writes the template.
+        if (!READ_OPERATIONS.contains(op)
+            && !JsonUtils.extractBooleanArgument(params, "dryRun", false)) //$NON-NLS-1$
+        {
+            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).put("operation", op).toJson(); //$NON-NLS-1$
+            }
+        }
         switch (op)
         {
             case "create_template": //$NON-NLS-1$
