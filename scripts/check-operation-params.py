@@ -60,9 +60,11 @@ READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalIn
 # dispatchExport and dispatchRestore take the map and the project name, and read nothing by literal
 # name themselves: their callers extract the arguments and hand them down, so the operation's
 # vocabulary is established at the facade (`read in place`) and not here.
+# templateModelFileMismatch takes the map and the operation name. The name is not an
+# argument it reads; the address comes out through extractStringArgument inside it.
 NOT_READERS = ("addContentEntry", "addTypedCollectionChild", "bind", "unbind", "branchArgument",
                "dispatchExport", "dispatchRestore", "doBorrow", "pathOf", "put",
-               "removeContentEntry", "withMode")
+               "removeContentEntry", "templateModelFileMismatch", "withMode")
 READERS = r"\b(?:extract\w*|" + "|".join(READER_HELPERS) + r")"
 HELPER_SIGNATURE = re.compile(r"\b(\w+)\(Map<String, ?String> \w+, String \w+")
 SRC = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server"

@@ -19,6 +19,8 @@ import org.eclipse.emf.common.util.EList;
 import com._1c.g5.v8.dt.metadata.mdclass.CommonTemplate;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 
 import ru.aiedt.mcp.server.wire.GsonHolder;
@@ -29,7 +31,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.BmTemplateHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.support.ProjectStateGuard;
 import ru.aiedt.mcp.server.support.TemplatePrintWidth;
 
 /**
@@ -48,6 +52,9 @@ public class MxlWorkshopTool implements IMcpTool
     public static final String NAME = "mxl_workshop"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
+
+    /** Creates a top-level common template. Object-owned templates stay on the Templates collection. */
+    private final ObjectOps objectOps = new ObjectOps();
 
     @Override
     public String getName()
@@ -223,46 +230,250 @@ public class MxlWorkshopTool implements IMcpTool
                 + ". Available: " + String.join(", ", OPS.keySet())).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
+        // Readiness is asked for every content operation, including create_template, and only for
+        // a project that is there. A name that resolves to nothing belongs to the operation's own
+        // argument validation and not-found answer, so the guard does not answer in its place.
+        // A write stops on every state short of ready. A read stops while the project is building,
+        // while its build state cannot be determined, or while it is closed.
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        if (gatesOnReadiness(op))
+        {
+            IProject project = ProjectResolver.resolve(projectName);
+            if (project != null)
+            {
+                ProjectStateGuard.ProjectStateResult state = ProjectStateGuard.checkProjectState(project);
+                if (readinessBlocks(op, state))
+                {
+                    String notReady = ProjectStateGuard.checkReadyOrError(project);
+                    if (notReady != null)
+                    {
+                        return ToolResult.error(notReady).put("operation", op).toJson(); //$NON-NLS-1$
+                    }
+                }
+            }
+        }
+
+        String modelFileMismatch = templateModelFileMismatch(params, op);
+        String writeRefusal = writeRefusal(op, modelFileMismatch);
+        if (writeRefusal != null)
+        {
+            return ToolResult.error(writeRefusal)
+                .put("operation", op) //$NON-NLS-1$
+                .put("templateModelFileMismatch", writeRefusal) //$NON-NLS-1$
+                .toJson();
+        }
+
+        String answer;
         switch (op)
         {
             case "create_template": //$NON-NLS-1$
-                return opCreateTemplate(params);
+                answer = opCreateTemplate(params);
+                break;
             case "set_cell": //$NON-NLS-1$
-                return opSetCell(params);
+                answer = opSetCell(params);
+                break;
             case "format_cells": //$NON-NLS-1$
-                return opFormatCells(params);
+                answer = opFormatCells(params);
+                break;
             case "merge_cells": //$NON-NLS-1$
-                return opMergeCells(params);
+                answer = opMergeCells(params);
+                break;
             case "draw": //$NON-NLS-1$
-                return opDraw(params);
+                answer = opDraw(params);
+                break;
             case "add_drawing": //$NON-NLS-1$
-                return opAddDrawing(params);
+                answer = opAddDrawing(params);
+                break;
             case "remove_drawing": //$NON-NLS-1$
-                return opRemoveDrawing(params);
+                answer = opRemoveDrawing(params);
+                break;
             case "add_named_area": //$NON-NLS-1$
-                return opAddNamedArea(params);
+                answer = opAddNamedArea(params);
+                break;
             case "list_named_areas": //$NON-NLS-1$
-                return opListNamedAreas(params);
+                answer = opListNamedAreas(params);
+                break;
             case "remove_named_area": //$NON-NLS-1$
-                return opRemoveNamedArea(params);
+                answer = opRemoveNamedArea(params);
+                break;
             case "insert_rows": //$NON-NLS-1$
-                return opInsertRows(params);
+                answer = opInsertRows(params);
+                break;
             case "delete_rows": //$NON-NLS-1$
-                return opDeleteRows(params);
+                answer = opDeleteRows(params);
+                break;
             case "copy_rows": //$NON-NLS-1$
-                return opCopyRows(params);
+                answer = opCopyRows(params);
+                break;
             case "insert_columns": //$NON-NLS-1$
-                return opInsertColumns(params);
+                answer = opInsertColumns(params);
+                break;
             case "delete_columns": //$NON-NLS-1$
-                return opDeleteColumns(params);
+                answer = opDeleteColumns(params);
+                break;
             case "copy_columns": //$NON-NLS-1$
-                return opCopyColumns(params);
+                answer = opCopyColumns(params);
+                break;
             case "read_template": //$NON-NLS-1$
-                return opReadTemplate(params);
+                answer = opReadTemplate(params);
+                break;
             case "check_print_width": //$NON-NLS-1$
-                return opCheckPrintWidth(params);
+                answer = opCheckPrintWidth(params);
+                break;
             default:
                 return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
+        }
+        return modelFileMismatch == null ? answer
+            : addMismatchWarning(answer, modelFileMismatch);
+    }
+
+    /**
+     * Whether the operation consults project readiness before it runs. Every real operation does.
+     * Help and an unknown name are answered before this is asked.
+     *
+     * @param operation the operation name
+     * @return <code>true</code> when a resolved project must be ready
+     */
+    static boolean gatesOnReadiness(String operation)
+    {
+        return operation != null && OPS.containsKey(operation);
+    }
+
+    /**
+     * Whether this operation stops on the readiness state in front of it.
+     * <p>
+     * A write stops on every state short of ready. A read stops while derived data is still being
+     * computed, while that state cannot be determined, and while the project is closed. A project
+     * that is not an EDT project, and a workbench whose DtProjectManager cannot be reached, lets a
+     * read continue to the model entry.
+     * </p>
+     *
+     * @param operation the operation name
+     * @param state the project state; may be <code>null</code>
+     * @return <code>true</code> when the call is answered with the readiness refusal
+     */
+    static boolean readinessBlocks(String operation, ProjectStateGuard.ProjectStateResult state)
+    {
+        if (state == null || state.isReady())
+        {
+            return false;
+        }
+        if (!isReadOperation(operation))
+        {
+            return true;
+        }
+        if (state.getState() == ProjectStateGuard.ProjectState.BUILDING)
+        {
+            return true;
+        }
+        String message = state.getMessage();
+        if (message == null)
+        {
+            return false;
+        }
+        if (state.getState() == ProjectStateGuard.ProjectState.UNKNOWN)
+        {
+            return message.startsWith("Build state cannot be determined"); //$NON-NLS-1$
+        }
+        return "The project is closed".equals(message); //$NON-NLS-1$
+    }
+
+    /**
+     * The mismatch refusal a writing operation returns, or <code>null</code> when the call may
+     * proceed. A read keeps the mismatch as a note on its answer instead of a refusal.
+     *
+     * @param operation the operation name
+     * @param mismatch the model/file divergence, or <code>null</code>
+     * @return the refusal text, or <code>null</code>
+     */
+    static String writeRefusal(String operation, String mismatch)
+    {
+        if (mismatch == null || isReadOperation(operation))
+        {
+            return null;
+        }
+        return mismatch;
+    }
+
+    /**
+     * Whether the operation only reads the template. A read does not get the mismatch refusal -
+     * it answers what the model holds and names the divergence beside it.
+     *
+     * @param operation the operation name
+     * @return <code>true</code> for the reading operations
+     */
+    private static boolean isReadOperation(String operation)
+    {
+        return "read_template".equals(operation) //$NON-NLS-1$
+            || "list_named_areas".equals(operation) //$NON-NLS-1$
+            || "check_print_width".equals(operation); //$NON-NLS-1$
+    }
+
+    /**
+     * The divergence between the template's file and what the model currently holds for it.
+     * <p>
+     * Asked before every content operation, so a write against a model that has not loaded the
+     * file yet is refused before it serializes the empty model over the real template. The probe
+     * runs in a read transaction that rolls back, so the {@code getOrCreateSpreadsheet} attachment
+     * of an empty document it may do reaches nothing. Anything the probe cannot establish - a
+     * missing argument, an unresolvable project, a template that is not there - answers
+     * <code>null</code> and the operation's own validation reports it.
+     * </p>
+     *
+     * @param params the call's arguments
+     * @param operation the operation being dispatched
+     * @return the mismatch description, or <code>null</code> when model and file do not diverge
+     *         or the question cannot be asked
+     */
+    private static String templateModelFileMismatch(Map<String, String> params, String operation)
+    {
+        if ("create_template".equals(operation)) //$NON-NLS-1$
+        {
+            return null;
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
+        String templateName = JsonUtils.extractStringArgument(params, "templateName"); //$NON-NLS-1$
+        if (projectName == null || ownerFqn == null || templateName == null)
+        {
+            return null;
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null)
+        {
+            return null;
+        }
+        final String[] mismatch = { null };
+        BmObjectHelper.Result inspected = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+            (tx, owner) -> {
+                MdObject template = resolveTemplate(owner, templateName);
+                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                mismatch[0] = BmTemplateHelper.modelFileMismatch(project, ownerFqn,
+                    templateName, doc);
+                return templateName;
+            });
+        return inspected.ok ? mismatch[0] : null;
+    }
+
+    /**
+     * Adds the model/file mismatch note to a reading operation's answer. An answer that is not a
+     * JSON object is returned as it came - the note is information, not a reason to break the call.
+     *
+     * @param answer the operation's JSON answer
+     * @param mismatch the mismatch description
+     * @return the answer carrying {@code templateModelFileMismatch}
+     */
+    static String addMismatchWarning(String answer, String mismatch)
+    {
+        try
+        {
+            JsonObject object = JsonParser.parseString(answer).getAsJsonObject();
+            object.addProperty("templateModelFileMismatch", mismatch); //$NON-NLS-1$
+            return object.toString();
+        }
+        catch (RuntimeException malformedAnswer)
+        {
+            return answer;
         }
     }
 
@@ -279,6 +490,16 @@ public class MxlWorkshopTool implements IMcpTool
             return ToolResult
                 .error("projectName, ownerFqn and templateName are required").toJson(); //$NON-NLS-1$
         }
+        // A common template is the template itself. A name that does not match is the same
+        // refusal resolveTemplate gives, and it is answered before any project is opened.
+        String nameMismatch = commonTemplateNameMismatch(ownerFqn, templateName);
+        if (nameMismatch != null)
+        {
+            return ToolResult.error("create_template failed: " + nameMismatch) //$NON-NLS-1$
+                .put("operation", "create_template") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("ownerFqn", ownerFqn) //$NON-NLS-1$
+                .toJson();
+        }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
@@ -289,6 +510,11 @@ public class MxlWorkshopTool implements IMcpTool
         // input falls back to the upstream default. Without this, a sloppy
         // alias would surface as "No enum constant TemplateType.<X>" later.
         final String canonicalType = BmTemplateHelper.canonicalTemplateType(templateType);
+        if (commonTemplateAddress(ownerFqn, templateName) != null)
+        {
+            return createCommonTemplate(projectName, project, ownerFqn, templateName,
+                canonicalType, dryRun);
+        }
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 @SuppressWarnings("unchecked")
@@ -342,6 +568,143 @@ public class MxlWorkshopTool implements IMcpTool
             }
         }
         return formatResult(r, "create_template"); //$NON-NLS-1$
+    }
+
+    /**
+     * Creates a common template that does not exist yet, or reports that it already does.
+     * <p>
+     * An existing common template has no Templates collection, so the object-owned path would
+     * answer "no Templates collection" instead of {@code alreadyExists}. A missing one is created
+     * through {@code create_object}, which writes the spreadsheet file for
+     * {@code SpreadsheetDocument}. Any other read error is returned and nothing is created.
+     * </p>
+     *
+     * @param projectName the project name the caller passed
+     * @param project the project that name resolved to
+     * @param ownerFqn {@code CommonTemplate.<Name>}
+     * @param templateName the same name
+     * @param canonicalType the template type to set
+     * @param dryRun whether the create is rolled back
+     * @return the {@code create_template} answer
+     */
+    private String createCommonTemplate(String projectName, IProject project, String ownerFqn,
+        String templateName, String canonicalType, boolean dryRun)
+    {
+        String refusal = BmTemplateHelper.templateDirRefusal(ownerFqn, templateName);
+        if (refusal != null)
+        {
+            return ToolResult.error("create_template failed: " + refusal) //$NON-NLS-1$
+                .put("operation", "create_template") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("ownerFqn", ownerFqn) //$NON-NLS-1$
+                .toJson();
+        }
+        BmObjectHelper.Result existing = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+            (tx, owner) -> {
+                throw BmObjectHelper.alreadyExists(templateName, ownerFqn, "template"); //$NON-NLS-1$
+            });
+        if (existing.error == null || !existing.error.startsWith("Owner not found")) //$NON-NLS-1$
+        {
+            return formatResult(existing, "create_template"); //$NON-NLS-1$
+        }
+        Map<String, String> create = new LinkedHashMap<>();
+        create.put("projectName", projectName); //$NON-NLS-1$
+        create.put("objectType", "CommonTemplate"); //$NON-NLS-1$ //$NON-NLS-2$
+        create.put("name", templateName); //$NON-NLS-1$
+        create.put("dryRun", Boolean.toString(dryRun)); //$NON-NLS-1$
+        JsonObject properties = new JsonObject();
+        properties.addProperty("templateType", canonicalType); //$NON-NLS-1$
+        create.put("properties", properties.toString()); //$NON-NLS-1$
+        return reshapeCommonTemplateAnswer(objectOps.opCreateObject(create), ownerFqn, templateName);
+    }
+
+    /**
+     * Turns a {@code create_object} answer into the {@code create_template} answer. The object
+     * type, the content flags and any warning stay; the operation name and the two addresses the
+     * caller passed are written over them.
+     *
+     * @param createObjectAnswer the JSON {@code create_object} returned
+     * @param ownerFqn the owner FQN
+     * @param templateName the template name
+     * @return the reshaped JSON, or the original text when it is not an object
+     */
+    static String reshapeCommonTemplateAnswer(String createObjectAnswer, String ownerFqn,
+        String templateName)
+    {
+        try
+        {
+            JsonObject object = JsonParser.parseString(createObjectAnswer).getAsJsonObject();
+            object.addProperty("operation", "create_template"); //$NON-NLS-1$ //$NON-NLS-2$
+            object.addProperty("ownerFqn", ownerFqn); //$NON-NLS-1$
+            object.addProperty("templateName", templateName); //$NON-NLS-1$
+            return object.toString();
+        }
+        catch (RuntimeException malformed)
+        {
+            return createObjectAnswer;
+        }
+    }
+
+    /**
+     * A common template addressed by {@code ownerFqn}, or <code>null</code> when the FQN names
+     * some other owner. The name match is exact case. A name that is not a single path segment is
+     * still returned; creating it is refused later by the folder rule.
+     *
+     * @param ownerFqn the owner FQN
+     * @param templateName the template name; <code>null</code> does not match
+     * @return the address, or <code>null</code>
+     */
+    static CommonTemplateAddress commonTemplateAddress(String ownerFqn, String templateName)
+    {
+        int dot = ownerFqn == null ? -1 : ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1)
+        {
+            return null;
+        }
+        String typePrefix = ownerFqn.substring(0, dot);
+        if (MetadataTypeCatalog.MetadataTypeInfo.COMMON_TEMPLATE
+            != MetadataTypeCatalog.resolve(typePrefix))
+        {
+            return null;
+        }
+        String name = ownerFqn.substring(dot + 1);
+        return new CommonTemplateAddress(name, name.equals(templateName));
+    }
+
+    /**
+     * The exact-case refusal {@link #resolveTemplate} gives when {@code templateName} is not the
+     * common template {@code ownerFqn} addresses.
+     *
+     * @param ownerFqn the owner FQN
+     * @param templateName the template name
+     * @return the refusal, or <code>null</code> when the address is not a common template or the
+     *         names match
+     */
+    static String commonTemplateNameMismatch(String ownerFqn, String templateName)
+    {
+        CommonTemplateAddress address = commonTemplateAddress(ownerFqn, templateName);
+        if (address == null || address.nameMatches)
+        {
+            return null;
+        }
+        return "ownerFqn addresses the common template '" + address.name //$NON-NLS-1$
+            + "', which is the template itself: pass templateName='" + address.name //$NON-NLS-1$
+            + "', got '" + templateName + "'."; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * {@code ownerFqn=CommonTemplate.&lt;Name&gt;} read as the template itself.
+     */
+    static final class CommonTemplateAddress
+    {
+        final String name;
+
+        final boolean nameMatches;
+
+        CommonTemplateAddress(String name, boolean nameMatches)
+        {
+            this.name = name;
+            this.nameMatches = nameMatches;
+        }
     }
 
     /**
@@ -2183,7 +2546,9 @@ public class MxlWorkshopTool implements IMcpTool
             // number beside it counts something else.
             sb.append("MXL spreadsheet template constructor.\n\n"); //$NON-NLS-1$
             sb.append("**Operations:**\n"); //$NON-NLS-1$
-            sb.append("- create_template - creates the Template MdObject (templateType=SpreadsheetDocument by default)\n"); //$NON-NLS-1$
+            sb.append("- create_template - creates the Template MdObject " //$NON-NLS-1$
+                + "(templateType=SpreadsheetDocument by default). " //$NON-NLS-1$
+                + "ownerFqn=CommonTemplate.X with templateName=X creates that common template.\n"); //$NON-NLS-1$
             sb.append("- set_cell - sets a cell's text or template parameter. Args: row, col, " //$NON-NLS-1$
                 + "text, language (default 'ru'), fillType (text / parameter / template), " //$NON-NLS-1$
                 + "parameter\n"); //$NON-NLS-1$
