@@ -111,6 +111,38 @@ public class AHttpHandlerStubIsWrittenByNameTest
         assertArrayEquals("the refused write touches nothing", before, Files.readAllBytes(modulePath)); //$NON-NLS-1$
     }
 
+    /**
+     * A module that opens on the UTF-8 byte-order mark with a declaration on its first line: the
+     * declaration is recognized rather than doubled, and a stub written into the module leaves the
+     * mark the module opened with.
+     */
+    @Test
+    public void aByteOrderMarkDoesNotHideAFirstLineDeclaration() throws Exception
+    {
+        writeModule("\uFEFFФункция GetAll(Запрос)\n\tВозврат Новый HTTPСервисОтвет(200);\nКонецФункции\n"); //$NON-NLS-1$
+        byte[] before = Files.readAllBytes(modulePath);
+
+        String path = appendStub("GetAll"); //$NON-NLS-1$
+
+        assertTrue(path, path.endsWith("HTTPServices/Заказы/Module.bsl")); //$NON-NLS-1$
+        assertArrayEquals("a declared handler behind the mark writes nothing", before, //$NON-NLS-1$
+            Files.readAllBytes(modulePath));
+
+        appendStub("Get"); //$NON-NLS-1$
+        byte[] afterGet = Files.readAllBytes(modulePath);
+        assertEquals("the mark stays the module's first bytes", 0xEF, afterGet[0] & 0xFF); //$NON-NLS-1$
+        assertEquals(0xBB, afterGet[1] & 0xFF);
+        assertEquals(0xBF, afterGet[2] & 0xFF);
+        String text = new String(afterGet, StandardCharsets.UTF_8);
+        int stub = text.indexOf("Функция Get(Запрос)"); //$NON-NLS-1$
+        assertTrue("a name the module does not declare gets its stub", stub >= 0); //$NON-NLS-1$
+        assertTrue("the stub lands once", text.indexOf("Функция Get(Запрос)", stub + 1) < 0); //$NON-NLS-1$ //$NON-NLS-2$
+
+        appendStub("Get"); //$NON-NLS-1$
+        assertArrayEquals("the next call recognizes the stub it wrote", afterGet, //$NON-NLS-1$
+            Files.readAllBytes(modulePath));
+    }
+
     private void writeModule(String text) throws Exception
     {
         Files.createDirectories(modulePath.getParent());

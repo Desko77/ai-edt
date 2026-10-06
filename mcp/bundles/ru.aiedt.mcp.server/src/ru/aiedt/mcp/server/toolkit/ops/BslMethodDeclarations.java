@@ -57,9 +57,12 @@ public final class BslMethodDeclarations
     }
 
     /**
-     * Reads the methods a module text declares, in document order.
+     * Reads the methods a module text declares, in document order. A leading byte-order mark,
+     * which a raw byte-to-text decode keeps as U+FEFF, is read past, so a declaration on the
+     * module's first line counts.
      *
-     * @param moduleText the module text, in either line-break convention
+     * @param moduleText the module text, in either line-break convention, with or without a
+     *            leading byte-order mark
      * @return the declared methods
      * @throws ParseFailure when the text cannot be read as module text
      */
@@ -69,6 +72,14 @@ public final class BslMethodDeclarations
         if (moduleText == null || moduleText.isEmpty())
         {
             return methods;
+        }
+        if (moduleText.charAt(0) == '﻿')
+        {
+            moduleText = moduleText.substring(1);
+            if (moduleText.isEmpty())
+            {
+                return methods;
+            }
         }
         String[] lines = moduleText.replace("\r\n", "\n").split("\n", -1); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         boolean inString = false;

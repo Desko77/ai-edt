@@ -94,6 +94,18 @@ public class BslMethodDeclarationsTest
         assertTrue(declared(module, "GetAll")); //$NON-NLS-1$
     }
 
+    /** A leading byte-order mark does not hide the declaration on the first line. */
+    @Test
+    public void aLeadingByteOrderMarkDoesNotHideTheFirstDeclaration()
+    {
+        String module = "\uFEFFФункция GetAll(Запрос)\n\tВозврат 1;\nКонецФункции\n"; //$NON-NLS-1$
+        List<BslMethodDeclarations.Method> methods = parse(module);
+
+        assertEquals(1, methods.size());
+        assertEquals("GetAll", methods.get(0).name);
+        assertTrue("the mark is read past", declared(module, "GetAll")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     /** A module whose text cannot be read fails instead of answering a guess. */
     @Test
     public void aBrokenModuleIsRefused()
