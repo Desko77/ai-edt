@@ -972,6 +972,14 @@ public final class BmRouteMapHelper
             int height = def.small ? 40 : 60;
             Integer givenWidth = intValue(vals.get("width")); //$NON-NLS-1$
             Integer givenHeight = intValue(vals.get("height")); //$NON-NLS-1$
+            if (vals.containsKey("width") && givenWidth == null) //$NON-NLS-1$
+            {
+                return "Route point '" + pl.name + "': 'location.width' must be a whole number"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            if (vals.containsKey("height") && givenHeight == null) //$NON-NLS-1$
+            {
+                return "Route point '" + pl.name + "': 'location.height' must be a whole number"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
             if (givenWidth != null && givenWidth.intValue() <= 0
                 || givenHeight != null && givenHeight.intValue() <= 0)
             {
@@ -1214,14 +1222,29 @@ public final class BmRouteMapHelper
      */
     public static String handlerStub(String handler, String event)
     {
+        return handlerStub(handler, event, BslScriptLanguage.RUSSIAN);
+    }
+
+    /**
+     * The procedure a route-point handler needs in the object module, in the language the
+     * configuration writes: the name the scheme carries, the parameters of its event and an empty
+     * body.
+     *
+     * @param handler the handler name the scheme carries
+     * @param event the event the handler answers
+     * @param language the language of the keywords
+     * @return the procedure text, or null when the event is not a route-point event
+     */
+    public static String handlerStub(String handler, String event, BslScriptLanguage language)
+    {
         String parameters = handlerParameters(event);
         if (parameters == null)
         {
             return null;
         }
-        return "Процедура " + handler + "(" + parameters + ")\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            + "\t// TODO: реализовать обработчик " + handler + "\n" //$NON-NLS-1$ //$NON-NLS-2$
-            + "КонецПроцедуры"; //$NON-NLS-1$
+        return language.procedure() + " " + handler + "(" + parameters + ")\n" //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + "\t" + language.todoComment(handler) + "\n" //$NON-NLS-1$ //$NON-NLS-2$
+            + language.endProcedure();
     }
 
     /** Fixed properties of one route-point kind (ports, box size, events, tails). */

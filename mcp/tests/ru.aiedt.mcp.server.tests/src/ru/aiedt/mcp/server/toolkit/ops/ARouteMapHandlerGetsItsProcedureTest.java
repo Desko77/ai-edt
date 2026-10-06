@@ -124,20 +124,78 @@ public class ARouteMapHandlerGetsItsProcedureTest
     }
 
     /**
-     * A procedure added to a module that already has text starts after a blank line.
+     * The plan carries bare procedures; where they go in the module, blank lines included, is the
+     * placement's to say.
      */
     @Test
-    public void aProcedureAddedToAModuleStartsAfterABlankLine()
+    public void thePlanCarriesBareProceduresWhateverTheModule()
+    {
+        List<Map<String, String>> handlers = new ArrayList<>();
+        handlers.add(handler("Завершение", "OnComplete", "ЗавершениеПриЗавершении")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue(RouteMapOps.planHandlerStubs(handlers,
+            "Процедура Другая()\r\nКонецПроцедуры").text.toString() //$NON-NLS-1$
+                .startsWith("Процедура ЗавершениеПриЗавершении(")); //$NON-NLS-1$
+        assertTrue("an empty module needs no line before the first procedure either", //$NON-NLS-1$
+            RouteMapOps.planHandlerStubs(handlers, null).text.toString().startsWith("Процедура")); //$NON-NLS-1$
+    }
+
+    /**
+     * A name given to two events whose handlers take different numbers of parameters is refused,
+     * and the refusal names both events with their signatures.
+     */
+    @Test
+    public void aNameOnEventsOfDifferentArityIsRefused()
+    {
+        List<Map<String, String>> handlers = new ArrayList<>();
+        handlers.add(handler("Выполнить", "OnExecute", "ОбщийОбработчик")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        handlers.add(handler("Старт", "BeforeStart", "ОбщийОбработчик")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        RouteMapOps.HandlerStubs plan = RouteMapOps.planHandlerStubs(handlers, null);
+
+        assertTrue(plan.error, plan.error.contains("OnExecute")); //$NON-NLS-1$
+        assertTrue(plan.error, plan.error.contains("BeforeStart")); //$NON-NLS-1$
+        assertTrue(plan.error, plan.error.contains("ТочкаМаршрутаБизнесПроцесса, Задача, Отказ")); //$NON-NLS-1$
+        assertTrue(plan.error, plan.error.contains("ТочкаМаршрутаБизнесПроцесса, Отказ")); //$NON-NLS-1$
+        assertTrue("nothing is written for a refused name", plan.names.isEmpty()); //$NON-NLS-1$
+        assertEquals(0, plan.text.length());
+    }
+
+    /**
+     * A name given to two events whose handlers take the same number of parameters is one
+     * procedure, written once.
+     */
+    @Test
+    public void aNameOnEventsOfEqualArityIsOneProcedure()
+    {
+        List<Map<String, String>> handlers = new ArrayList<>();
+        handlers.add(handler("Выполнить", "OnExecute", "ОбщийОбработчик")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        handlers.add(handler("Проверить", "BeforeExecute", "ОБЩИЙОБРАБОТЧИК")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        RouteMapOps.HandlerStubs plan = RouteMapOps.planHandlerStubs(handlers, null);
+
+        assertNull(plan.error);
+        assertEquals(Arrays.asList("ОбщийОбработчик"), plan.names); //$NON-NLS-1$
+        String text = plan.text.toString();
+        assertEquals("one name of equal arity is one procedure", //$NON-NLS-1$
+            text.indexOf("ОбщийОбработчик("), text.lastIndexOf("ОбщийОбработчик(")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A function of the handler's name in the module does not make the handler present: the module
+     * still gets its procedure.
+     */
+    @Test
+    public void aFunctionOfTheHandlerNameDoesNotMakeItPresent()
     {
         List<Map<String, String>> handlers = new ArrayList<>();
         handlers.add(handler("Завершение", "OnComplete", "ЗавершениеПриЗавершении")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
         RouteMapOps.HandlerStubs plan = RouteMapOps.planHandlerStubs(handlers,
-            "Процедура Другая()\r\nКонецПроцедуры"); //$NON-NLS-1$
+            "Функция ЗавершениеПриЗавершении()\n\tВозврат 1;\nКонецФункции"); //$NON-NLS-1$
 
-        assertTrue(plan.text.toString(), plan.text.toString().startsWith("\nПроцедура ЗавершениеПриЗавершении(")); //$NON-NLS-1$
-        assertTrue("an empty module needs no line before the first procedure", //$NON-NLS-1$
-            RouteMapOps.planHandlerStubs(handlers, null).text.toString().startsWith("Процедура")); //$NON-NLS-1$
+        assertTrue(plan.alreadyPresent.isEmpty());
+        assertEquals(Arrays.asList("ЗавершениеПриЗавершении"), plan.names); //$NON-NLS-1$
     }
 
     /**

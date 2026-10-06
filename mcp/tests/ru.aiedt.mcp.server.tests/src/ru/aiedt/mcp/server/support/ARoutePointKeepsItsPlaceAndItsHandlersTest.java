@@ -205,6 +205,34 @@ public class ARoutePointKeepsItsPlaceAndItsHandlersTest
         assertNotNull("a box of no height is not a place", flat.error); //$NON-NLS-1$
     }
 
+    /**
+     * A size that is not a number is refused, not silently replaced by the kind's own box; a size
+     * the caller left out still is.
+     */
+    @Test
+    public void aSizeThatIsNotANumberIsRefusedAndAnAbsentOneDefaults()
+    {
+        List<Map<String, String>> points = threePoints();
+        points.get(1).put("location", "{\"x\":200,\"y\":400,\"width\":\"широко\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmRouteMapHelper.WritePlan wide = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", points, twoTransitions(), null, null); //$NON-NLS-1$
+        assertNotNull("a non-numeric width is not a size", wide.error); //$NON-NLS-1$
+        assertTrue(wide.error, wide.error.contains("location.width")); //$NON-NLS-1$
+        assertTrue(wide.error, wide.error.contains("whole number")); //$NON-NLS-1$
+
+        points.get(1).put("location", "{\"x\":200,\"y\":400,\"height\":\"высоко\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmRouteMapHelper.WritePlan high = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", points, twoTransitions(), null, null); //$NON-NLS-1$
+        assertNotNull("a non-numeric height is not a size either", high.error); //$NON-NLS-1$
+        assertTrue(high.error, high.error.contains("location.height")); //$NON-NLS-1$
+
+        points.get(1).put("location", "{\"x\":200,\"y\":400}"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmRouteMapHelper.WritePlan unnumbered = BmRouteMapHelper.buildRouteMap(
+            "BusinessProcess.Order", points, twoTransitions(), null, null); //$NON-NLS-1$
+        assertNull("sizes left out take the kind's own box: " + unnumbered.error, //$NON-NLS-1$
+            unnumbered.error);
+    }
+
     /** The handler of an event reaches the document and comes back out of it. */
     @Test
     public void theHandlerOfAnEventIsWrittenAndRead()
