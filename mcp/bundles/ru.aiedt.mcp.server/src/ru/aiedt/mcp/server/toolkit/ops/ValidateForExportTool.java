@@ -236,6 +236,13 @@ public class ValidateForExportTool implements IMcpTool
     private static final Pattern MXLX_BARE_FONT_STYLE =
         Pattern.compile("<(bold|italic|underline|strikeout)>[^<]*</\\1>"); //$NON-NLS-1$
 
+    /**
+     * A picture reference whose name is empty, in either XML quote style. {@code ref="v8ui:/Foo"}
+     * is a name and does not match: the character after the slash has to be the closing quote.
+     */
+    private static final Pattern MXLX_EMPTY_PICTURE_REF =
+        Pattern.compile("ref\\s*=\\s*(?:\"v8ui:/\"|'v8ui:/')"); //$NON-NLS-1$
+
     @Override
     public String getName()
     {
@@ -967,6 +974,54 @@ public class ValidateForExportTool implements IMcpTool
                 "<bold>/<italic>/<underline>/<strikeout> as Element - must be an " //$NON-NLS-1$
                 + "attribute of a <font> variant; define the font and reference it by index."); //$NON-NLS-1$
         }
+        int emptyRefs = emptyPictureRefCount(content);
+        if (emptyRefs > 0)
+        {
+            Matcher first = MXLX_EMPTY_PICTURE_REF.matcher(content);
+            int line = first.find() ? lineOf(content, first.start()) : 1;
+            add(findings, checkFilterLower, relPath, fqn,
+                "mxlx-empty-picture-ref", "ERROR", line, //$NON-NLS-1$ //$NON-NLS-2$
+                "Template.mxlx contains " + emptyRefs //$NON-NLS-1$
+                    + " picture reference(s) ref=\"v8ui:/\". The platform refuses to load " //$NON-NLS-1$
+                    + "a picture reference with an empty name."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * How many picture elements in {@code content} carry the empty reference {@code ref="v8ui:/"}.
+     *
+     * @param content the Template.mxlx text; <code>null</code> counts as none
+     * @return the number of empty picture references
+     */
+    static int emptyPictureRefCount(String content)
+    {
+        if (content == null || content.isEmpty())
+        {
+            return 0;
+        }
+        int count = 0;
+        Matcher matcher = MXLX_EMPTY_PICTURE_REF.matcher(content);
+        while (matcher.find())
+        {
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * The .mxlx findings {@link #scanMxlx} reports for one file. Tests and the export scan share
+     * this scan.
+     *
+     * @param content the Template.mxlx text
+     * @param relPath the file path the finding names
+     * @param fqn the template FQN, or <code>null</code>
+     * @return the findings, in scan order
+     */
+    static List<Map<String, Object>> mxlxFindings(String content, String relPath, String fqn)
+    {
+        List<Map<String, Object>> findings = new ArrayList<>();
+        new ValidateForExportTool().scanMxlx(content, relPath, fqn, null, findings);
+        return findings;
     }
 
     // ---- helpers --------------------------------------------------------

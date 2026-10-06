@@ -153,7 +153,7 @@ read as the server being down when the port belongs to the other instance.
 | `get_problem_summary` | Aggregated counts instead of a full listing. |
 | `revalidate_objects` | Recomputes problems for the given objects. Run this after edits, before reading errors. |
 | `clean_project` | Full rebuild of derived state. The remedy when validation results look stale rather than wrong. |
-| `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. |
+| `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. A `Template.mxlx` picture reference `ref="v8ui:/"` is finding `mxlx-empty-picture-ref`: one finding names the file and the count. The platform refuses to load a picture reference with an empty name. |
 | `get_check_description` | What a specific validation check means. |
 
 ## Changing the model
@@ -280,7 +280,13 @@ form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
   uniqueness, autonumbering, folders on top; a document: number length and type, periodicity,
   uniqueness, autonumbering, posting; both: standard commands and `producedTypes`). Where that factory
   is unavailable the object is built from the model's base factory instead and the answer carries
-  `warning` naming the defaults the object did not receive and why.
+  `warning` naming the defaults the object did not receive and why. `objectType=CommonTemplate` sets
+  `templateType` to `SpreadsheetDocument` unless `properties` already names another type, and after the
+  commit writes an empty `Template.mxlx`. The answer carries `templateType` and `templateContentCreated`, or
+  `templateContentKept` with `templateContentNote` when `Template.mxlx` already stood in the folder;
+  a failed write carries `templateContentInitWarning` naming `mxl_workshop create_template` with
+  `ownerFqn=CommonTemplate.<Name>` and `templateName=<Name>`. `TextDocument` and the other types write no
+  spreadsheet file. `dryRun` writes none.
 - `add_object_attribute`, `add_tabular_section_attribute` and `set_object_type` answer
   `qualifierIgnored` when the qualifier applies to none of the types in the composition (`length` on
   a `Number`, for one). Under `dryRun` the first two do not borrow the reference types' targets and
@@ -752,3 +758,19 @@ target while the merges fully inside the replaced target come off first. There i
 of the two ranges is refused, named areas are neither copied nor moved, and the target may run past
 the current end. The answer carries `shiftedColumns`, `resizedMerges`, `removedMerges`,
 `resizedNamedAreas`, `removedNamedAreas`, `removedDrawings` and `lastColumn`.
+
+A write while the project is not ready is refused with the same readiness sentence as `update_database`
+and `validate_query`, and the file is left as it is. A read is refused with that sentence while the
+project is building, while its build state cannot be determined, and while the project is closed. A write whose model has no rows, no column set and
+no drawings, against a `Template.mxlx` that is not the empty skeleton (the bytes a new template writes,
+or that skeleton with `<indexTo>1</indexTo>` right after `<index>0</index>`), is refused and the file
+stays byte for byte; a read names the mismatch as `templateModelFileMismatch`.
+
+A picture reference that does not resolve in the project refuses the write before the file changes,
+naming the count and the first names. An empty picture placeholder does not refuse the write. A
+document with no column set receives a column set of size 0 before the save, the same shape as an empty
+template.
+
+`create_template` with `ownerFqn=CommonTemplate.<Name>` and the same `templateName` creates that common
+template as a spreadsheet and an empty `Template.mxlx`. An existing common template is not overwritten.
+A different `templateName` is refused before the model is opened.

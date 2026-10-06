@@ -25,6 +25,7 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.emf.common.util.EMap;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.InternalEObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
@@ -36,6 +37,8 @@ import com._1c.g5.v8.dt.mcore.Font;
 import com._1c.g5.v8.dt.mcore.FontDef;
 import com._1c.g5.v8.dt.mcore.McoreFactory;
 import com._1c.g5.v8.dt.mcore.MutableFont;
+import com._1c.g5.v8.dt.mcore.Picture;
+import com._1c.g5.v8.dt.mcore.PictureRef;
 import com._1c.g5.v8.dt.mcore.Point;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.metadata.mdclass.TemplateType;
@@ -614,6 +617,33 @@ public final class BmTemplateHelper
     public static String writeEmptyMxlxFile(IProject project, String ownerFqn,
         String templateName, String canonicalType)
     {
+        return writeEmptyMxlxFileChecked(project, ownerFqn, templateName, canonicalType);
+    }
+
+    /**
+     * Whether {@code Template.mxlx} is in the folder of the named template.
+     * {@link #writeEmptyMxlxFile} leaves such a file as it is, so a caller that reports what it
+     * created asks this first.
+     *
+     * @param project the EDT project
+     * @param ownerFqn FQN of the owning metadata object
+     * @param templateName name of the template
+     * @return <code>true</code> when the file exists; <code>false</code> when it does not or the
+     *         folder cannot be resolved
+     */
+    public static boolean spreadsheetFileExists(IProject project, String ownerFqn, String templateName)
+    {
+        if (project == null || ownerFqn == null || templateName == null)
+        {
+            return false;
+        }
+        Path templateDir = resolveTemplateDir(project, ownerFqn, templateName);
+        return templateDir != null && Files.exists(templateDir.resolve("Template.mxlx")); //$NON-NLS-1$
+    }
+
+    private static String writeEmptyMxlxFileChecked(IProject project, String ownerFqn,
+        String templateName, String canonicalType)
+    {
         if (project == null || ownerFqn == null || templateName == null
             || canonicalType == null)
         {
@@ -891,6 +921,29 @@ public final class BmTemplateHelper
             || spreadsheetDocument == null)
         {
             return "project, ownerFqn, templateName and spreadsheetDocument are required"; //$NON-NLS-1$
+        }
+        if (spreadsheetDocument instanceof SpreadsheetDocument)
+        {
+            SpreadsheetDocument spreadsheet = (SpreadsheetDocument) spreadsheetDocument;
+            // A picture reference the project cannot resolve serializes as ref="v8ui:/", which
+            // the platform then refuses to load. Better to refuse the write here, before any
+            // byte of the file is touched, and name what is missing.
+            List<String> unresolved = unresolvedPictureRefs(spreadsheet);
+            if (!unresolved.isEmpty())
+            {
+                int shown = Math.min(unresolved.size(), 3);
+                return "the template holds " + unresolved.size() //$NON-NLS-1$
+                    + " picture reference(s) that do not resolve in the project (" //$NON-NLS-1$
+                    + String.join(", ", unresolved.subList(0, shown)) //$NON-NLS-1$
+                    + (unresolved.size() > shown ? ", ..." : "") //$NON-NLS-1$ //$NON-NLS-2$
+                    + "). Writing would serialize them as ref=\"v8ui:/\", which the platform " //$NON-NLS-1$
+                    + "refuses to load. Copy the common pictures into the project or remove the " //$NON-NLS-1$
+                    + "drawings first. Template.mxlx was not changed."; //$NON-NLS-1$
+            }
+            // The moxel serializer dereferences the document's column set, so a document built
+            // without one dies inside save() with a NullPointerException. Give it the default
+            // empty set - the same shape writeEmptyMxlxFile writes for a fresh template.
+            ensureColumnSet(spreadsheet);
         }
         Path templateDir = resolveTemplateDir(project, ownerFqn, templateName);
         if (templateDir == null)
@@ -1238,6 +1291,272 @@ public final class BmTemplateHelper
     {
         Path dir = project == null ? null : resolveTemplateDir(project, ownerFqn, templateName);
         return dir != null && Files.isDirectory(dir);
+    }
+
+    /**
+     * The picture references of the document that point at nothing in this project.
+     * <p>
+     * A picture drawing keeps its picture in the document's {@code pictures} table, and a
+     * reference to a common picture the project does not have stays an EMF proxy there - a
+     * stand-in the model never resolved. The moxel serializer writes such a stand-in as
+     * {@code ref="v8ui:/"}, a reference the platform refuses to load, so a write carrying one has
+     * to be stopped rather than persisted. A reference with no target at all is an empty picture
+     * placeholder, not a missing one, and does not stop the write. Embedded pictures carry their
+     * bytes and resolve by construction.
+     * </p>
+     *
+     * @param doc the spreadsheet document; must not be <code>null</code>
+     * @return the names of the unresolved references, in table order; empty when every reference
+     *         resolves
+     */
+    public static List<String> unresolvedPictureRefs(SpreadsheetDocument doc)
+    {
+        if (doc == null)
+        {
+            throw new IllegalArgumentException("doc must not be null"); //$NON-NLS-1$
+        }
+        List<String> unresolved = new ArrayList<>();
+        for (Picture picture : doc.getPictures())
+        {
+            if (picture == null)
+            {
+                continue;
+            }
+            EObject suspect = picture;
+            // A PictureRef points at the picture it stands for; follow the chain so a reference
+            // to a reference is judged by what it finally names. The bound keeps a cyclic chain
+            // from holding the caller forever.
+            for (int depth = 0; depth < 8 && suspect instanceof PictureRef
+                && !suspect.eIsProxy(); depth++)
+            {
+                EObject target = ((PictureRef) suspect).getPicture();
+                if (target == null)
+                {
+                    break;
+                }
+                suspect = target;
+            }
+            if (suspect.eIsProxy())
+            {
+                unresolved.add(proxyPictureName((InternalEObject) suspect));
+            }
+        }
+        return unresolved;
+    }
+
+    /**
+     * The name a proxy picture reference was meant to resolve to, read off its proxy URI.
+     * <p>
+     * A project picture lives at {@code .../CommonPictures/&lt;Name&gt;/&lt;Name&gt;.mdo}. The
+     * folder segment is the name. A URI that spells the type as {@code CommonPicture.&lt;Name&gt;}
+     * is read the same way. Anything else gives the URI's last segment, with a trailing
+     * {@code .mdo} removed, so the refusal still names something the caller can search for.
+     * </p>
+     *
+     * @param proxy the unresolved proxy object
+     * @return the best name the proxy carries
+     */
+    private static String proxyPictureName(InternalEObject proxy)
+    {
+        URI uri = proxy.eProxyURI();
+        if (uri == null)
+        {
+            return "(unnamed proxy)"; //$NON-NLS-1$
+        }
+        String text = uri.toString();
+        String fromFolder = nameAfter(text, "CommonPictures/"); //$NON-NLS-1$
+        if (fromFolder != null)
+        {
+            return stripPictureSuffix(fromFolder);
+        }
+        String fromMarker = nameAfter(text, "CommonPicture."); //$NON-NLS-1$
+        if (fromMarker != null)
+        {
+            return stripPictureSuffix(fromMarker);
+        }
+        String segment = uri.lastSegment();
+        if (segment == null || segment.isEmpty())
+        {
+            return text;
+        }
+        return stripPictureSuffix(segment);
+    }
+
+    /**
+     * The first path segment after {@code marker}, or <code>null</code> when the marker is absent
+     * or names nothing.
+     *
+     * @param text the proxy URI text
+     * @param marker the folder or type marker to look for
+     * @return the segment, still carrying a {@code .mdo} suffix when the URI had one
+     */
+    private static String nameAfter(String text, String marker)
+    {
+        int at = text.indexOf(marker);
+        if (at < 0)
+        {
+            return null;
+        }
+        String rest = text.substring(at + marker.length());
+        int end = rest.length();
+        for (int i = 0; i < rest.length(); i++)
+        {
+            char c = rest.charAt(i);
+            if (c == '/' || c == '#' || c == '?' || c == '&' || c == ';')
+            {
+                end = i;
+                break;
+            }
+        }
+        return end > 0 ? rest.substring(0, end) : null;
+    }
+
+    /**
+     * Removes a trailing {@code .mdo} from a picture name taken out of a URI.
+     *
+     * @param name the segment
+     * @return the name without that suffix
+     */
+    private static String stripPictureSuffix(String name)
+    {
+        if (name.endsWith(".mdo")) //$NON-NLS-1$
+        {
+            return name.substring(0, name.length() - ".mdo".length()); //$NON-NLS-1$
+        }
+        return name;
+    }
+
+    /**
+     * Gives the document the default column set when it has none. The moxel serializer
+     * dereferences the set on every save, so a document built without one (a spreadsheet attached
+     * to a freshly created template) cannot be written at all. The default set declares size 0 -
+     * the same shape {@code writeEmptyMxlxFile} writes for a fresh template.
+     *
+     * @param doc the spreadsheet document; must not be <code>null</code>
+     */
+    public static void ensureColumnSet(SpreadsheetDocument doc)
+    {
+        if (doc == null)
+        {
+            throw new IllegalArgumentException("doc must not be null"); //$NON-NLS-1$
+        }
+        if (doc.getColumns() == null)
+        {
+            Columns columns = MoxelFactory.eINSTANCE.createColumns();
+            columns.setSize(0);
+            doc.setColumns(columns);
+        }
+    }
+
+    /**
+     * Whether the file on disk and the document the model holds diverge: the file carries a real
+     * template and the model document is empty.
+     * <p>
+     * The empty spreadsheet written for a new template is not that divergence. Its bytes are
+     * {@link #emptySpreadsheetSkeleton()}, or the same skeleton with {@code indexTo} on the first
+     * row after EDT rewrites the file. An unloaded model document has
+     * no rows, no column set and no drawings, and refusing a write over that skeleton would block
+     * the first {@code set_cell} on a template that was just created.
+     * </p>
+     *
+     * @param project the EDT project
+     * @param ownerFqn the template owner's FQN
+     * @param templateName the template's name
+     * @param document the document the model currently holds; <code>null</code> reads as an
+     *        empty model
+     * @return a caller-facing mismatch description, or {@code null} when model and file do not
+     *         have this signature
+     */
+    public static String modelFileMismatch(IProject project, String ownerFqn,
+        String templateName, SpreadsheetDocument document)
+    {
+        if (project == null)
+        {
+            return null;
+        }
+        Path dir = resolveTemplateDir(project, ownerFqn, templateName);
+        Path file = dir == null ? null : dir.resolve("Template.mxlx"); //$NON-NLS-1$
+        return modelFileMismatch(document, file);
+    }
+
+    /**
+     * The same divergence asked directly against the file: the model answers an empty document
+     * (no rows, no column set, no drawings - the state of a freshly built SpreadsheetDocument)
+     * while the file it would be written over is there and carries a template. A document holding
+     * any of those is a model that has read its file. A file that is absent, empty, or only the
+     * empty-spreadsheet skeleton is nothing a write could destroy.
+     *
+     * @param document the document the model currently holds; <code>null</code> reads as an
+     *        empty model
+     * @param mxlxFile the template's {@code Template.mxlx} on disk
+     * @return a caller-facing mismatch description, or {@code null} when there is no divergence
+     */
+    public static String modelFileMismatch(SpreadsheetDocument document, Path mxlxFile)
+    {
+        if (document != null && (!document.getRows().isEmpty()
+            || document.getColumns() != null || !document.getDrawings().isEmpty()))
+        {
+            return null;
+        }
+        try
+        {
+            if (mxlxFile != null && Files.isRegularFile(mxlxFile) && Files.size(mxlxFile) > 0)
+            {
+                String content = Files.readString(mxlxFile, StandardCharsets.UTF_8);
+                if (isEmptySpreadsheetSkeleton(content))
+                {
+                    return null;
+                }
+                return "Template.mxlx is not empty on disk, but the EDT model has no rows, " //$NON-NLS-1$
+                    + "columns or drawings. The project model may still be loading; retry after " //$NON-NLS-1$
+                    + "the build completes. Writing now is refused to preserve the file."; //$NON-NLS-1$
+            }
+        }
+        catch (IOException e)
+        {
+            return "Template.mxlx could not be compared with the empty EDT model: " //$NON-NLS-1$
+                + e.getMessage() + ". Writing is refused to preserve the file."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * The bytes {@link #writeEmptyMxlxFile} writes for a new spreadsheet template.
+     *
+     * @return the skeleton XML, with {@code \n} line endings
+     */
+    static String emptySpreadsheetSkeleton()
+    {
+        return EMPTY_MXLX_CONTENT;
+    }
+
+    /**
+     * Whether {@code content} is the empty spreadsheet skeleton, newline endings aside.
+     * <p>
+     * Equal to {@link #emptySpreadsheetSkeleton()}, or to that skeleton with
+     * {@code <indexTo>1</indexTo>} on the first row. Comparison is exact after {@code CR LF} and
+     * a lone {@code CR} are read as {@code LF}. Surrounding space is not removed: a file that
+     * carries anything else is a template, and writing an empty model over it is refused.
+     * </p>
+     *
+     * @param content the file text; <code>null</code> is not a skeleton
+     * @return <code>true</code> when the file is only the empty spreadsheet
+     */
+    static boolean isEmptySpreadsheetSkeleton(String content)
+    {
+        if (content == null)
+        {
+            return false;
+        }
+        String normalized = content.replace("\r\n", "\n").replace("\r", "\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        if (normalized.equals(EMPTY_MXLX_CONTENT))
+        {
+            return true;
+        }
+        String withIndexTo = EMPTY_MXLX_CONTENT.replace(
+            "\t\t<index>0</index>\n", //$NON-NLS-1$
+            "\t\t<index>0</index>\n\t\t<indexTo>1</indexTo>\n"); //$NON-NLS-1$
+        return normalized.equals(withIndexTo);
     }
 
     /**
