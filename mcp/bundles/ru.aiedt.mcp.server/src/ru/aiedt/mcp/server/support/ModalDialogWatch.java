@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -279,8 +278,8 @@ public final class ModalDialogWatch
      * <p>
      * Runs on the modal's own event loop, the same way the reading does. A UI thread that does
      * not answer within the budget ends the call as "nothing was pressed", and the press is
-     * withdrawn: the posted task checks the withdrawal before it runs, so a thread that wakes up
-     * late finds nothing left to do.
+     * withdrawn - unless the posted task had already claimed it, in which case the call waits for
+     * the press it can no longer stop and answers with what it did.
      * </p>
      *
      * @param label the button to press, matched ignoring case and the mnemonic ampersand.
@@ -305,28 +304,32 @@ public final class ModalDialogWatch
     /**
      * Posts a press to the UI thread and waits for the outcome within the budget.
      * <p>
-     * A budget that runs out withdraws the press before the answer is given: the posted runnable
-     * checks the withdrawal flag before it touches anything, so a UI thread that wakes up late
-     * finds nothing left to do and "nothing was pressed" stays true. Package-private with the
-     * posting and the press as parameters, so a test can drive the timing without a display.
+     * The withdrawal and the press itself are one transition: the posted task moves the phase from
+     * {@link PressPhase#WAITING WAITING} to {@link PressPhase#PRESSING PRESSING} before it acts, a
+     * caller whose budget has run out moves it to {@link PressPhase#WITHDRAWN WITHDRAWN}, and only
+     * one of the two moves succeeds. A refusal - "nothing was pressed" - is given only when the
+     * withdrawal won; when the task had already claimed the press, the caller waits past its budget
+     * for the outcome and answers with that, because denying a press that is happening would be
+     * the lie this exists to prevent. Package-private with the posting and the press as
+     * parameters, so a test can drive the timing without a display.
      * </p>
      *
      * @param postToUi how a runnable reaches the UI thread
      * @param action the press itself, run on the UI thread
      * @param budgetMs how long to wait for the UI thread, in milliseconds
-     * @return what happened; a refusal when the budget ran out or the wait was interrupted
+     * @return what happened; a refusal only when the press was withdrawn before it began
      */
     static Press pressWithBudget(Consumer<Runnable> postToUi, Supplier<Press> action, long budgetMs)
     {
         AtomicReference<Press> outcome = new AtomicReference<>();
         CountDownLatch answered = new CountDownLatch(1);
-        AtomicBoolean withdrawn = new AtomicBoolean();
+        AtomicReference<PressPhase> phase = new AtomicReference<>(PressPhase.WAITING);
         try
         {
             postToUi.accept(() -> {
                 try
                 {
-                    if (!withdrawn.get())
+                    if (phase.compareAndSet(PressPhase.WAITING, PressPhase.PRESSING))
                     {
                         outcome.set(action.get());
                     }
@@ -336,22 +339,81 @@ public final class ModalDialogWatch
                     answered.countDown();
                 }
             });
-            if (!answered.await(budgetMs, TimeUnit.MILLISECONDS))
+            if (answered.await(budgetMs, TimeUnit.MILLISECONDS))
             {
-                withdrawn.set(true);
+                return outcomeOf(outcome);
+            }
+            if (phase.compareAndSet(PressPhase.WAITING, PressPhase.WITHDRAWN))
+            {
                 return new Press(false, null, "EDT's UI thread did not answer within " //$NON-NLS-1$
                     + budgetMs + "ms, so nothing was pressed"); //$NON-NLS-1$
             }
         }
         catch (InterruptedException stop)
         {
-            withdrawn.set(true);
             Thread.currentThread().interrupt();
-            return new Press(false, null, "interrupted before anything was pressed"); //$NON-NLS-1$
+            if (phase.compareAndSet(PressPhase.WAITING, PressPhase.WITHDRAWN))
+            {
+                return new Press(false, null, "interrupted before anything was pressed"); //$NON-NLS-1$
+            }
+            return claimedOutcome(answered, outcome, true);
         }
+        return claimedOutcome(answered, outcome, false);
+    }
+
+    /** Where a posted press stands: queued, claimed by the UI thread, or called off by its caller. */
+    private enum PressPhase
+    {
+        WAITING, PRESSING, WITHDRAWN
+    }
+
+    /**
+     * The outcome a finished press left behind.
+     *
+     * @param outcome what the press set, when it ran
+     * @return the outcome, or the refusal for a task that answered without one
+     */
+    private static Press outcomeOf(AtomicReference<Press> outcome)
+    {
         Press result = outcome.get();
         return result != null ? result
             : new Press(false, null, "the workbench answered with nothing"); //$NON-NLS-1$
+    }
+
+    /**
+     * The outcome of a press the posted task claimed before the caller's budget ran out.
+     * <p>
+     * The caller wanted to refuse, but a claimed press is happening and its outcome is the only
+     * true answer, so this waits for the task to finish - past the budget, and without letting an
+     * interrupt cut the wait short. An interrupt that arrives is put back on the thread once the
+     * outcome has been taken.
+     * </p>
+     *
+     * @param answered the latch the task counts down when it is done
+     * @param outcome where the task put its result
+     * @param interruptPending whether the thread carries an interrupt to restore afterwards
+     * @return what the press did
+     */
+    private static Press claimedOutcome(CountDownLatch answered, AtomicReference<Press> outcome,
+        boolean interruptPending)
+    {
+        while (true)
+        {
+            try
+            {
+                answered.await();
+                break;
+            }
+            catch (InterruptedException stop)
+            {
+                interruptPending = true;
+            }
+        }
+        if (interruptPending)
+        {
+            Thread.currentThread().interrupt();
+        }
+        return outcomeOf(outcome);
     }
 
     private static Press pressOnUiThread(Display display, String wanted)
