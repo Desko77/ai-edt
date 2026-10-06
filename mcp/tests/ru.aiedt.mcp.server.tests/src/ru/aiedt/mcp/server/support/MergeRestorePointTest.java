@@ -150,6 +150,7 @@ public class MergeRestorePointTest
         Files.writeString(platform(copyProject), PLATFORM, StandardCharsets.UTF_8);
         Files.deleteIfExists(added(copyProject));
         MergeRestorePoint.refreshCalls = 0;
+        MergeRestorePoint.contentComparisons = 0;
         GitRepositoryAccess.deleteRefResultForTest = null;
         McpToolCatalog catalog = McpToolCatalog.getInstance();
         catalog.register(new GitTool());
@@ -605,6 +606,108 @@ public class MergeRestorePointTest
         assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
         assertFalse(Files.exists(copyDir));
         assertFalse(Files.exists(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The comparison a copy restore makes between the copy and the project file decides by size
+     * first: files of different lengths are never read, and files of one length are compared
+     * whatever their bytes are.
+     */
+    @Test
+    public void sameBytesDecidesBySizeBeforeContent() throws Exception
+    {
+        Path left = Files.createTempFile("aiedt-same-left", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+        Path right = Files.createTempFile("aiedt-same-right", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+        try
+        {
+            Files.writeString(left, "aaaa", StandardCharsets.UTF_8); //$NON-NLS-1$
+            Files.writeString(right, "aa", StandardCharsets.UTF_8); //$NON-NLS-1$
+            MergeRestorePoint.contentComparisons = 0;
+            assertFalse(MergeRestorePoint.sameBytes(left, right));
+            assertEquals("files of different sizes were decided without their content", 0, //$NON-NLS-1$
+                MergeRestorePoint.contentComparisons);
+
+            Files.writeString(right, "aaaa", StandardCharsets.UTF_8); //$NON-NLS-1$
+            MergeRestorePoint.contentComparisons = 0;
+            assertTrue(MergeRestorePoint.sameBytes(left, right));
+            assertEquals(1, MergeRestorePoint.contentComparisons);
+
+            Files.writeString(right, "aaba", StandardCharsets.UTF_8); //$NON-NLS-1$
+            MergeRestorePoint.contentComparisons = 0;
+            assertFalse(MergeRestorePoint.sameBytes(left, right));
+            assertEquals("files of one size are compared even when they differ", 1, //$NON-NLS-1$
+                MergeRestorePoint.contentComparisons);
+        }
+        finally
+        {
+            Files.deleteIfExists(left);
+            Files.deleteIfExists(right);
+        }
+    }
+
+    /**
+     * A copy restore decides files of different sizes without reading their content: both changed
+     * files are rewritten although no comparison ran for them, and every unchanged file got
+     * exactly one.
+     */
+    @Test
+    public void aCopyRestoreRewritesDifferentSizesWithoutReadingContent() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(copyProject), MERGED, StandardCharsets.UTF_8);
+        Files.writeString(platform(copyProject), PLATFORM_AFTER, StandardCharsets.UTF_8);
+        MergeRestorePoint.contentComparisons = 0;
+        JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(strings(restored, "restoredFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(strings(restored, "restoredFiles").contains("DT-INF/PROJECT.PMF")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("every unchanged file got one content comparison and no rewritten one did", //$NON-NLS-1$
+            strings(restored, "unchangedFiles").size(), MergeRestorePoint.contentComparisons); //$NON-NLS-1$
+        assertArrayEquals(PROBE.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(copyProject)));
+        assertArrayEquals(PLATFORM.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(platform(copyProject)));
+    }
+
+    /**
+     * A git restore decides a file of a different size without reading its content, and a file of
+     * the point's own size is compared however far into it the difference sits - a large file is
+     * compared across several buffers.
+     */
+    @Test
+    public void aGitRestoreDecidesBySizeAndComparesLargeFilesInChunks() throws Exception
+    {
+        String large = "a".repeat(20000) + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        Files.writeString(module(gitProject), large, StandardCharsets.UTF_8);
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+
+        Files.writeString(module(gitProject), MERGED, StandardCharsets.UTF_8);
+        MergeRestorePoint.contentComparisons = 0;
+        JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(strings(restored, "restoredFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(strings(restored, "unchangedFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("every unchanged file got one content comparison and no rewritten one did", //$NON-NLS-1$
+            strings(restored, "unchangedFiles").size(), MergeRestorePoint.contentComparisons); //$NON-NLS-1$
+        assertArrayEquals(large.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(gitProject)));
+
+        String sameSize = "a".repeat(19999) + "b\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        Files.writeString(module(gitProject), sameSize, StandardCharsets.UTF_8);
+        MergeRestorePoint.contentComparisons = 0;
+        JsonObject again = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertTrue(strings(again, "restoredFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(strings(again, "unchangedFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the file of the point's own size was compared once and rewritten", //$NON-NLS-1$
+            strings(again, "unchangedFiles").size() + 1, MergeRestorePoint.contentComparisons); //$NON-NLS-1$
+        assertArrayEquals(large.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(gitProject)));
     }
 
     /**

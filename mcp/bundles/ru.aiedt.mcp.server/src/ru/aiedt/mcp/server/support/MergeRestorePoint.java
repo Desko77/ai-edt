@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -61,6 +62,16 @@ public final class MergeRestorePoint
      * back, because the refresh has no other visible effect a headless run can observe.
      */
     static int refreshCalls;
+
+    /**
+     * How many times the content of a file was compared byte by byte, after the sizes had matched.
+     * A test resets this and reads it back: a file whose size already differs is decided without
+     * its content being read, and this count is the proof.
+     */
+    static int contentComparisons;
+
+    /** The buffer a point's bytes are compared against a file through. */
+    private static final int COMPARE_BUFFER = 8192;
 
     private static final String FORMAT = "V1"; //$NON-NLS-1$
 
@@ -628,7 +639,7 @@ public final class MergeRestorePoint
                     break;
                 }
                 Path to = projectDir.resolve(relative);
-                if (Files.isRegularFile(to) && Arrays.equals(Files.readAllBytes(from), Files.readAllBytes(to)))
+                if (Files.isRegularFile(to) && sameBytes(from, to))
                 {
                     restored.unchangedFiles.add(relative);
                     continue;
@@ -695,7 +706,8 @@ public final class MergeRestorePoint
 
     /**
      * Whether the work-tree file already holds exactly these bytes, so a restore would rewrite it
-     * with what it already has.
+     * with what it already has. A file of a different size is decided by its size alone; one of the
+     * same size is compared through a buffer, so a large file is never held in memory whole.
      *
      * @param repository the repository
      * @param repoPath the work-tree-relative path
@@ -710,11 +722,46 @@ public final class MergeRestorePoint
         {
             disk = disk.resolve(segment);
         }
-        if (!Files.isRegularFile(disk))
+        if (!Files.isRegularFile(disk) || Files.size(disk) != bytes.length)
         {
             return false;
         }
-        return Arrays.equals(bytes, Files.readAllBytes(disk));
+        contentComparisons++;
+        try (InputStream input = Files.newInputStream(disk))
+        {
+            byte[] buffer = new byte[COMPARE_BUFFER];
+            int offset = 0;
+            while (offset < bytes.length)
+            {
+                int read = input.readNBytes(buffer, 0, Math.min(buffer.length, bytes.length - offset));
+                if (read <= 0 || !Arrays.equals(buffer, 0, read, bytes, offset, offset + read))
+                {
+                    return false;
+                }
+                offset += read;
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Whether two regular files hold the same bytes. Sizes are compared first, so files of
+     * different lengths are decided without reading either; files of one length are compared by
+     * streaming, so a large file is never held in memory whole.
+     *
+     * @param left one file
+     * @param right the other file
+     * @return {@code true} when the bytes match
+     * @throws IOException when a file cannot be read
+     */
+    static boolean sameBytes(Path left, Path right) throws IOException
+    {
+        if (Files.size(left) != Files.size(right))
+        {
+            return false;
+        }
+        contentComparisons++;
+        return Files.mismatch(left, right) == -1L;
     }
 
     /**
