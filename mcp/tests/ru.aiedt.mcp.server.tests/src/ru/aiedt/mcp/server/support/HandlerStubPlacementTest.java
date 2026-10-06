@@ -128,6 +128,56 @@ public class HandlerStubPlacementTest
         assertTrue(plan.text, plan.text.startsWith("\n#Область ОбработчикиСобытий\n")); //$NON-NLS-1$
     }
 
+    /** A conditional-compilation block that opens after code frames only what follows it. */
+    @Test
+    public void aTrailingBlockAfterCodeDoesNotFrameTheModule()
+    {
+        String module = "Процедура Серверная()\nКонецПроцедуры\n" //$NON-NLS-1$
+            + "#Если Клиент Тогда\n" //$NON-NLS-1$
+            + "Процедура Клиентская()\nКонецПроцедуры\n" //$NON-NLS-1$
+            + "#КонецЕсли\n"; //$NON-NLS-1$
+
+        HandlerStubPlacement.Plan plan = HandlerStubPlacement.plan(module, PROCEDURES,
+            BslScriptLanguage.RUSSIAN);
+
+        assertNull("code stands before the block, so it is not the module's framing", //$NON-NLS-1$
+            plan.insertBeforeLine);
+        assertTrue(plan.text, plan.text.startsWith("\n#Область ОбработчикиСобытий\n")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A comment header above the opening directive does not undo the framing. */
+    @Test
+    public void aCommentHeaderDoesNotUndoTheFraming()
+    {
+        String module = "// Module of the object.\n" //$NON-NLS-1$
+            + "#Если Сервер Или ТолстыйКлиентОбычноеПриложение Или ВнешнееСоединение Тогда\n" //$NON-NLS-1$
+            + "Процедура Серверная()\nКонецПроцедуры\n" //$NON-NLS-1$
+            + "#КонецЕсли\n"; //$NON-NLS-1$
+
+        HandlerStubPlacement.Plan plan = HandlerStubPlacement.plan(module, PROCEDURES,
+            BslScriptLanguage.RUSSIAN);
+
+        assertEquals("only a comment stands before the framing, so it holds the whole module", //$NON-NLS-1$
+            Integer.valueOf(5), plan.insertBeforeLine);
+    }
+
+    /** The trailing-block rule reads the English directives the same way. */
+    @Test
+    public void theTrailingBlockRuleHoldsForEnglishDirectives()
+    {
+        String module = "Procedure ServerSide()\nEndProcedure\n" //$NON-NLS-1$
+            + "#If Client Then\n" //$NON-NLS-1$
+            + "Procedure ClientSide()\nEndProcedure\n" //$NON-NLS-1$
+            + "#EndIf\n"; //$NON-NLS-1$
+
+        HandlerStubPlacement.Plan plan = HandlerStubPlacement.plan(module, PROCEDURES,
+            BslScriptLanguage.ENGLISH);
+
+        assertNull("code stands before the block, so it is not the module's framing", //$NON-NLS-1$
+            plan.insertBeforeLine);
+        assertTrue(plan.text, plan.text.startsWith("\n#Region EventHandlers\n")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     /** A module with neither the region nor a framing gets a new region at its end. */
     @Test
     public void aPlainModuleGetsANewRegionAtItsEnd()

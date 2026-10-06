@@ -16,7 +16,10 @@ import java.util.regex.Pattern;
  * region gets one new region: inside the module's top-level conditional-compilation framing when
  * there is one, before its top-level {@code #Иначе} or, without one, before its closing
  * {@code #КонецЕсли}; at the end of the module otherwise, without a framing of its own. A module
- * with nothing in it takes the whole shape: framing, region, stubs.
+ * with nothing in it takes the whole shape: framing, region, stubs. A conditional-compilation
+ * block counts as the module's framing only when it holds the whole module - nothing but blank
+ * lines and comments before its opening directive and after its closing one; a block that opens
+ * after code frames only what stands inside it, so the stubs go outside it.
  * </p>
  * <p>
  * Region and preprocessor directives are recognized in either language whatever the configuration
@@ -172,7 +175,9 @@ public final class HandlerStubPlacement
     /**
      * Where a new region goes inside the module's top-level conditional-compilation framing: before
      * its top-level {@code #Иначе} when there is one, before its closing {@code #КонецЕсли}
-     * otherwise.
+     * otherwise. A block counts as the framing of the whole module only when nothing but blank
+     * lines and comments stands before its opening directive and after its closing one; a block
+     * that opens after code frames only what stands inside it and answers nothing here.
      *
      * @param lines the module lines
      * @return the 1-based line number, or 0 when the module carries no framing of its whole self
@@ -200,7 +205,8 @@ public final class HandlerStubPlacement
                 }
                 else if (IF_CLOSE.matcher(lines[j]).find() && --depth == 0)
                 {
-                    if (!onlyBlanksAndCommentsFollow(lines, j + 1))
+                    if (!onlyBlanksAndComments(lines, j + 1, lines.length)
+                        || !onlyBlanksAndComments(lines, 0, i))
                     {
                         return 0;
                     }
@@ -213,17 +219,18 @@ public final class HandlerStubPlacement
     }
 
     /**
-     * Whether nothing but blank lines and comments stand after a line, which is what makes a
+     * Whether nothing but blank lines and comments stand in a span of lines, which is what makes a
      * conditional-compilation block the framing of the whole module rather than a block in the
      * middle of it.
      *
      * @param lines the module lines
-     * @param from the 0-based index of the first line after the block
-     * @return true when only blanks and comments follow
+     * @param from the 0-based index of the first line of the span
+     * @param to the 0-based index one past the last line of the span
+     * @return true when the span carries only blanks and comments
      */
-    private static boolean onlyBlanksAndCommentsFollow(String[] lines, int from)
+    private static boolean onlyBlanksAndComments(String[] lines, int from, int to)
     {
-        for (int i = from; i < lines.length; i++)
+        for (int i = from; i < to; i++)
         {
             String line = lines[i].trim();
             if (!line.isEmpty() && !line.startsWith("//")) //$NON-NLS-1$
