@@ -44,6 +44,7 @@ import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.BmExternalObjectDumpHelper;
 import ru.aiedt.mcp.server.support.ApplicationUpdater;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.ClientLaunchMode;
 import ru.aiedt.mcp.server.support.DumpInfoProbe;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -565,6 +566,15 @@ public final class DebugSessionStarter implements IMcpTool
             ApplicationUpdater.Result databaseUpdate = null;
             if (!isAttach && updateBeforeLaunch && configProject != null && !configProject.isEmpty())
             {
+                String presetRefusal = presetUpdateRefusal(updateBeforeLaunch);
+                if (presetRefusal != null)
+                {
+                    return ToolResult.error(presetRefusal)
+                        .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                        .put("applicationId", effectiveAppId) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
                 String notReady = ProjectStateGuard.checkReadyOrError(configProject);
                 if (notReady != null)
                 {
@@ -863,6 +873,15 @@ public final class DebugSessionStarter implements IMcpTool
             ApplicationUpdater.Result databaseUpdate = null;
             if (updateBeforeLaunch && appManager != null && application != null)
             {
+                String presetRefusal = presetUpdateRefusal(updateBeforeLaunch);
+                if (presetRefusal != null)
+                {
+                    return ToolResult.error(presetRefusal)
+                        .put("project", projectName) //$NON-NLS-1$
+                        .put("applicationId", applicationId) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
                 databaseUpdate = updateDatabase(appManager, application);
                 String refusal = preLaunchRefusal(databaseUpdate);
                 if (refusal != null)
@@ -1130,6 +1149,34 @@ public final class DebugSessionStarter implements IMcpTool
         IApplication application, DumpInfoProbe.Reading dumpInfo)
     {
         return ApplicationUpdater.updateIfNeeded(appManager, application, dumpInfo);
+    }
+
+    /**
+     * Says whether the active preset forbids the database update a launch is about to run.
+     * <p>
+     * {@code update_database} is a name every write-blocking preset disables, and a launch that
+     * carries {@code updateBeforeLaunch=true} would run that very work by another road - so every
+     * path that launches with an update (a debug launch by project or by configuration name, a
+     * client start, the two YAXUnit modes) asks here, before anything is updated or started. A
+     * call that opted out of the update has nothing to ask about.
+     * </p>
+     *
+     * @param updateBeforeLaunch whether this launch asked for the update
+     * @return the refusal sentence naming the way out, or {@code null} when the launch may go on
+     */
+    static String presetUpdateRefusal(boolean updateBeforeLaunch)
+    {
+        if (!updateBeforeLaunch)
+        {
+            return null;
+        }
+        String gate = ToolGate.gateIfPresetDisabled(DatabaseUpdater.NAME);
+        if (gate == null)
+        {
+            return null;
+        }
+        return gate + " Nothing was launched or updated. Retry with updateBeforeLaunch=false to " //$NON-NLS-1$
+            + "launch against the infobase as it stands."; //$NON-NLS-1$
     }
 
     /**

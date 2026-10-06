@@ -91,4 +91,39 @@ public final class ToolGate
         return McpToolCatalog.getInstance().isDisabledByPreset(capabilityName)
             ? disabledMessage(capabilityName) : null;
     }
+
+    /** The suffix of a capability name that stands for the write operations of a facade. */
+    private static final String WRITE_DOOR_SUFFIX = "_writes"; //$NON-NLS-1$
+
+    /**
+     * Gates the write operations of a facade by their capability name ({@code <facade>_writes}).
+     * <p>
+     * Such a name is not a tool and has no checkbox on the Tools tab, so the refusal does not send
+     * the user looking for one: it names the facade and the preset as the thing to change.
+     * </p>
+     *
+     * @param writeDoor the capability name, {@code <facade>_writes}
+     * @return {@code null} when the active preset allows the writes; otherwise the rejection text
+     */
+    public static String gateWriteDoor(String writeDoor)
+    {
+        return McpToolCatalog.getInstance().isDisabledByPreset(writeDoor)
+            ? writeDoorMessage(writeDoor) : null;
+    }
+
+    /**
+     * The rejection text of a write door.
+     *
+     * @param writeDoor the capability name, {@code <facade>_writes}
+     * @return the text a facade returns in place of running the write
+     */
+    public static String writeDoorMessage(String writeDoor)
+    {
+        String facade = writeDoor != null && writeDoor.endsWith(WRITE_DOOR_SUFFIX)
+            ? writeDoor.substring(0, writeDoor.length() - WRITE_DOOR_SUFFIX.length()) : writeDoor;
+        return "The write operations of '" + facade + "' are switched off by the active tool preset " //$NON-NLS-1$ //$NON-NLS-2$
+            + "and nothing was executed. Its reading operations stay available, and so does a dryRun " //$NON-NLS-1$
+            + "preview of an operation that has one. Ask the user to choose a preset that allows " //$NON-NLS-1$
+            + "writing in EDT Preferences > AI-EDT > Tools tab, then try again."; //$NON-NLS-1$
+    }
 }

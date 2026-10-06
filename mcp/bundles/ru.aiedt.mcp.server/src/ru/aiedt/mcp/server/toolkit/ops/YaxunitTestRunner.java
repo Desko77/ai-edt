@@ -421,6 +421,14 @@ public final class YaxunitTestRunner
         {
             return null;
         }
+        // The preset is asked before the update step runs, so a preset that forbids
+        // update_database refuses the launch having updated nothing at all. Both YAXUnit modes
+        // (run and debug) come through here, and so does every other launching path.
+        String presetRefusal = DebugSessionStarter.presetUpdateRefusal(true);
+        if (presetRefusal != null)
+        {
+            return presetRefusal;
+        }
         return DebugSessionStarter.preLaunchRefusal(updateStep.apply(projectName, applicationId));
     }
 

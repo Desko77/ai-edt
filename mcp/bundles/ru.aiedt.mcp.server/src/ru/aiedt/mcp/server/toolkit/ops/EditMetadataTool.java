@@ -883,6 +883,18 @@ public class EditMetadataTool implements IMcpTool
                 .toJson();
         }
 
+        // Asked before the pending machinery and the mutation lock: a preset-blocked write is
+        // refused having done nothing at all, and the refusal needs no workspace read.
+        // A call that carries a runKey starts nothing: it collects the answer of an operation that
+        // is already running, and an unknown key is answered "not found". It is not asked, so an
+        // operation started before the preset changed still hands its result back.
+        String presetGate = isResultPoll(params) ? null : presetWriteGate(op,
+            JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
+        if (presetGate != null)
+        {
+            return gatedRejectJson(op, presetGate);
+        }
+
         // On the UI thread already - run it here. Handing the work to a pool thread that then needs
         // this same thread would deadlock, and a caller that is on the UI thread is not an MCP
         // client with a patience to run out.
@@ -1229,6 +1241,40 @@ public class EditMetadataTool implements IMcpTool
                 .put("notStarted", Integer.valueOf(ops.size())) //$NON-NLS-1$
                 .put("refusedBeforeRunning", unrunnable) //$NON-NLS-1$
                 .toJson();
+        }
+        // A preset-blocked write is told before the batch starts, on the same terms as a batch that
+        // cannot run as written: reading and previewing entries stay possible, so only the blocked
+        // ones are named. dryRun inherits from the outer call exactly as the dispatch below
+        // inherits it, and the door is asked once so an allowed batch reads no preset per entry.
+        String batchPresetGate = ToolGate.gateWriteDoor(WRITE_DOOR);
+        if (batchPresetGate != null)
+        {
+            boolean outerDryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+            java.util.List<String> presetBlocked = new java.util.ArrayList<>();
+            for (int i = 0; i < ops.size(); i++)
+            {
+                Map<String, String> opParams = ops.get(i);
+                String subOp = JsonUtils.normalizeOperationToken(
+                    JsonUtils.extractStringArgument(opParams, "operation")); //$NON-NLS-1$
+                boolean entryDryRun = opParams.containsKey("dryRun") //$NON-NLS-1$
+                    ? JsonUtils.extractBooleanArgument(opParams, "dryRun", false) //$NON-NLS-1$
+                    : outerDryRun;
+                if (presetWriteGate(subOp, entryDryRun) != null)
+                {
+                    presetBlocked.add("[" + i + "] " + subOp); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            if (!presetBlocked.isEmpty())
+            {
+                return ToolResult
+                    .error(batchPresetGate + " This batch was not started: " + presetBlocked.size() //$NON-NLS-1$
+                        + " of its " + ops.size() + " operations are writes the active preset has " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "switched off. Nothing was changed in the project. " //$NON-NLS-1$
+                        + String.join("; ", presetBlocked)) //$NON-NLS-1$
+                    .put("notStarted", Integer.valueOf(ops.size())) //$NON-NLS-1$
+                    .put("presetBlocked", presetBlocked) //$NON-NLS-1$
+                    .toJson();
+            }
         }
         boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
         java.util.List<Map<String, Object>> results = new java.util.ArrayList<>();
@@ -3309,6 +3355,74 @@ public class EditMetadataTool implements IMcpTool
         return ToolResult.error(message)
             .put("operation", op) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it. Code Review keeps the constructors group on so a review can read what a
+     * constructor would produce; this name is how its promise still holds for the writes.
+     */
+    static final String WRITE_DOOR = "edit_metadata_writes"; //$NON-NLS-1$
+
+    /**
+     * The operations of this facade that read and write nothing, so a write-blocking preset lets
+     * them run. {@code help} is answered before the registry is consulted; it is listed here so a
+     * future routing of it through the same gate stays a read.
+     */
+    private static final Set<String> READ_OPERATIONS = Set.of(
+        "help", //$NON-NLS-1$
+        "get_template_content", //$NON-NLS-1$
+        "get_route_map", //$NON-NLS-1$
+        "list_pictures", //$NON-NLS-1$
+        "list_form_appearance_rules"); //$NON-NLS-1$
+
+    /**
+     * Whether the call collects the result of an operation started earlier rather than starting
+     * one: it names a {@code runKey}.
+     *
+     * @param params the call arguments
+     * @return <code>true</code> when a non-empty {@code runKey} is present
+     */
+    static boolean isResultPoll(Map<String, String> params)
+    {
+        String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        return runKey != null && !runKey.isEmpty();
+    }
+
+    /**
+     * The writing operations of this facade that have no preview: their handlers do not read
+     * {@code dryRun}, so a call that passes it writes all the same. {@code sync_export} flushes the
+     * model to disk, and the three others remove or rename an object.
+     */
+    static final Set<String> WRITES_WITHOUT_PREVIEW = Set.of(
+        "sync_export", //$NON-NLS-1$
+        "remove_object", //$NON-NLS-1$
+        "delete_metadata_object", //$NON-NLS-1$
+        "rename_metadata_object"); //$NON-NLS-1$
+
+    /**
+     * Says whether the active preset blocks this operation as a write, before anything runs.
+     * <p>
+     * A preview ({@code dryRun}) rolls its transaction back and persists nothing, and the four
+     * reading operations change nothing at all, so neither reaches the preset question. An operation
+     * in {@link #WRITES_WITHOUT_PREVIEW} writes whatever {@code dryRun} says and is asked always. Everything
+     * else this facade does writes the project, and a preset that promises no writes refuses it by
+     * the capability name above - the same decision for the single-operation path and for every
+     * entry of a batch.
+     * </p>
+     *
+     * @param op the normalized operation name, never {@code null}
+     * @param dryRun whether this call (or batch entry, after inheritance) previews only
+     * @return the gate's rejection text, or {@code null} when the operation may run
+     */
+    static String presetWriteGate(String op, boolean dryRun)
+    {
+        if (READ_OPERATIONS.contains(op) || dryRun && !WRITES_WITHOUT_PREVIEW.contains(op))
+        {
+            return null;
+        }
+        return ToolGate.gateWriteDoor(WRITE_DOOR);
     }
 
     /** Editorial one-line note per help group (the op list itself is generated). */

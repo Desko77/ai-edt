@@ -343,6 +343,17 @@ public class ClientSessionStarter
 
             if (updateFirst)
             {
+                // The preset question comes first: an update the active preset forbids is refused
+                // before the configuration is read and the application resolved.
+                String presetRefusal = DebugSessionStarter.presetUpdateRefusal(updateFirst);
+                if (presetRefusal != null)
+                {
+                    return ToolResult.error(presetRefusal)
+                        .put("configuration", config.getName()) //$NON-NLS-1$
+                        .put("applicationId", resolvedAppId) //$NON-NLS-1$
+                        .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                        .toJson();
+                }
                 // The project comes from the configuration that was actually resolved, not from the
                 // request. A name given as launchConfigurationName wins the resolution, so a
                 // projectName sent alongside it may belong to something else entirely - updating
