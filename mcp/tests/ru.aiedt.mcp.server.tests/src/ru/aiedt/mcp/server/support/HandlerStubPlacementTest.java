@@ -161,6 +161,26 @@ public class HandlerStubPlacementTest
             Integer.valueOf(5), plan.insertBeforeLine);
     }
 
+    /** A byte-order mark in front of the comment header or of the directive itself does not either. */
+    @Test
+    public void aByteOrderMarkDoesNotUndoTheFraming()
+    {
+        String framed = "#Если Сервер Или ТолстыйКлиентОбычноеПриложение Или ВнешнееСоединение Тогда\n" //$NON-NLS-1$
+            + "Процедура Серверная()\nКонецПроцедуры\n" //$NON-NLS-1$
+            + "#КонецЕсли\n"; //$NON-NLS-1$
+
+        HandlerStubPlacement.Plan underHeader = HandlerStubPlacement.plan(
+            '﻿' + "// Module of the object.\n" + framed, PROCEDURES, //$NON-NLS-1$
+            BslScriptLanguage.RUSSIAN);
+        HandlerStubPlacement.Plan bare = HandlerStubPlacement.plan('﻿' + framed, PROCEDURES,
+            BslScriptLanguage.RUSSIAN);
+
+        assertEquals("the mark before the comment header is not code", //$NON-NLS-1$
+            Integer.valueOf(5), underHeader.insertBeforeLine);
+        assertEquals("the mark before the opening directive does not hide it", //$NON-NLS-1$
+            Integer.valueOf(4), bare.insertBeforeLine);
+    }
+
     /** The trailing-block rule reads the English directives the same way. */
     @Test
     public void theTrailingBlockRuleHoldsForEnglishDirectives()

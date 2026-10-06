@@ -182,8 +182,9 @@ public final class HandlerStubPlacement
      * @param lines the module lines
      * @return the 1-based line number, or 0 when the module carries no framing of its whole self
      */
-    static int topLevelFramingBoundary(String[] lines)
+    static int topLevelFramingBoundary(String[] moduleLines)
     {
+        String[] lines = withoutByteOrderMark(moduleLines);
         int depth = 0;
         for (int i = 0; i < lines.length; i++)
         {
@@ -216,6 +217,25 @@ public final class HandlerStubPlacement
             return 0;
         }
         return 0;
+    }
+
+    /**
+     * The module lines with a leading byte-order mark taken off the first one. The mark is neither
+     * white space nor a comment, so a first line that carries it would read as code and as a
+     * directive that does not open at the start of its line.
+     *
+     * @param lines the module lines
+     * @return the same array when the first line carries no mark, otherwise a copy without it
+     */
+    private static String[] withoutByteOrderMark(String[] lines)
+    {
+        if (lines.length == 0 || lines[0].isEmpty() || lines[0].charAt(0) != '﻿')
+        {
+            return lines;
+        }
+        String[] copy = lines.clone();
+        copy[0] = lines[0].substring(1);
+        return copy;
     }
 
     /**
