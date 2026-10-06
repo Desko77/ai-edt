@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -22,8 +23,10 @@ import org.junit.Test;
  * instances racing for one workspace lock.</p>
  *
  * <p>The slot is claimed in {@code execute} before the watcher starter runs and freed on every
- * path that leaves EDT alive; what a headless suite can drive is the slot's own contract, the
- * same seam {@code restartPreflight} is held through.</p>
+ * path that leaves EDT alive - a refusal, a vetoed close, a failed close - while a close that
+ * succeeded holds it to the end of the process. What a headless suite can drive is the slot's
+ * own contract, the same seam {@code restartPreflight} is held through and {@code
+ * runDeferredClose} settles.</p>
  */
 public class ASecondRestartDoesNotRaceTheFirstTest
 {
@@ -115,6 +118,123 @@ public class ASecondRestartDoesNotRaceTheFirstTest
         finally
         {
             RestartEdtTool.releaseRestartSlot(second);
+        }
+    }
+
+    /**
+     * A close that succeeded keeps the slot held: the JVM has accepted the shutdown but not
+     * finished it, and a call in that window meets the same refusal as before the close instead
+     * of a free slot and a second watcher for the one exit.
+     */
+    @Test
+    public void aSuccessfulCloseHoldsTheSlotUntilTheProcessEnds()
+    {
+        RestartEdtTool.RestartInFlight first = deferredBy("restart", 0); //$NON-NLS-1$
+        assertNull(RestartEdtTool.claimRestartSlot(first));
+        RestartEdtTool.RestartInFlight second = deferredBy("restart", 1000); //$NON-NLS-1$
+        try
+        {
+            RestartEdtTool.runDeferredClose(first, null, false, true, () -> true);
+            RestartEdtTool.RestartInFlight conflict = RestartEdtTool.claimRestartSlot(second);
+            assertNotNull("a call after a successful close does not pass", conflict); //$NON-NLS-1$
+            assertSame("the refusal speaks about the attempt whose close succeeded", first, //$NON-NLS-1$
+                conflict);
+            String refusal = RestartEdtTool.inFlightRefusal(conflict);
+            assertTrue(refusal, refusal.contains("no watcher was started")); //$NON-NLS-1$
+        }
+        finally
+        {
+            // The process these tests run in does not end with the attempt; whichever of the two
+            // holds the slot, give it back - identity makes each release a no-op for the other.
+            RestartEdtTool.releaseRestartSlot(second);
+            RestartEdtTool.releaseRestartSlot(first);
+        }
+    }
+
+    /** A close the workbench vetoed leaves EDT alive: the slot is freed and the watcher stopped. */
+    @Test
+    public void aVetoedCloseFreesTheSlotAndStopsTheWatcher()
+    {
+        RestartEdtTool.RestartInFlight first = deferredBy("restart", 0); //$NON-NLS-1$
+        assertNull(RestartEdtTool.claimRestartSlot(first));
+        RecordingWatcher watcher = new RecordingWatcher();
+        RestartEdtTool.runDeferredClose(first, watcher, false, true, () -> false);
+        assertEquals("a vetoed close stops the watcher it started", 1, watcher.destroyed); //$NON-NLS-1$
+        RestartEdtTool.RestartInFlight second = deferredBy("restart", 1000); //$NON-NLS-1$
+        try
+        {
+            assertNull("a vetoed close leaves the next call free to try", //$NON-NLS-1$
+                RestartEdtTool.claimRestartSlot(second));
+        }
+        finally
+        {
+            RestartEdtTool.releaseRestartSlot(second);
+        }
+    }
+
+    /** A close that threw leaves EDT alive as well: the slot is freed and the watcher stopped. */
+    @Test
+    public void aFailedCloseFreesTheSlotAndStopsTheWatcher()
+    {
+        RestartEdtTool.RestartInFlight first = deferredBy("restart", 0); //$NON-NLS-1$
+        assertNull(RestartEdtTool.claimRestartSlot(first));
+        RecordingWatcher watcher = new RecordingWatcher();
+        RestartEdtTool.runDeferredClose(first, watcher, false, true, () -> {
+            throw new IllegalStateException("the workbench close broke"); //$NON-NLS-1$
+        });
+        assertEquals("a failed close stops the watcher it started", 1, watcher.destroyed); //$NON-NLS-1$
+        RestartEdtTool.RestartInFlight second = deferredBy("restart", 1000); //$NON-NLS-1$
+        try
+        {
+            assertNull("a failed close leaves the next call free to try", //$NON-NLS-1$
+                RestartEdtTool.claimRestartSlot(second));
+        }
+        finally
+        {
+            RestartEdtTool.releaseRestartSlot(second);
+        }
+    }
+
+    /** A stand-in watcher that counts the times it was told to go away. */
+    private static final class RecordingWatcher extends Process
+    {
+        int destroyed;
+
+        @Override
+        public java.io.OutputStream getOutputStream()
+        {
+            return java.io.OutputStream.nullOutputStream();
+        }
+
+        @Override
+        public java.io.InputStream getInputStream()
+        {
+            return java.io.InputStream.nullInputStream();
+        }
+
+        @Override
+        public java.io.InputStream getErrorStream()
+        {
+            return java.io.InputStream.nullInputStream();
+        }
+
+        @Override
+        public int waitFor()
+        {
+            return 0;
+        }
+
+        @Override
+        public int exitValue()
+        {
+            // Still running: destroyQuietly must not confuse the stand-in for a dead process.
+            throw new IllegalThreadStateException();
+        }
+
+        @Override
+        public void destroy()
+        {
+            destroyed++;
         }
     }
 }
