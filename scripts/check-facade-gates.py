@@ -255,10 +255,10 @@ def constructor_verdict(path: pathlib.Path) -> tuple[str | None, str | None]:
     delegation facades are held to.
     """
     code = without_comments(path.read_text(encoding="utf-8"))
-    gate = min((code.find(token) for token in ("gateIfPresetDisabled", "presetWriteGate")
+    gate = min((code.find(token) for token in ("gateIfPresetDisabled", "gateWriteDoor", "presetWriteGate")
                 if code.find(token) != -1), default=-1)
     if gate == -1:
-        return "no gateIfPresetDisabled in the source", None
+        return "no gateIfPresetDisabled or gateWriteDoor in the source", None
     handoff = HANDOFF.search(code)
     if handoff and handoff.start() < gate:
         return None, f"operation hand-off at offset {handoff.start()} before the gate at {gate}"

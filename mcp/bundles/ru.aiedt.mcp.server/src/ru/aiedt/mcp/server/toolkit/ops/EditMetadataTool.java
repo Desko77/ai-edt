@@ -885,7 +885,10 @@ public class EditMetadataTool implements IMcpTool
 
         // Asked before the pending machinery and the mutation lock: a preset-blocked write is
         // refused having done nothing at all, and the refusal needs no workspace read.
-        String presetGate = presetWriteGate(op,
+        // A call that carries a runKey starts nothing: it collects the answer of an operation that
+        // is already running, and an unknown key is answered "not found". It is not asked, so an
+        // operation started before the preset changed still hands its result back.
+        String presetGate = isResultPoll(params) ? null : presetWriteGate(op,
             JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
         if (presetGate != null)
         {
@@ -3373,6 +3376,19 @@ public class EditMetadataTool implements IMcpTool
         "get_route_map", //$NON-NLS-1$
         "list_pictures", //$NON-NLS-1$
         "list_form_appearance_rules"); //$NON-NLS-1$
+
+    /**
+     * Whether the call collects the result of an operation started earlier rather than starting
+     * one: it names a {@code runKey}.
+     *
+     * @param params the call arguments
+     * @return <code>true</code> when a non-empty {@code runKey} is present
+     */
+    static boolean isResultPoll(Map<String, String> params)
+    {
+        String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        return runKey != null && !runKey.isEmpty();
+    }
 
     /**
      * The writing operations of this facade that have no preview: their handlers do not read

@@ -265,6 +265,20 @@ public class AConstructorWritesRefuseUnderWriteBlockingPresetsTest
         assertNull(EditMetadataTool.presetWriteGate("add_field", true)); //$NON-NLS-1$
     }
 
+    /** A call with a runKey collects a result and is not asked; one without starts a write. */
+    @Test
+    public void aResultPollIsNotAWrite()
+    {
+        java.util.Map<String, String> poll = new java.util.HashMap<>();
+        poll.put("operation", "create_object"); //$NON-NLS-1$ //$NON-NLS-2$
+        poll.put("runKey", "abc"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(EditMetadataTool.isResultPoll(poll));
+        poll.put("runKey", ""); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(!EditMetadataTool.isResultPoll(poll));
+        poll.remove("runKey"); //$NON-NLS-1$
+        assertTrue(!EditMetadataTool.isResultPoll(poll));
+    }
+
     /** The refusal names the facade and the preset, not a checkbox that does not exist. */
     @Test
     public void theRefusalNamesTheFacadeAndThePreset()
