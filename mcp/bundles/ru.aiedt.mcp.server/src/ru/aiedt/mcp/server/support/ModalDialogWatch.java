@@ -12,7 +12,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.widgets.Button;
@@ -274,7 +277,10 @@ public final class ModalDialogWatch
      * taken back.
      * </p>
      * <p>
-     * Runs on the modal's own event loop, the same way the reading does.
+     * Runs on the modal's own event loop, the same way the reading does. A UI thread that does
+     * not answer within the budget ends the call as "nothing was pressed", and the press is
+     * withdrawn: the posted task checks the withdrawal before it runs, so a thread that wakes up
+     * late finds nothing left to do.
      * </p>
      *
      * @param label the button to press, matched ignoring case and the mnemonic ampersand.
@@ -292,28 +298,54 @@ public final class ModalDialogWatch
         {
             return new Press(false, null, "there is no workbench here to press anything in"); //$NON-NLS-1$
         }
+        return pressWithBudget(display::asyncExec, () -> pressOnUiThread(display, wanted),
+            UI_ANSWER_MS);
+    }
+
+    /**
+     * Posts a press to the UI thread and waits for the outcome within the budget.
+     * <p>
+     * A budget that runs out withdraws the press before the answer is given: the posted runnable
+     * checks the withdrawal flag before it touches anything, so a UI thread that wakes up late
+     * finds nothing left to do and "nothing was pressed" stays true. Package-private with the
+     * posting and the press as parameters, so a test can drive the timing without a display.
+     * </p>
+     *
+     * @param postToUi how a runnable reaches the UI thread
+     * @param action the press itself, run on the UI thread
+     * @param budgetMs how long to wait for the UI thread, in milliseconds
+     * @return what happened; a refusal when the budget ran out or the wait was interrupted
+     */
+    static Press pressWithBudget(Consumer<Runnable> postToUi, Supplier<Press> action, long budgetMs)
+    {
         AtomicReference<Press> outcome = new AtomicReference<>();
         CountDownLatch answered = new CountDownLatch(1);
+        AtomicBoolean withdrawn = new AtomicBoolean();
         try
         {
-            display.asyncExec(() -> {
+            postToUi.accept(() -> {
                 try
                 {
-                    outcome.set(pressOnUiThread(display, wanted));
+                    if (!withdrawn.get())
+                    {
+                        outcome.set(action.get());
+                    }
                 }
                 finally
                 {
                     answered.countDown();
                 }
             });
-            if (!answered.await(UI_ANSWER_MS, TimeUnit.MILLISECONDS))
+            if (!answered.await(budgetMs, TimeUnit.MILLISECONDS))
             {
+                withdrawn.set(true);
                 return new Press(false, null, "EDT's UI thread did not answer within " //$NON-NLS-1$
-                    + UI_ANSWER_MS + "ms, so nothing was pressed"); //$NON-NLS-1$
+                    + budgetMs + "ms, so nothing was pressed"); //$NON-NLS-1$
             }
         }
         catch (InterruptedException stop)
         {
+            withdrawn.set(true);
             Thread.currentThread().interrupt();
             return new Press(false, null, "interrupted before anything was pressed"); //$NON-NLS-1$
         }
