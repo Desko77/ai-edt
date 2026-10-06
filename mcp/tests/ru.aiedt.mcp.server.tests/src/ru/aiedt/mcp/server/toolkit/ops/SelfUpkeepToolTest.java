@@ -121,6 +121,18 @@ public class SelfUpkeepToolTest
     }
 
     @Test
+    public void aFailedAttemptIsAnsweredAsAnErrorNotAState()
+    {
+        // A caller reading only the outcome flag must see the failure: a "check_failed" state
+        // string beside a success flag reads as an install that went through.
+        ReleaseOffer failed = ReleaseOffer.failed(null, null, "p2 refused the profile change", 1L); //$NON-NLS-1$
+        String json = SelfUpkeepTool.report("install", failed); //$NON-NLS-1$
+        assertTrue(json, json.contains("\"success\":false")); //$NON-NLS-1$
+        assertTrue(json, json.contains("check_failed")); //$NON-NLS-1$
+        assertTrue(json, json.contains("p2 refused the profile change")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aMisspeltActionSaysWhatIsAccepted()
     {
         String json = new SelfUpkeepTool().execute(params("stauts")); //$NON-NLS-1$
