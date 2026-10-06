@@ -158,6 +158,7 @@ public class ProjectCleaner
             }
 
             // Phase C - trigger the clean builds.
+            int restartsNotFinished = 0;
             IProgressMonitor monitor = new NullProgressMonitor();
             try
             {
@@ -166,10 +167,15 @@ public class ProjectCleaner
                     cleanSingleProject(info.project, monitor);
                 }
 
-                // Phase D - wait for each context to stop and start again.
+                // Phase D - wait for each context to stop and start again. A wait that ran out is
+                // counted, not dropped: the answer below has to say when the restarts it waited
+                // for did not all finish.
                 for (ProjectRestartWaiter waiter : waiters)
                 {
-                    waiter.await(DEFAULT_LIFECYCLE_TIMEOUT_MS);
+                    if (!waiter.await(DEFAULT_LIFECYCLE_TIMEOUT_MS))
+                    {
+                        restartsNotFinished++;
+                    }
                 }
             }
             finally
@@ -196,17 +202,44 @@ public class ProjectCleaner
                 BuildTaskHelper.waitForDerivedData(info.project);
             }
 
-            return ToolResult.success()
-                .put("projectsCleaned", projectNamesList.size()) //$NON-NLS-1$
-                .put("projects", projectNamesList) //$NON-NLS-1$
-                .put("message", "Clean and revalidation finished.") //$NON-NLS-1$ //$NON-NLS-2$
-                .toJson();
+            return cleanOutcome(projectNamesList, restartsNotFinished);
         }
         catch (Exception e)
         {
             Activator.logError("Project clean raised an exception", e); //$NON-NLS-1$
             return ToolResult.error(TextSuggest.safeMessage(e)).toJson();
         }
+    }
+
+    /**
+     * The answer of a clean, from what the restart waits reported.
+     * <p>
+     * A clean whose contexts did not all stop and start again within the wait is not "finished":
+     * the builds ran, but the revalidation the caller was promised to find done may still be in
+     * flight. That answer is an error naming how many projects did not finish, beside the list of
+     * what was cleaned, so a caller reading only the outcome flag is not told a half-done wait was
+     * a completed clean.
+     * </p>
+     *
+     * @param projectNames the projects the clean builds ran for
+     * @param restartsNotFinished how many restart waits ended without the context coming back
+     * @return the result document, never {@code null}
+     */
+    static String cleanOutcome(List<String> projectNames, int restartsNotFinished)
+    {
+        ToolResult result = ToolResult.success()
+            .put("projectsCleaned", projectNames.size()) //$NON-NLS-1$
+            .put("projects", projectNames); //$NON-NLS-1$
+        if (restartsNotFinished > 0)
+        {
+            return result
+                .put("restartsNotFinished", restartsNotFinished) //$NON-NLS-1$
+                .demote("The clean builds ran, but " + restartsNotFinished //$NON-NLS-1$
+                    + " project context(s) did not finish restarting within the wait - " //$NON-NLS-1$
+                    + "revalidation there may still be in flight. Ask for the project's state " //$NON-NLS-1$
+                    + "before trusting its markers.").toJson(); //$NON-NLS-1$
+        }
+        return result.put("message", "Clean and revalidation finished.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
