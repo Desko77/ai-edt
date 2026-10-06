@@ -150,6 +150,7 @@ public class MergeRestorePointTest
         MergeRestorePoint.contentComparisons = 0;
         MergeRestorePoint.refreshFailureForTest = null;
         MergeRestorePoint.deleteRefusalForTest = null;
+        MergeRestorePoint.walkFailureForTest = null;
         GitRepositoryAccess.deleteRefResultForTest = null;
         McpToolCatalog catalog = McpToolCatalog.getInstance();
         catalog.register(new GitTool());
@@ -598,6 +599,46 @@ public class MergeRestorePointTest
         finally
         {
             MergeRestorePoint.deleteRefusalForTest = null;
+        }
+        JsonObject again = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertFalse(Files.exists(copyDir));
+        assertFalse(Files.exists(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A copy point whose directory cannot be walked is not reported deleted either: a walk that
+     * fails on a child becomes the same structural refusal, no exception leaves the call, the index
+     * entry and the copy stay, and the same call succeeds once the directory can be walked again.
+     */
+    @Test
+    public void aCopyPointWhoseDirectoryCannotBeWalkedIsNotReportedDeleted() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Path copyDir = Path.of(created.get("copyPath").getAsString()); //$NON-NLS-1$
+        assertTrue(Files.isDirectory(copyDir));
+        Path unreadable = copyDir.resolve("src"); //$NON-NLS-1$
+        MergeRestorePoint.walkFailureForTest = path -> path.equals(unreadable);
+        try
+        {
+            JsonObject dropped = json(new GitTool().execute(Map.of("operation", //$NON-NLS-1$
+                "delete_merge_restore_point", "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertFalse(dropped.toString(), dropped.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(dropped.toString(), dropped.get("error").getAsString() //$NON-NLS-1$
+                .contains("the restore copy directory")); //$NON-NLS-1$
+            assertTrue(dropped.toString(), dropped.get("error").getAsString() //$NON-NLS-1$
+                .contains("could not be read")); //$NON-NLS-1$
+            assertTrue("the index entry has to stay while the copy does", //$NON-NLS-1$
+                Files.isRegularFile(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the copy directory itself has to stay", Files.isDirectory(copyDir)); //$NON-NLS-1$
+        }
+        finally
+        {
+            MergeRestorePoint.walkFailureForTest = null;
         }
         JsonObject again = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
             "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$

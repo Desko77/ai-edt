@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.support;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.FileVisitResult;
@@ -26,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.stream.Stream;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
@@ -86,6 +88,13 @@ public final class MergeRestorePoint
      * read-only file stops a deletion on Windows only. {@code null} deletes for real.
      */
     static Predicate<Path> deleteRefusalForTest;
+
+    /**
+     * Paths a test makes a directory walk fail on, the way a child that cannot be read fails it:
+     * the walk wraps the failure and throws it from the terminal operation, past a catch of
+     * {@link IOException}. {@code null} walks for real.
+     */
+    static Predicate<Path> walkFailureForTest;
 
     /** The buffer a point's bytes are compared against a file through. */
     private static final int COMPARE_BUFFER = 8192;
@@ -1222,9 +1231,24 @@ public final class MergeRestorePoint
     }
 
     /**
+     * Fails a directory walk on a path a test named, the way a child that cannot be read fails it.
+     *
+     * @param path a path the walk reached
+     * @throws UncheckedIOException when a test refuses this path
+     */
+    private static void failWalkForTest(Path path)
+    {
+        if (walkFailureForTest.test(path))
+        {
+            throw new UncheckedIOException(new AccessDeniedException(path.toString()));
+        }
+    }
+
+    /**
      * Deletes a copy directory: a partial one a refused create leaves behind, or the one a delete
      * drops. A failure is logged and named in the answer, so a caller that has to keep the point
-     * addressable can refuse.
+     * addressable can refuse. A directory that cannot be walked - a child that cannot be read, or
+     * one that vanishes mid-walk - is the same refusal, not an exception past the caller.
      *
      * @param root the copy directory, or {@code null}
      * @return {@code null} when the directory is gone, or what could not be deleted and why
@@ -1239,7 +1263,12 @@ public final class MergeRestorePoint
         int left = 0;
         try (var walk = Files.walk(root))
         {
-            for (Path path : walk.sorted(Comparator.reverseOrder()).toList())
+            Stream<Path> tree = walk;
+            if (walkFailureForTest != null)
+            {
+                tree = tree.peek(MergeRestorePoint::failWalkForTest);
+            }
+            for (Path path : tree.sorted(Comparator.reverseOrder()).toList())
             {
                 try
                 {
@@ -1256,10 +1285,17 @@ public final class MergeRestorePoint
                 }
             }
         }
+        catch (UncheckedIOException e)
+        {
+            // a walk that fails on a child wraps the failure and throws it from the terminal
+            // operation; unwrapped it is the refusal a directory that never opened gets
+            Activator.logError("could not delete restore copy " + root, e); //$NON-NLS-1$
+            return unreadableCopy(root, e.getCause());
+        }
         catch (IOException e)
         {
             Activator.logError("could not delete restore copy " + root, e); //$NON-NLS-1$
-            return "the restore copy directory could not be read (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+            return unreadableCopy(root, e);
         }
         if (left > 0)
         {
@@ -1267,6 +1303,19 @@ public final class MergeRestorePoint
                 + " item(s) remain under " + root; //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * The refusal a copy directory that cannot be walked is answered with.
+     *
+     * @param root the copy directory
+     * @param failure why the walk failed
+     * @return the refusal text, naming the directory and the reason
+     */
+    private static String unreadableCopy(Path root, Throwable failure)
+    {
+        return "the restore copy directory " + root + " could not be read (" + failure.getMessage() //$NON-NLS-1$ //$NON-NLS-2$
+            + ")"; //$NON-NLS-1$
     }
 
     /**
