@@ -24,7 +24,10 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  * runs the p2 director against the local build repository (which requires the IDE
  * closed), and this tool provides the in-process graceful close that flushes the
  * Business Model cleanly - safer than an OS-level kill. {@code action=restart}
- * relaunches the same workspace via {@link PlatformUI}'s workbench restart;
+ * closes the workbench while a detached watcher process relaunches the same
+ * workspace; a restart whose watcher cannot be started is refused before
+ * anything closes, because the only fallback - the launcher's own restart -
+ * has answered success on this instance without ever coming back.
  * {@code action=shutdown} closes the workbench and leaves the IDE down.
  *
  * <p>The close/restart would tear down the MCP server (it runs inside this IDE) and
@@ -142,26 +145,28 @@ public class RestartEdtTool implements IMcpTool
             return ToolResult.error("No live SWT display - cannot " + action + " EDT.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
-        // Preflight BEFORE anything closes. A restart that cannot start anything is refused while
-        // the workspace is still alive to hear it: the workbench restarts only when the launcher
-        // relaunches it, and measured twice (16.09 and 17.09) PlatformUI's restart on this
-        // instance answered success and the workbench never came back. The restart instead hands
-        // off: this instance closes gracefully, and a detached watcher - outside this process, so
-        // it survives - waits for the workspace to free and starts the same executable with the
-        // same arguments.
-        java.util.List<String> relaunchCommand = null;
+        // Preflight BEFORE anything closes, watcher included. A restart that cannot start anything
+        // is refused while the workspace is still alive to hear it: the workbench restarts only
+        // when the launcher relaunches it, and measured twice (16.09 and 17.09) PlatformUI's
+        // restart on this instance answered success and the workbench never came back. The restart
+        // instead hands off: this instance closes gracefully, and a detached watcher - outside
+        // this process, so it survives - waits for the workspace to free and starts the same
+        // executable with the same arguments. The watcher is started now, not after the delay,
+        // because by then this answer is already sent and a failed start could no longer be
+        // reported; refused here, nothing has closed yet.
+        RestartPreflight preflight = null;
         if (!shutdown)
         {
-            relaunchCommand = relaunchCommandOf();
-            if (relaunchCommand == null)
+            preflight = restartPreflight(RestartEdtTool::startWatcher);
+            if (preflight.refusal != null)
             {
-                return ToolResult.error("The restart is refused before anything closes: " //$NON-NLS-1$
-                    + relaunchProblem + " Nothing was closed.").toJson(); //$NON-NLS-1$
+                return ToolResult.error(preflight.refusal).toJson();
             }
         }
 
         final int finalDelay = delayMs;
-        final java.util.List<String> command = relaunchCommand;
+        final java.util.List<String> command = preflight == null ? null : preflight.command;
+        final Process relaunchWatcher = preflight == null ? null : preflight.watcher;
         final String vmArgumentsNote = shutdown ? null : relaunchVmArgumentsNote;
         Thread worker = new Thread(() -> {
             try
@@ -175,6 +180,7 @@ public class RestartEdtTool implements IMcpTool
             }
             if (display.isDisposed())
             {
+                destroyQuietly(relaunchWatcher);
                 return;
             }
             // close()/restart() must run on the SWT UI thread.
@@ -185,6 +191,7 @@ public class RestartEdtTool implements IMcpTool
                     {
                         if (!PlatformUI.isWorkbenchRunning())
                         {
+                            destroyQuietly(relaunchWatcher);
                             return;
                         }
                         if (!shutdown && command != null)
@@ -192,30 +199,17 @@ public class RestartEdtTool implements IMcpTool
                             // The watcher owns the relaunch, so the workbench is CLOSED, not
                             // restarted through the launcher: a launcher that honours the restart
                             // exit code would start its own replacement, and two would race for
-                            // the same workspace. The watcher starts BEFORE the close because a
-                            // process started from within a closing JVM dies with it - measured.
-                            // A veto is caught below and the watcher taken down again, so nothing
-                            // is left waiting for a PID whose owner stayed alive.
-                            Process watcher = startWatcher(command);
-                            boolean viaLauncher = restartsThroughLauncher(shutdown, watcher != null);
-                            boolean ok = viaLauncher
-                                ? PlatformUI.getWorkbench().restart()
-                                : PlatformUI.getWorkbench().close();
-                            if (!ok && watcher != null && watcher.isAlive())
+                            // the same workspace.
+                            boolean ok = PlatformUI.getWorkbench().close();
+                            if (!ok)
                             {
                                 // The workbench vetoed the close (an unsaved editor, a listener).
                                 // EDT stays up, and the watcher must not stay behind waiting for
                                 // a PID whose owner never left - or every later ordinary exit
                                 // would bring EDT back on its own.
-                                watcher.destroy();
-                            }
-                            if (!ok)
-                            {
-                                // A part/listener vetoed it (e.g. an unsaved editor
-                                // cancelled the close). EDT stays up; the caller was
-                                // already told it would go down, so surface it in the log.
-                                Activator.logError("restart_edt: " + (viaLauncher ? "restart" : "close") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                                    + "() returned false - a listener vetoed it; EDT is still running.", //$NON-NLS-1$
+                                destroyQuietly(relaunchWatcher);
+                                Activator.logError("restart_edt: close()" //$NON-NLS-1$
+                                    + " returned false - a listener vetoed it; EDT is still running.", //$NON-NLS-1$
                                     null);
                             }
                         }
@@ -234,6 +228,7 @@ public class RestartEdtTool implements IMcpTool
                     }
                     catch (Exception e)
                     {
+                        destroyQuietly(relaunchWatcher);
                         Activator.logError("restart_edt: " + (shutdown ? "shutdown" : "restart") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                             + " failed", e); //$NON-NLS-1$
                     }
@@ -241,7 +236,8 @@ public class RestartEdtTool implements IMcpTool
             }
             catch (org.eclipse.swt.SWTException disposed)
             {
-                // display was disposed between the isDisposed() check and asyncExec - nothing to do
+                // display was disposed between the isDisposed() check and asyncExec
+                destroyQuietly(relaunchWatcher);
             }
         }, "mcp-restart-edt"); //$NON-NLS-1$
         worker.setDaemon(true);
@@ -663,22 +659,94 @@ public class RestartEdtTool implements IMcpTool
     private static String relaunchVmArgumentsNote;
 
     /**
-     * Whether the workbench is restarted through the launcher's restart exit code, or closed.
+     * The preflight of a restart: the relaunch command and the watcher already started, or the
+     * refusal to hand back while nothing has closed yet.
+     */
+    static final class RestartPreflight
+    {
+        /** The command the watcher relaunches; <code>null</code> when it could not be assembled. */
+        final java.util.List<String> command;
+
+        /** The started watcher; <code>null</code> when it could not be started. */
+        final Process watcher;
+
+        /** Why the restart is refused, or <code>null</code> when it may proceed. */
+        final String refusal;
+
+        RestartPreflight(java.util.List<String> command, Process watcher, String refusal)
+        {
+            this.command = command;
+            this.watcher = watcher;
+            this.refusal = refusal;
+        }
+    }
+
+    /**
+     * Assembles the relaunch command and starts the watcher, or names why the restart is refused.
      * <p>
-     * A watcher that owns the relaunch means the workbench is closed: a launcher that honours the
-     * restart exit code would start a replacement of its own beside the watcher's, and the two
-     * race for one workspace - the loser stays at the workspace-in-use dialog. Measured: 16
-     * restarts left 16 such instances. Without a watcher the launcher is the only way back, and
-     * a shutdown never restarts.
+     * A restart without a running watcher is refused rather than handed to the launcher's own
+     * restart: measured on this instance, that restart answered success and the workbench never
+     * came back, so it is not a fallback but a quieter way to lose the IDE. Refusing happens
+     * before anything closes, which is the one moment the caller can still be told.
+     * </p>
+     * <p>
+     * The watcher starter is a parameter so a test can make the launch fail without starting a
+     * real process.
      * </p>
      *
-     * @param shutdown whether the action is a shutdown rather than a restart.
-     * @param watcherOwnsRelaunch whether a relaunch watcher was started for this restart.
-     * @return {@code true} to call {@code restart()}, {@code false} to call {@code close()}.
+     * @param starter what launches the watcher for a command; <code>null</code> means the process
+     *            could not be started
+     * @return the preflight outcome, never <code>null</code>
      */
-    static boolean restartsThroughLauncher(boolean shutdown, boolean watcherOwnsRelaunch)
+    static RestartPreflight restartPreflight(
+        java.util.function.Function<java.util.List<String>, Process> starter)
     {
-        return !shutdown && !watcherOwnsRelaunch;
+        java.util.List<String> command = relaunchCommandOf();
+        if (command == null)
+        {
+            return new RestartPreflight(null, null,
+                "The restart is refused before anything closes: " //$NON-NLS-1$
+                    + relaunchProblem + " Nothing was closed."); //$NON-NLS-1$
+        }
+        Process watcher = starter.apply(command);
+        if (watcher == null)
+        {
+            return new RestartPreflight(command, null,
+                "The restart is refused before anything closes: the relaunch watcher process " //$NON-NLS-1$
+                    + "could not be started, and without it the restart would rely on the " //$NON-NLS-1$
+                    + "launcher's own restart, which this instance has answered with success " //$NON-NLS-1$
+                    + "without coming back. Nothing was closed."); //$NON-NLS-1$
+        }
+        return new RestartPreflight(command, watcher, null);
+    }
+
+    /**
+     * Takes a relaunch watcher down without letting its own failure escape.
+     * <p>
+     * For every path where the close the watcher waits for is not going to happen - a veto, a
+     * display already gone, a failure on the way: the watcher must not be left waiting for a PID
+     * whose owner stays alive, or a later ordinary exit would bring EDT back on its own.
+     * </p>
+     *
+     * @param watcher the watcher to stop; <code>null</code> stops nothing
+     */
+    private static void destroyQuietly(Process watcher)
+    {
+        if (watcher == null)
+        {
+            return;
+        }
+        try
+        {
+            if (watcher.isAlive())
+            {
+                watcher.destroy();
+            }
+        }
+        catch (RuntimeException ignored)
+        {
+            // Best-effort: a watcher that died on its own is the same outcome.
+        }
     }
 
     /**
@@ -716,7 +784,7 @@ public class RestartEdtTool implements IMcpTool
         catch (Exception e)
         {
             Activator.logError("restart_edt: the relaunch watcher could not be started - " //$NON-NLS-1$
-                + "EDT will close with nothing to bring it back", e); //$NON-NLS-1$
+                + "the restart is refused rather than left to the launcher's own restart", e); //$NON-NLS-1$
             return null;
         }
     }

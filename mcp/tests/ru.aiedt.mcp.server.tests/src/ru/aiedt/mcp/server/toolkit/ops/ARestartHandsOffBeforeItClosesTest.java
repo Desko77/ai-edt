@@ -7,8 +7,9 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -76,17 +77,82 @@ public class ARestartHandsOffBeforeItClosesTest
     }
 
     /**
-     * A restart the watcher owns closes the workbench: restarted through the launcher as well,
-     * two instances start into one workspace and the loser stays at the workspace-in-use dialog
-     * (measured: sixteen restarts, sixteen such instances). The launcher is used only when no
-     * watcher could be started, and a shutdown never restarts.
+     * A restart whose watcher could not be started is refused before anything closes. The only
+     * fallback would be the launcher's own restart, which answered success on the stand and never
+     * brought the workbench back - so an unreachable watcher is a refusal, not a quieter way to
+     * lose the IDE.
      */
     @Test
-    public void theWatcherOwnedRestartClosesTheWorkbench()
+    public void aRestartWithoutItsWatcherIsRefusedBeforeAnythingCloses()
     {
-        assertFalse(RestartEdtTool.restartsThroughLauncher(false, true));
-        assertTrue(RestartEdtTool.restartsThroughLauncher(false, false));
-        assertFalse(RestartEdtTool.restartsThroughLauncher(true, false));
-        assertFalse(RestartEdtTool.restartsThroughLauncher(true, true));
+        RestartEdtTool.RestartPreflight preflight = RestartEdtTool.restartPreflight(command -> null);
+        if (preflight.command == null)
+        {
+            // This runtime cannot assemble the command at all; the refusal names that instead.
+            // Same door: nothing closes.
+            assertNotNull(preflight.refusal);
+            return;
+        }
+        assertNull(preflight.watcher);
+        assertNotNull(preflight.refusal);
+        assertTrue(preflight.refusal, preflight.refusal.contains("watcher")); //$NON-NLS-1$
+        assertTrue(preflight.refusal, preflight.refusal.contains("Nothing was closed")); //$NON-NLS-1$
+    }
+
+    /**
+     * A watcher that started lets the restart proceed, and the preflight hands it to the deferred
+     * close together with the command it was started for.
+     */
+    @Test
+    public void aStartedWatcherLetsTheRestartProceed()
+    {
+        Process fakeWatcher = new Process()
+        {
+            @Override
+            public java.io.OutputStream getOutputStream()
+            {
+                return java.io.OutputStream.nullOutputStream();
+            }
+
+            @Override
+            public java.io.InputStream getInputStream()
+            {
+                return java.io.InputStream.nullInputStream();
+            }
+
+            @Override
+            public java.io.InputStream getErrorStream()
+            {
+                return java.io.InputStream.nullInputStream();
+            }
+
+            @Override
+            public int waitFor()
+            {
+                return 0;
+            }
+
+            @Override
+            public int exitValue()
+            {
+                // Still running: a preflight must not confuse the stand-in for a dead process.
+                throw new IllegalThreadStateException();
+            }
+
+            @Override
+            public void destroy()
+            {
+            }
+        };
+
+        RestartEdtTool.RestartPreflight preflight =
+            RestartEdtTool.restartPreflight(command -> fakeWatcher);
+        if (preflight.command == null)
+        {
+            // No launcher under this runtime; the refusal path is covered by its own test.
+            return;
+        }
+        assertNull(preflight.refusal);
+        assertSame(fakeWatcher, preflight.watcher);
     }
 }
