@@ -59,6 +59,16 @@ public class AnEmptyPictureReferenceIsAnExportFindingTest
     }
 
     @Test
+    public void aCommentedReferenceAndAnotherAttributeAreNotRead()
+    {
+        String content = "<!-- <picture ref=\"v8ui:/\"/> -->" //$NON-NLS-1$
+            + "<picture href=\"v8ui:/\"/><link ref=\"v8ui:/\"/>" //$NON-NLS-1$
+            + "<picture t=\"false\" ref=\"v8ui:/\"/>"; //$NON-NLS-1$
+
+        assertEquals(1, ValidateForExportTool.emptyPictureRefCount(content));
+    }
+
+    @Test
     public void aNamedPictureReferenceIsNotAnEmptyOne()
     {
         String content = "<picture ref=\"v8ui:SomePicture\"/>" //$NON-NLS-1$

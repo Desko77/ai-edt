@@ -937,8 +937,9 @@ public final class BmTemplateHelper
                     + String.join(", ", unresolved.subList(0, shown)) //$NON-NLS-1$
                     + (unresolved.size() > shown ? ", ..." : "") //$NON-NLS-1$ //$NON-NLS-2$
                     + "). Writing would serialize them as ref=\"v8ui:/\", which the platform " //$NON-NLS-1$
-                    + "refuses to load. Copy the common pictures into the project or remove the " //$NON-NLS-1$
-                    + "drawings first. Template.mxlx was not changed."; //$NON-NLS-1$
+                    + "refuses to load. Copy the named common pictures into the project first. " //$NON-NLS-1$
+                    + "Removing the drawings does not help: the reference stays in the " //$NON-NLS-1$
+                    + "document's picture table. Template.mxlx was not changed."; //$NON-NLS-1$
             }
             // The moxel serializer dereferences the document's column set, so a document built
             // without one dies inside save() with a NullPointerException. Give it the default

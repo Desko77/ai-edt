@@ -237,11 +237,16 @@ public class ValidateForExportTool implements IMcpTool
         Pattern.compile("<(bold|italic|underline|strikeout)>[^<]*</\\1>"); //$NON-NLS-1$
 
     /**
-     * A picture reference whose name is empty, in either XML quote style. {@code ref="v8ui:/Foo"}
-     * is a name and does not match: the character after the slash has to be the closing quote.
+     * A {@code picture} element whose {@code ref} attribute names nothing, in either XML quote
+     * style. {@code ref="v8ui:/Foo"} is a name and does not match: the character after the slash
+     * has to be the closing quote. The attribute has to be {@code ref} itself, so {@code href}
+     * and the like are not read, and the element has to be {@code picture}.
      */
-    private static final Pattern MXLX_EMPTY_PICTURE_REF =
-        Pattern.compile("ref\\s*=\\s*(?:\"v8ui:/\"|'v8ui:/')"); //$NON-NLS-1$
+    private static final Pattern MXLX_EMPTY_PICTURE_REF = Pattern.compile(
+        "<picture\\b[^>]*?\\sref\\s*=\\s*(?:\"v8ui:/\"|'v8ui:/')"); //$NON-NLS-1$
+
+    /** An XML comment. What it holds is not loaded by the platform. */
+    private static final Pattern XML_COMMENT = Pattern.compile("<!--.*?-->", Pattern.DOTALL); //$NON-NLS-1$
 
     @Override
     public String getName()
@@ -1000,7 +1005,7 @@ public class ValidateForExportTool implements IMcpTool
             return 0;
         }
         int count = 0;
-        Matcher matcher = MXLX_EMPTY_PICTURE_REF.matcher(content);
+        Matcher matcher = MXLX_EMPTY_PICTURE_REF.matcher(XML_COMMENT.matcher(content).replaceAll("")); //$NON-NLS-1$
         while (matcher.find())
         {
             count++;
