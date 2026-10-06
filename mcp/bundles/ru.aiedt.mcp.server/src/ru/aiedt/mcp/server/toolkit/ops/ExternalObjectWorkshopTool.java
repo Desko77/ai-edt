@@ -132,7 +132,7 @@ public class ExternalObjectWorkshopTool implements IMcpTool
         // Designer is started.
         if (!"help".equals(operation)) //$NON-NLS-1$
         {
-            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            String gate = ToolGate.gateWriteDoor(WRITE_DOOR);
             if (gate != null)
             {
                 return ToolResult.error(gate).put("operation", operation).toJson(); //$NON-NLS-1$

@@ -167,7 +167,9 @@ Writing operations are refused by Read-only, Debug & Test and Code Review throug
 `edit_metadata_writes` door, before the project is read; a batch carrying a writing operation is
 not started at all and names the blocked entries in `presetBlocked`. The reading operations
 (`help`, `get_template_content`, `get_route_map`, `list_pictures`, `list_form_appearance_rules`)
-and `dryRun` previews keep working.
+and `dryRun` previews keep working. `sync_export`, `remove_object`, `delete_metadata_object` and
+`rename_metadata_object` have no preview and are refused with `dryRun=true` as well. The refusal names
+the facade and the preset.
 
 Two things worth knowing before the first call:
 

@@ -1243,7 +1243,7 @@ public class EditMetadataTool implements IMcpTool
         // cannot run as written: reading and previewing entries stay possible, so only the blocked
         // ones are named. dryRun inherits from the outer call exactly as the dispatch below
         // inherits it, and the door is asked once so an allowed batch reads no preset per entry.
-        String batchPresetGate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+        String batchPresetGate = ToolGate.gateWriteDoor(WRITE_DOOR);
         if (batchPresetGate != null)
         {
             boolean outerDryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
@@ -3375,10 +3375,22 @@ public class EditMetadataTool implements IMcpTool
         "list_form_appearance_rules"); //$NON-NLS-1$
 
     /**
+     * The writing operations of this facade that have no preview: their handlers do not read
+     * {@code dryRun}, so a call that passes it writes all the same. {@code sync_export} flushes the
+     * model to disk, and the three others remove or rename an object.
+     */
+    static final Set<String> WRITES_WITHOUT_PREVIEW = Set.of(
+        "sync_export", //$NON-NLS-1$
+        "remove_object", //$NON-NLS-1$
+        "delete_metadata_object", //$NON-NLS-1$
+        "rename_metadata_object"); //$NON-NLS-1$
+
+    /**
      * Says whether the active preset blocks this operation as a write, before anything runs.
      * <p>
      * A preview ({@code dryRun}) rolls its transaction back and persists nothing, and the four
-     * reading operations change nothing at all, so neither reaches the preset question. Everything
+     * reading operations change nothing at all, so neither reaches the preset question. An operation
+     * in {@link #WRITES_WITHOUT_PREVIEW} writes whatever {@code dryRun} says and is asked always. Everything
      * else this facade does writes the project, and a preset that promises no writes refuses it by
      * the capability name above - the same decision for the single-operation path and for every
      * entry of a batch.
@@ -3390,11 +3402,11 @@ public class EditMetadataTool implements IMcpTool
      */
     static String presetWriteGate(String op, boolean dryRun)
     {
-        if (dryRun || READ_OPERATIONS.contains(op))
+        if (READ_OPERATIONS.contains(op) || dryRun && !WRITES_WITHOUT_PREVIEW.contains(op))
         {
             return null;
         }
-        return ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+        return ToolGate.gateWriteDoor(WRITE_DOOR);
     }
 
     /** Editorial one-line note per help group (the op list itself is generated). */

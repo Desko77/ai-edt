@@ -94,7 +94,7 @@ public class AConstructorWritesRefuseUnderWriteBlockingPresetsTest
      */
     private static boolean refusesByTheDoor(String answer, String door)
     {
-        String message = ToolGate.disabledMessage(door);
+        String message = ToolGate.writeDoorMessage(door);
         try
         {
             com.google.gson.JsonObject parsed = com.google.gson.JsonParser.parseString(answer)
@@ -232,17 +232,47 @@ public class AConstructorWritesRefuseUnderWriteBlockingPresetsTest
     {
         store.setValue(PrefKeys.PREF_TOOL_PRESET, ToolProfile.CODE_REVIEW.name());
         assertNull("a preview is not a write", EditFormTool.presetWriteGate(true)); //$NON-NLS-1$
-        assertEquals("a real write is refused", ToolGate.disabledMessage(EditFormTool.WRITE_DOOR), //$NON-NLS-1$
+        assertEquals("a real write is refused", ToolGate.writeDoorMessage(EditFormTool.WRITE_DOOR), //$NON-NLS-1$
             EditFormTool.presetWriteGate(false));
         assertNull(DcsWorkshopTool.presetWriteGate(true));
-        assertEquals(ToolGate.disabledMessage(DcsWorkshopTool.WRITE_DOOR),
+        assertEquals(ToolGate.writeDoorMessage(DcsWorkshopTool.WRITE_DOOR),
             DcsWorkshopTool.presetWriteGate(false));
         assertNull("a reading operation is not a write", //$NON-NLS-1$
             EditMetadataTool.presetWriteGate("get_template_content", false)); //$NON-NLS-1$
         assertNull("a preview is not a write", EditMetadataTool.presetWriteGate("create_object", true)); //$NON-NLS-1$
         assertEquals("a real write is refused", //$NON-NLS-1$
-            ToolGate.disabledMessage(EditMetadataTool.WRITE_DOOR),
+            ToolGate.writeDoorMessage(EditMetadataTool.WRITE_DOOR),
             EditMetadataTool.presetWriteGate("create_object", false)); //$NON-NLS-1$
+    }
+
+    /**
+     * An operation whose handler does not read dryRun writes with it too, so passing dryRun does
+     * not take it past the door. Every other write has a preview and goes past.
+     */
+    @Test
+    public void aWriteWithoutAPreviewIsRefusedEvenWithDryRun()
+    {
+        store.setValue(PrefKeys.PREF_TOOL_PRESET, ToolProfile.CODE_REVIEW.name());
+        for (String op : EditMetadataTool.WRITES_WITHOUT_PREVIEW)
+        {
+            assertEquals(op, ToolGate.writeDoorMessage(EditMetadataTool.WRITE_DOOR),
+                EditMetadataTool.presetWriteGate(op, true));
+            assertEquals(op, ToolGate.writeDoorMessage(EditMetadataTool.WRITE_DOOR),
+                EditMetadataTool.presetWriteGate(op, false));
+        }
+        assertEquals(java.util.Set.of("sync_export", "remove_object", "delete_metadata_object", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "rename_metadata_object"), EditMetadataTool.WRITES_WITHOUT_PREVIEW); //$NON-NLS-1$
+        assertNull(EditMetadataTool.presetWriteGate("add_field", true)); //$NON-NLS-1$
+    }
+
+    /** The refusal names the facade and the preset, not a checkbox that does not exist. */
+    @Test
+    public void theRefusalNamesTheFacadeAndThePreset()
+    {
+        String text = ToolGate.writeDoorMessage("edit_metadata_writes"); //$NON-NLS-1$
+        assertTrue(text, text.contains("'edit_metadata'")); //$NON-NLS-1$
+        assertTrue(text, text.contains("preset")); //$NON-NLS-1$
+        assertTrue(text, !text.contains("edit_metadata_writes")); //$NON-NLS-1$
     }
 
     /**

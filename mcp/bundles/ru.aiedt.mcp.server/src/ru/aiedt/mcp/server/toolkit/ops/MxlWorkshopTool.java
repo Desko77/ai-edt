@@ -248,7 +248,7 @@ public class MxlWorkshopTool implements IMcpTool
         if (!READ_OPERATIONS.contains(op)
             && !JsonUtils.extractBooleanArgument(params, "dryRun", false)) //$NON-NLS-1$
         {
-            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            String gate = ToolGate.gateWriteDoor(WRITE_DOOR);
             if (gate != null)
             {
                 return ToolResult.error(gate).put("operation", op).toJson(); //$NON-NLS-1$

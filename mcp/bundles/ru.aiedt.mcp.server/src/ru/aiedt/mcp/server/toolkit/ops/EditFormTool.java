@@ -253,7 +253,7 @@ public class EditFormTool implements IMcpTool
      */
     static String presetWriteGate(boolean dryRun)
     {
-        return dryRun ? null : ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+        return dryRun ? null : ToolGate.gateWriteDoor(WRITE_DOOR);
     }
 
     /**

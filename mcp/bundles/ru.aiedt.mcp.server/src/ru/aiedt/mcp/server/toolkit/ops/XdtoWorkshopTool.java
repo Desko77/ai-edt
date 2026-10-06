@@ -164,7 +164,7 @@ public class XdtoWorkshopTool implements IMcpTool
         if (!"read".equals(op) //$NON-NLS-1$
             && !JsonUtils.extractBooleanArgument(params, "dryRun", false)) //$NON-NLS-1$
         {
-            String gate = ToolGate.gateIfPresetDisabled(WRITE_DOOR);
+            String gate = ToolGate.gateWriteDoor(WRITE_DOOR);
             if (gate != null)
             {
                 return ToolResult.error(gate).put("operation", op).toJson(); //$NON-NLS-1$

@@ -601,7 +601,9 @@
 Пишущие операции гасятся пресетами Read-only, Debug & Test и Code Review дверью
 `edit_metadata_writes` и отвергаются до чтения проекта; батч с пишущими операциями не стартует
 целиком, заблокированные записи названы в `presetBlocked`. Чтения (`help`, `get_template_content`,
-`get_route_map`, `list_pictures`, `list_form_appearance_rules`) и `dryRun` работают.
+`get_route_map`, `list_pictures`, `list_form_appearance_rules`) и `dryRun` работают. У `sync_export`,
+`remove_object`, `delete_metadata_object` и `rename_metadata_object` предпросмотра нет: они отвергаются и с
+`dryRun=true`. Отказ называет фасад и пресет.
 
 Содержит около 160 операций, разбитых на домены:
 
