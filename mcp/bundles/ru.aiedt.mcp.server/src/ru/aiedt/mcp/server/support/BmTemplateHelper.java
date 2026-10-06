@@ -3181,7 +3181,7 @@ public final class BmTemplateHelper
         /** Drawings the deletion took entirely, by id. */
         public final List<Integer> removedDrawings = new ArrayList<>();
 
-        /** Drawing data sources the deletion took entirely, by count. */
+        /** Drawing data sources the deletion took - with their area or with their drawing. */
         public int removedDataSources;
 
         /** Why nothing happened, when nothing did. */
@@ -3383,7 +3383,8 @@ public final class BmTemplateHelper
         moveRowGroups(doc.getRowGroups(), true, at, count);
         moveNamedItems(doc, true, at, count, outcome, Axis.ROW);
         moveDrawings(doc, true, at, count, outcome, Axis.ROW);
-        moveDrawingDataSources(doc, true, at, count, outcome, Axis.ROW);
+        moveDrawingDataSources(doc, true, at, count, outcome, Axis.ROW,
+            Collections.<Integer> emptyList());
         moveDocumentAreas(doc, true, at, count, Axis.ROW);
         moveViewPointers(doc, true, at, count, Axis.ROW);
         moveHeight(doc, true, at, count);
@@ -3397,7 +3398,8 @@ public final class BmTemplateHelper
      * The rows go with their cells and their notes. A merge, a named area, a row group or a drawing
      * that lies entirely inside the deleted range goes with them and is named in the outcome; one
      * the range cuts in half shrinks by the rows it lost; one below moves up. A drawing data source
-     * whose area the range takes entirely goes too, counted in the outcome. The print and repeat
+     * whose area the range takes entirely goes too, and so does one whose drawing the range took,
+     * counted once in the outcome. The print and repeat
      * areas, the declared height and the saved view rows move the same way.
      * </p>
      *
@@ -3434,8 +3436,9 @@ public final class BmTemplateHelper
         moveRowMerges(doc.getRowMerges(), false, first, count, outcome);
         moveRowGroups(doc.getRowGroups(), false, first, count);
         moveNamedItems(doc, false, first, count, outcome, Axis.ROW);
-        moveDrawings(doc, false, first, count, outcome, Axis.ROW);
-        moveDrawingDataSources(doc, false, first, count, outcome, Axis.ROW);
+        List<Integer> removedDrawingIds = moveDrawings(doc, false, first, count, outcome,
+            Axis.ROW);
+        moveDrawingDataSources(doc, false, first, count, outcome, Axis.ROW, removedDrawingIds);
         moveDocumentAreas(doc, false, first, count, Axis.ROW);
         moveViewPointers(doc, false, first, count, Axis.ROW);
         moveHeight(doc, false, first, count);
@@ -3624,7 +3627,8 @@ public final class BmTemplateHelper
         moveColumnGroups(doc.getColumnGroups(), true, at, count);
         moveNamedItems(doc, true, at, count, outcome, Axis.COLUMN);
         moveDrawings(doc, true, at, count, outcome, Axis.COLUMN);
-        moveDrawingDataSources(doc, true, at, count, outcome, Axis.COLUMN);
+        moveDrawingDataSources(doc, true, at, count, outcome, Axis.COLUMN,
+            Collections.<Integer> emptyList());
         moveDocumentAreas(doc, true, at, count, Axis.COLUMN);
         moveViewPointers(doc, true, at, count, Axis.COLUMN);
         outcome.lastColumn = lastColumnOf(doc);
@@ -3638,7 +3642,8 @@ public final class BmTemplateHelper
      * column set. A merge, a named area, a column group or a drawing that lies entirely inside the
      * deleted range goes with them and is named in the outcome; one the range cuts in half shrinks
      * by the columns it lost; one to the right moves left. A drawing data source whose area the
-     * range takes entirely goes too, counted in the outcome. The print and repeat areas, the
+     * range takes entirely goes too, and so does one whose drawing the range took, counted once in
+     * the outcome. The print and repeat areas, the
      * declared set sizes and the saved view columns move the same way.
      * </p>
      *
@@ -3675,8 +3680,10 @@ public final class BmTemplateHelper
         moveColumnMerges(doc.getColumnMerges(), false, first, count, outcome);
         moveColumnGroups(doc.getColumnGroups(), false, first, count);
         moveNamedItems(doc, false, first, count, outcome, Axis.COLUMN);
-        moveDrawings(doc, false, first, count, outcome, Axis.COLUMN);
-        moveDrawingDataSources(doc, false, first, count, outcome, Axis.COLUMN);
+        List<Integer> removedDrawingIds = moveDrawings(doc, false, first, count, outcome,
+            Axis.COLUMN);
+        moveDrawingDataSources(doc, false, first, count, outcome, Axis.COLUMN,
+            removedDrawingIds);
         moveDocumentAreas(doc, false, first, count, Axis.COLUMN);
         moveViewPointers(doc, false, first, count, Axis.COLUMN);
         outcome.lastColumn = lastColumnOf(doc);
@@ -3829,10 +3836,12 @@ public final class BmTemplateHelper
     /**
      * The document's last row, 1-based: the highest row anything of the model reaches.
      * <p>
-     * Every holder of a row number counts - the rows themselves, merges, named areas, row groups,
-     * drawings, the areas the drawings read their data from, the print and repeat areas, and the
-     * declared height. A row past the content sits in the model all the same, and an operation
-     * that asked about "the last row" has to see it.
+     * Every holder of a row number counts - the rows that carry content, merges, named areas, row
+     * groups, drawings, the areas the drawings read their data from, the print and repeat areas,
+     * and the declared height. A row past the content sits in the model all the same, and an
+     * operation that asked about "the last row" has to see it. A bare row entry - no row format,
+     * no cells, no column set of its own - is the placeholder an empty template carries, not
+     * content, and does not hold the end.
      * </p>
      *
      * @param doc the spreadsheet
@@ -3843,7 +3852,7 @@ public final class BmTemplateHelper
         int maxKey = -1;
         for (Map.Entry<Integer, Row> held : doc.getRows())
         {
-            if (held != null && held.getKey() != null)
+            if (held != null && held.getKey() != null && rowCarriesContent(held.getValue()))
             {
                 maxKey = Math.max(maxKey, held.getKey().intValue());
             }
@@ -3896,6 +3905,28 @@ public final class BmTemplateHelper
             maxKey = doc.getHeight() - 1;
         }
         return maxKey + 1;
+    }
+
+    /**
+     * Whether a row entry holds anything a reader could see: a row format of its own, cells, or
+     * a column set with a declared size or entries. A row with none of the three is the
+     * placeholder an empty template file carries, not content.
+     *
+     * @param row the row, or <code>null</code>
+     * @return <code>true</code> when the row carries content
+     */
+    private static boolean rowCarriesContent(Row row)
+    {
+        if (row == null)
+        {
+            return false;
+        }
+        if (row.getFormatIndex() != 0 || !row.getCells().isEmpty())
+        {
+            return true;
+        }
+        Columns set = row.getColumns();
+        return set != null && (set.getSize() > 0 || !set.getColumns().isEmpty());
     }
 
     /**
@@ -4020,6 +4051,52 @@ public final class BmTemplateHelper
             return -1;
         }
         return axis == Axis.COLUMN ? point.getCell().getX() : point.getCell().getY();
+    }
+
+    /**
+     * The offset a drawing point carries inside its position on an axis; a point with no offset
+     * recorded reads as 0, the near edge of the position.
+     *
+     * @param point the anchor, or <code>null</code>
+     * @param axis the axis to read
+     * @return the offset, or 0
+     */
+    private static int pointOffsetOf(SpreadsheetPoint point, Axis axis)
+    {
+        if (point == null || point.getOffset() == null)
+        {
+            return 0;
+        }
+        return axis == Axis.COLUMN ? point.getOffset().getX() : point.getOffset().getY();
+    }
+
+    /**
+     * Sets the offset a drawing point carries inside its position on an axis.
+     *
+     * @param point the anchor, or <code>null</code>
+     * @param offset the offset to write
+     * @param axis the axis to write
+     */
+    private static void setPointOffset(SpreadsheetPoint point, int offset, Axis axis)
+    {
+        if (point == null)
+        {
+            return;
+        }
+        Point off = point.getOffset();
+        if (off == null)
+        {
+            off = McoreFactory.eINSTANCE.createPoint();
+            point.setOffset(off);
+        }
+        if (axis == Axis.COLUMN)
+        {
+            off.setX(offset);
+        }
+        else
+        {
+            off.setY(offset);
+        }
     }
 
     /**
@@ -4780,8 +4857,13 @@ public final class BmTemplateHelper
      * Moves the drawings over an insertion or a deletion on an axis.
      * <p>
      * A drawing the deleted range swallows goes away and is named by id; one it cuts in half keeps
-     * its near anchor and loses the positions that went; one past the range moves toward it. A
-     * drawing with no anchor at all is left alone - there is nothing to reason with.
+     * its near anchor and loses the positions that went; one past the range moves toward it. An end
+     * anchor with no offset stands on the near edge of its position, so it reaches no position of
+     * its own: an end on the first position past the deleted range with an offset of 0 means the
+     * drawing lay in the range whole, and it goes away with it. An anchor whose position was
+     * deleted re-anchors at the near edge of the first surviving position with an offset of 0, so
+     * the begin never ends up past the end. A drawing with no anchor at all is left alone - there
+     * is nothing to reason with.
      * </p>
      *
      * @param doc the spreadsheet holding the drawings
@@ -4790,9 +4872,10 @@ public final class BmTemplateHelper
      * @param count how many positions were inserted or deleted
      * @param outcome where the ids land, or <code>null</code> to move silently
      * @param axis the axis the shift runs over
+     * @return the ids of the drawings the deletion took, so what feeds them can go with them
      */
-    private static void moveDrawings(SpreadsheetDocument doc, boolean inserting, int at, int count,
-        ShiftOutcome outcome, Axis axis)
+    private static List<Integer> moveDrawings(SpreadsheetDocument doc, boolean inserting, int at,
+        int count, ShiftOutcome outcome, Axis axis)
     {
         List<Drawing> gone = new ArrayList<>();
         for (Drawing drawing : doc.getDrawings())
@@ -4807,6 +4890,14 @@ public final class BmTemplateHelper
             int endAt = pointAtOf(end, axis);
             if (beginAt < 0 && endAt < 0)
             {
+                continue;
+            }
+            int endOffset = pointOffsetOf(end, axis);
+            if (!inserting && beginAt >= 0 && beginAt <= endAt
+                && (endOffset != 0 || endAt > beginAt))
+            {
+                moveDrawingOverDeletion(drawing, begin, end, beginAt, endAt, endOffset,
+                    at, count, outcome, axis, gone);
                 continue;
             }
             int from = beginAt < 0 ? endAt : beginAt;
@@ -4828,6 +4919,80 @@ public final class BmTemplateHelper
         {
             doc.getDrawings().removeAll(gone);
         }
+        List<Integer> goneIds = new ArrayList<>(gone.size());
+        for (Drawing drawing : gone)
+        {
+            goneIds.add(Integer.valueOf(drawing.getDrawingId()));
+        }
+        return goneIds;
+    }
+
+    /**
+     * Moves one drawing over a deletion on an axis, by the positions its anchors occupy rather
+     * than the ones they name.
+     * <p>
+     * An end anchor with an offset of 0 stands on the near edge of its position and occupies none
+     * of it, so the last position the drawing occupies is the one before. A drawing whose occupied
+     * span the deleted range swallows whole goes away and is named by id; one cut at the begin
+     * re-anchors its begin at the near edge of the first surviving position; one cut at the end
+     * ends at the near edge of that same position.
+     * </p>
+     *
+     * @param drawing the drawing to move
+     * @param begin the drawing's begin anchor
+     * @param end the drawing's end anchor
+     * @param beginAt the position the begin anchor names on the axis, 0-based
+     * @param endAt the position the end anchor names on the axis, 0-based
+     * @param endOffset the end anchor's offset inside its position on the axis
+     * @param at the 0-based position the deletion starts at
+     * @param count how many positions were deleted
+     * @param outcome where the id lands, or <code>null</code> to move silently
+     * @param axis the axis the shift runs over
+     * @param gone where a drawing the range swallowed is collected
+     */
+    private static void moveDrawingOverDeletion(Drawing drawing,
+        SpreadsheetPoint begin, SpreadsheetPoint end, int beginAt, int endAt, int endOffset,
+        int at, int count, ShiftOutcome outcome, Axis axis, List<Drawing> gone)
+    {
+        int last = at + count - 1;
+        int occupiedEnd = endOffset == 0 ? endAt - 1 : endAt;
+        if (beginAt > last)
+        {
+            setPointAt(begin, beginAt - count, axis);
+            setPointAt(end, endAt - count, axis);
+        }
+        else if (occupiedEnd < at)
+        {
+            // The drawing ends at or over the near edge of the first deleted position: nothing
+            // of it lay in the range, and nothing moves.
+        }
+        else if (beginAt >= at && occupiedEnd <= last)
+        {
+            gone.add(drawing);
+            if (outcome != null)
+            {
+                outcome.removedDrawings.add(Integer.valueOf(drawing.getDrawingId()));
+            }
+        }
+        else if (beginAt >= at)
+        {
+            // The positions the begin was anchored in are gone: the drawing starts where the
+            // first surviving position starts.
+            setPointAt(begin, at, axis);
+            setPointOffset(begin, 0, axis);
+            setPointAt(end, endAt - count, axis);
+        }
+        else if (occupiedEnd <= last)
+        {
+            // The positions the end was anchored in are gone: the drawing ends where the first
+            // surviving position starts.
+            setPointAt(end, at, axis);
+            setPointOffset(end, 0, axis);
+        }
+        else
+        {
+            setPointAt(end, endAt - count, axis);
+        }
     }
 
     /**
@@ -4836,7 +5001,10 @@ public final class BmTemplateHelper
      * A chart or a pivot reads its data from an area, and that area travels with the rows and
      * columns the operation moves - a source left behind keeps the drawing reading the cells that
      * moved away. A deletion that takes an area entirely takes the source with it: the model
-     * requires an area on every source, so none is left behind empty.
+     * requires an area on every source, so none is left behind empty. A source whose drawing the
+     * deletion took goes with its drawing, wherever its own area lay - a source pointing at a
+     * drawing that no longer exists reads nothing. Such a source is counted once, even when its
+     * area was taken too.
      * </p>
      *
      * @param doc the spreadsheet holding the data sources
@@ -4845,15 +5013,21 @@ public final class BmTemplateHelper
      * @param count how many positions were inserted or deleted
      * @param outcome where the counter lands, or <code>null</code> to move silently
      * @param axis the axis the shift runs over
+     * @param removedDrawingIds the ids of the drawings the deletion already took
      */
     private static void moveDrawingDataSources(SpreadsheetDocument doc, boolean inserting, int at,
-        int count, ShiftOutcome outcome, Axis axis)
+        int count, ShiftOutcome outcome, Axis axis, List<Integer> removedDrawingIds)
     {
         List<DrawingsDataSource> gone = new ArrayList<>();
         for (DrawingsDataSource source : doc.getDrawingDataSources())
         {
             if (source == null)
             {
+                continue;
+            }
+            if (!inserting && removedDrawingIds.contains(Integer.valueOf(source.getDrawingId())))
+            {
+                gone.add(source);
                 continue;
             }
             Area area = source.getArea();
@@ -5730,9 +5904,10 @@ public final class BmTemplateHelper
     }
 
     /**
-     * Removes the drawing with the given id from the spreadsheet. Returns
-     * {@code true} when a drawing was removed, {@code false} when none matched
-     * (idempotent).
+     * Removes the drawing with the given id from the spreadsheet, together with
+     * the data sources that fed it - a source pointing at a drawing that no
+     * longer exists reads nothing. Returns {@code true} when a drawing was
+     * removed, {@code false} when none matched (idempotent).
      */
     public static boolean removeDrawing(SpreadsheetDocument doc, int drawingId)
     {
@@ -5747,6 +5922,15 @@ public final class BmTemplateHelper
             if (d != null && d.getDrawingId() == drawingId)
             {
                 drawings.remove(i);
+                List<DrawingsDataSource> orphaned = new ArrayList<>();
+                for (DrawingsDataSource source : doc.getDrawingDataSources())
+                {
+                    if (source != null && source.getDrawingId() == drawingId)
+                    {
+                        orphaned.add(source);
+                    }
+                }
+                doc.getDrawingDataSources().removeAll(orphaned);
                 return true;
             }
         }

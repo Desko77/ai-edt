@@ -719,6 +719,93 @@ public class ColumnOperationsOfATemplateTest
         assertEquals("and is counted", 1, removed.removedDataSources); //$NON-NLS-1$
     }
 
+    /** A source whose drawing the deletion took goes with it, wherever its own area lay. */
+    @Test
+    public void aDataSourceGoesAwayWithItsDrawing()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 2, 2, 3, 0, 0, 0, 5, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(3);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lay in the deleted columns and went with them", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue("and its source went too, though its area lay right of the range", //$NON-NLS-1$
+            doc.getDrawingDataSources().isEmpty());
+        assertEquals("counted once", 1, outcome.removedDataSources); //$NON-NLS-1$
+    }
+
+    /** A source taken with both its drawing and its area is counted once, not twice. */
+    @Test
+    public void aDataSourceTakenWithItsDrawingAndItsAreaIsCountedOnce()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 2, 2, 3, 0, 0, 0, 5, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(1);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue(outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawingDataSources().isEmpty());
+        assertEquals("the drawing and the area were both taken, the source counts once", 1, //$NON-NLS-1$
+            outcome.removedDataSources);
+    }
+
+    /** A source stays while its drawing stays, riding with the columns as before. */
+    @Test
+    public void aDataSourceStaysWhileItsDrawingStays()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 4, 2, 5, 0, 0, 0, 5, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(3);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing sat right of the range and only moved", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("and its source stayed with it", 1, doc.getDrawingDataSources().size()); //$NON-NLS-1$
+        assertEquals(0, outcome.removedDataSources);
+        assertEquals("the area rode left with the columns", 1, position.getX()); //$NON-NLS-1$
+    }
+
     /** A data area past the last cell holds the end of the document the area defines. */
     @Test
     public void aDataAreaPastTheCellsHoldsTheEndOfTheDocument()
@@ -1073,5 +1160,89 @@ public class ColumnOperationsOfATemplateTest
         assertNull(deleted.error);
         assertTrue("the one column the area held is gone, and the area with it", //$NON-NLS-1$
             deleted.removedNamedAreas.contains("Ячейка")); //$NON-NLS-1$
+    }
+
+    /** An empty template answers both axes the same: the first position is open, the second is not. */
+    @Test
+    public void anEmptyTemplateTakesColumnOneAndRefusesColumnTwo()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        doc.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        doc.getRows().put(Integer.valueOf(1), MoxelFactory.eINSTANCE.createRow());
+        doc.setColumns(MoxelFactory.eINSTANCE.createColumns());
+
+        BmTemplateHelper.ColumnOutcome refused = BmTemplateHelper.insertColumns(doc, 2, 1,
+            "none"); //$NON-NLS-1$
+        assertNotNull("a column set of size 0 does not make column 2 a column of the document", //$NON-NLS-1$
+            refused.error);
+        assertTrue(refused.error.contains("past the end")); //$NON-NLS-1$
+        assertNull("column 1 is the first column an empty document takes", //$NON-NLS-1$
+            BmTemplateHelper.insertColumns(doc, 1, 1, "none").error); //$NON-NLS-1$
+        assertNotNull("and the bare row entries do not open row 2 either", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, 2, 1, "none").error); //$NON-NLS-1$
+    }
+
+    /**
+     * An end anchor with no offset stands on the left edge of its column, so a drawing ending on
+     * the first surviving column with an offset of 0 lay in the deleted range whole - it goes with
+     * the columns and is named by id.
+     */
+    @Test
+    public void aDrawingEndingOnTheFirstSurvivingColumnWithNoOffsetGoesWithTheDeletion()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 8, 2, 9, 0, 3, 0, 0, -1, null, //$NON-NLS-1$
+            null, null);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing occupied only the deleted column and went with it", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawings().isEmpty());
+    }
+
+    /** A drawing with a nonzero end offset on a surviving column shrinks the way it did. */
+    @Test
+    public void aDrawingWithAnEndOffsetOnASurvivingColumnShrinksAsBefore()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 1, 6, 2, 9, 0, 2, 0, 5, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 7, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lost columns but was not taken whole", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin left of the range keeps its column", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getX());
+        assertEquals("and its offset", 2, doc.getDrawings().get(0).getPosition().getBegin() //$NON-NLS-1$
+            .getOffset().getX());
+        assertEquals("the end moved left by the count", 6, doc.getDrawings().get(0).getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getX());
+        assertEquals("and kept its offset on the surviving column", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getEnd().getOffset().getX());
+    }
+
+    /** A begin anchor whose column was deleted re-anchors at the left edge of the first survivor. */
+    @Test
+    public void aDrawingWhoseBeginColumnWentStartsAtTheEdgeOfTheSurvivor()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 1, 8, 2, 9, 0, 3, 0, 2, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin stands on the first surviving column", 7, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getX());
+        assertEquals("with no offset - the column its offset reached into is gone", 0, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getBegin().getOffset().getX());
+        assertEquals("the end stands on the same column", 7, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getEnd().getCell().getX());
+        assertEquals("keeping its offset, so the begin is not right of the end", 2, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getEnd().getOffset().getX());
     }
 }

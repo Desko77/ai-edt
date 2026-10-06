@@ -31,6 +31,7 @@ import com._1c.g5.v8.dt.moxel.RectArea;
 import com._1c.g5.v8.dt.moxel.Row;
 import com._1c.g5.v8.dt.moxel.RowGroup;
 import com._1c.g5.v8.dt.moxel.RowMerge;
+import com._1c.g5.v8.dt.moxel.RowsArea;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
 import com._1c.g5.v8.dt.moxel.SpreadsheetPoint;
 import com._1c.g5.v8.dt.moxel.SpreadsheetRect;
@@ -672,6 +673,119 @@ public class RowOperationsOfATemplateTest
         assertEquals("and is counted", 1, removed.removedDataSources); //$NON-NLS-1$
     }
 
+    /** A source whose drawing the deletion took goes with it, wherever its own area lay. */
+    @Test
+    public void aDataSourceGoesAwayWithItsDrawing()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 2, 1, 3, 2, 0, 0, 5, 0, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(0);
+        position.setY(3);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lay in the deleted rows and went with them", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue("and its source went too, though its area lay below the range", //$NON-NLS-1$
+            doc.getDrawingDataSources().isEmpty());
+        assertEquals("counted once", 1, outcome.removedDataSources); //$NON-NLS-1$
+    }
+
+    /** A source taken with both its drawing and its area is counted once, not twice. */
+    @Test
+    public void aDataSourceTakenWithItsDrawingAndItsAreaIsCountedOnce()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 2, 1, 3, 2, 0, 0, 5, 0, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(0);
+        position.setY(1);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue(outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawingDataSources().isEmpty());
+        assertEquals("the drawing and the area were both taken, the source counts once", 1, //$NON-NLS-1$
+            outcome.removedDataSources);
+    }
+
+    /** A source stays while its drawing stays, riding with the rows as before. */
+    @Test
+    public void aDataSourceStaysWhileItsDrawingStays()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 4, 1, 5, 2, 0, 0, 5, 0, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(0);
+        position.setY(3);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing sat below the range and only moved", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("and its source stayed with it", 1, doc.getDrawingDataSources().size()); //$NON-NLS-1$
+        assertEquals(0, outcome.removedDataSources);
+        assertEquals("the area rode up with the rows", 1, position.getY()); //$NON-NLS-1$
+    }
+
+    /** Removing a drawing by id takes the data sources that fed it. */
+    @Test
+    public void removingADrawingTakesItsDataSource()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B"); //$NON-NLS-1$ //$NON-NLS-2$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 1, 2, 2, 0, 0, 5, 0, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(0);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        assertTrue(BmTemplateHelper.removeDrawing(doc, id));
+
+        assertTrue(doc.getDrawings().isEmpty());
+        assertTrue("no source is left pointing at a drawing that no longer exists", //$NON-NLS-1$
+            doc.getDrawingDataSources().isEmpty());
+    }
+
     /** A data area past the last cell holds the end of the document the area defines. */
     @Test
     public void aDataAreaPastTheCellsHoldsTheEndOfTheDocument()
@@ -975,5 +1089,140 @@ public class RowOperationsOfATemplateTest
         assertNull(deleted.error);
         assertTrue("the one row the area held is gone, and the area with it", //$NON-NLS-1$
             deleted.removedNamedAreas.contains("Объект")); //$NON-NLS-1$
+    }
+
+    /** The bare row entries an empty template carries are not content: row 1 is open, row 2 is not. */
+    @Test
+    public void anEmptyTemplatesBareRowsDoNotHoldTheEnd()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        doc.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        doc.getRows().put(Integer.valueOf(1), MoxelFactory.eINSTANCE.createRow());
+
+        BmTemplateHelper.RowOutcome refused = BmTemplateHelper.insertRows(doc, 2, 1, "none"); //$NON-NLS-1$
+        assertNotNull("a bare row entry does not make row 2 a row of the document", //$NON-NLS-1$
+            refused.error);
+        assertTrue(refused.error.contains("past the end")); //$NON-NLS-1$
+
+        assertNull("row 1 is the first row an empty document takes", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, 1, 1, "none").error); //$NON-NLS-1$
+        assertNotNull("and an insertion that materialized nothing opened nothing", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, 2, 1, "none").error); //$NON-NLS-1$
+    }
+
+    /** A row format and a cell are content; a bare row entry is what does not count. */
+    @Test
+    public void aRowWithAFormatOrACellHoldsTheEnd()
+    {
+        SpreadsheetDocument byFormat = emptyDocument();
+        Row formatted = MoxelFactory.eINSTANCE.createRow();
+        formatted.setFormatIndex(3);
+        byFormat.getRows().put(Integer.valueOf(4), formatted);
+        assertNull("a row with a row format of its own runs the document to it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byFormat, 5, 1, "none").error); //$NON-NLS-1$
+
+        SpreadsheetDocument byCell = emptyDocument();
+        Row withCell = MoxelFactory.eINSTANCE.createRow();
+        withCell.getCells().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createCell());
+        byCell.getRows().put(Integer.valueOf(4), withCell);
+        assertNull("a row with a cell runs the document to it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byCell, 5, 1, "none").error); //$NON-NLS-1$
+    }
+
+    /** The declared height, the print area and the drawings hold the end over bare rows, as over content. */
+    @Test
+    public void theHeightThePrintAreaAndTheDrawingsHoldTheEndOverBareRows()
+    {
+        SpreadsheetDocument byHeight = emptyDocument();
+        byHeight.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        byHeight.setHeight(5);
+        assertNotNull("row 7 is past the declared height of 5", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byHeight, 7, 1, "none").error); //$NON-NLS-1$
+        assertNull("and row 6 appends to it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byHeight, 6, 1, "none").error); //$NON-NLS-1$
+
+        SpreadsheetDocument byPrintArea = emptyDocument();
+        byPrintArea.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        RowsArea print = MoxelFactory.eINSTANCE.createRowsArea();
+        print.setBegin(2);
+        print.setEnd(3);
+        byPrintArea.setPrintArea(print);
+        assertNotNull("row 6 is past the print area over rows 3..4", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byPrintArea, 6, 1, "none").error); //$NON-NLS-1$
+        assertNull("and row 4 is inside it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byPrintArea, 4, 1, "none").error); //$NON-NLS-1$
+
+        SpreadsheetDocument byDrawing = emptyDocument();
+        byDrawing.getRows().put(Integer.valueOf(0), MoxelFactory.eINSTANCE.createRow());
+        BmTemplateHelper.addDrawing(byDrawing, "Line", 4, 1, 5, 2, 0, 0, 0, 0, -1, null, //$NON-NLS-1$
+            null, null);
+        assertNotNull("row 7 is past the drawing over rows 4..5", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byDrawing, 7, 1, "none").error); //$NON-NLS-1$
+        assertNull("and row 5 is inside it", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(byDrawing, 5, 1, "none").error); //$NON-NLS-1$
+    }
+
+    /**
+     * An end anchor with no offset stands on the top edge of its row, so a drawing ending on the
+     * first surviving row with an offset of 0 lay in the deleted range whole - it goes with the
+     * rows and is named by id.
+     */
+    @Test
+    public void aDrawingEndingOnTheFirstSurvivingRowWithNoOffsetGoesWithTheDeletion()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 8, 1, 9, 2, 3, 0, 0, 0, -1, null, //$NON-NLS-1$
+            null, null);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing occupied only the deleted row and went with it", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawings().isEmpty());
+    }
+
+    /** A drawing with a nonzero end offset on a surviving row shrinks the way it did. */
+    @Test
+    public void aDrawingWithAnEndOffsetOnASurvivingRowShrinksAsBefore()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 6, 1, 9, 2, 2, 0, 5, 0, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 7, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lost rows but was not taken whole", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin above the range keeps its row", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getY());
+        assertEquals("and its offset", 2, doc.getDrawings().get(0).getPosition().getBegin() //$NON-NLS-1$
+            .getOffset().getY());
+        assertEquals("the end moved up by the count", 6, doc.getDrawings().get(0).getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getY());
+        assertEquals("and kept its offset on the surviving row", 5, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getEnd().getOffset().getY());
+    }
+
+    /** A begin anchor whose row was deleted re-anchors at the top of the first surviving row. */
+    @Test
+    public void aDrawingWhoseBeginRowWentStartsAtTheEdgeOfTheSurvivor()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.addDrawing(doc, "Line", 8, 1, 9, 2, 3, 0, 2, 0, -1, null, null, null); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, 8, 1);
+
+        assertNull(outcome.error);
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("the begin stands on the first surviving row", 7, doc.getDrawings().get(0) //$NON-NLS-1$
+            .getPosition().getBegin().getCell().getY());
+        assertEquals("with no offset - the row its offset reached into is gone", 0, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getBegin().getOffset().getY());
+        assertEquals("the end stands on the same row", 7, doc.getDrawings().get(0).getPosition() //$NON-NLS-1$
+            .getEnd().getCell().getY());
+        assertEquals("keeping its offset, so the begin is not below the end", 2, //$NON-NLS-1$
+            doc.getDrawings().get(0).getPosition().getEnd().getOffset().getY());
     }
 }
