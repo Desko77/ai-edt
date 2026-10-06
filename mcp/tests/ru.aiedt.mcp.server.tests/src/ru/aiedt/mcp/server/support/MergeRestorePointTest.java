@@ -14,10 +14,12 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.DosFileAttributeView;
 import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,8 +33,10 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.lib.ObjectId;
+import org.eclipse.jgit.lib.RefUpdate;
 import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -146,6 +150,7 @@ public class MergeRestorePointTest
         Files.writeString(platform(copyProject), PLATFORM, StandardCharsets.UTF_8);
         Files.deleteIfExists(added(copyProject));
         MergeRestorePoint.refreshCalls = 0;
+        GitRepositoryAccess.deleteRefResultForTest = null;
         McpToolCatalog catalog = McpToolCatalog.getInstance();
         catalog.register(new GitTool());
         catalog.register(new GitFileRestore());
@@ -523,6 +528,86 @@ public class MergeRestorePointTest
     }
 
     /**
+     * A git point whose ref could not be dropped is not reported deleted: the answer is an error,
+     * the ref and the index entry stay, and once the ref can be dropped the same call succeeds.
+     */
+    @Test
+    public void aGitPointWhoseRefSurvivesIsNotReportedDeleted() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        GitRepositoryAccess.deleteRefResultForTest = RefUpdate.Result.REJECTED;
+        try
+        {
+            JsonObject dropped = json(new GitTool().execute(Map.of("operation", //$NON-NLS-1$
+                "delete_merge_restore_point", "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertFalse(dropped.toString(), dropped.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(dropped.toString(), dropped.get("error").getAsString() //$NON-NLS-1$
+                .contains("the restore ref could not be deleted")); //$NON-NLS-1$
+            assertTrue("the index entry has to stay while the ref does", //$NON-NLS-1$
+                Files.isRegularFile(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            try (Git git = Git.open(repoRoot.toFile()))
+            {
+                assertNotNull("the ref itself has to stay", //$NON-NLS-1$
+                    git.getRepository().resolve(GitRepositoryAccess.restoreRef(pointId)));
+            }
+        }
+        finally
+        {
+            GitRepositoryAccess.deleteRefResultForTest = null;
+        }
+        JsonObject again = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", GIT_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
+        try (Git git = Git.open(repoRoot.toFile()))
+        {
+            assertNull(git.getRepository().resolve(GitRepositoryAccess.restoreRef(pointId)));
+        }
+        assertFalse(Files.exists(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A copy point whose directory could not be removed is not reported deleted either: the answer
+     * is an error, the index entry and the remains of the copy stay, and the same call succeeds
+     * once the directory can be removed.
+     */
+    @Test
+    public void aCopyPointWhoseDirectorySurvivesIsNotReportedDeleted() throws Exception
+    {
+        Assume.assumeTrue("a read-only file does not block deletion on this file system", //$NON-NLS-1$
+            readOnlyBlocksDelete());
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Path copyDir = Path.of(created.get("copyPath").getAsString()); //$NON-NLS-1$
+        assertTrue(Files.isDirectory(copyDir));
+        refuseDeletion(copyDir.resolve("src/Module.bsl")); //$NON-NLS-1$
+        try
+        {
+            JsonObject dropped = json(new GitTool().execute(Map.of("operation", //$NON-NLS-1$
+                "delete_merge_restore_point", "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertFalse(dropped.toString(), dropped.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(dropped.toString(), dropped.get("error").getAsString() //$NON-NLS-1$
+                .contains("the restore copy directory could not be deleted")); //$NON-NLS-1$
+            assertTrue("the index entry has to stay while the copy does", //$NON-NLS-1$
+                Files.isRegularFile(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the copy directory itself has to stay", Files.isDirectory(copyDir)); //$NON-NLS-1$
+        }
+        finally
+        {
+            allowDeletion(copyDir.resolve("src/Module.bsl")); //$NON-NLS-1$
+        }
+        JsonObject again = json(new GitTool().execute(Map.of("operation", "delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(again.toString(), again.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertFalse(Files.exists(copyDir));
+        assertFalse(Files.exists(store.resolve("points").resolve(pointId + ".txt"))); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * A failed index write names the storage directory and the reason, drops the ref it had
      * already written, and the merge does not start.
      */
@@ -661,6 +746,64 @@ public class MergeRestorePointTest
     private static Path added(IProject project)
     {
         return project.getLocation().toFile().toPath().resolve("src/Added.bsl"); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether this file system refuses to delete a read-only file. Windows does; a POSIX system
+     * removes it when the directory allows writing, and a test that needs the refusal is skipped
+     * there.
+     *
+     * @return {@code true} when the read-only file could not be deleted
+     */
+    private static boolean readOnlyBlocksDelete() throws IOException
+    {
+        Path probe = Files.createTempFile("aiedt-merge-hold", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+        DosFileAttributeView view = Files.getFileAttributeView(probe, DosFileAttributeView.class);
+        if (view == null)
+        {
+            Files.deleteIfExists(probe);
+            return false;
+        }
+        view.setReadOnly(true);
+        try
+        {
+            Files.deleteIfExists(probe);
+            return false;
+        }
+        catch (IOException refused)
+        {
+            return true;
+        }
+        finally
+        {
+            view.setReadOnly(false);
+            Files.deleteIfExists(probe);
+        }
+    }
+
+    /**
+     * Makes a file refuse deletion on a file system where {@link #readOnlyBlocksDelete()} said it
+     * would.
+     *
+     * @param file the file
+     */
+    private static void refuseDeletion(Path file) throws IOException
+    {
+        Files.getFileAttributeView(file, DosFileAttributeView.class).setReadOnly(true);
+    }
+
+    /**
+     * Returns a file to normal deletion, when {@link #refuseDeletion(Path)} was used on it.
+     *
+     * @param file the file
+     */
+    private static void allowDeletion(Path file) throws IOException
+    {
+        DosFileAttributeView view = Files.getFileAttributeView(file, DosFileAttributeView.class);
+        if (view != null)
+        {
+            view.setReadOnly(false);
+        }
     }
 
     private static IProject openProject(String name, Path location) throws Exception

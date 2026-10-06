@@ -597,8 +597,9 @@ already matches the point is not rewritten. A restore that stops halfway still n
 not put back in `unrestoredFiles`, still removes the extras and still refreshes the workspace. It
 needs no repository: a project outside git is served from a copy of its directory.
 `delete_merge_restore_point` takes a required `pointId` and drops that point - the ref or the copy
-and the index entry; no project file is touched, and a point of another project is refused. See
-`expected-behavior.md` for what such a point covers.
+and the index entry; no project file is touched, and a point of another project is refused. A ref
+or a copy directory that could not be deleted is an error with the reason, and the index entry is
+kept so the point can be deleted again. See `expected-behavior.md` for what such a point covers.
 
 The writes `commit`, `checkout`, `revert_file`, `restore_merge_point`, `create_merge_restore_point`
 and `delete_merge_restore_point` are switched by presets under the names `git_commit`,

@@ -103,7 +103,9 @@ of the PROJECT FILES before the merge begins and answers `mergeRestorePoint` and
 removed, and a file whose bytes already match the point is not rewritten. A restore that stops
 halfway still removes the extras and refreshes the workspace, and names what it did not put back in
 `unrestoredFiles`. `git operation=delete_merge_restore_point` drops a recorded point by its
-`pointId` - required, and only a point of this project - without touching any project file.
+`pointId` - required, and only a point of this project - without touching any project file; a ref
+or a copy directory that could not be deleted is an error, and the index entry is kept so the
+point can be deleted again.
 
 **The point and the restore cover project files only. The infobase is not copied and is not rolled
 back.** A merge that reached the base has to be undone in the base by other means; a restore that

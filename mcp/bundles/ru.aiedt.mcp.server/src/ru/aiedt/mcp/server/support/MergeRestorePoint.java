@@ -316,7 +316,8 @@ public final class MergeRestorePoint
 
     /**
      * Deletes a recorded point: the ref that keeps the commit, or the copy directory, and the index
-     * entry. The project files are not touched, and neither is the infobase.
+     * entry. The project files are not touched, and neither is the infobase. Storage that could not
+     * be deleted keeps the index entry, so the point stays addressable and can be deleted again.
      *
      * @param project the project whose point is deleted
      * @param pointId the point, required; a point of another project is not resolved
@@ -365,7 +366,13 @@ public final class MergeRestorePoint
                     deleted.error = resolved.error + " Nothing was deleted."; //$NON-NLS-1$
                     return deleted;
                 }
-                GitRepositoryAccess.deleteRestoreRef(resolved.repository, record.pointId);
+                String problem = GitRepositoryAccess.deleteRestoreRef(resolved.repository, record.pointId);
+                if (problem != null)
+                {
+                    deleted.error = problem + ". The index entry was kept, so the point can be " //$NON-NLS-1$
+                        + "deleted again."; //$NON-NLS-1$
+                    return deleted;
+                }
             }
             catch (Exception e)
             {
@@ -377,7 +384,13 @@ public final class MergeRestorePoint
         }
         else
         {
-            deleteTree(record.copyPath == null ? null : Path.of(record.copyPath));
+            String problem = deleteTree(record.copyPath == null ? null : Path.of(record.copyPath));
+            if (problem != null)
+            {
+                deleted.error = problem + ". The index entry was kept, so the point can be deleted " //$NON-NLS-1$
+                    + "again."; //$NON-NLS-1$
+                return deleted;
+            }
         }
         try
         {
@@ -1092,16 +1105,21 @@ public final class MergeRestorePoint
     }
 
     /**
-     * Deletes a partial copy. A failure is logged; the point is already being refused.
+     * Deletes a copy directory: a partial one a refused create leaves behind, or the one a delete
+     * drops. A failure is logged and named in the answer, so a caller that has to keep the point
+     * addressable can refuse.
      *
      * @param root the copy directory, or {@code null}
+     * @return {@code null} when the directory is gone, or what could not be deleted and why
      */
-    private static void deleteTree(Path root)
+    private static String deleteTree(Path root)
     {
         if (root == null || !Files.exists(root))
         {
-            return;
+            return null;
         }
+        String reason = null;
+        int left = 0;
         try (var walk = Files.walk(root))
         {
             for (Path path : walk.sorted(Comparator.reverseOrder()).toList())
@@ -1113,13 +1131,25 @@ public final class MergeRestorePoint
                 catch (IOException e)
                 {
                     Activator.logError("could not delete " + path, e); //$NON-NLS-1$
+                    left++;
+                    if (reason == null)
+                    {
+                        reason = e.getMessage();
+                    }
                 }
             }
         }
         catch (IOException e)
         {
             Activator.logError("could not delete restore copy " + root, e); //$NON-NLS-1$
+            return "the restore copy directory could not be read (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
         }
+        if (left > 0)
+        {
+            return "the restore copy directory could not be deleted (" + reason + "): " + left //$NON-NLS-1$ //$NON-NLS-2$
+                + " item(s) remain under " + root; //$NON-NLS-1$
+        }
+        return null;
     }
 
     /**

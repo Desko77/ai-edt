@@ -275,32 +275,44 @@ public final class GitRepositoryAccess
     }
 
     /**
-     * Drops the ref that keeps a restore commit. A failed point must not stay addressable, and
-     * deleting the ref does not move HEAD.
+     * The answer {@link #deleteRestoreRef} reports instead of running the update, when a test forces
+     * one. {@code null} runs the update for real.
+     */
+    static RefUpdate.Result deleteRefResultForTest;
+
+    /**
+     * Drops the ref that keeps a restore commit. Deleting the ref does not move HEAD. A caller that
+     * drops the ref of a point it has named has to know the ref survived, or it deletes the index
+     * entry of a point whose storage is still there.
      *
      * @param repository the repository
      * @param pointId the point whose ref should go
+     * @return {@code null} when the ref is gone, or why it is not
      */
-    public static void deleteRestoreRef(Repository repository, String pointId)
+    public static String deleteRestoreRef(Repository repository, String pointId)
     {
         if (repository == null || pointId == null)
         {
-            return;
+            return null;
         }
         try
         {
             RefUpdate update = repository.updateRef(restoreRef(pointId));
             update.setForceUpdate(true);
-            RefUpdate.Result result = update.delete();
+            RefUpdate.Result result = deleteRefResultForTest != null ? deleteRefResultForTest
+                : update.delete();
             if (result != RefUpdate.Result.FORCED && result != RefUpdate.Result.FAST_FORWARD
                 && result != RefUpdate.Result.NO_CHANGE && result != RefUpdate.Result.NEW)
             {
                 Activator.logError("could not drop merge restore ref " + pointId + ": " + result, null); //$NON-NLS-1$ //$NON-NLS-2$
+                return "the restore ref could not be deleted (" + result + ")"; //$NON-NLS-1$ //$NON-NLS-2$
             }
+            return null;
         }
         catch (IOException e)
         {
             Activator.logError("could not drop merge restore ref " + pointId, e); //$NON-NLS-1$
+            return "the restore ref could not be deleted (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
