@@ -145,6 +145,18 @@ public class RestartEdtTool implements IMcpTool
             return ToolResult.error("No live SWT display - cannot " + action + " EDT.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
 
+        // One restart at a time per JVM. The watcher starts below, before the delay, so two calls
+        // inside one delay would each start a watcher and - once EDT closed - each relaunch the
+        // same workspace. A second call is refused while the first has not finished, and holds the
+        // slot from here until the deferred action has run its course; a JVM that closes takes the
+        // slot with it.
+        RestartInFlight attempt = new RestartInFlight(action, System.currentTimeMillis() + delayMs);
+        RestartInFlight running = claimRestartSlot(attempt);
+        if (running != null)
+        {
+            return ToolResult.error(inFlightRefusal(running)).toJson();
+        }
+
         // Preflight BEFORE anything closes, watcher included. A restart that cannot start anything
         // is refused while the workspace is still alive to hear it: the workbench restarts only
         // when the launcher relaunches it, and measured twice (16.09 and 17.09) PlatformUI's
@@ -160,6 +172,7 @@ public class RestartEdtTool implements IMcpTool
             preflight = restartPreflight(RestartEdtTool::startWatcher);
             if (preflight.refusal != null)
             {
+                releaseRestartSlot(attempt);
                 return ToolResult.error(preflight.refusal).toJson();
             }
         }
@@ -176,11 +189,17 @@ public class RestartEdtTool implements IMcpTool
             catch (InterruptedException ie)
             {
                 Thread.currentThread().interrupt();
+                // The close is not going to happen. The watcher already started would outlive the
+                // attempt and relaunch EDT after a later ordinary exit, so it is taken down with
+                // the slot it was started under.
+                destroyQuietly(relaunchWatcher);
+                releaseRestartSlot(attempt);
                 return;
             }
             if (display.isDisposed())
             {
                 destroyQuietly(relaunchWatcher);
+                releaseRestartSlot(attempt);
                 return;
             }
             // close()/restart() must run on the SWT UI thread.
@@ -232,12 +251,19 @@ public class RestartEdtTool implements IMcpTool
                         Activator.logError("restart_edt: " + (shutdown ? "shutdown" : "restart") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                             + " failed", e); //$NON-NLS-1$
                     }
+                    finally
+                    {
+                        // The attempt is over whether it closed EDT or EDT stayed up: a JVM that
+                        // survives the attempt must be able to restart again.
+                        releaseRestartSlot(attempt);
+                    }
                 });
             }
             catch (org.eclipse.swt.SWTException disposed)
             {
                 // display was disposed between the isDisposed() check and asyncExec
                 destroyQuietly(relaunchWatcher);
+                releaseRestartSlot(attempt);
             }
         }, "mcp-restart-edt"); //$NON-NLS-1$
         worker.setDaemon(true);
@@ -718,6 +744,85 @@ public class RestartEdtTool implements IMcpTool
                     + "without coming back. Nothing was closed."); //$NON-NLS-1$
         }
         return new RestartPreflight(command, watcher, null);
+    }
+
+    /**
+     * The restart or shutdown this JVM is already carrying out.
+     * <p>
+     * Held from the moment a call is accepted - before its watcher starts - until the deferred
+     * action has run its course: closed, vetoed, or failed. A JVM that closes takes the attempt
+     * with it, so the slot never outlives the process it belongs to.
+     * </p>
+     */
+    static final class RestartInFlight
+    {
+        /** The accepted action, {@code restart} or {@code shutdown}. */
+        final String action;
+
+        /** When the deferred close is due, in {@link System#currentTimeMillis()} ticks. */
+        final long actAtMillis;
+
+        RestartInFlight(String action, long actAtMillis)
+        {
+            this.action = action;
+            this.actAtMillis = actAtMillis;
+        }
+    }
+
+    /** The restart or shutdown this JVM is carrying out; <code>null</code> when none is. */
+    private static final java.util.concurrent.atomic.AtomicReference<RestartInFlight> inFlight =
+        new java.util.concurrent.atomic.AtomicReference<>();
+
+    /**
+     * Claims this JVM's one restart slot for an attempt.
+     *
+     * @param attempt the accepted call to seat
+     * @return <code>null</code> when the slot was free and now holds the attempt; otherwise the
+     *         attempt already holding it, for the refusal to name
+     */
+    static RestartInFlight claimRestartSlot(RestartInFlight attempt)
+    {
+        while (true)
+        {
+            if (inFlight.compareAndSet(null, attempt))
+            {
+                return null;
+            }
+            RestartInFlight running = inFlight.get();
+            if (running != null)
+            {
+                return running;
+            }
+            // Released between the two reads - the slot is free again, so try once more.
+        }
+    }
+
+    /**
+     * Frees the slot an attempt holds.
+     * <p>
+     * Matched by identity, so an attempt never frees a slot a later one has already claimed.
+     * </p>
+     *
+     * @param attempt the attempt whose slot to free
+     */
+    static void releaseRestartSlot(RestartInFlight attempt)
+    {
+        inFlight.compareAndSet(attempt, null);
+    }
+
+    /**
+     * The refusal a second restart or shutdown meets while the first is still to act.
+     *
+     * @param running the attempt already holding the slot
+     * @return the refusal, naming its action and how long before it closes EDT
+     */
+    static String inFlightRefusal(RestartInFlight running)
+    {
+        long remainingMs = Math.max(0, running.actAtMillis - System.currentTimeMillis());
+        return "A " + running.action + " of this EDT is already in progress and closes it in ~" //$NON-NLS-1$ //$NON-NLS-2$
+            + remainingMs + "ms. A second restart or shutdown is refused while the first is " //$NON-NLS-1$
+            + "unfinished - two would race for the same workspace. Nothing was closed by this " //$NON-NLS-1$
+            + "call and no watcher was started."; //$NON-NLS-1$
     }
 
     /**
