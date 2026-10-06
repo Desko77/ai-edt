@@ -254,6 +254,8 @@ public enum ToolProfile
             "git_commit", //$NON-NLS-1$
             "git_checkout", //$NON-NLS-1$
             "git_revert_file", //$NON-NLS-1$
+            "git_create_merge_restore_point", //$NON-NLS-1$
+            "git_delete_merge_restore_point", //$NON-NLS-1$
 
             // launch_debugger covers these
             "debug_launch", //$NON-NLS-1$
@@ -426,11 +428,12 @@ public enum ToolProfile
      * disables each writer of its own list, written out there by hand rather than read from here.
      * </p>
      * <p>
-     * The repository is as much a write target as the sources, and the three git doors live in the
-     * VCS group, which no write-blocking preset disables wholesale: a commit writes the index and the
-     * history, a checkout rewrites the work tree, and putting a file back overwrites that file. The
-     * reads of the same facade - status, branches, log, show_file_changes - stay on under all three,
-     * because only the doors are named here.
+     * The repository is as much a write target as the sources, and the git doors live in the VCS
+     * group, which no write-blocking preset disables wholesale: a commit writes the index and the
+     * history, a checkout rewrites the work tree, putting a file back overwrites that file, and
+     * taking or dropping a merge restore point writes the repository or a copy beside the workspace
+     * even though the work tree is not touched. The reads of the same facade - status, branches,
+     * log, show_file_changes - stay on under all three, because only the doors are named here.
      * </p>
      * <p>
      * {@code extension_workshop} is named as a whole: its borrow operations and
@@ -454,6 +457,8 @@ public enum ToolProfile
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$
+        names.add("git_create_merge_restore_point"); //$NON-NLS-1$
+        names.add("git_delete_merge_restore_point"); //$NON-NLS-1$
         // The five write doors of the cluster facade sit in the tags-and-marks group, which every
         // write-blocking preset keeps enabled because its reads belong there: each door is named
         // here, or the preset writes through the one group it left open.

@@ -51,7 +51,7 @@ public class GitTool
     /** Every operation this tool accepts, in the order a refusal lists them. */
     private static final String KNOWN =
         "status | branches | log | commit | checkout | show_file_changes | revert_file | " //$NON-NLS-1$
-            + "create_merge_restore_point | restore_merge_point"; //$NON-NLS-1$
+            + "create_merge_restore_point | delete_merge_restore_point | restore_merge_point"; //$NON-NLS-1$
 
     @Override
     public String getName()
@@ -73,12 +73,15 @@ public class GitTool
             + ".form, .mdo or .dcs needs revalidate_objects. " //$NON-NLS-1$
             + "create_merge_restore_point records the project files before a merge and does not move " //$NON-NLS-1$
             + "HEAD: a commit and its hash when the project is in git, otherwise a copy of the project " //$NON-NLS-1$
-            + "directory. restore_merge_point puts those files back and does not roll back the infobase. " //$NON-NLS-1$
+            + "directory. restore_merge_point puts those files back - a file whose bytes already " //$NON-NLS-1$
+            + "match the point is not rewritten - and does not roll back the infobase. " //$NON-NLS-1$
+            + "delete_merge_restore_point drops a recorded point: the ref or the copy, and the " //$NON-NLS-1$
+            + "index entry; no project file is touched. " //$NON-NLS-1$
             + "Operations: status (work tree and index vs HEAD, ahead/behind the tracking branch), " //$NON-NLS-1$
             + "branches (local branches, current first), log (recent commits), " //$NON-NLS-1$
             + "commit (stage named paths and commit them - paths by name only, there is no add-all), " //$NON-NLS-1$
             + "checkout (switch branch, or create it), show_file_changes, revert_file, " //$NON-NLS-1$
-            + "create_merge_restore_point, restore_merge_point."; //$NON-NLS-1$
+            + "create_merge_restore_point, delete_merge_restore_point, restore_merge_point."; //$NON-NLS-1$
     }
 
     @Override
@@ -90,7 +93,8 @@ public class GitTool
     @Override
     public List<String> getGatedWriteNames()
     {
-        return List.of("git_commit", "git_checkout", GitFileRestore.DOOR); //$NON-NLS-1$ //$NON-NLS-2$
+        return List.of("git_commit", "git_checkout", GitFileRestore.DOOR, //$NON-NLS-1$ //$NON-NLS-2$
+            GitMergePointCreateTool.DOOR, GitMergePointDeleteTool.DOOR);
     }
 
     @Override
@@ -143,7 +147,7 @@ public class GitTool
                     + "while an editor holds unsaved changes for it; only the write is refused then.") //$NON-NLS-1$
             .stringProperty("pointId", //$NON-NLS-1$
                 "restore_merge_point: the point to put back. Omit it to use the latest point for " //$NON-NLS-1$
-                    + "the project.") //$NON-NLS-1$
+                    + "the project. delete_merge_restore_point: the point to delete, required.") //$NON-NLS-1$
             .build();
     }
 
@@ -195,6 +199,27 @@ public class GitTool
                 return ToolResult.error(gate).toJson();
             }
         }
+        if (op.equals("create_merge_restore_point")) //$NON-NLS-1$
+        {
+            // Taking a point leaves the work tree alone but writes elsewhere: a commit on a ref in
+            // the repository, or a copy of the project directory beside the workspace. A door of
+            // its own, so a read-only preset refuses the call before a project file is listed.
+            String gate = ToolGate.gateOrNull(GitMergePointCreateTool.DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).toJson();
+            }
+        }
+        if (op.equals("delete_merge_restore_point")) //$NON-NLS-1$
+        {
+            // Dropping a point discards the way back from a merge. A door of its own as well, so
+            // the refusal comes before the index is read.
+            String gate = ToolGate.gateOrNull(GitMergePointDeleteTool.DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate).toJson();
+            }
+        }
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         if (projectName == null || projectName.isEmpty())
         {
@@ -226,6 +251,7 @@ public class GitTool
         Map<String, String> params)
     {
         boolean mergePoint = "create_merge_restore_point".equals(op) //$NON-NLS-1$
+            || "delete_merge_restore_point".equals(op) //$NON-NLS-1$
             || "restore_merge_point".equals(op); //$NON-NLS-1$
         GitRepositoryAccess.Resolved resolved = null;
         if (!mergePoint)
@@ -244,6 +270,9 @@ public class GitTool
             {
             case "create_merge_restore_point": //$NON-NLS-1$
                 return MergeRestorePoint.createJson(project);
+            case "delete_merge_restore_point": //$NON-NLS-1$
+                return MergeRestorePoint.deleteJson(project,
+                    JsonUtils.extractStringArgument(params, "pointId")); //$NON-NLS-1$
             case "restore_merge_point": //$NON-NLS-1$
                 return MergeRestorePoint.restoreJson(project,
                     JsonUtils.extractStringArgument(params, "pointId")); //$NON-NLS-1$

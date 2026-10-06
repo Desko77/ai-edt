@@ -158,7 +158,10 @@ public class ToolCategoryTest
         // On 2026-09-30 cluster_admin and its five write doors joined TAGS (+6 -> 145): the
         // clusters of the Navigator are read and written through their own facade, and each write
         // is a door a read-only preset switches off by name.
-        assertEquals(145, ToolCategory.getTotalToolCount());
+        // On 2026-10-06 the two merge restore point doors joined VCS (+2 -> 147): taking a point
+        // writes a ref or a copy beside the workspace and dropping one discards the way back from
+        // a merge, so each is a door a read-only preset switches off by name.
+        assertEquals(147, ToolCategory.getTotalToolCount());
     }
 
     @Test

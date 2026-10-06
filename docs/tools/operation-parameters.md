@@ -324,6 +324,7 @@
 | `GitTool` | `checkout` | `branch:string`, `createBranch:boolean`, `projectName:string` | read in place |
 | `GitTool` | `commit` | `authorEmail:string`, `authorName:string`, `message:string`, `paths:string`, `projectName:string` | read in place |
 | `GitTool` | `create_merge_restore_point` | `projectName:string` | passed in as locals |
+| `GitTool` | `delete_merge_restore_point` | `pointId:string`, `projectName:string` | read in place |
 | `GitTool` | `log` | `limit:integer`, `projectName:string` | read in place |
 | `GitTool` | `restore_merge_point` | `pointId:string`, `projectName:string` | read in place |
 | `GitTool` | `revert_file` | `dryRun:boolean`, `filePath:string`, `fromRef:string`, `projectName:string` | read in place |

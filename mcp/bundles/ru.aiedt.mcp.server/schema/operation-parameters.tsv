@@ -325,6 +325,7 @@ GitTool	branches	projectName:string	passed in as locals
 GitTool	checkout	branch:string,createBranch:boolean	read in place	projectName:string
 GitTool	commit	message:string,paths:string	read in place	authorEmail:string,authorName:string,projectName:string
 GitTool	create_merge_restore_point	projectName:string	passed in as locals	
+GitTool	delete_merge_restore_point	pointId:string	read in place	projectName:string
 GitTool	log	limit:integer	read in place	projectName:string
 GitTool	restore_merge_point	pointId:string	read in place	projectName:string
 GitTool	revert_file	dryRun:boolean,filePath:string,fromRef:string	read in place	projectName:string

@@ -250,7 +250,8 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // only previews (measured 29.09: 1553).
         // 1854 for the line endings revert_file names, the editor note on dryRun and the file limit
         // of show_file_changes, and 143 more for pointId of restore_merge_point.
-        PROSE.put("git", Integer.valueOf(1997));
+        // 2085 measured 06.10: pointId names delete_merge_restore_point beside the restore.
+        PROSE.put("git", Integer.valueOf(2085));
         // cluster_admin: one sentence per argument of six operations - the tree the read answers,
         // the two places a create hangs a cluster, the move's model check and collection rule, and
         // the dry run that still passes the write door (measured 30.09: 1590).
@@ -637,6 +638,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And for the three column operations of the same facade: the sentences col, fromCol and toCol
      * gained, and count and formatFrom gained the column half of theirs. Measured 05.10: 104346.
      * </p>
+     * <p>
+     * And by 88 for pointId on git: delete_merge_restore_point names the point it deletes, and the
+     * sentence saying so sits on the argument both operations share. Measured 06.10: 104434.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 104346;
+    private static final int DOCUMENT_PROSE = 104434;
 }

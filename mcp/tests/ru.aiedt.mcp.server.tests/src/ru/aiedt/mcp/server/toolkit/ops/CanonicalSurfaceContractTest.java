@@ -232,10 +232,11 @@ public class CanonicalSurfaceContractTest
             "unpack_external_binary", "import_configuration_from_binary", "help"));
 
         // git (GitTool.execute): a plain switch on "operation". The write doors are reached
-        // as commit, checkout and revert_file; their standalone names carry the git_ prefix (see
-        // RENAMED_STANDALONES).
+        // as commit, checkout, revert_file and the two merge restore point operations; their
+        // standalone names carry the git_ prefix (see RENAMED_STANDALONES).
         m.put("git", Set.of("status", "branches", "log", "commit", "checkout", "show_file_changes",
-            "revert_file", "create_merge_restore_point", "restore_merge_point"));
+            "revert_file", "create_merge_restore_point", "delete_merge_restore_point",
+            "restore_merge_point"));
 
         // insights (InsightsFacadeTool.execute + its OPS catalog): nine operations, all
         // literally the standalone names they replace, plus help.
@@ -292,6 +293,8 @@ public class CanonicalSurfaceContractTest
         m.put("git_commit", "commit"); // GitCommitTool.getName() == "git_commit"
         m.put("git_checkout", "checkout"); // GitCheckoutTool.getName() == "git_checkout"
         m.put("git_revert_file", "revert_file"); // GitFileRestore.getName() == "git_revert_file"
+        m.put("git_create_merge_restore_point", "create_merge_restore_point"); // GitMergePointCreateTool.getName()
+        m.put("git_delete_merge_restore_point", "delete_merge_restore_point"); // GitMergePointDeleteTool.getName()
         return m;
     }
 
@@ -355,7 +358,8 @@ public class CanonicalSurfaceContractTest
         // (+2 -> 90).
         // On 2026-09-29 git_revert_file joined the git coverage (+1 -> 91).
         // On 2026-09-30 the five cluster write doors joined the cluster_admin coverage (+5 -> 96).
-        assertEquals(96, ToolProfile.CANONICAL.getUnlistedTools().size());
+        // On 2026-10-06 the two merge restore point doors joined the git coverage (+2 -> 98).
+        assertEquals(98, ToolProfile.CANONICAL.getUnlistedTools().size());
 
         // Tripwire 2: exactly how many facades this snapshot tracks - code_search,
         // launch_debugger, edit_metadata, yaxunit_tests, extension_workshop, diagnostics,
