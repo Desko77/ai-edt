@@ -29,6 +29,8 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IStatus;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.jgit.lib.Repository;
 
 import ru.aiedt.mcp.server.Activator;
@@ -62,6 +64,13 @@ public final class MergeRestorePoint
      * back, because the refresh has no other visible effect a headless run can observe.
      */
     static int refreshCalls;
+
+    /**
+     * The failure {@link #refresh(IProject, Restored)} reports instead of refreshing, when a test
+     * forces one. {@code null} refreshes for real: the workspace of a healthy test runtime has no
+     * way to make a real refresh fail.
+     */
+    static String refreshFailureForTest;
 
     /**
      * How many times the content of a file was compared byte by byte, after the sizes had matched.
@@ -123,6 +132,12 @@ public final class MergeRestorePoint
 
         /** Project-relative files the point holds that were not put back. */
         public List<String> unrestoredFiles = new ArrayList<>();
+
+        /** Extra files the cleanup could not remove, each with the reason it stayed. */
+        public List<String> cleanupFailures = new ArrayList<>();
+
+        /** Why the workspace refresh after the restore failed, when it did. */
+        public String refreshFailure;
 
         /** Why the restore did not finish. Files already written stay written. */
         public String error;
@@ -284,6 +299,8 @@ public final class MergeRestorePoint
                 .put("unchangedFiles", restored.unchangedFiles) //$NON-NLS-1$
                 .put("unrestoredFiles", restored.unrestoredFiles) //$NON-NLS-1$
                 .put("removedFiles", restored.removedFiles) //$NON-NLS-1$
+                .put("cleanupFailures", restored.cleanupFailures) //$NON-NLS-1$
+                .put("refreshFailure", restored.refreshFailure) //$NON-NLS-1$
                 .toJson();
         }
         return ToolResult.success()
@@ -674,6 +691,10 @@ public final class MergeRestorePoint
      * that stopped halfway runs this as well - the caller asked for the point, and half of it with
      * the extras of the merge still lying beside it is further from the point than half of it alone.
      *
+     * <p>A cleanup that could not remove every extra does not undo what it did remove: the answer
+     * keeps the files that stayed in {@link Restored#cleanupFailures} and says so beside its primary
+     * error, when it has one.</p>
+     *
      * @param project the project
      * @param record the point
      * @param restored the answer being filled in
@@ -691,14 +712,24 @@ public final class MergeRestorePoint
         }
         try
         {
-            restored.removedFiles.addAll(deleteExtras(projectDirectory(project), record.files));
+            restored.removedFiles.addAll(deleteExtras(projectDirectory(project), record.files, restored));
         }
         catch (IOException e)
         {
             Activator.logError("merge restore cleanup failed", e); //$NON-NLS-1$
+            restored.cleanupFailures.add("the project files could not be listed (" + e.getMessage() + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (!restored.cleanupFailures.isEmpty())
+        {
             if (restored.error == null)
             {
-                restored.error = "the cleanup after the restore failed (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+                restored.error = "the cleanup after the restore did not finish: " //$NON-NLS-1$
+                    + String.join("; ", restored.cleanupFailures); //$NON-NLS-1$
+            }
+            else
+            {
+                restored.error = restored.error
+                    + " The cleanup after the restore did not finish; see cleanupFailures."; //$NON-NLS-1$
             }
         }
         refresh(project, restored);
@@ -1091,14 +1122,18 @@ public final class MergeRestorePoint
 
     /**
      * Deletes regular files under the project that the point does not hold. Git metadata is left
-     * alone.
+     * alone. A file that cannot be deleted does not stop the others: it is named with the reason in
+     * {@link Restored#cleanupFailures}, and the files that did go are still returned - the answer
+     * claims removed only what was really removed.
      *
      * @param projectDir the project directory
      * @param keep the project-relative files to leave in place
+     * @param restored the answer being filled in, with the removals and the failures
      * @return the project-relative paths that were removed
-     * @throws IOException when a file cannot be deleted
+     * @throws IOException when the project files cannot be walked
      */
-    private static List<String> deleteExtras(Path projectDir, List<String> keep) throws IOException
+    private static List<String> deleteExtras(Path projectDir, List<String> keep, Restored restored)
+        throws IOException
     {
         Set<String> held = new HashSet<>(keep);
         List<Path> files = new ArrayList<>();
@@ -1144,8 +1179,18 @@ public final class MergeRestorePoint
             {
                 continue;
             }
-            Files.deleteIfExists(file);
-            removed.add(relative);
+            try
+            {
+                if (Files.deleteIfExists(file))
+                {
+                    removed.add(relative);
+                }
+            }
+            catch (IOException e)
+            {
+                Activator.logError("merge restore cleanup could not delete " + relative, e); //$NON-NLS-1$
+                restored.cleanupFailures.add(relative + " could not be deleted (" + e.getMessage() + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
         Collections.sort(removed);
         return removed;
@@ -1204,22 +1249,34 @@ public final class MergeRestorePoint
      * it too and no other visible state says it happened.
      *
      * @param project the project
-     * @param restored the answer being filled in; a failed refresh becomes its error when it has
-     *            none yet
+     * @param restored the answer being filled in; a failed refresh is kept in
+     *            {@link Restored#refreshFailure} and becomes its error when it has none yet
      */
     private static void refresh(IProject project, Restored restored)
     {
         refreshCalls++;
         try
         {
+            if (refreshFailureForTest != null)
+            {
+                throw new CoreException(new Status(IStatus.ERROR, Activator.PLUGIN_ID,
+                    refreshFailureForTest));
+            }
             project.refreshLocal(IResource.DEPTH_INFINITE, null);
         }
         catch (CoreException e)
         {
             Activator.logError("merge restore refresh failed", e); //$NON-NLS-1$
+            restored.refreshFailure = "the workspace refresh after the restore failed (" + e.getMessage() //$NON-NLS-1$
+                + ")"; //$NON-NLS-1$
             if (restored.error == null)
             {
-                restored.error = "the workspace refresh after the restore failed (" + e.getMessage() + ")"; //$NON-NLS-1$ //$NON-NLS-2$
+                restored.error = restored.refreshFailure;
+            }
+            else
+            {
+                restored.error = restored.error
+                    + " The workspace refresh after the restore failed; see refreshFailure."; //$NON-NLS-1$
             }
         }
     }

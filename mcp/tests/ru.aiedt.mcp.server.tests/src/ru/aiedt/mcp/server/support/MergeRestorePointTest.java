@@ -151,6 +151,7 @@ public class MergeRestorePointTest
         Files.deleteIfExists(added(copyProject));
         MergeRestorePoint.refreshCalls = 0;
         MergeRestorePoint.contentComparisons = 0;
+        MergeRestorePoint.refreshFailureForTest = null;
         GitRepositoryAccess.deleteRefResultForTest = null;
         McpToolCatalog catalog = McpToolCatalog.getInstance();
         catalog.register(new GitTool());
@@ -711,6 +712,140 @@ public class MergeRestorePointTest
     }
 
     /**
+     * A restore that stopped halfway and then could not remove an extra names both: the primary
+     * error stays the answer's text with one phrase about the cleanup, the stuck extra is listed
+     * in cleanupFailures, and removedFiles claims only the file that really went.
+     */
+    @Test
+    public void aStuckExtraBesideAPartialRestoreIsNamedToo() throws Exception
+    {
+        Assume.assumeTrue("a read-only file does not block deletion on this file system", //$NON-NLS-1$
+            readOnlyBlocksDelete());
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(copyProject), MERGED, StandardCharsets.UTF_8);
+        Files.writeString(added(copyProject), "// added\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        Files.writeString(stuck(copyProject), "// stuck\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        Files.deleteIfExists(Path.of(created.get("copyPath").getAsString()).resolve("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        refuseDeletion(stuck(copyProject));
+        try
+        {
+            JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+                "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("error").getAsString() //$NON-NLS-1$
+                .contains("src/Module.bsl is missing from the restore copy.")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("error").getAsString() //$NON-NLS-1$
+                .contains("The cleanup after the restore did not finish")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("cleanupFailures").toString() //$NON-NLS-1$
+                .contains("src/Stuck.bsl")); //$NON-NLS-1$
+            assertTrue(strings(restored, "removedFiles").contains("src/Added.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse("a file that stayed is nobody's removed file", //$NON-NLS-1$
+                strings(restored, "removedFiles").contains("src/Stuck.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals(List.of("src/Module.bsl"), strings(restored, "unrestoredFiles")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue("the stuck file itself stays", Files.exists(stuck(copyProject))); //$NON-NLS-1$
+        }
+        finally
+        {
+            allowDeletion(stuck(copyProject));
+            Files.deleteIfExists(stuck(copyProject));
+        }
+    }
+
+    /**
+     * An extra that cannot be removed makes the restore an error on its own: nothing else went
+     * wrong, the answer names the file in cleanupFailures, and the workspace was still refreshed.
+     */
+    @Test
+    public void aStuckExtraAloneMakesTheRestoreAnError() throws Exception
+    {
+        Assume.assumeTrue("a read-only file does not block deletion on this file system", //$NON-NLS-1$
+            readOnlyBlocksDelete());
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(stuck(copyProject), "// stuck\n", StandardCharsets.UTF_8); //$NON-NLS-1$
+        refuseDeletion(stuck(copyProject));
+        try
+        {
+            JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+                "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("error").getAsString() //$NON-NLS-1$
+                .contains("the cleanup after the restore did not finish")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("cleanupFailures").toString() //$NON-NLS-1$
+                .contains("src/Stuck.bsl")); //$NON-NLS-1$
+            assertTrue(strings(restored, "removedFiles").isEmpty()); //$NON-NLS-1$
+            assertTrue(strings(restored, "restoredFiles").isEmpty()); //$NON-NLS-1$
+            assertTrue("the workspace was still refreshed", MergeRestorePoint.refreshCalls > 0); //$NON-NLS-1$
+            assertArrayEquals(PROBE.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(module(copyProject)));
+            assertTrue("the stuck file itself stays", Files.exists(stuck(copyProject))); //$NON-NLS-1$
+        }
+        finally
+        {
+            allowDeletion(stuck(copyProject));
+            Files.deleteIfExists(stuck(copyProject));
+        }
+    }
+
+    /**
+     * A refresh that fails beside a primary error is said beside it - the primary text stays, one
+     * phrase names the refresh, and refreshFailure carries it. Alone, it is the whole error.
+     */
+    @Test
+    public void aRefreshFailureIsSaidBesideThePrimaryErrorAndAlone() throws Exception
+    {
+        JsonObject created = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(created.toString(), created.get("success").getAsBoolean()); //$NON-NLS-1$
+        String pointId = created.get("pointId").getAsString(); //$NON-NLS-1$
+        Files.writeString(module(copyProject), MERGED, StandardCharsets.UTF_8);
+        Files.deleteIfExists(Path.of(created.get("copyPath").getAsString()).resolve("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        MergeRestorePoint.refreshFailureForTest = "the refresh was refused"; //$NON-NLS-1$
+        try
+        {
+            JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+                "projectName", COPY_PROJECT, "pointId", pointId))); //$NON-NLS-1$ //$NON-NLS-2$
+            assertFalse(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("error").getAsString() //$NON-NLS-1$
+                .contains("src/Module.bsl is missing from the restore copy.")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("error").getAsString() //$NON-NLS-1$
+                .contains("The workspace refresh after the restore failed")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("refreshFailure").getAsString() //$NON-NLS-1$
+                .contains("the refresh was refused")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("cleanupFailures").getAsJsonArray().isEmpty()); //$NON-NLS-1$
+        }
+        finally
+        {
+            MergeRestorePoint.refreshFailureForTest = null;
+        }
+
+        JsonObject second = json(new GitTool().execute(Map.of("operation", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
+            "projectName", COPY_PROJECT))); //$NON-NLS-1$
+        assertTrue(second.toString(), second.get("success").getAsBoolean()); //$NON-NLS-1$
+        MergeRestorePoint.refreshFailureForTest = "the refresh was refused again"; //$NON-NLS-1$
+        try
+        {
+            JsonObject restored = json(new GitTool().execute(Map.of("operation", "restore_merge_point", //$NON-NLS-1$ //$NON-NLS-2$
+                "projectName", COPY_PROJECT, "pointId", second.get("pointId").getAsString()))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertFalse(restored.toString(), restored.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("error").getAsString() //$NON-NLS-1$
+                .contains("the workspace refresh after the restore failed")); //$NON-NLS-1$
+            assertTrue(restored.toString(), restored.get("refreshFailure").getAsString() //$NON-NLS-1$
+                .contains("the refresh was refused again")); //$NON-NLS-1$
+            assertTrue(strings(restored, "unchangedFiles").contains("src/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(strings(restored, "restoredFiles").isEmpty()); //$NON-NLS-1$
+        }
+        finally
+        {
+            MergeRestorePoint.refreshFailureForTest = null;
+        }
+    }
+
+    /**
      * A failed index write names the storage directory and the reason, drops the ref it had
      * already written, and the merge does not start.
      */
@@ -849,6 +984,11 @@ public class MergeRestorePointTest
     private static Path added(IProject project)
     {
         return project.getLocation().toFile().toPath().resolve("src/Added.bsl"); //$NON-NLS-1$
+    }
+
+    private static Path stuck(IProject project)
+    {
+        return project.getLocation().toFile().toPath().resolve("src/Stuck.bsl"); //$NON-NLS-1$
     }
 
     /**

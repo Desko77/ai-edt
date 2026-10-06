@@ -592,14 +592,17 @@ answer advises `revalidate_objects`: the model still holds the previous state un
 point that cannot be taken answers `mergeStarted: false` and names the storage directory and the
 reason. `restore_merge_point` takes `pointId`, the project's latest point when it is left out, and
 puts those files back, listing `restoredFiles` with `restoredCount`, the files whose bytes already
-matched in `unchangedFiles`, and the files the point does not hold in `removedFiles`. A file that
-already matches the point is not rewritten. A restore that stops halfway still names what it did
-not put back in `unrestoredFiles`, still removes the extras and still refreshes the workspace. It
-needs no repository: a project outside git is served from a copy of its directory.
-`delete_merge_restore_point` takes a required `pointId` and drops that point - the ref or the copy
-and the index entry; no project file is touched, and a point of another project is refused. A ref
-or a copy directory that could not be deleted is an error with the reason, and the index entry is
-kept so the point can be deleted again. See `expected-behavior.md` for what such a point covers.
+matched in `unchangedFiles`, and the files the point does not hold in `removedFiles`, which name
+only the files that were really removed. A file that already matches the point is not rewritten.
+A restore that stops halfway still names what it did not put back in `unrestoredFiles`, still
+removes the extras and still refreshes the workspace; an extra that could not be deleted is named
+with its reason in `cleanupFailures`, a failed workspace refresh in `refreshFailure`, and either
+makes the answer an error that says so beside the primary one. It needs no repository: a project
+outside git is served from a copy of its directory. `delete_merge_restore_point` takes a required
+`pointId` and drops that point - the ref or the copy and the index entry; no project file is
+touched, and a point of another project is refused. A ref or a copy directory that could not be
+deleted is an error with the reason, and the index entry is kept so the point can be deleted
+again. See `expected-behavior.md` for what such a point covers.
 
 The writes `commit`, `checkout`, `revert_file`, `restore_merge_point`, `create_merge_restore_point`
 and `delete_merge_restore_point` are switched by presets under the names `git_commit`,
