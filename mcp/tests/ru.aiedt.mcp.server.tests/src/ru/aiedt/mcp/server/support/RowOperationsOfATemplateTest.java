@@ -649,8 +649,8 @@ public class RowOperationsOfATemplateTest
         Rect position = MoxelFactory.eINSTANCE.createRect();
         position.setX(0);
         position.setY(1);
-        position.setWidth(2);
-        position.setHeight(2);
+        position.setWidth(1);
+        position.setHeight(1);
         RectArea area = MoxelFactory.eINSTANCE.createRectArea();
         area.setPosition(position);
         DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
@@ -680,8 +680,8 @@ public class RowOperationsOfATemplateTest
         Rect position = MoxelFactory.eINSTANCE.createRect();
         position.setX(0);
         position.setY(2);
-        position.setWidth(1);
-        position.setHeight(3);
+        position.setWidth(0);
+        position.setHeight(2);
         RectArea area = MoxelFactory.eINSTANCE.createRectArea();
         area.setPosition(position);
         DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
@@ -693,13 +693,13 @@ public class RowOperationsOfATemplateTest
 
         assertNull("a row inside the data area is inside the document", inserted.error); //$NON-NLS-1$
         assertEquals("the document runs to the row the area now does", 6, inserted.lastRow); //$NON-NLS-1$
-        assertEquals("the area grew over the inserted row without moving", 4, position.getHeight()); //$NON-NLS-1$
+        assertEquals("the area grew over the inserted row without moving", 3, position.getHeight()); //$NON-NLS-1$
 
         BmTemplateHelper.RowOutcome deleted = BmTemplateHelper.deleteRows(doc, 4, 1);
 
         assertNull(deleted.error);
         assertEquals("and back to the row it ends at after the deletion", 5, deleted.lastRow); //$NON-NLS-1$
-        assertEquals(3, position.getHeight());
+        assertEquals(2, position.getHeight());
     }
 
     /** A merge and an area wholly below an insertion move; one the point lands inside resizes. */
@@ -942,4 +942,38 @@ public class RowOperationsOfATemplateTest
         assertEquals(before, readOf(doc));
     }
 
+    /**
+     * A rectangle of one row carries 0 in its height, the way the template file is read:
+     * beginRow and endRow of the same value. It rides with the rows like any other area.
+     */
+    @Test
+    public void aRectangleOfOneRowRidesWithTheRows()
+    {
+        SpreadsheetDocument doc = withTexts("A", "B", "C"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(1);
+        position.setY(1);
+        position.setWidth(11);
+        position.setHeight(0);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        com._1c.g5.v8.dt.moxel.NamedItemCells item = MoxelFactory.eINSTANCE.createNamedItemCells();
+        item.setArea(area);
+        doc.getNamedItems().put("Объект", item); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome inserted = BmTemplateHelper.insertRows(doc, 2, 2, "none"); //$NON-NLS-1$
+
+        assertNull(inserted.error);
+        assertEquals("the area stood on row 2 and the rows went in before it", 3, position.getY()); //$NON-NLS-1$
+        assertEquals("one row still", 0, position.getHeight()); //$NON-NLS-1$
+        Map<String, Object> read = areaNamed(doc, "Объект"); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(4), read.get("fromRow")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(4), read.get("toRow")); //$NON-NLS-1$
+
+        BmTemplateHelper.RowOutcome deleted = BmTemplateHelper.deleteRows(doc, 4, 1);
+
+        assertNull(deleted.error);
+        assertTrue("the one row the area held is gone, and the area with it", //$NON-NLS-1$
+            deleted.removedNamedAreas.contains("Объект")); //$NON-NLS-1$
+    }
 }

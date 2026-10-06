@@ -3044,11 +3044,13 @@ public final class BmTemplateHelper
         else if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
         {
             Rect position = ((RectArea)area).getPosition();
+            int[] rows = boundsOf(position, Axis.ROW);
+            int[] columns = boundsOf(position, Axis.COLUMN);
             into.put("kind", "rect"); //$NON-NLS-1$ //$NON-NLS-2$
-            into.put("fromRow", Integer.valueOf(position.getY() + 1)); //$NON-NLS-1$
-            into.put("fromCol", Integer.valueOf(position.getX() + 1)); //$NON-NLS-1$
-            into.put("toRow", Integer.valueOf(position.getY() + position.getHeight())); //$NON-NLS-1$
-            into.put("toCol", Integer.valueOf(position.getX() + position.getWidth())); //$NON-NLS-1$
+            into.put("fromRow", Integer.valueOf(rows[0] + 1)); //$NON-NLS-1$
+            into.put("fromCol", Integer.valueOf(columns[0] + 1)); //$NON-NLS-1$
+            into.put("toRow", Integer.valueOf(rows[1] + 1)); //$NON-NLS-1$
+            into.put("toCol", Integer.valueOf(columns[1] + 1)); //$NON-NLS-1$
         }
         else
         {
@@ -3116,8 +3118,10 @@ public final class BmTemplateHelper
         Rect position = MoxelFactory.eINSTANCE.createRect();
         position.setX(fromCol - 1);
         position.setY(fromRow - 1);
-        position.setWidth(toCol - fromCol + 1);
-        position.setHeight(toRow - fromRow + 1);
+        // The width and height are the cells after the first: the template file carries
+        // endRow = y + height and endColumn = x + width.
+        position.setWidth(toCol - fromCol);
+        position.setHeight(toRow - fromRow);
         rect.setPosition(position);
         return rect;
     }
@@ -4047,11 +4051,7 @@ public final class BmTemplateHelper
         }
         if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
         {
-            int[] bounds = areaBoundsOf(((RectArea)area).getPosition(), axis);
-            if (bounds == null)
-            {
-                return null;
-            }
+            int[] bounds = boundsOf(((RectArea)area).getPosition(), axis);
             Span span = new Span();
             span.begin = bounds[0];
             span.end = bounds[1];
@@ -4061,37 +4061,15 @@ public final class BmTemplateHelper
     }
 
     /**
-     * The positions a rectangular AREA spans on an axis, normalized.
+     * The positions a rectangle spans on an axis, normalized: the model carries a signed extent,
+     * and a rectangle written with a negative one means the same positions either way.
      * <p>
-     * An area's rectangle carries a COUNT of positions in its width and height - the platform
-     * copies a UI rectangle's width and height into it unchanged, and those count cells - while a
-     * merge's rectangle carries the cells after the first. Reading an area with the merge rule
-     * stretches its far end past the area by one, so the two readings live apart.
+     * A merge and a rectangular area read alike. The width and height are the cells after the
+     * first, so a rectangle of one cell carries 0 in both, and the template file writes an area as
+     * endRow = y + height and endColumn = x + width.
      * </p>
      *
-     * @param position the area's rectangle
-     * @param axis the axis to measure on
-     * @return the near position and the far one, 0-based and inclusive; <code>null</code> when the
-     *         rectangle holds no positions on the axis
-     */
-    private static int[] areaBoundsOf(Rect position, Axis axis)
-    {
-        int near = axis == Axis.COLUMN ? position.getX() : position.getY();
-        int extent = axis == Axis.COLUMN ? position.getWidth() : position.getHeight();
-        int count = Math.abs(extent);
-        if (count < 1)
-        {
-            return null;
-        }
-        int begin = Math.min(near, near + extent);
-        return new int[] { begin, begin + count - 1 };
-    }
-
-    /**
-     * The positions a MERGE rectangle spans on an axis, normalized: the model carries a signed
-     * extent, and a rectangle written with a negative one means the same positions either way.
-     *
-     * @param position the merge's rectangle
+     * @param position the rectangle of a merge or of an area
      * @param axis the axis to measure on
      * @return the near position and the far one, 0-based and inclusive
      */
@@ -4103,9 +4081,10 @@ public final class BmTemplateHelper
     }
 
     /**
-     * Writes a MERGE rectangle's span on an axis back into it, as the cells after the first.
+     * Writes a span on an axis back into the rectangle of a merge or of an area, as the cells after
+     * the first.
      *
-     * @param position the merge's rectangle the span was read from
+     * @param position the rectangle the span was read from
      * @param span the span to write, 0-based with both ends inclusive
      * @param axis the axis to write on
      */
@@ -4120,29 +4099,6 @@ public final class BmTemplateHelper
         {
             position.setY(span.begin);
             position.setHeight(span.end - span.begin);
-        }
-    }
-
-    /**
-     * Writes a rectangular AREA's span on an axis back into it, as the count of positions it holds
-     * - the counterpart of {@link #areaBoundsOf}, kept apart from the merge writing the same
-     * rectangle class carries.
-     *
-     * @param position the area's rectangle the span was read from
-     * @param span the span to write, 0-based with both ends inclusive
-     * @param axis the axis to write on
-     */
-    private static void writeAreaRect(Rect position, Span span, Axis axis)
-    {
-        if (axis == Axis.COLUMN)
-        {
-            position.setX(span.begin);
-            position.setWidth(span.end - span.begin + 1);
-        }
-        else
-        {
-            position.setY(span.begin);
-            position.setHeight(span.end - span.begin + 1);
         }
     }
 
@@ -4199,7 +4155,7 @@ public final class BmTemplateHelper
         }
         else if (area instanceof RectArea && ((RectArea)area).getPosition() != null)
         {
-            writeAreaRect(((RectArea)area).getPosition(), span, axis);
+            writeRect(((RectArea)area).getPosition(), span, axis);
         }
     }
 

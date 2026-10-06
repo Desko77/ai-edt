@@ -695,8 +695,8 @@ public class ColumnOperationsOfATemplateTest
         Rect position = MoxelFactory.eINSTANCE.createRect();
         position.setX(1);
         position.setY(0);
-        position.setWidth(2);
-        position.setHeight(2);
+        position.setWidth(1);
+        position.setHeight(1);
         RectArea area = MoxelFactory.eINSTANCE.createRectArea();
         area.setPosition(position);
         DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
@@ -727,8 +727,8 @@ public class ColumnOperationsOfATemplateTest
         Rect position = MoxelFactory.eINSTANCE.createRect();
         position.setX(2);
         position.setY(0);
-        position.setWidth(3);
-        position.setHeight(1);
+        position.setWidth(2);
+        position.setHeight(0);
         RectArea area = MoxelFactory.eINSTANCE.createRectArea();
         area.setPosition(position);
         DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
@@ -742,7 +742,7 @@ public class ColumnOperationsOfATemplateTest
         assertNull("a column inside the data area is inside the document", inserted.error); //$NON-NLS-1$
         assertEquals("the document runs to the column the area now does", 6, //$NON-NLS-1$
             inserted.lastColumn);
-        assertEquals("the area grew over the inserted column without moving", 4, //$NON-NLS-1$
+        assertEquals("the area grew over the inserted column without moving", 3, //$NON-NLS-1$
             position.getWidth());
 
         BmTemplateHelper.ColumnOutcome deleted = BmTemplateHelper.deleteColumns(doc, 4, 1);
@@ -750,7 +750,7 @@ public class ColumnOperationsOfATemplateTest
         assertNull(deleted.error);
         assertEquals("and back to the column it ends at after the deletion", 5, //$NON-NLS-1$
             deleted.lastColumn);
-        assertEquals(3, position.getWidth());
+        assertEquals(2, position.getWidth());
     }
 
     /** A merge and an area wholly right of an insertion move; one the point lands inside resizes. */
@@ -1036,5 +1036,42 @@ public class ColumnOperationsOfATemplateTest
 
         assertNull(BmTemplateHelper.deleteColumns(doc, 2, 2).error);
         assertEquals(before, readOf(doc));
+    }
+
+    /**
+     * A rectangle of one column carries 0 in its width, the way the template file is read:
+     * beginColumn and endColumn of the same value. It rides with the columns like any other area.
+     */
+    @Test
+    public void aRectangleOfOneColumnRidesWithTheColumns()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(1);
+        position.setY(0);
+        position.setWidth(0);
+        position.setHeight(0);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        com._1c.g5.v8.dt.moxel.NamedItemCells item = MoxelFactory.eINSTANCE.createNamedItemCells();
+        item.setArea(area);
+        doc.getNamedItems().put("Ячейка", item); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome inserted = BmTemplateHelper.insertColumns(doc, 2, 2,
+            "none"); //$NON-NLS-1$
+
+        assertNull(inserted.error);
+        assertEquals("the area stood on column 2 and the columns went in before it", 3, //$NON-NLS-1$
+            position.getX());
+        assertEquals("one column still", 0, position.getWidth()); //$NON-NLS-1$
+        Map<String, Object> read = areaNamed(doc, "Ячейка"); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(4), read.get("fromCol")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(4), read.get("toCol")); //$NON-NLS-1$
+
+        BmTemplateHelper.ColumnOutcome deleted = BmTemplateHelper.deleteColumns(doc, 4, 1);
+
+        assertNull(deleted.error);
+        assertTrue("the one column the area held is gone, and the area with it", //$NON-NLS-1$
+            deleted.removedNamedAreas.contains("Ячейка")); //$NON-NLS-1$
     }
 }
