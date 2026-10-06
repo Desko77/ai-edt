@@ -719,6 +719,93 @@ public class ColumnOperationsOfATemplateTest
         assertEquals("and is counted", 1, removed.removedDataSources); //$NON-NLS-1$
     }
 
+    /** A source whose drawing the deletion took goes with it, wherever its own area lay. */
+    @Test
+    public void aDataSourceGoesAwayWithItsDrawing()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 2, 2, 3, 0, 0, 0, 5, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(3);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing lay in the deleted columns and went with them", //$NON-NLS-1$
+            outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue("and its source went too, though its area lay right of the range", //$NON-NLS-1$
+            doc.getDrawingDataSources().isEmpty());
+        assertEquals("counted once", 1, outcome.removedDataSources); //$NON-NLS-1$
+    }
+
+    /** A source taken with both its drawing and its area is counted once, not twice. */
+    @Test
+    public void aDataSourceTakenWithItsDrawingAndItsAreaIsCountedOnce()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 2, 2, 3, 0, 0, 0, 5, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(1);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue(outcome.removedDrawings.contains(Integer.valueOf(id)));
+        assertTrue(doc.getDrawingDataSources().isEmpty());
+        assertEquals("the drawing and the area were both taken, the source counts once", 1, //$NON-NLS-1$
+            outcome.removedDataSources);
+    }
+
+    /** A source stays while its drawing stays, riding with the columns as before. */
+    @Test
+    public void aDataSourceStaysWhileItsDrawingStays()
+    {
+        SpreadsheetDocument doc = withTextsAcross("A", "B", "C", "D", "E"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        int id = BmTemplateHelper.addDrawing(doc, "Line", 1, 4, 2, 5, 0, 0, 0, 5, -1, null, //$NON-NLS-1$
+            null, null);
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(3);
+        position.setY(0);
+        position.setWidth(1);
+        position.setHeight(1);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        DrawingsDataSource source = MoxelFactory.eINSTANCE.createDrawingsDataSource();
+        source.setDrawingId(id);
+        source.setArea(area);
+        doc.getDrawingDataSources().add(source);
+
+        BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, 2, 2);
+
+        assertNull(outcome.error);
+        assertTrue("the drawing sat right of the range and only moved", //$NON-NLS-1$
+            outcome.removedDrawings.isEmpty());
+        assertEquals(1, doc.getDrawings().size());
+        assertEquals("and its source stayed with it", 1, doc.getDrawingDataSources().size()); //$NON-NLS-1$
+        assertEquals(0, outcome.removedDataSources);
+        assertEquals("the area rode left with the columns", 1, position.getX()); //$NON-NLS-1$
+    }
+
     /** A data area past the last cell holds the end of the document the area defines. */
     @Test
     public void aDataAreaPastTheCellsHoldsTheEndOfTheDocument()
