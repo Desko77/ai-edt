@@ -186,7 +186,17 @@ public final class DebugResumer implements IMcpTool
 
         DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(applicationId);
 
+        // Read before the first resume goes out: the platform's RESUME event for one thread
+        // forgets every id the application issued, and ids read after the resumes would name -1
+        // for threads this call did resume.
+        // Read before the first resume goes out: the platform's RESUME event for one thread
+        // forgets every id the application issued, and ids read after the resumes would name -1
+        // for threads this call did resume.
         List<Long> resumedIds = new ArrayList<>();
+        for (IThread thread : toResume)
+        {
+            resumedIds.add(Long.valueOf(registry.threadIdOf(thread)));
+        }
         for (IThread thread : toResume)
         {
             thread.resume();
@@ -194,7 +204,6 @@ public final class DebugResumer implements IMcpTool
             // resume that fails partway through the list has already taken the earlier threads
             // away, while a thread that stops again leaves its newer stop for the caller's wait.
             registry.clearSnapshotIfCurrent(applicationId, leftBehind);
-            resumedIds.add(Long.valueOf(registry.threadIdOf(thread)));
         }
 
         ToolResult res = ToolResult.success().put("resumed", true) //$NON-NLS-1$
