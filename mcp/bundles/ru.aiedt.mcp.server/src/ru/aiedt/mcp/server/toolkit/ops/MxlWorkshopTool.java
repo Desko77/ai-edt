@@ -2231,20 +2231,20 @@ public class MxlWorkshopTool implements IMcpTool
             (tx, owner) -> {
                 // Resolved without the guard: a removal that matches nothing changes nothing and
                 // writes nothing, and the guard inside asks only the removal that will.
-                SpreadsheetDocument doc = resolvedDocument(owner, templateName);
-                boolean removed = guardedRemoveDrawing(doc, drawingIdF);
-                removedRef[0] = removed;
-                if (removed && !dryRun)
+                DrawingRemoval removal = removeDrawingIn(owner, templateName, drawingIdF);
+                removedRef[0] = removal.removed;
+                if (removal.removed && !dryRun)
                 {
                     String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
-                        templateName, doc);
+                        templateName, removal.doc);
                     if (pErr != null)
                     {
                         persistErrorRef[0] = pErr;
                     }
                 }
-                return removed ? "removed drawing #" + drawingIdF //$NON-NLS-1$
-                    : "no drawing with id " + drawingIdF + " (idempotent skip)"; //$NON-NLS-1$ //$NON-NLS-2$
+                // The unchanged marker for a removal that moved nothing, so the write entry owes
+                // the owner no export either: the operation promises nothing was written.
+                return removal.actionAnswer(drawingIdF);
             });
         if (persistErrorRef[0] != null && r.tags != null)
         {
@@ -2483,6 +2483,70 @@ public class MxlWorkshopTool implements IMcpTool
         }
         BmTemplateHelper.requireResolvablePictures(doc);
         return BmTemplateHelper.removeDrawing(doc, drawingId);
+    }
+
+    /**
+     * What one drawing removal did to the template's document, and whether the document was
+     * already attached: the difference between a model that did not move and a get-or-create that
+     * attached a fresh document the removal itself would not have justified.
+     */
+    static final class DrawingRemoval
+    {
+        /** Whether a drawing left the document. */
+        final boolean removed;
+
+        /**
+         * Whether the document was attached before the call. A template whose document this very
+         * call attached changed, whatever the removal did.
+         */
+        final boolean documentExisted;
+
+        /** The document the removal addressed. */
+        final SpreadsheetDocument doc;
+
+        DrawingRemoval(boolean removed, boolean documentExisted, SpreadsheetDocument doc)
+        {
+            this.removed = removed;
+            this.documentExisted = documentExisted;
+            this.doc = doc;
+        }
+
+        /**
+         * The write action's answer. A removal that matched nothing on a template that already
+         * held its document is the unchanged marker: neither the document nor the owner moved, so
+         * the owner export has nothing to carry and the operation keeps its idempotent wording.
+         *
+         * @param drawingId the drawing the call named
+         * @return the answer message, or the marker the write entry skips the export for
+         */
+        Object actionAnswer(int drawingId)
+        {
+            if (removed)
+            {
+                return "removed drawing #" + drawingId; //$NON-NLS-1$
+            }
+            String skip = "no drawing with id " + drawingId + " (idempotent skip)"; //$NON-NLS-1$ //$NON-NLS-2$
+            return documentExisted ? BmObjectHelper.Unchanged.of(skip) : skip;
+        }
+    }
+
+    /**
+     * Removes a drawing the way the remove_drawing action does: the template is resolved without
+     * the unresolved-picture guard, and the guard asks only the removal that will change
+     * something, so a removal that matches nothing neither refuses nor moves the document.
+     *
+     * @param owner the object {@code ownerFqn} resolved to
+     * @param templateName the template's name
+     * @param drawingId the drawing to remove
+     * @return what the removal did
+     */
+    static DrawingRemoval removeDrawingIn(MdObject owner, String templateName, int drawingId)
+    {
+        MdObject template = resolveTemplate(owner, templateName);
+        boolean documentExisted = BmTemplateHelper.existingSpreadsheetOf(template) != null;
+        SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+        boolean removed = guardedRemoveDrawing(doc, drawingId);
+        return new DrawingRemoval(removed, documentExisted, doc);
     }
 
     /**
