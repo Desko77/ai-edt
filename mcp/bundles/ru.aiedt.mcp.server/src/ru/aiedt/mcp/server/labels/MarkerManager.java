@@ -2173,9 +2173,10 @@ public class MarkerManager
      * <p>
      * The write runs under the file's lock, against the fingerprint of the bytes the storage
      * was read from, and replaces the file atomically: a file that changed after it was read is
-     * left as the changing party wrote it. A tree that still remembers a file the disk no The settings folder is created on disk when missing,
-     * and the workspace is refreshed after the write. A project whose file has no location on
-     * disk, or whose file was never read, is written through the workspace as before.
+     * left as the changing party wrote it. The settings folder is created when missing, and the
+     * workspace holds the written file as a resource without an outside refresh. A project whose
+     * file has no location on disk, or whose file was never read, is written through the
+     * workspace as before.
      * </p>
      *
      * @param project the project
