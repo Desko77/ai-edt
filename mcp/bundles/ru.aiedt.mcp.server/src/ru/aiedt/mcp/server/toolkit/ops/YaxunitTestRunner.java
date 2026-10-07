@@ -690,14 +690,16 @@ public final class YaxunitTestRunner
                     Activator.logInfo("Starting YAXUnit test launch: config=" + matchingConfig.getName() //$NON-NLS-1$
                         + ", startup=" + startupOption); //$NON-NLS-1$
                     launch = workingCopy.launch(ILaunchManager.RUN_MODE, new NullProgressMonitor());
+                    // The decision every answer of this run carries, put where the pickups read
+                    // it: a later call's own arguments and preset must not speak for the launch.
+                    // Recorded before the launch becomes visible, because a concurrent call finds
+                    // the launch without taking this lock and reads the decision straight away.
+                    noteLaunchSkipDecision(runKey, update.skippedByPreset);
                     ACTIVE_LAUNCHES.put(runKey, launch);
                     // A run started here whose report nobody has read yet. This is what makes the
                     // next call a pickup rather than a request for a new run, and it is cleared
                     // the moment the report is handed over.
                     noteUndelivered(runKey);
-                    // The decision every answer of this run carries, put where the pickups read
-                    // it: a later call's own arguments and preset must not speak for the launch.
-                    noteLaunchSkipDecision(runKey, update.skippedByPreset);
                 }
             }
 
