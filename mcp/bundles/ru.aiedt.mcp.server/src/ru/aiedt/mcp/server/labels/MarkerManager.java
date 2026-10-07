@@ -90,6 +90,9 @@ import org.eclipse.core.runtime.IPath;
 
 import ru.aiedt.mcp.server.Activator;
 
+import ru.aiedt.mcp.server.support.AtomicFileReplace;
+
+
 import ru.aiedt.mcp.server.support.LegacyStorageMigration;
 
 import ru.aiedt.mcp.server.labels.model.Marker;
@@ -124,7 +127,13 @@ import ru.aiedt.mcp.server.labels.model.MarkerStore;
 
  * and publishes it only after the file is stored; a failed write puts the previous contents back
 
- * and tells the caller. A marker file that does not parse is not cached and is not overwritten.
+ * and tells the caller. A marker file that does not parse is not cached and is not overwritten,
+
+ * and neither is one that could not be read. The cache is served only while the file still
+
+ * holds the bytes it was read from, and a save replaces the file under its lock only when
+
+ * it still holds them.
 
  * </p>
 
@@ -183,6 +192,12 @@ public class MarkerManager
 
 
     private final Map<IProject, MarkerStore> cache = new HashMap<>();
+
+    /**
+     * The digest of the bytes each project's storage was read from. A cache entry is served
+     * only while the file still holds them.
+     */
+    private final Map<IProject, String> fingerprints = new HashMap<>();
 
     /**
 
@@ -348,6 +363,8 @@ public class MarkerManager
 
                 current.cache.clear();
 
+                current.fingerprints.clear();
+
             }
 
             finally
@@ -448,7 +465,7 @@ public class MarkerManager
 
             MarkerStore cached = cache.get(project);
 
-            if (cached != null)
+            if (cached != null && cacheIsCurrent(project))
 
             {
 
@@ -531,7 +548,7 @@ public class MarkerManager
 
             MarkerStore cached = cache.get(project);
 
-            if (cached != null)
+            if (cached != null && cacheIsCurrent(project))
 
             {
 
@@ -1755,6 +1772,8 @@ public class MarkerManager
 
             unreadable.remove(project);
 
+            fingerprints.remove(project);
+
         }
 
         finally
@@ -1853,62 +1872,44 @@ public class MarkerManager
 
 
     /**
-
      * Returns the cached storage, loading it when absent. The caller holds the write lock.
-
      * <p>
-
-     * An unreadable file is not cached. The caller must not write an empty storage over it.
-
+     * An unreadable file is not cached, and neither is a read that failed: the caller must
+     * not write an empty storage over either. A failed read is not remembered as a state
+     * either: the next call reads the file again, so a transient failure disables the
+     * markers only while it lasts. A cache entry is served only while the file still holds
+     * the bytes it was read from; once the file changes, the entry is dropped and the
+     * storage is reloaded from what the file holds now.
      * </p>
-
      *
-
      * @param project the project
-
-     * @return the live storage, or <code>null</code> when the file does not parse
-
+     * @return the live storage, or <code>null</code> when the file does not parse or cannot be
+     *         read
      */
-
     private MarkerStore loadIntoCache(IProject project)
-
     {
-
         if (project == null || unreadable.contains(project))
-
         {
-
             return null;
-
         }
-
         MarkerStore cached = cache.get(project);
-
         if (cached != null)
-
         {
-
-            return cached;
-
+            if (cacheIsCurrent(project))
+            {
+                return cached;
+            }
+            cache.remove(project);
+            fingerprints.remove(project);
         }
-
         MarkerStore loaded = loadMarkerStorage(project);
-
         if (loaded == null)
-
         {
-
             return null;
-
         }
-
         cache.put(project, loaded);
-
         return loaded;
-
     }
-
-
 
     /**
 
@@ -2001,196 +2002,251 @@ public class MarkerManager
     }
 
     /**
-
-     * Reads a project's marker file into a storage.
-
+     * Reads a project's marker file into a storage and remembers the bytes it was read from.
      * <p>
-
-     * A missing or empty file resolves to an empty storage. Malformed YAML does not: it is recorded
-
-     * as unreadable and answered with <code>null</code>, so nobody caches that emptiness or writes it
-
-     * back over the file. The load ignores properties it does not know, so a file written by a newer
-
-     * version still reads.
-
+     * A missing file resolves to an empty storage. A file the workspace does not know about is
+     * read from the disk it lies on: the bytes are the project's own whichever party put them
+     * there. Malformed YAML is recorded as unreadable and answered with <code>null</code>, and a
+     * read that failed is answered the same way and tried again on the next call: neither is
+     * cached, so no mutation writes an empty storage over a file it never read. The load
+     * ignores properties it does not know, so a file written by a newer version still reads.
      * </p>
-
      *
-
      * @param project the project
-
-     * @return the loaded storage, an empty one when there is nothing to read, or <code>null</code> when
-
-     *         the file does not parse
-
+     * @return the loaded storage, an empty one when there is nothing to read, or
+     *         <code>null</code> when the file does not parse or cannot be read
      */
-
     private MarkerStore loadMarkerStorage(IProject project)
-
     {
-
         if (project == null || !project.isAccessible())
-
         {
-
             return new MarkerStore();
-
         }
-
         IFile file = getMarkersFile(project);
-
-        if (file == null || !file.exists())
-
+        if (file == null)
         {
-
-            unreadable.remove(project);
-
             return new MarkerStore();
-
         }
-
-        try (InputStream input = file.getContents();
-
-            Reader reader = new InputStreamReader(input, StandardCharsets.UTF_8))
-
+        byte[] bytes;
+        try
         {
-
-            MarkerStore storage = createLoadYaml().load(reader);
-
-            unreadable.remove(project);
-
-            return storage != null ? storage : new MarkerStore();
-
+            bytes = readMarkersBytes(file);
         }
-
         catch (CoreException | IOException e)
-
         {
-
+            fingerprints.remove(project);
             Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
-
-            return new MarkerStore();
-
-        }
-
-        catch (YAMLException e)
-
-        {
-
-            // Corrupt YAML or a git merge-conflict marker. Remember it and refuse to cache an empty
-
-            // storage: the next mutation would otherwise overwrite both sides of the conflict.
-
-            unreadable.add(project);
-
-            Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
-
             return null;
-
         }
-
+        unreadable.remove(project);
+        if (bytes == null)
+        {
+            fingerprints.put(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
+            return new MarkerStore();
+        }
+        try (Reader reader = new InputStreamReader(new ByteArrayInputStream(bytes),
+            StandardCharsets.UTF_8))
+        {
+            MarkerStore storage = createLoadYaml().load(reader);
+            fingerprints.put(project, AtomicFileReplace.fingerprint(bytes));
+            return storage != null ? storage : new MarkerStore();
+        }
+        catch (IOException e)
+        {
+            fingerprints.remove(project);
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
+        }
+        catch (YAMLException e)
+        {
+            // Corrupt YAML or a git merge-conflict marker. Remember it and refuse to cache an
+            // empty storage: the next mutation would otherwise overwrite both sides of the
+            // conflict.
+            unreadable.add(project);
+            fingerprints.remove(project);
+            Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
+        }
     }
-
-
-
 
     /**
-
-     * Writes a storage back to a project's marker file, creating the settings folder if needed.
-
+     * Reads the marker file's bytes, following the file onto the local disk when the resource
+     * tree does not have it yet.
+     * <p>
+     * Another process writes the file - git checks a branch out, an editor outside the
+     * workspace saves it - while the tree still answers that there is no such resource. The
+     * bytes on disk are the ones the project has, so they are read directly when the tree has
+     * no file. The disk decides the other way around too: a file the tree remembers that the
+     * disk no longer has counts as no file, not as a read error.
+     * </p>
      *
-
-     * @param project the project
-
-     * @param storage the storage to write
-
-     * @return <code>true</code> when the file was written; <code>false</code> when it was not
-
+     * @param file the marker file handle
+     * @return the bytes, or {@code null} when there is no file at all
+     * @throws CoreException when the file cannot be read through the workspace
+     * @throws IOException when the file cannot be read from disk
      */
-
-    private boolean saveMarkerStorage(IProject project, MarkerStore storage)
-
+    private static byte[] readMarkersBytes(IFile file) throws CoreException, IOException
     {
-
-        if (project == null)
-
+        IPath location = file.getLocation();
+        Path onDisk = location == null ? null : location.toFile().toPath();
+        if (onDisk != null && !Files.exists(onDisk))
         {
-
-            return false;
-
+            // The tree may still remember a file the disk no longer has - a delete the
+            // workspace was never told about. The disk decides whether there is a file.
+            return null;
         }
-
-        try
-
+        if (file.exists())
         {
-
-            IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
-
-            if (!settingsFolder.exists())
-
+            try (InputStream input = file.getContents())
             {
-
-                settingsFolder.create(true, true, null);
-
+                return input.readAllBytes();
             }
-
-            IFile file = settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
-
-            if (file.exists() && !canOverwrite(file))
-
-            {
-
-                Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
-
-                    + ": the file is read-only", null); //$NON-NLS-1$
-
-                return false;
-
-            }
-
-            byte[] bytes = dumpToString(storage).getBytes(StandardCharsets.UTF_8);
-
-            try (InputStream input = new ByteArrayInputStream(bytes))
-
-            {
-
-                if (file.exists())
-
-                {
-
-                    file.setContents(input, true, true, null);
-
-                }
-
-                else
-
-                {
-
-                    file.create(input, true, null);
-
-                }
-
-            }
-
-            return true;
-
         }
-
-        catch (CoreException | IOException e)
-
-        {
-
-            Activator.logError("Could not save the marker file for project " + project.getName(), e); //$NON-NLS-1$
-
-            return false;
-
-        }
-
+        return onDisk == null ? null : Files.readAllBytes(onDisk);
     }
 
+    /**
+     * Tells whether the cached storage still describes the marker file.
+     * <p>
+     * The cache is served only while the file holds the bytes it was read from. The comparison
+     * reads the file the same way the load does, so an edit made outside the workspace is seen
+     * even before the workspace has been told about it.
+     * </p>
+     * <p>
+     * The caller may hold the read lock, so the file handle is built without the legacy
+     * carry-over, which writes to disk and belongs under the write lock.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the remembered fingerprint still matches the file
+     */
+    private boolean cacheIsCurrent(IProject project)
+    {
+        String remembered = fingerprints.get(project);
+        if (remembered == null || !project.isAccessible())
+        {
+            return false;
+        }
+        IFile file = project.getFolder(MarkerKeys.SETTINGS_FOLDER)
+            .getFile(MarkerKeys.MARKERS_FILE);
+        return remembered.equals(diskFingerprint(project, file));
+    }
 
+    /**
+     * The fingerprint of the marker file as it stands now.
+     *
+     * @param project the project, for the log line
+     * @param file the marker file handle
+     * @return the fingerprint, {@link AtomicFileReplace#NO_FILE_FINGERPRINT} when there is no
+     *         file, or {@code null} when it cannot be read
+     */
+    private static String diskFingerprint(IProject project, IFile file)
+    {
+        try
+        {
+            byte[] bytes = readMarkersBytes(file);
+            return bytes == null ? AtomicFileReplace.NO_FILE_FINGERPRINT
+                : AtomicFileReplace.fingerprint(bytes);
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
+        }
+    }
 
+    /**
+     * Writes a storage back to a project's marker file.
+     * <p>
+     * The write runs under the file's lock, against the fingerprint of the bytes the storage
+     * was read from, and replaces the file atomically: a file that changed after it was read is
+     * left as the changing party wrote it. The settings folder is created when missing, and the
+     * workspace holds the written file as a resource without an outside refresh. A project whose
+     * file has no location on disk, or whose file was never read, is written through the
+     * workspace as before.
+     * </p>
+     *
+     * @param project the project
+     * @param storage the storage to write
+     * @return <code>true</code> when the file was written; <code>false</code> when it was not
+     */
+    private boolean saveMarkerStorage(IProject project, MarkerStore storage)
+    {
+        if (project == null)
+        {
+            return false;
+        }
+        IFile file = getMarkersFile(project);
+        byte[] bytes = dumpToString(storage).getBytes(StandardCharsets.UTF_8);
+        String expected = fingerprints.get(project);
+        IPath location = file.getLocation();
+        if (expected == null || location == null)
+        {
+            return saveThroughWorkspace(project, file, bytes);
+        }
+        if (file.exists() && !canOverwrite(file))
+        {
+            Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                + ": the file is read-only", null); //$NON-NLS-1$
+            return false;
+        }
+        AtomicFileReplace.Outcome written = AtomicFileReplace.replace(
+            location.toFile().toPath(), expected, bytes, file);
+        if (!written.isOk())
+        {
+            Activator.logWarning("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                + ": " + written); //$NON-NLS-1$
+            return false;
+        }
+        fingerprints.put(project, AtomicFileReplace.fingerprint(bytes));
+        return true;
+    }
+
+    /**
+     * Writes the bytes through the workspace, the route used when the file has no location on
+     * disk or was never read by this manager. An existing read-only file is refused here as it
+     * is on the locked route: a forced workspace write clears the read-only flag and overwrites
+     * the file while telling the caller it was saved.
+     *
+     * @param project the project
+     * @param file the marker file handle
+     * @param bytes the bytes to write
+     * @return <code>true</code> when the file was written
+     */
+    static boolean saveThroughWorkspace(IProject project, IFile file, byte[] bytes)
+    {
+        try
+        {
+            IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
+            if (!settingsFolder.exists())
+            {
+                settingsFolder.create(true, true, null);
+            }
+            if (file.exists() && !canOverwrite(file))
+            {
+                Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                    + ": the file is read-only", null); //$NON-NLS-1$
+                return false;
+            }
+            try (InputStream input = new ByteArrayInputStream(bytes))
+            {
+                if (file.exists())
+                {
+                    file.setContents(input, true, true, null);
+                }
+                else
+                {
+                    file.create(input, true, null);
+                }
+            }
+            return true;
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Could not save the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return false;
+        }
+    }
 
     /**
 
