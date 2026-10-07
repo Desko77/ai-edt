@@ -22,10 +22,13 @@ import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.EStructuralFeature;
 
 import com._1c.g5.v8.dt.mcore.DateQualifiers;
+import com._1c.g5.v8.dt.mcore.DateValue;
 import com._1c.g5.v8.dt.mcore.NumberQualifiers;
+import com._1c.g5.v8.dt.mcore.ReferenceValue;
 import com._1c.g5.v8.dt.mcore.StringQualifiers;
 import com._1c.g5.v8.dt.mcore.TypeDescription;
 import com._1c.g5.v8.dt.mcore.TypeItem;
+import com._1c.g5.v8.dt.mcore.UndefinedValue;
 import com._1c.g5.v8.dt.mcore.util.McoreUtil;
 import com._1c.g5.v8.dt.metadata.mdclass.BasicCommand;
 import com._1c.g5.v8.dt.metadata.mdclass.BasicFeature;
@@ -92,7 +95,7 @@ final class MetadataFormatter
 
     private static final String[] FULL_ATTRIBUTE_COLUMNS = { "Name", "Synonym", "Type", "Indexing", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         "Fill Checking", "Full Text Search", "Password Mode", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "Multi Line", "Quick Choice", "Create On Input" }; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "Multi Line", "Quick Choice", "Create On Input", "Fill Value" }; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
     private static final String[] CHARACTERISTIC_COLUMNS = { "Index", "Characteristic Types", "Key Field", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "Types Filter Field", "Types Filter Value", "Characteristic Values", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -784,7 +787,8 @@ final class MetadataFormatter
 
             rows.add(new String[] { attribute.getName(), synonym, type, indexing,
                 formatEnum(attribute.getFillChecking()), fullTextSearch, passwordMode, multiLine,
-                formatEnum(attribute.getQuickChoice()), formatEnum(attribute.getCreateOnInput()) });
+                formatEnum(attribute.getQuickChoice()), formatEnum(attribute.getCreateOnInput()),
+                fillValueFeature(attribute) });
         }
         return rows;
     }
@@ -1169,6 +1173,132 @@ final class MetadataFormatter
             rendered.append(name).append(qualifierSuffix(name, typeDescription));
         }
         return rendered.length() == 0 ? DASH : rendered.toString();
+    }
+
+    /**
+     * Reads one attribute's fill value feature and renders it for the wide attribute table.
+     *
+     * @param attribute the attribute, not <code>null</code>
+     * @return the cell text; a dash when this attribute kind carries no fill value at all, or when the
+     *         feature is there but unset
+     */
+    private static String fillValueFeature(EObject attribute)
+    {
+        EStructuralFeature feature = attribute.eClass().getEStructuralFeature("fillValue"); //$NON-NLS-1$
+        if (feature == null)
+        {
+            return DASH;
+        }
+        return formatFillValue(attribute.eGet(feature));
+    }
+
+    /**
+     * Renders an mcore fill value as one cell.
+     * <p>
+     * A reference value is shown as the FQN of what it points at, because that is the spelling a caller
+     * can hand back: {@code Enum.X.EnumValue.Y} for an enum value,
+     * {@code ChartOfCharacteristicTypes.X.Y} for a predefined item, {@code Catalog.X.EmptyRef} for an
+     * empty reference. A date is shown the way EDT serializes it. Undefined is one word, so the reader
+     * can tell a cleared attribute from an unset one.
+     * </p>
+     *
+     * @param value the value the model holds; may be <code>null</code>
+     * @return the cell text, never <code>null</code>
+     */
+    static String formatFillValue(Object value)
+    {
+        if (value == null)
+        {
+            return DASH;
+        }
+        if (value instanceof UndefinedValue)
+        {
+            return "Undefined"; //$NON-NLS-1$
+        }
+        if (value instanceof DateValue)
+        {
+            com._1c.g5.v8.dt.mcore.util.Date date = ((DateValue)value).getValue();
+            return date == null ? DASH : formatDate(date);
+        }
+        if (value instanceof ReferenceValue)
+        {
+            EObject referenced = ((ReferenceValue)value).getValue();
+            return referenced == null ? DASH : metadataFqn(referenced);
+        }
+        return EObjectProbe.primaryValueAsString((EObject)value);
+    }
+
+    /**
+     * Formats an mcore date the way EDT serializes it into an .mdo.
+     *
+     * @param date the date, not <code>null</code>
+     * @return {@code YYYY-MM-DDTHH:MM:SS}
+     */
+    private static String formatDate(com._1c.g5.v8.dt.mcore.util.Date date)
+    {
+        return String.format(Locale.ROOT, "%04d-%02d-%02dT%02d:%02d:%02d", //$NON-NLS-1$
+            Integer.valueOf(date.getYear()), Integer.valueOf(date.getMonth()),
+            Integer.valueOf(date.getDay()), Integer.valueOf(date.getHour()),
+            Integer.valueOf(date.getMinute()), Integer.valueOf(date.getSecond()));
+    }
+
+    /**
+     * Names an object the way an .mdo addresses it, from the object up through its containers.
+     * <p>
+     * A metadata object contributes {@code Type.Name}; anything else with a name contributes the name
+     * alone (that is how a predefined item is addressed); a container that is neither - the predefined
+     * holder, the produced-types holder, the ref type - contributes nothing, which is what makes
+     * {@code Catalog.X.EmptyRef} come out right. The object itself always contributes something: a
+     * nameless non-MdObject is named by its model class, which is the EmptyRef case.
+     * </p>
+     *
+     * @param object the object, not <code>null</code>
+     * @return the qualified name
+     */
+    private static String metadataFqn(EObject object)
+    {
+        StringBuilder fqn = new StringBuilder(ownSegmentOf(object));
+        for (EObject container = object.eContainer(); container != null; container = container.eContainer())
+        {
+            if (!(container instanceof MdObject) && nameOf(container) == null)
+            {
+                // A pure holder: transparent in the qualified name.
+                continue;
+            }
+            fqn.insert(0, container instanceof MdObject
+                ? container.eClass().getName() + "." + ((MdObject)container).getName() + "." //$NON-NLS-1$ //$NON-NLS-2$
+                : nameOf(container) + "."); //$NON-NLS-1$
+        }
+        return fqn.toString();
+    }
+
+    /**
+     * The segment the addressed object itself adds, always saying something.
+     *
+     * @param object the object, not <code>null</code>
+     * @return the segment, never <code>null</code>
+     */
+    private static String ownSegmentOf(EObject object)
+    {
+        if (object instanceof MdObject)
+        {
+            return object.eClass().getName() + "." + ((MdObject)object).getName(); //$NON-NLS-1$
+        }
+        String name = nameOf(object);
+        return name != null ? name : object.eClass().getName();
+    }
+
+    /**
+     * Reads an object's {@code name} feature, when it has one that says something.
+     *
+     * @param object the object, not <code>null</code>
+     * @return the name, or <code>null</code> when there is none
+     */
+    private static String nameOf(EObject object)
+    {
+        EStructuralFeature nameFeature = object.eClass().getEStructuralFeature("name"); //$NON-NLS-1$
+        Object name = nameFeature == null ? null : object.eGet(nameFeature);
+        return name != null && !name.toString().isEmpty() ? name.toString() : null;
     }
 
     /**

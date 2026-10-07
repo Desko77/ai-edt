@@ -1541,18 +1541,37 @@ public final class BmObjectHelper
      */
     public static String setProperty(EObject obj, String propertyName, Object value)
     {
+        return setProperty(obj, propertyName, value, null);
+    }
+
+    /**
+     * Project-aware variant of {@link #setProperty(EObject, String, Object)}:
+     * {@code fillValue} on a reference-typed attribute resolves its enum value,
+     * predefined item or empty reference against the project's configuration,
+     * which needs the project the attribute lives in. Every other property
+     * behaves exactly as in the project-less overload.
+     *
+     * @param project the owning project; may be {@code null}
+     * @return {@code null} on success or an error message
+     */
+    public static String setProperty(EObject obj, String propertyName, Object value,
+        org.eclipse.core.resources.IProject project)
+    {
         if (obj == null || propertyName == null || propertyName.isEmpty())
         {
             return "owner and propertyName are required"; //$NON-NLS-1$
         }
         // fillValue is an mcore.Value EObject (not a scalar) whose subtype
-        // depends on the attribute's own primitive type - delegate to the
-        // defined-type helper which builds the matching Value (Boolean / Number
-        // / String / Undefined). coerceValue cannot do this: it sees only the
-        // setFillValue(Value) parameter type, not the attribute's type.
+        // depends on the attribute's own type - delegate to the defined-type
+        // helper which builds the matching Value (Boolean / Number / String /
+        // Date / Undefined / a ReferenceValue holding an enum value, a
+        // predefined item or the type's EmptyRef). coerceValue cannot do this:
+        // it sees only the setFillValue(Value) parameter type, not the
+        // attribute's type.
         if ("fillValue".equalsIgnoreCase(propertyName)) //$NON-NLS-1$
         {
-            return BmDefinedTypeHelper.applyFillValue(obj, value == null ? null : value.toString());
+            return BmDefinedTypeHelper.applyFillValue(obj,
+                value == null ? null : value.toString(), project);
         }
         String setter = "set" + Character.toUpperCase(propertyName.charAt(0)) //$NON-NLS-1$
             + propertyName.substring(1);

@@ -1026,7 +1026,7 @@ final class ObjectOps
                     listShape[0] = outcome.value;
                     return outcome.message;
                 }
-                String setErr = BmObjectHelper.setProperty(target, propertyName, propertyValue);
+                String setErr = BmObjectHelper.setProperty(target, propertyName, propertyValue, project);
                 if (setErr != null)
                 {
                     throw new RuntimeException(setErr);
