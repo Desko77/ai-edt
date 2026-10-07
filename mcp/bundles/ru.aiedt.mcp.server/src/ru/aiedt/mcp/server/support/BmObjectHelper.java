@@ -1811,7 +1811,166 @@ public final class BmObjectHelper
                 return localString;
             }
         }
+        Object formReference = resolveFormReference(owner, s, targetType);
+        if (formReference != null)
+        {
+            return formReference;
+        }
         return value;
+    }
+
+    /**
+     * Whether a setter parameter type is a form type the given form fits.
+     * <p>
+     * A form is an {@code EObject}, so a setter that takes any {@code EObject} would accept one too;
+     * such a property is not a form reference, and text written to it is not a form's name. The
+     * parameter has to be the model's form interface or one of its per-purpose subtypes.
+     * </p>
+     *
+     * @param targetType what the setter takes
+     * @param form one of the owner's forms
+     * @return <code>true</code> when the setter takes a form and this form is one it takes
+     */
+    static boolean takesAForm(Class<?> targetType, EObject form)
+    {
+        if (targetType == null || form == null || !targetType.isInstance(form))
+        {
+            return false;
+        }
+        Class<?> formBase = interfaceNamed(form.getClass(), "BasicForm"); //$NON-NLS-1$
+        return formBase != null && formBase.isAssignableFrom(targetType);
+    }
+
+    /**
+     * Finds an interface by its simple name among everything a class implements.
+     *
+     * @param type the class to look through, with its superclasses and their interfaces
+     * @param simpleName the interface's simple name
+     * @return the interface, or <code>null</code> when the class implements none by that name
+     */
+    private static Class<?> interfaceNamed(Class<?> type, String simpleName)
+    {
+        for (Class<?> current = type; current != null; current = current.getSuperclass())
+        {
+            for (Class<?> declared : current.getInterfaces())
+            {
+                Class<?> found = interfaceNamedAmong(declared, simpleName);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds an interface by its simple name in one interface and everything it extends.
+     *
+     * @param candidate the interface to look at first
+     * @param simpleName the interface's simple name
+     * @return the interface, or <code>null</code> when neither it nor a parent carries that name
+     */
+    private static Class<?> interfaceNamedAmong(Class<?> candidate, String simpleName)
+    {
+        if (candidate.getSimpleName().equals(simpleName))
+        {
+            return candidate;
+        }
+        for (Class<?> parent : candidate.getInterfaces())
+        {
+            Class<?> found = interfaceNamedAmong(parent, simpleName);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves text that names one of the owner's forms into the form object a reference setter
+     * takes.
+     * <p>
+     * The default-form slots hold a form, not a scalar: {@code setDefaultForm(BasicForm)} on a data
+     * processor or report, {@code setDefaultObjectForm(CatalogForm)} and its siblings on the types
+     * that keep one slot per purpose. With only text to pass, no operation could change one - the
+     * write reached the setter and came back as a refusal about a composite value. The text is the
+     * form's name or its address ({@code DataProcessor.Обработка.Form.Форма}); a name the owner does
+     * not declare, and an address naming another owner's form, are refused with the forms this owner
+     * has, so the caller corrects it in one round trip.
+     * </p>
+     *
+     * @param owner the object being written
+     * @param text what the caller gave
+     * @param targetType what the setter takes
+     * @return the form to pass to the setter, or <code>null</code> when this is not a form reference
+     */
+    private static Object resolveFormReference(EObject owner, String text, Class<?> targetType)
+    {
+        if (owner == null || text == null || text.isEmpty())
+        {
+            return null;
+        }
+        EList<? extends EObject> forms = getChildListByKind(owner, "Form"); //$NON-NLS-1$
+        // The parameter type decides: an owner holds forms whatever the property is, and only a
+        // setter that takes one of them is a reference to resolve. Comparing against the owner's
+        // first form covers the per-purpose types without naming any of them - the plugin does not
+        // compile against them.
+        if (forms == null || forms.isEmpty() || !takesAForm(targetType, forms.get(0)))
+        {
+            return null;
+        }
+        String name = text;
+        int lastDot = text.lastIndexOf('.');
+        if (lastDot >= 0)
+        {
+            name = addressesOneOfTheseForms(owner, text) ? text.substring(lastDot + 1) : null;
+        }
+        EObject form = name == null ? null : findChildByNameReflective(forms, name);
+        if (form != null)
+        {
+            return form;
+        }
+        List<String> names = new ArrayList<>();
+        for (EObject child : forms)
+        {
+            String childName = eObjectName(child);
+            if (childName != null)
+            {
+                names.add(childName);
+            }
+        }
+        throw new IllegalArgumentException(TextSuggest.invalidValue("form", text, names)); //$NON-NLS-1$
+    }
+
+    /**
+     * Tells whether a form address names a form of this owner: the address ends in a form kind and
+     * a name, and the part before them is the owner's own address.
+     *
+     * @param owner the object being written
+     * @param address the address the caller wrote
+     * @return true when the address is one of this owner's form addresses
+     */
+    private static boolean addressesOneOfTheseForms(EObject owner, String address)
+    {
+        String[] segments = address.split("\\."); //$NON-NLS-1$
+        if (segments.length < 3 || !"Form".equals(canonicalChildKind(segments[segments.length - 2]))) //$NON-NLS-1$
+        {
+            return false;
+        }
+        String ownerName = eObjectName(owner);
+        if (ownerName == null)
+        {
+            return false;
+        }
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < segments.length - 2; i++)
+        {
+            prefix.append(i == 0 ? "" : ".").append(segments[i]); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String ownerAddress = owner.eClass().getName() + "." + ownerName; //$NON-NLS-1$
+        return MetadataTypeCatalog.normalizeFqn(prefix.toString()).equalsIgnoreCase(ownerAddress);
     }
 
     /**
@@ -2283,20 +2442,36 @@ public final class BmObjectHelper
         }
         for (EObject child : list)
         {
-            try
+            String childName = eObjectName(child);
+            if (childName != null && name.equalsIgnoreCase(childName))
             {
-                Object nm = child.getClass().getMethod("getName").invoke(child); //$NON-NLS-1$
-                if (nm != null && name.equalsIgnoreCase(nm.toString()))
-                {
-                    return child;
-                }
-            }
-            catch (Exception ignored)
-            {
-                // child exposes no getName() - skip
+                return child;
             }
         }
         return null;
+    }
+
+    /**
+     * The name a metadata child answers to, or {@code null} when it exposes no {@code getName()}.
+     *
+     * @param child the object to read
+     * @return its name, or {@code null}
+     */
+    private static String eObjectName(EObject child)
+    {
+        if (child == null)
+        {
+            return null;
+        }
+        try
+        {
+            Object name = child.getClass().getMethod("getName").invoke(child); //$NON-NLS-1$
+            return name == null ? null : name.toString();
+        }
+        catch (Exception noName)
+        {
+            return null;
+        }
     }
 
     /** {@code true} when the kind segment names the StandardAttribute collection. */
