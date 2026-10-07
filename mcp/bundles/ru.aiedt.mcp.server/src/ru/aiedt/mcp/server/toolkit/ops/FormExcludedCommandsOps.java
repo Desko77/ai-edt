@@ -150,7 +150,29 @@ final class FormExcludedCommandsOps
         {
             return ToolResult.error(applied.substring("Error:".length()).trim()).toJson(); //$NON-NLS-1$
         }
-        return answer(formFqn, written.isEmpty() ? proposed : written.get(0), dryRun).toJson();
+        return withWriteNote(answer(formFqn, written.isEmpty() ? proposed : written.get(0), dryRun),
+            applied).toJson();
+    }
+
+    /**
+     * Adds what the form write said about reaching the disk to a successful answer.
+     * <p>
+     * The model change is committed before the form file is exported, and the export can time out or
+     * fail on its own. The write then returns a note rather than an error, and an answer without it
+     * would read as a file that carries the exclusions.
+     * </p>
+     *
+     * @param result the successful answer
+     * @param writeNote what the form write returned; <code>null</code> or empty when it had nothing to say
+     * @return the same answer, with {@code persistNote} when there is a note
+     */
+    static ToolResult withWriteNote(ToolResult result, String writeNote)
+    {
+        if (writeNote != null && !writeNote.trim().isEmpty())
+        {
+            result.put("persistNote", writeNote.trim()); //$NON-NLS-1$
+        }
+        return result;
     }
 
     /**
