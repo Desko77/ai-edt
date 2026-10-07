@@ -220,14 +220,6 @@ public class MarkerManager
     private final Set<IProject> unreadable = new HashSet<>();
 
 
-    /**
-     * Projects whose marker file could not be read since the cache entry was last dropped.
-     * An unreadable answer is not an empty store: caching one would have the next mutation
-     * write that emptiness over a file this reader could not even open.
-     */
-    private final Set<IProject> failedReads = new HashSet<>();
-
-
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
@@ -372,8 +364,6 @@ public class MarkerManager
                 current.cache.clear();
 
                 current.fingerprints.clear();
-
-                current.failedReads.clear();
 
             }
 
@@ -1784,8 +1774,6 @@ public class MarkerManager
 
             fingerprints.remove(project);
 
-            failedReads.remove(project);
-
         }
 
         finally
@@ -1887,9 +1875,11 @@ public class MarkerManager
      * Returns the cached storage, loading it when absent. The caller holds the write lock.
      * <p>
      * An unreadable file is not cached, and neither is a read that failed: the caller must
-     * not write an empty storage over either. A cache entry is served only while the file
-     * still holds the bytes it was read from; once the file changes, the entry is dropped and
-     * the storage is reloaded from what the file holds now.
+     * not write an empty storage over either. A failed read is not remembered as a state
+     * either: the next call reads the file again, so a transient failure disables the
+     * markers only while it lasts. A cache entry is served only while the file still holds
+     * the bytes it was read from; once the file changes, the entry is dropped and the
+     * storage is reloaded from what the file holds now.
      * </p>
      *
      * @param project the project
@@ -1898,7 +1888,7 @@ public class MarkerManager
      */
     private MarkerStore loadIntoCache(IProject project)
     {
-        if (project == null || unreadable.contains(project) || failedReads.contains(project))
+        if (project == null || unreadable.contains(project))
         {
             return null;
         }
@@ -2017,9 +2007,9 @@ public class MarkerManager
      * A missing file resolves to an empty storage. A file the workspace does not know about is
      * read from the disk it lies on: the bytes are the project's own whichever party put them
      * there. Malformed YAML is recorded as unreadable and answered with <code>null</code>, and a
-     * read that failed is recorded as failed and answered the same way: neither is cached, so no
-     * mutation writes an empty storage over a file it never read. The load ignores properties
-     * it does not know, so a file written by a newer version still reads.
+     * read that failed is answered the same way and tried again on the next call: neither is
+     * cached, so no mutation writes an empty storage over a file it never read. The load
+     * ignores properties it does not know, so a file written by a newer version still reads.
      * </p>
      *
      * @param project the project
@@ -2044,13 +2034,11 @@ public class MarkerManager
         }
         catch (CoreException | IOException e)
         {
-            failedReads.add(project);
             fingerprints.remove(project);
             Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
             return null;
         }
         unreadable.remove(project);
-        failedReads.remove(project);
         if (bytes == null)
         {
             fingerprints.put(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
@@ -2065,7 +2053,6 @@ public class MarkerManager
         }
         catch (IOException e)
         {
-            failedReads.add(project);
             fingerprints.remove(project);
             Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
             return null;
