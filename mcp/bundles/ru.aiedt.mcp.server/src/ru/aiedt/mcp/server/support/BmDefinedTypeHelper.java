@@ -1554,19 +1554,133 @@ public final class BmDefinedTypeHelper
     /**
      * Sets an attribute's fill value (the platform "Default value" /
      * "Значение заполнения"). The mcore {@code Value} subtype is chosen from the
-     * attribute's own primitive type: Boolean -&gt; BooleanValue, Number -&gt;
-     * NumberValue, String -&gt; StringValue. An empty raw value (or "Undefined" /
-     * "Неопределено") -&gt; UndefinedValue (the platform default). Date and
-     * reference types are intentionally not handled (a date default is usually a
-     * StandardBeginningDate; a reference default needs empty-ref / predefined-item
-     * resolution) and return a clear message. Reliable on an EXISTING, fully
-     * resolved attribute (set_object_property); not wired into creation because a
-     * freshly created in-session type may not resolve its name yet.
+     * attribute's own single type: Boolean -&gt; BooleanValue, Number -&gt;
+     * NumberValue, String -&gt; StringValue (a string longer than the attribute's
+     * declared length is refused before anything is written), Date -&gt; DateValue
+     * parsed against the attribute's date qualifier, a reference type -&gt;
+     * ReferenceValue holding an enum value, a predefined item or the type's
+     * EmptyRef. An empty raw value (or "Undefined" / "Неопределено") -&gt;
+     * UndefinedValue (the platform default). The literals "EmptyRef" /
+     * "ПустаяСсылка" name the type's empty reference and "StandardBeginningDate"
+     * / "НачалоДаты" the beginning-of-date date. A composite type (more than one
+     * type in the description) is refused. Reliable on an EXISTING, fully
+     * resolved attribute (set_object_property); not wired into creation because
+     * a freshly created in-session type may not resolve its name yet.
      *
      * @return {@code null} on success, or an error message (mirrors
      *         {@link ru.aiedt.mcp.server.support.BmObjectHelper#setProperty}).
      */
     public static String applyFillValue(EObject target, String raw)
+    {
+        return applyFillValue(target, raw, (Configuration)null);
+    }
+
+    /**
+     * Project-aware variant of {@link #applyFillValue(EObject, String)}: the
+     * project's configuration is what reference-typed fills are resolved against
+     * (an enum value, a predefined item and the produced EmptyRef all live in
+     * objects the configuration holds). For an extension project the
+     * configuration of the project it extends is searched second, so a type of
+     * the base configuration the extension did not adopt still resolves. A null
+     * or unresolved project leaves the primitive kinds working and the reference
+     * kinds refused with the reason.
+     *
+     * @param project the owning project; may be {@code null}
+     * @return {@code null} on success, or an error message
+     */
+    public static String applyFillValue(EObject target, String raw, IProject project)
+    {
+        return applyFillValue(target, raw, resolutionOrder(project));
+    }
+
+    /**
+     * The configurations a reference fill resolves against, in search order:
+     * the project's own configuration first, then - for an extension project -
+     * the configuration of the project it extends, where the types the
+     * extension did not adopt still live. The parent project comes from the
+     * existing {@link BmCommonModuleGuards#parentProjectOf(IProject)}; this is
+     * the only parent-resolution mechanism the helper uses.
+     *
+     * @param project the owning project; may be {@code null}
+     * @return the configurations in order, empty when none resolves
+     */
+    private static List<Configuration> resolutionOrder(IProject project)
+    {
+        List<Configuration> order = new ArrayList<>();
+        if (project == null)
+        {
+            return order;
+        }
+        com._1c.g5.v8.dt.core.platform.IConfigurationProvider provider = null;
+        try
+        {
+            provider = Activator.getDefault() == null
+                ? null : Activator.getDefault().getConfigurationProvider();
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("applyFillValue: configuration provider unreachable: " //$NON-NLS-1$
+                + e.getMessage());
+        }
+        addConfigurationOf(order, project, provider);
+        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+        if (parent != null)
+        {
+            addConfigurationOf(order, parent, provider);
+        }
+        return order;
+    }
+
+    /**
+     * Adds a project's configuration to the search order when it resolves; a
+     * project whose configuration does not resolve is skipped, not fatal.
+     */
+    private static void addConfigurationOf(List<Configuration> order, IProject project,
+        com._1c.g5.v8.dt.core.platform.IConfigurationProvider provider)
+    {
+        if (provider == null)
+        {
+            return;
+        }
+        try
+        {
+            Configuration config = provider.getConfiguration(project);
+            if (config != null)
+            {
+                order.add(config);
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("applyFillValue: configuration resolve failed: " //$NON-NLS-1$
+                + e.getMessage());
+        }
+    }
+
+    /**
+     * Configuration-aware variant every other overload funnels into. Exposed for
+     * callers and tests that already hold the configuration object.
+     *
+     * @param config the configuration reference fills resolve against; may be {@code null}
+     * @return {@code null} on success, or an error message
+     */
+    public static String applyFillValue(EObject target, String raw, Configuration config)
+    {
+        return applyFillValue(target, raw,
+            config == null ? new ArrayList<Configuration>() : Arrays.asList(config));
+    }
+
+    /**
+     * Search-order variant reference fills resolve against: each configuration
+     * in the list is searched in turn and the first that holds the type wins,
+     * which is how an extension attribute reaches a base-configuration type the
+     * extension did not adopt. An empty order leaves the primitive kinds
+     * working and the reference kinds refused with the reason.
+     *
+     * @param configs the configurations in search order; may be empty or hold nulls
+     * @return {@code null} on success, or an error message
+     */
+    public static String applyFillValue(EObject target, String raw, List<Configuration> configs)
     {
         if (target == null)
         {
@@ -1592,10 +1706,29 @@ public final class BmDefinedTypeHelper
         {
             value = createMcoreValue("createUndefinedValue", null, null); //$NON-NLS-1$
         }
+        else if (isEmptyRefLiteral(v) || namesTheTypesOwnEmptyRef(v, target))
+        {
+            String[] refusal = new String[1];
+            value = buildEmptyRefValue(target, configs, refusal);
+            if (value == null && refusal[0] != null)
+            {
+                return refusal[0];
+            }
+        }
+        else if (isBeginningOfDateLiteral(v))
+        {
+            String kind = kindOf(target);
+            if (!"Date".equals(kind)) //$NON-NLS-1$
+            {
+                return "StandardBeginningDate fills a Date attribute; this attribute's type is " //$NON-NLS-1$
+                    + (kind == null ? "not a single primitive" : kind); //$NON-NLS-1$
+            }
+            value = createMcoreValue("createDateValue", com._1c.g5.v8.dt.mcore.util.Date.class, //$NON-NLS-1$
+                beginningOfDate());
+        }
         else
         {
-            String kind = (target instanceof MdObject)
-                ? primitiveValueKind(readExistingTypeNames((MdObject) target)) : null;
+            String kind = kindOf(target);
             if ("Boolean".equals(kind)) //$NON-NLS-1$
             {
                 boolean flag;
@@ -1626,19 +1759,36 @@ public final class BmDefinedTypeHelper
             }
             else if ("String".equals(kind)) //$NON-NLS-1$
             {
+                int maxLength = declaredStringLength(target);
+                if (maxLength > 0 && v.length() > maxLength)
+                {
+                    return "fillValue '" + v + "' is " + v.length() //$NON-NLS-1$ //$NON-NLS-2$
+                        + " characters, longer than the attribute's String length " + maxLength; //$NON-NLS-1$
+                }
                 value = createMcoreValue("createStringValue", String.class, v); //$NON-NLS-1$
             }
             else if ("Date".equals(kind)) //$NON-NLS-1$
             {
-                return "fillValue for Date attributes is not supported " //$NON-NLS-1$
-                    + "(a date default is usually a StandardBeginningDate); " //$NON-NLS-1$
-                    + "supported: String / Number / Boolean, or empty for Undefined"; //$NON-NLS-1$
+                com._1c.g5.v8.dt.mcore.util.Date parsed;
+                try
+                {
+                    parsed = parseDateLiteral(v, dateFractionsOf(target));
+                }
+                catch (IllegalArgumentException rejected)
+                {
+                    // A null message would read as success; every date refusal
+                    // carries the value and the shape the qualifier allows.
+                    String message = rejected.getMessage();
+                    return message != null && !message.isEmpty() ? message
+                        : "fillValue '" + v + "' is not a valid date (expected " //$NON-NLS-1$ //$NON-NLS-2$
+                            + expectedShape(dateFractionsOf(target)) + ")"; //$NON-NLS-1$
+                }
+                value = createMcoreValue("createDateValue", com._1c.g5.v8.dt.mcore.util.Date.class, //$NON-NLS-1$
+                    parsed);
             }
             else
             {
-                return "fillValue is supported only for String / Number / Boolean primitive attributes " //$NON-NLS-1$
-                    + "(or empty = Undefined); this attribute's type is " //$NON-NLS-1$
-                    + (kind == null ? "a reference / composite / unresolved type" : kind); //$NON-NLS-1$
+                return applyReferenceFill(target, v, configs);
             }
         }
         if (value == null)
@@ -1656,6 +1806,568 @@ public final class BmDefinedTypeHelper
             return "fillValue not applied: " + (c.getMessage() != null //$NON-NLS-1$
                 ? c.getMessage() : c.getClass().getSimpleName());
         }
+    }
+
+    /**
+     * The single kind of the target's type description as
+     * {@link #primitiveValueKind(Set)} spells it, or {@code null}.
+     */
+    private static String kindOf(EObject target)
+    {
+        return (target instanceof MdObject)
+            ? primitiveValueKind(readExistingTypeNames((MdObject) target)) : null;
+    }
+
+    /**
+     * Tells the two spellings of the empty-reference literal apart from a value
+     * that names something.
+     */
+    private static boolean isEmptyRefLiteral(String v)
+    {
+        return "EmptyRef".equalsIgnoreCase(v) || "ПустаяСсылка".equalsIgnoreCase(v); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Tells the addressed spelling of the empty reference apart from a value
+     * that names something: {@code <Kind>.<Name>.EmptyRef} (Russian tail
+     * accepted) addresses the empty reference of the attribute's own type -
+     * the exact spelling the fill-value report shows for a stored empty
+     * reference. An address that names another type is not this one and is
+     * left to the reference fill, which refuses it as unknown.
+     */
+    private static boolean namesTheTypesOwnEmptyRef(String v, EObject target)
+    {
+        if (v == null || !(target instanceof MdObject))
+        {
+            return false;
+        }
+        String typeFqn = readSingleTypeName((MdObject)target);
+        String[] parts = typeFqn == null ? null : typeFqn.split("\\.", 2); //$NON-NLS-1$
+        String kind = parts != null && parts.length == 2 ? stripTypeKindSuffix(parts[0]) : null;
+        if (kind == null)
+        {
+            return false;
+        }
+        int tail = v.lastIndexOf('.');
+        if (tail < 0 || !isEmptyRefLiteral(v.substring(tail + 1)))
+        {
+            return false;
+        }
+        // The whole owner address, not a beginning of it: "Catalog.EmptyRef" names no type.
+        return v.substring(0, tail).equalsIgnoreCase(kind + "." + parts[1]); //$NON-NLS-1$
+    }
+
+    /**
+     * Tells the two spellings of the beginning-of-date literal apart from a value
+     * that names a date.
+     */
+    private static boolean isBeginningOfDateLiteral(String v)
+    {
+        return "StandardBeginningDate".equalsIgnoreCase(v) || "НачалоДаты".equalsIgnoreCase(v); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The date a StandardBeginningDate fill carries, as EDT serializes it:
+     * {@code 0001-01-01T00:00:00}.
+     */
+    private static com._1c.g5.v8.dt.mcore.util.Date beginningOfDate()
+    {
+        return new com._1c.g5.v8.dt.mcore.util.Date(1, 1, 1, 0, 0, 0);
+    }
+
+    /**
+     * Reads the single type FQN of the target's type description (for example
+     * {@code CatalogRef.Users}), or {@code null} when there is none.
+     */
+    private static String readSingleTypeName(MdObject target)
+    {
+        Set<String> names = readExistingTypeNames(target);
+        return names.size() == 1 ? names.iterator().next() : null;
+    }
+
+    /**
+     * Reads the declared length of a String attribute from its string
+     * qualifiers. Zero means unlimited (and is the model default when no
+     * qualifier has been written).
+     */
+    private static int declaredStringLength(EObject target)
+    {
+        Object typeDesc = target instanceof MdObject ? readTypeDescription((MdObject) target) : null;
+        Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
+        Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
+        return length instanceof Integer ? ((Integer)length).intValue() : 0;
+    }
+
+    /**
+     * Reads the date qualifier of a Date attribute. A description without date
+     * qualifiers answers the platform default, DateTime.
+     */
+    private static com._1c.g5.v8.dt.mcore.DateFractions dateFractionsOf(EObject target)
+    {
+        Object typeDesc = target instanceof MdObject ? readTypeDescription((MdObject) target) : null;
+        Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getDateQualifiers"); //$NON-NLS-1$
+        Object fractions = qualifiers == null ? null : invokeNoArg(qualifiers, "getDateFractions"); //$NON-NLS-1$
+        if (fractions instanceof com._1c.g5.v8.dt.mcore.DateFractions)
+        {
+            return (com._1c.g5.v8.dt.mcore.DateFractions)fractions;
+        }
+        return com._1c.g5.v8.dt.mcore.DateFractions.DATE_TIME;
+    }
+
+    /**
+     * Parses a fill-value date literal against the attribute's date qualifier:
+     * {@code YYYY-MM-DD} for Date, {@code YYYY-MM-DDTHH:MM:SS} for DateTime,
+     * {@code HH:MM:SS} for Time - no time zone, matching what EDT serializes.
+     *
+     * @param v the literal, already trimmed
+     * @param fractions the attribute's date qualifier
+     * @return the parsed date
+     * @throws IllegalArgumentException when the literal does not match the
+     *         qualifier, with a message naming both
+     */
+    static com._1c.g5.v8.dt.mcore.util.Date parseDateLiteral(String v,
+        com._1c.g5.v8.dt.mcore.DateFractions fractions)
+    {
+        String literal = v == null ? "" : v.trim(); //$NON-NLS-1$
+        String shape = fractions == com._1c.g5.v8.dt.mcore.DateFractions.DATE
+            ? "(\\d{4})-(\\d{2})-(\\d{2})" //$NON-NLS-1$
+            : fractions == com._1c.g5.v8.dt.mcore.DateFractions.TIME
+                ? "(\\d{2}):(\\d{2}):(\\d{2})" //$NON-NLS-1$
+                : "(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})"; //$NON-NLS-1$
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^" + shape + "$").matcher(literal); //$NON-NLS-1$ //$NON-NLS-2$
+        if (!m.matches())
+        {
+            throw new IllegalArgumentException("fillValue '" + literal //$NON-NLS-1$
+                + "' does not match the attribute's date qualifier " + qualifierName(fractions) //$NON-NLS-1$
+                + " (expected " + expectedShape(fractions) + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        int[] part = new int[m.groupCount()];
+        for (int i = 0; i < part.length; i++)
+        {
+            part[i] = Integer.parseInt(m.group(i + 1));
+        }
+        int year = 1, month = 1, day = 1, hour = 0, minute = 0, second = 0;
+        if (fractions == com._1c.g5.v8.dt.mcore.DateFractions.DATE)
+        {
+            year = part[0];
+            month = part[1];
+            day = part[2];
+        }
+        else if (fractions == com._1c.g5.v8.dt.mcore.DateFractions.TIME)
+        {
+            hour = part[0];
+            minute = part[1];
+            second = part[2];
+        }
+        else
+        {
+            year = part[0];
+            month = part[1];
+            day = part[2];
+            hour = part[3];
+            minute = part[4];
+            second = part[5];
+        }
+        if (month < 1 || month > 12 || day < 1 || day > 31
+            || hour > 23 || minute > 59 || second > 59)
+        {
+            throw new IllegalArgumentException("fillValue '" + literal + "' is not a real date or time"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        try
+        {
+            return new com._1c.g5.v8.dt.mcore.util.Date(year, month, day, hour, minute, second);
+        }
+        catch (IllegalArgumentException calendarImpossible)
+        {
+            // The mcore Date constructor throws without a message (year outside
+            // 1..9999, a day the month does not have), and a null refusal reads
+            // as success one level up.
+            throw new IllegalArgumentException("fillValue '" + literal //$NON-NLS-1$
+                + "' is not a real calendar date (expected " + expectedShape(fractions) + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The qualifier as the platform UI names it, for refusal messages.
+     */
+    private static String qualifierName(com._1c.g5.v8.dt.mcore.DateFractions fractions)
+    {
+        if (fractions == com._1c.g5.v8.dt.mcore.DateFractions.DATE)
+        {
+            return "Date"; //$NON-NLS-1$
+        }
+        if (fractions == com._1c.g5.v8.dt.mcore.DateFractions.TIME)
+        {
+            return "Time"; //$NON-NLS-1$
+        }
+        return "DateTime"; //$NON-NLS-1$
+    }
+
+    /**
+     * The literal shape the qualifier accepts, for refusal messages.
+     */
+    private static String expectedShape(com._1c.g5.v8.dt.mcore.DateFractions fractions)
+    {
+        if (fractions == com._1c.g5.v8.dt.mcore.DateFractions.DATE)
+        {
+            return "YYYY-MM-DD"; //$NON-NLS-1$
+        }
+        if (fractions == com._1c.g5.v8.dt.mcore.DateFractions.TIME)
+        {
+            return "HH:MM:SS"; //$NON-NLS-1$
+        }
+        return "YYYY-MM-DDTHH:MM:SS"; //$NON-NLS-1$
+    }
+
+    /**
+     * Builds the ReferenceValue of the attribute type's empty reference: the
+     * EmptyRef object the type's produced ref type carries (serialized by EDT
+     * as {@code <Type>.<Name>.EmptyRef}).
+     *
+     * @return the value, or {@code null} with the refusal written into
+     *         {@code refusal[0]}
+     */
+    private static Object buildEmptyRefValue(EObject target, List<Configuration> configs, String[] refusal)
+    {
+        String typeFqn = target instanceof MdObject
+            ? readSingleTypeName((MdObject)target) : null;
+        String refused = requireSingleReferenceType(typeFqn, configs, "the empty reference"); //$NON-NLS-1$
+        if (refused != null)
+        {
+            refusal[0] = refused;
+            return null;
+        }
+        MdObject owner = resolveReferenceOwner(typeFqn, configs);
+        if (owner == null)
+        {
+            refusal[0] = typeFqn + " is not found in the configuration"; //$NON-NLS-1$
+            return null;
+        }
+        Object producedTypes = owner == null ? null : invokeNoArg(owner, "getProducedTypes"); //$NON-NLS-1$
+        Object refType = producedTypes == null ? null : invokeNoArg(producedTypes, "getRefType"); //$NON-NLS-1$
+        Object emptyRef = refType == null ? null : invokeNoArg(refType, "getEmptyRef"); //$NON-NLS-1$
+        if (!(emptyRef instanceof EObject))
+        {
+            refusal[0] = typeFqn + ".EmptyRef is not present in the produced types " //$NON-NLS-1$//$NON-NLS-2$
+                + "of " + typeFqn + " on this runtime"; //$NON-NLS-1$ //$NON-NLS-2$
+            return null;
+        }
+        Object value = createMcoreValue("createReferenceValue", null, null); //$NON-NLS-1$
+        if (value == null)
+        {
+            return null;
+        }
+        try
+        {
+            value.getClass().getMethod("setValue", EObject.class).invoke(value, emptyRef); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            refusal[0] = "fillValue EmptyRef not applied: " + e.getMessage(); //$NON-NLS-1$
+            return null;
+        }
+        return value;
+    }
+
+    /**
+     * Fills a reference-typed attribute: an enum value for an EnumRef type, a
+     * predefined item for an object reference type. Both are matched by name
+     * against what the type itself declares, ignoring case; an unknown name is
+     * refused with the closest declared names, a name two candidates share is
+     * refused as ambiguous. Predefined items are collected recursively through
+     * the item content, so an item inside a group resolves by its bare name
+     * (when unique) or by its path from the owner.
+     */
+    private static String applyReferenceFill(EObject target, String v, List<Configuration> configs)
+    {
+        if (!(target instanceof MdObject))
+        {
+            return "fillValue is supported on attributes and register fields; this target is " //$NON-NLS-1$
+                + target.eClass().getName();
+        }
+        Set<String> typeNames = readExistingTypeNames((MdObject)target);
+        if (typeNames.size() > 1)
+        {
+            return "fillValue refuses a composite type (compositeType): this attribute has " //$NON-NLS-1$
+                + typeNames.size() + " types (" + String.join(", ", typeNames) //$NON-NLS-1$ //$NON-NLS-2$
+                + "); give the attribute a single type first"; //$NON-NLS-1$
+        }
+        String typeFqn = typeNames.isEmpty() ? null : typeNames.iterator().next();
+        String refused = requireSingleReferenceType(typeFqn, configs, "a reference fill"); //$NON-NLS-1$
+        if (refused != null)
+        {
+            return refused;
+        }
+        MdObject owner = resolveReferenceOwner(typeFqn, configs);
+        String[] parts = typeFqn.split("\\.", 2); //$NON-NLS-1$
+        if (owner == null)
+        {
+            return typeFqn + " is not found in the configuration"; //$NON-NLS-1$
+        }
+        boolean enumType = "EnumRef".equalsIgnoreCase(parts[0]); //$NON-NLS-1$
+        List<String> candidates = new ArrayList<>();
+        List<Object> items = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
+        if (enumType)
+        {
+            Object values = owner == null ? null : invokeNoArg(owner, "getEnumValues"); //$NON-NLS-1$
+            if (!(values instanceof EList) || ((EList<?>)values).isEmpty())
+            {
+                return typeFqn + " declares no enum values"; //$NON-NLS-1$
+            }
+            for (Object item : (EList<?>)values)
+            {
+                candidates.add(String.valueOf(invokeNoArg(item, "getName"))); //$NON-NLS-1$
+                items.add(item);
+            }
+        }
+        else
+        {
+            Object predefined = owner == null ? null : invokeNoArg(owner, "getPredefined"); //$NON-NLS-1$
+            Object list = predefined == null ? null : invokeNoArg(predefined, "getItems"); //$NON-NLS-1$
+            if (!(list instanceof EList) || ((EList<?>)list).isEmpty())
+            {
+                return typeFqn + " has no predefined items (only EnumRef types name their values " //$NON-NLS-1$
+                    + "and Catalog / Chart / ... types their predefined items)"; //$NON-NLS-1$
+            }
+            collectPredefinedItems((EList<?>)list, "", candidates, paths, items); //$NON-NLS-1$
+        }
+        String wanted = stripReferenceValuePrefix(v, parts[0],
+            String.valueOf(invokeNoArg(owner, "getName")), enumType); //$NON-NLS-1$
+        int picked = pickByNameIgnoreCase(candidates, wanted);
+        if (picked == AMBIGUOUS_NAME)
+        {
+            return "fillValue '" + wanted + "' names " + (enumType ? "enum values" : "predefined items") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                + " of " + typeFqn + " more than once" //$NON-NLS-1$ //$NON-NLS-2$
+                + (enumType ? "; give the reference itself" //$NON-NLS-1$
+                    : "; the items: " + fullPathsOf(wanted, candidates, paths, parts[0], //$NON-NLS-1$
+                        String.valueOf(invokeNoArg(owner, "getName"))) //$NON-NLS-1$
+                        + "; give the full path"); //$NON-NLS-1$
+        }
+        if (picked < 0 && !enumType)
+        {
+            // No name matches; the wanted string may still be an item's path
+            // from the owner (Group.Item), which is unique per item.
+            picked = pickByNameIgnoreCase(paths, wanted);
+        }
+        if (picked < 0)
+        {
+            return "fillValue '" + wanted + "' is not a " //$NON-NLS-1$ //$NON-NLS-2$
+                + (enumType ? "value of " : "predefined item of ") + typeFqn //$NON-NLS-1$ //$NON-NLS-2$
+                + "; closest: " + closestNames(wanted, candidates); //$NON-NLS-1$
+        }
+        Object value = createMcoreValue("createReferenceValue", null, null); //$NON-NLS-1$
+        if (value == null)
+        {
+            return "fillValue: McoreFactory unavailable on this EDT runtime"; //$NON-NLS-1$
+        }
+        try
+        {
+            value.getClass().getMethod("setValue", EObject.class).invoke(value, items.get(picked)); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            Throwable c = e.getCause() != null ? e.getCause() : e;
+            return "fillValue not applied: " + (c.getMessage() != null //$NON-NLS-1$
+                ? c.getMessage() : c.getClass().getSimpleName());
+        }
+        return applyValueThroughSetter(target, value);
+    }
+
+    /**
+     * Writes a built value through the target's {@code setFillValue}, shared by
+     * every fill path that builds its value outside the main method.
+     *
+     * @return {@code null} on success, or an error message
+     */
+    private static String applyValueThroughSetter(EObject target, Object value)
+    {
+        for (Method m : target.getClass().getMethods())
+        {
+            if (!"setFillValue".equals(m.getName()) || m.getParameterCount() != 1) //$NON-NLS-1$
+            {
+                continue;
+            }
+            try
+            {
+                m.invoke(target, value);
+                return null;
+            }
+            catch (Exception e)
+            {
+                Throwable c = e.getCause() != null ? e.getCause() : e;
+                return "fillValue not applied: " + (c.getMessage() != null //$NON-NLS-1$
+                    ? c.getMessage() : c.getClass().getSimpleName());
+            }
+        }
+        return "fillValue is not supported on " + target.eClass().getName(); //$NON-NLS-1$
+    }
+
+    /**
+     * Refuses everything a reference fill needs that the type does not offer:
+     * no single type, a type that is not a reference, no configuration to
+     * resolve against.
+     */
+    private static String requireSingleReferenceType(String typeFqn, List<Configuration> configs,
+        String what)
+    {
+        if (typeFqn == null)
+        {
+            return "fillValue cannot resolve " + what + ": this attribute's type description " //$NON-NLS-1$ //$NON-NLS-2$
+                + "is empty or composite"; //$NON-NLS-1$
+        }
+        String[] parts = typeFqn.split("\\.", 2); //$NON-NLS-1$
+        if (parts.length != 2 || stripTypeKindSuffix(parts[0]) == null)
+        {
+            return "fillValue cannot resolve " + what + " for the type " + typeFqn //$NON-NLS-1$ //$NON-NLS-2$
+                + "; reference fills resolve EnumRef.<Name>, <Kind>Ref.<Name> of an object " //$NON-NLS-1$
+                + "(Catalog / Document / Chart / Task / ...)"; //$NON-NLS-1$
+        }
+        if (configs == null || configs.isEmpty())
+        {
+            return "fillValue cannot resolve " + what + " without the project configuration " //$NON-NLS-1$ //$NON-NLS-2$
+                + "(unavailable on this call)"; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * Finds the metadata object a reference type FQN points at, or {@code null}
+     * when no configuration of the search order holds it. Each configuration is
+     * asked in turn and the first hit wins, which is how an extension's
+     * attribute reaches an object of the base configuration the extension did
+     * not adopt.
+     */
+    private static MdObject resolveReferenceOwner(String typeFqn, List<Configuration> configs)
+    {
+        String[] parts = typeFqn.split("\\.", 2); //$NON-NLS-1$
+        for (Configuration config : configs)
+        {
+            MdObject found = config == null ? null
+                : MetadataTypeCatalog.findObject(config, stripTypeKindSuffix(parts[0]), parts[1]);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Collects predefined items recursively, with the path each one is
+     * addressed by: the names from the owner's top level down to the item,
+     * dot-joined ({@code Group.Item}). That is the spelling between the owner
+     * segment and the item in what the fill-value report shows
+     * ({@code Catalog.X.Group.Item}), so reading and writing converge. An item
+     * kind without content (a flat one) contributes no recursion.
+     */
+    private static void collectPredefinedItems(EList<?> siblings, String parentPath,
+        List<String> names, List<String> paths, List<Object> items)
+    {
+        for (Object item : siblings)
+        {
+            String name = String.valueOf(invokeNoArg(item, "getName")); //$NON-NLS-1$
+            String path = parentPath.isEmpty() ? name : parentPath + "." + name; //$NON-NLS-1$
+            names.add(name);
+            paths.add(path);
+            items.add(item);
+            Object nested = invokeNoArg(item, "getContent"); //$NON-NLS-1$
+            if (nested instanceof EList && !((EList<?>)nested).isEmpty())
+            {
+                collectPredefinedItems((EList<?>)nested, path, names, paths, items);
+            }
+        }
+    }
+
+    /**
+     * The full addresses of every item whose name matches the wanted one, for
+     * the ambiguity refusal: the caller reads them as the spellings that
+     * disambiguate ({@code Catalog.X.Group.Item}).
+     */
+    private static String fullPathsOf(String wanted, List<String> names, List<String> paths,
+        String kind, String ownerName)
+    {
+        List<String> full = new ArrayList<>();
+        String prefix = stripTypeKindSuffix(kind) + "." + ownerName + "."; //$NON-NLS-1$ //$NON-NLS-2$
+        for (int i = 0; i < names.size(); i++)
+        {
+            if (names.get(i) != null && names.get(i).trim().equalsIgnoreCase(wanted.trim()))
+            {
+                full.add(prefix + paths.get(i));
+            }
+        }
+        return String.join(", ", full); //$NON-NLS-1$
+    }
+
+    /**
+     * Accepts both spellings a caller may have read out of an .mdo: the bare
+     * item name and the full reference ({@code Enum.X.EnumValue.Y} for an enum
+     * value, {@code <OwnerKind>.<X>.<Y>} for a predefined item - the owner
+     * kind, not the attribute's <Kind>Ref). Returns the bare name for matching.
+     */
+    private static String stripReferenceValuePrefix(String v, String kind, String ownerName,
+        boolean enumType)
+    {
+        String prefix = (enumType ? "Enum." + ownerName + ".EnumValue." //$NON-NLS-1$ //$NON-NLS-2$
+            : stripTypeKindSuffix(kind) + "." + ownerName + "."); //$NON-NLS-1$ //$NON-NLS-2$
+        if (prefix == null || v.length() <= prefix.length())
+        {
+            return v;
+        }
+        if (v.regionMatches(true, 0, prefix, 0, prefix.length()))
+        {
+            return v.substring(prefix.length());
+        }
+        return v;
+    }
+
+    /** What {@link #pickByNameIgnoreCase(List, String)} answers when the name fits two candidates. */
+    static final int AMBIGUOUS_NAME = -2;
+
+    /**
+     * Picks a candidate by name ignoring case. A name two candidates share
+     * cannot be picked.
+     *
+     * @return the index of the match, {@code -1} when none matches,
+     *         {@link #AMBIGUOUS_NAME} when more than one does
+     */
+    static int pickByNameIgnoreCase(List<String> candidates, String wanted)
+    {
+        int found = -1;
+        for (int i = 0; i < candidates.size(); i++)
+        {
+            if (candidates.get(i) == null || wanted == null)
+            {
+                continue;
+            }
+            if (candidates.get(i).trim().equalsIgnoreCase(wanted.trim()))
+            {
+                if (found >= 0)
+                {
+                    return AMBIGUOUS_NAME;
+                }
+                found = i;
+            }
+        }
+        return found;
+    }
+
+    /**
+     * The closest declared names to an unknown one, for refusal messages.
+     */
+    private static String closestNames(String wanted, List<String> candidates)
+    {
+        List<String> closest = new ArrayList<>();
+        for (String candidate : candidates)
+        {
+            String suggestion = TextSuggest.closest(wanted, java.util.Collections.singletonList(candidate));
+            if (suggestion != null && !closest.contains(suggestion))
+            {
+                closest.add(suggestion);
+            }
+        }
+        return closest.isEmpty() ? String.join(", ", candidates) //$NON-NLS-1$
+            : String.join(", ", closest); //$NON-NLS-1$
     }
 
     /**
