@@ -108,6 +108,30 @@ public final class FakeDebugFrames
         /** Run inside {@code suspend()}, for the platform state a test wants to change at that moment. */
         public Runnable onSuspendRequest;
 
+        /** Whether a stopped thread accepts a resume. A resume test keeps its session stopped. */
+        public boolean canResume = true;
+
+        /** When set, {@code resume()} throws it instead of resuming. */
+        public Exception resumeRefusal;
+
+        /** Run inside {@code resume()}, for the platform events a test wants delivered while the resume is being made. */
+        public Runnable onResumeRequest;
+
+        /** How many resumes the thread received. */
+        public int resumeRequests;
+
+        /** Whether {@code canStepOver} accepts a step over. */
+        public boolean canStepOver;
+
+        /** Whether {@code canStepInto} accepts a step into. */
+        public boolean canStepInto;
+
+        /** Whether {@code canStepReturn} accepts a step out. */
+        public boolean canStepReturn;
+
+        /** How many steps the thread was sent, whichever kind. */
+        public int stepRequests;
+
         /** The target this thread belongs to; it carries the thread in its thread list. */
         public final Target target;
 
@@ -155,6 +179,28 @@ public final class FakeDebugFrames
             if (suspendsOnRequest)
             {
                 DebugSessionBook.get().injectSuspend(applicationId, thread);
+            }
+        }
+
+        /**
+         * What a resume does on this thread: refuse if a refusal was set, otherwise leave the stopped
+         * state. The platform reports the resume as an event of its own, later, which is why the
+         * tools that drop the snapshot do it themselves.
+         *
+         * @throws Exception the refusal, when the test set one
+         */
+        private void onResumeRequested() throws Exception
+        {
+            resumeRequests++;
+            if (resumeRefusal != null)
+            {
+                throw resumeRefusal;
+            }
+            suspended = false;
+            Runnable hook = onResumeRequest;
+            if (hook != null)
+            {
+                hook.run();
             }
         }
 
@@ -279,6 +325,22 @@ public final class FakeDebugFrames
                     case "suspend": //$NON-NLS-1$
                         onSuspendRequested();
                         return null;
+                    case "canResume": //$NON-NLS-1$
+                        return Boolean.valueOf(suspended && canResume);
+                    case "resume": //$NON-NLS-1$
+                        onResumeRequested();
+                        return null;
+                    case "canStepOver": //$NON-NLS-1$
+                        return Boolean.valueOf(canStepOver);
+                    case "canStepInto": //$NON-NLS-1$
+                        return Boolean.valueOf(canStepInto);
+                    case "canStepReturn": //$NON-NLS-1$
+                        return Boolean.valueOf(canStepReturn);
+                    case "stepOver": //$NON-NLS-1$
+                    case "stepInto": //$NON-NLS-1$
+                    case "stepReturn": //$NON-NLS-1$
+                        stepRequests++;
+                        return null;
                     case "isTerminated": //$NON-NLS-1$
                         return Boolean.valueOf(target.terminated);
                     case "equals": //$NON-NLS-1$
@@ -316,6 +378,9 @@ public final class FakeDebugFrames
 
         /** How many suspend requests the target itself received. */
         public int suspendRequests;
+
+        /** How many resume requests the target itself received. */
+        public int resumeRequests;
 
         /** When set, a suspend on the target itself throws it instead of being accepted. */
         public Exception suspendRefusal;
@@ -363,6 +428,12 @@ public final class FakeDebugFrames
                             throw suspendRefusal;
                         }
                         return null;
+                    case "canResume": //$NON-NLS-1$
+                        // A debug target of this platform does not resume; only its threads do.
+                        return Boolean.FALSE;
+                    case "resume": //$NON-NLS-1$
+                        resumeRequests++;
+                        return null;
                     case "equals": //$NON-NLS-1$
                         return Boolean.valueOf(proxy == args[0]);
                     case "hashCode": //$NON-NLS-1$
@@ -383,6 +454,18 @@ public final class FakeDebugFrames
     public static Session session(String applicationId)
     {
         return new Session(applicationId);
+    }
+
+    /**
+     * Delivers the registry side of the platform's RESUME event: everything the application issued
+     * is dropped, the way the event listener does it. A resume hook that wants the event to arrive
+     * while the resume is still being made calls this.
+     *
+     * @param applicationId the application that resumed
+     */
+    public static void resumeEvent(String applicationId)
+    {
+        DebugSessionBook.get().forget(applicationId);
     }
 
     /** A variable of a frame, remembering what was written into it. */

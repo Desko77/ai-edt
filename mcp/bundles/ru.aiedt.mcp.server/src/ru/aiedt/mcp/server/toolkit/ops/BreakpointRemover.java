@@ -36,6 +36,8 @@ public class BreakpointRemover
     private static final String KEY_PROJECT_NAME = "projectName"; //$NON-NLS-1$
     private static final String KEY_MODULE = "module"; //$NON-NLS-1$
     private static final String KEY_LINE_NUMBER = "lineNumber"; //$NON-NLS-1$
+    private static final String KEY_MODULE_PATH = "modulePath"; //$NON-NLS-1$
+    private static final String KEY_LINE = "line"; //$NON-NLS-1$
     private static final String KEY_REMOVED = "removed"; //$NON-NLS-1$
     private static final String KEY_BREAKPOINT_IDS = "breakpointIds"; //$NON-NLS-1$
     private static final String KEY_ALL = "all"; //$NON-NLS-1$
@@ -56,7 +58,8 @@ public class BreakpointRemover
     {
         return "Back-compat alias of `launch_debugger` `action=remove_breakpoint`; prefer the facade for new prompts. " //$NON-NLS-1$
             + "Removes one or more 1C BSL breakpoints. Single: pass breakpointId (from set_breakpoint), or " //$NON-NLS-1$
-            + "look it up by coordinates via projectName+module+lineNumber. Batch: pass `breakpointIds` " //$NON-NLS-1$
+            + "look it up by coordinates via projectName+module+lineNumber (modulePath and line are the " //$NON-NLS-1$
+            + "same arguments under the names the facade schema uses). Batch: pass `breakpointIds` " //$NON-NLS-1$
             + "(a JSON array of marker ids), or `all=true` to clear every breakpoint, or " //$NON-NLS-1$
             + "`allOfModule=true` with module (+projectName) to clear every breakpoint on one module."; //$NON-NLS-1$
     }
@@ -92,8 +95,8 @@ public class BreakpointRemover
     {
         long breakpointId = JsonUtils.extractLongArgument(params, KEY_BREAKPOINT_ID, -1L);
         String projectName = JsonUtils.extractStringArgument(params, KEY_PROJECT_NAME);
-        String module = JsonUtils.extractStringArgument(params, KEY_MODULE);
-        int lineNumber = JsonUtils.extractIntArgument(params, KEY_LINE_NUMBER, -1);
+        String module = moduleOf(params);
+        int lineNumber = lineOf(params);
         boolean all = JsonUtils.extractBooleanArgument(params, KEY_ALL, false);
         boolean allOfModule = JsonUtils.extractBooleanArgument(params, KEY_ALL_OF_MODULE, false);
 
@@ -195,5 +198,39 @@ public class BreakpointRemover
             Activator.logError("Removing the breakpoint raised an exception", e); //$NON-NLS-1$
             return ToolResult.error("Could not remove the breakpoint: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The module a call names.
+     * <p>
+     * Two names reach here for the same thing: the one this tool shipped with, and the one the facade
+     * schema promises for every breakpoint action. A caller that read the schema and sent the second
+     * one was told the call named no module at all.
+     * </p>
+     *
+     * @param params the call arguments
+     * @return the module, or <code>null</code> when the call names none
+     */
+    static String moduleOf(Map<String, String> params)
+    {
+        String module = JsonUtils.extractStringArgument(params, KEY_MODULE);
+        if (module != null && !module.isEmpty())
+        {
+            return module;
+        }
+        String alias = JsonUtils.extractStringArgument(params, KEY_MODULE_PATH);
+        return alias == null || alias.isEmpty() ? null : alias;
+    }
+
+    /**
+     * The line a call names, under either of the two names it may arrive by.
+     *
+     * @param params the call arguments
+     * @return the line, counting from 1, or -1 when the call names none
+     */
+    static int lineOf(Map<String, String> params)
+    {
+        int line = JsonUtils.extractIntArgument(params, KEY_LINE_NUMBER, -1);
+        return line >= 1 ? line : JsonUtils.extractIntArgument(params, KEY_LINE, -1);
     }
 }

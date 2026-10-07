@@ -182,6 +182,107 @@ public final class BreakpointAccess
     }
 
     /**
+     * Makes the line breakpoint of a call, with the manager the caller resolved; a seam so the
+     * replacement below can be exercised without EDT's own breakpoint classes.
+     */
+    interface LineBreakpointFactory
+    {
+        /**
+         * @param file the module file
+         * @param lineNumber the line, counting from 1
+         * @param manager the breakpoint manager to register with
+         * @return the breakpoint
+         * @throws Exception when the breakpoint cannot be created
+         */
+        IBreakpoint create(IFile file, int lineNumber, IBreakpointManager manager) throws Exception;
+    }
+
+    /**
+     * Puts a line breakpoint on a module, in place of any breakpoint already on that line.
+     * <p>
+     * Two breakpoints on one line both stop the debugger, both show in the breakpoints view, and a
+     * removal by coordinates takes only the first of them away - so a line asked for twice would leave
+     * a breakpoint nobody asked to keep. The replacement is made first and the one that was there is
+     * taken off afterwards, so a replacement that cannot be made leaves the line with the breakpoint
+     * it had, working; the one that comes back carries the options of this call.
+     * </p>
+     *
+     * @param file the module file
+     * @param lineNumber the line, counting from 1
+     * @param manager the breakpoint manager to search and register with
+     * @param factory how the new breakpoint is made
+     * @return the registered breakpoint
+     * @throws Exception if the new one cannot be created, or the old one cannot then be removed -
+     *             in which case the half-made replacement is taken back off and the line keeps the
+     *             breakpoint it had
+     */
+    static IBreakpoint replaceLineBreakpoint(IFile file, int lineNumber, IBreakpointManager manager,
+        LineBreakpointFactory factory) throws Exception
+    {
+        IBreakpoint existing = lineBreakpointAt(file, lineNumber, manager);
+        if (existing == null)
+        {
+            return factory.create(file, lineNumber, manager);
+        }
+
+        IBreakpoint replacement = factory.create(file, lineNumber, manager);
+        try
+        {
+            manager.removeBreakpoint(existing, true);
+        }
+        catch (Exception removalRefused)
+        {
+            // The line keeps the breakpoint it had; the half-made replacement comes back off
+            // rather than leaving two breakpoints where one was asked for.
+            try
+            {
+                manager.removeBreakpoint(replacement, true);
+            }
+            catch (Exception rollbackRefused)
+            {
+                Activator.logWarning("Failed to take a replacement back off a line whose old " //$NON-NLS-1$
+                    + "breakpoint would not come off: " + rollbackRefused.getMessage()); //$NON-NLS-1$
+            }
+            throw removalRefused;
+        }
+        return replacement;
+    }
+
+    /**
+     * Finds the line breakpoint occupying a file and line, without touching it.
+     * <p>
+     * The one coordinate search both the replacement and the removal go through: a set that
+     * searches differently from a remove leaves a breakpoint behind that no removal by
+     * coordinates can reach.
+     * </p>
+     *
+     * @param file the module file
+     * @param line the line, counting from 1
+     * @param manager the breakpoint manager to search
+     * @return the breakpoint on that line, or <code>null</code> when none is
+     * @throws CoreException when a registered breakpoint cannot be read
+     */
+    static IBreakpoint lineBreakpointAt(IFile file, int line, IBreakpointManager manager)
+        throws CoreException
+    {
+        for (IBreakpoint breakpoint : manager.getBreakpoints())
+        {
+            if (!(breakpoint instanceof ILineBreakpoint))
+            {
+                continue;
+            }
+
+            IMarker marker = breakpoint.getMarker();
+            if (marker != null && file.equals(marker.getResource())
+                && ((ILineBreakpoint)breakpoint).getLineNumber() == line)
+            {
+                return breakpoint;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Puts a line breakpoint on a BSL module.
      *
      * @param file the module file; must not be <code>null</code>
@@ -197,7 +298,21 @@ public final class BreakpointAccess
         requireLine(lineNumber);
 
         IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
+        return replaceLineBreakpoint(file, lineNumber, manager, BreakpointAccess::createLineBreakpointOnce);
+    }
 
+    /**
+     * Makes the line breakpoint itself, with the manager the caller already resolved.
+     *
+     * @param file the module file
+     * @param lineNumber the line, counting from 1
+     * @param manager the breakpoint manager to register with
+     * @return the breakpoint, an EDT one where its class is to be had and a marker-backend one otherwise
+     * @throws Exception if even a plain Eclipse marker cannot be created
+     */
+    private static IBreakpoint createLineBreakpointOnce(IFile file, int lineNumber,
+        IBreakpointManager manager) throws Exception
+    {
         IBreakpoint edtBreakpoint = createEdtLineBreakpoint(file, lineNumber, manager);
         if (edtBreakpoint != null)
         {
@@ -394,24 +509,32 @@ public final class BreakpointAccess
      */
     public static boolean removeBreakpointAt(IFile file, int line) throws Exception
     {
-        IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
+        return removeBreakpointAt(file, line, DebugPlugin.getDefault().getBreakpointManager());
+    }
 
-        for (IBreakpoint breakpoint : manager.getBreakpoints())
+    /**
+     * Takes the line breakpoint off a file and line, searching the manager the caller resolved.
+     * <p>
+     * The search is one place on purpose: the same coordinates are looked up before a breakpoint is
+     * created and before one is removed, and a set that searches differently from a remove leaves a
+     * breakpoint behind that no removal by coordinates can reach.
+     * </p>
+     *
+     * @param file the module file; must not be <code>null</code>
+     * @param line the line, counting from 1
+     * @param manager the breakpoint manager to search
+     * @return whether one was found and removed
+     * @throws Exception if the platform refuses the removal
+     */
+    static boolean removeBreakpointAt(IFile file, int line, IBreakpointManager manager) throws Exception
+    {
+        IBreakpoint breakpoint = lineBreakpointAt(file, line, manager);
+        if (breakpoint == null)
         {
-            if (!(breakpoint instanceof ILineBreakpoint))
-            {
-                continue;
-            }
-
-            IMarker marker = breakpoint.getMarker();
-            if (marker != null && file.equals(marker.getResource())
-                && ((ILineBreakpoint)breakpoint).getLineNumber() == line)
-            {
-                manager.removeBreakpoint(breakpoint, true);
-                return true;
-            }
+            return false;
         }
-        return false;
+        manager.removeBreakpoint(breakpoint, true);
+        return true;
     }
 
     /**
