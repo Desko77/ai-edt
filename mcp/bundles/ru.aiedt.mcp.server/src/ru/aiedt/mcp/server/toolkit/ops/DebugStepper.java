@@ -125,10 +125,6 @@ public final class DebugStepper implements IMcpTool
             return ToolResult.error("unable to resolve an applicationId for this thread").toJson(); //$NON-NLS-1$
         }
 
-        // The stop this step leaves behind, read before the step is sent, so the drop in each
-        // branch takes it and not a stop another thread of the application records meanwhile.
-        DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(appId);
-
         try
         {
             switch (kind.toLowerCase())
@@ -140,7 +136,9 @@ public final class DebugStepper implements IMcpTool
                 }
                 // The snapshot describes where the debugger was, and it goes only once the step is
                 // really sent: a step the thread refuses leaves the session as describable as before.
-                registry.clearSnapshotIfCurrent(appId, leftBehind);
+                // Whatever stop is recorded at this point predates the step, another thread's
+                // included, so all of it goes: the wait below must be answered by a later stop.
+                registry.clearSnapshot(appId);
                 stepper.stepOver();
                 break;
             case "into": //$NON-NLS-1$
@@ -148,7 +146,7 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step into right now").toJson(); //$NON-NLS-1$
                 }
-                registry.clearSnapshotIfCurrent(appId, leftBehind);
+                registry.clearSnapshot(appId);
                 stepper.stepInto();
                 break;
             case "out": //$NON-NLS-1$
@@ -157,7 +155,7 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step out right now").toJson(); //$NON-NLS-1$
                 }
-                registry.clearSnapshotIfCurrent(appId, leftBehind);
+                registry.clearSnapshot(appId);
                 stepper.stepReturn();
                 break;
             default:
