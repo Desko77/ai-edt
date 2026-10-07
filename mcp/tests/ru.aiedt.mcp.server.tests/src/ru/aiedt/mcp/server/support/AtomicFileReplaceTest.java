@@ -466,6 +466,86 @@ public class AtomicFileReplaceTest
     }
 
     /**
+     * A target that does not exist yet keeps its spelling below the nearest existing ancestor,
+     * so the lock it will take is the one of the file it will become.
+     *
+     * @throws Exception when the path cannot be resolved
+     */
+    @Test
+    public void aMissingTargetResolvesAgainstItsNearestExistingAncestor() throws Exception
+    {
+        Path target = directory.resolve("aiedt-clusters.yaml"); //$NON-NLS-1$
+        assertFalse(Files.exists(target));
+        assertEquals(directory.toRealPath().resolve("aiedt-clusters.yaml"), //$NON-NLS-1$
+            AtomicFileReplace.physicalTarget(target));
+    }
+
+    /**
+     * A target that exists resolves to its real path, which is the file itself wherever no link
+     * stands in the way.
+     *
+     * @throws Exception when the file cannot be written or resolved
+     */
+    @Test
+    public void anExistingTargetResolvesToItsRealPath() throws Exception
+    {
+        Path target = aFileWith(ORIGINAL);
+        assertEquals(target.toRealPath(), AtomicFileReplace.physicalTarget(target));
+    }
+
+    /**
+     * Two spellings of one directory - one of them through a link or, on Windows, a junction -
+     * name one lock file, so their writers wait for each other instead of racing on two locks.
+     * Where no link can be created the test is skipped.
+     *
+     * @throws Exception when the link cannot be made
+     */
+    @Test
+    public void aliasedPathsTakeOneLock() throws Exception
+    {
+        Path real = Files.createTempDirectory("aiedt-atomic-real-"); //$NON-NLS-1$
+        Path aliasHome = Files.createTempDirectory("aiedt-atomic-alias-"); //$NON-NLS-1$
+        Path alias = aLinkTo(real, aliasHome.resolve("alias")); //$NON-NLS-1$
+        org.junit.Assume.assumeTrue("no link or junction could be created", alias != null); //$NON-NLS-1$
+        try
+        {
+            Path throughReal = real.resolve("aiedt-clusters.yaml"); //$NON-NLS-1$
+            Path throughAlias = alias.resolve("aiedt-clusters.yaml"); //$NON-NLS-1$
+            assertEquals(AtomicFileReplace.lockFileOf(AtomicFileReplace.physicalTarget(throughReal)),
+                AtomicFileReplace.lockFileOf(AtomicFileReplace.physicalTarget(throughAlias)));
+        }
+        finally
+        {
+            delete(aliasHome);
+            delete(real);
+        }
+    }
+
+    /**
+     * A target that is itself a link resolves to the file it points at, and the replacement
+     * writes that file through the link instead of replacing the link with a regular file. Where
+     * no link can be created the test is skipped.
+     *
+     * @throws Exception when the link cannot be made
+     */
+    @Test
+    public void aTargetThatIsALinkIsWrittenThroughToItsFile() throws Exception
+    {
+        Path file = aFileWith(ORIGINAL);
+        Path link = aLinkTo(file, directory.resolve("aiedt-clusters-linked.yaml")); //$NON-NLS-1$
+        org.junit.Assume.assumeTrue("no link could be created", link != null); //$NON-NLS-1$
+
+        assertEquals(file.toRealPath(), AtomicFileReplace.physicalTarget(link));
+
+        AtomicFileReplace.Outcome outcome = AtomicFileReplace.replace(link, fingerprint(ORIGINAL),
+            bytes(REPLACEMENT), null);
+        assertTrue(String.valueOf(outcome), outcome.isOk());
+        assertEquals("the file behind the link holds the new content", //$NON-NLS-1$
+            REPLACEMENT, Files.readString(file));
+        assertTrue("the link stays a link", Files.isSymbolicLink(link)); //$NON-NLS-1$
+    }
+
+    /**
      * Writes the file under test and returns it.
      *
      * @param content the file contents
@@ -477,6 +557,71 @@ public class AtomicFileReplaceTest
         Path file = directory.resolve("aiedt-clusters.yaml"); //$NON-NLS-1$
         Files.writeString(file, content);
         return file;
+    }
+
+    /**
+     * Creates a link to the target: a symbolic link where the environment allows one, and on
+     * Windows a junction for a directory where it does not.
+     *
+     * @param target what the link points at
+     * @param link where the link is created
+     * @return the link, or {@code null} when this environment creates no link
+     * @throws Exception when the junction command cannot be run
+     */
+    private static Path aLinkTo(Path target, Path link) throws Exception
+    {
+        try
+        {
+            return Files.createSymbolicLink(link, target);
+        }
+        catch (IOException | UnsupportedOperationException refused)
+        {
+            // Windows without the privilege creates no symlink; a junction is the fallback.
+        }
+        if (!System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT).startsWith("windows")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            return null;
+        }
+        if (!Files.isDirectory(target))
+        {
+            // A junction points at a directory only.
+            return null;
+        }
+        Process mklink = new ProcessBuilder("cmd.exe", "/c", "mklink", "/J", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "\"" + link + "\"", "\"" + target + "\"").start(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        boolean finished = mklink.waitFor(15, TimeUnit.SECONDS);
+        if (finished && mklink.exitValue() == 0 && Files.isDirectory(link))
+        {
+            return link;
+        }
+        return null;
+    }
+
+    /**
+     * Deletes a directory tree or a single file.
+     *
+     * @param at the path to delete
+     * @throws IOException when a file cannot be deleted
+     */
+    private static void delete(Path at) throws IOException
+    {
+        if (at == null || !Files.exists(at))
+        {
+            return;
+        }
+        try (var walk = Files.walk(at))
+        {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try
+                {
+                    Files.deleteIfExists(path);
+                }
+                catch (IOException ignored)
+                {
+                    // The caller's own cleanup reports what stays behind.
+                }
+            });
+        }
     }
 
     /**
@@ -540,7 +685,7 @@ public class AtomicFileReplaceTest
      */
     private static Process holdTheLockFromAnotherProcess(Path target, long holdMillis) throws Exception
     {
-        Path lockFile = AtomicFileReplace.lockFileOf(target.toAbsolutePath().normalize());
+        Path lockFile = AtomicFileReplace.lockFileOf(AtomicFileReplace.physicalTarget(target));
         Files.createDirectories(lockFile.getParent());
         Path program = Files.createTempFile("aiedt-lock-holder-", ".java"); //$NON-NLS-1$ //$NON-NLS-2$
         Files.write(program, ("""

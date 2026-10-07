@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
@@ -47,9 +48,12 @@ import ru.aiedt.mcp.server.Activator;
  * </p>
  * <p>
  * Writers are serialized by a lock file outside any project, under
- * {@code <user home>/.aiedt/locks/<SHA-256 of the target's canonical path>.lock}. The lock is one
+ * {@code <user home>/.aiedt/locks/<SHA-256 of the target's physical path>.lock}. The lock is one
  * per physical file for every workspace and every EDT instance, so nothing is written into the
- * project or its {@code .gitignore}. It is held from the first content check to the end of the
+ * project or its {@code .gitignore}. Symbolic links and junctions are resolved before the lock
+ * is named, so two spellings of one file wait for each other, and a target that is itself a
+ * link is written through to the file it points at. The lock is held from the first content
+ * check to the end of the
  * replacement: under it the file's fingerprint is compared with the one the caller read, the new
  * content is staged in a sibling temporary file, the fingerprint is compared a second time
  * immediately before the atomic move, and a mismatch at either check refuses the write and leaves
@@ -309,8 +313,17 @@ public final class AtomicFileReplace
     private static Outcome runUnderLocks(Path target, String expectedFingerprint, byte[] content,
         IFile workspaceFile, long waitMillis, Runnable afterStaging)
     {
-        Path canonical = target.toAbsolutePath().normalize();
-        ReentrantLock writer = WRITERS_HERE.computeIfAbsent(canonical, key -> new ReentrantLock());
+        Path physical;
+        try
+        {
+            physical = physicalTarget(target);
+        }
+        catch (IOException e)
+        {
+            return Outcome.refused(WRITE_FAILED,
+                "the target could not be resolved to the physical file: " + exceptionText(e)); //$NON-NLS-1$
+        }
+        ReentrantLock writer = WRITERS_HERE.computeIfAbsent(physical, key -> new ReentrantLock());
         boolean taken;
         try
         {
@@ -329,10 +342,10 @@ public final class AtomicFileReplace
         }
         try
         {
-            Outcome done = runUnderTheLockFile(canonical, expectedFingerprint, content, waitMillis, afterStaging);
+            Outcome done = runUnderTheLockFile(physical, expectedFingerprint, content, waitMillis, afterStaging);
             if (done.isOk())
             {
-                refreshQuietly(workspaceFile, canonical);
+                refreshQuietly(workspaceFile, physical);
             }
             return done;
         }
@@ -343,22 +356,55 @@ public final class AtomicFileReplace
     }
 
     /**
+     * The physical file behind the path as the caller spells it.
+     * <p>
+     * The lock and the write must speak of the file itself, not of one of its spellings:
+     * {@link Path#toAbsolutePath()} keeps symbolic links and junctions, so two spellings of one
+     * file would take two locks and write over each other. A target that is itself a link
+     * resolves to the file it points at, and the write updates that file through the link. A
+     * link that resolves nowhere is reported rather than replaced with a regular file. The
+     * nearest existing ancestor anchors the resolution when the target does not exist yet, and
+     * the segments below it are appended as they are spelled.
+     * </p>
+     *
+     * @param target the path as the caller spells it
+     * @return the physical path of the same file
+     * @throws IOException when an existing link cannot be resolved
+     */
+    static Path physicalTarget(Path target) throws IOException
+    {
+        Path absolute = target.toAbsolutePath().normalize();
+        Path anchor = absolute;
+        while (anchor != null && !Files.exists(anchor, LinkOption.NOFOLLOW_LINKS))
+        {
+            anchor = anchor.getParent();
+        }
+        if (anchor == null)
+        {
+            return absolute;
+        }
+        Path resolved = anchor.toRealPath();
+        return anchor.equals(absolute) ? resolved
+            : resolved.resolve(absolute.subpath(anchor.getNameCount(), absolute.getNameCount()));
+    }
+
+    /**
      * Runs one replacement or removal while holding the lock file of the target.
      *
-     * @param canonical the normalized target
+     * @param physical the physical target
      * @param expectedFingerprint the fingerprint the caller read, or {@code null} to skip comparing
      * @param content the bytes to write, or {@code null} to remove the file
      * @param waitMillis how long to wait for the lock file
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
      * @return what the write did
      */
-    private static Outcome runUnderTheLockFile(Path canonical, String expectedFingerprint, byte[] content,
+    private static Outcome runUnderTheLockFile(Path physical, String expectedFingerprint, byte[] content,
         long waitMillis, Runnable afterStaging)
     {
         Path lockFile;
         try
         {
-            lockFile = lockFileOf(canonical);
+            lockFile = lockFileOf(physical);
             Files.createDirectories(lockFile.getParent());
         }
         catch (IOException e)
@@ -377,7 +423,7 @@ public final class AtomicFileReplace
             }
             try
             {
-                return writeHoldingTheLockFile(canonical, expectedFingerprint, content, afterStaging);
+                return writeHoldingTheLockFile(physical, expectedFingerprint, content, afterStaging);
             }
             finally
             {
@@ -399,43 +445,43 @@ public final class AtomicFileReplace
     /**
      * Replaces or removes the target, both fingerprint checks and the staging under the lock file.
      *
-     * @param canonical the normalized target
+     * @param physical the physical target
      * @param expectedFingerprint the fingerprint the caller read, or {@code null} to skip comparing
      * @param content the bytes to write, or {@code null} to remove the file
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
      * @return what the write did
      * @throws IOException when the file cannot be read, staged or replaced
      */
-    private static Outcome writeHoldingTheLockFile(Path canonical, String expectedFingerprint, byte[] content,
+    private static Outcome writeHoldingTheLockFile(Path physical, String expectedFingerprint, byte[] content,
         Runnable afterStaging) throws IOException
     {
-        if (Files.exists(canonical))
+        if (Files.exists(physical))
         {
-            Outcome probe = probeWritableAndUnlocked(canonical);
+            Outcome probe = probeWritableAndUnlocked(physical);
             if (!probe.isOk())
             {
                 return probe;
             }
         }
-        Outcome unchanged = holdsWhatWasRead(canonical, expectedFingerprint);
+        Outcome unchanged = holdsWhatWasRead(physical, expectedFingerprint);
         if (!unchanged.isOk())
         {
             return unchanged;
         }
         if (content == null)
         {
-            if (Files.notExists(canonical))
+            if (Files.notExists(physical))
             {
                 return Outcome.ok();
             }
-            Outcome stillUnchanged = holdsWhatWasRead(canonical, expectedFingerprint);
+            Outcome stillUnchanged = holdsWhatWasRead(physical, expectedFingerprint);
             if (!stillUnchanged.isOk())
             {
                 return stillUnchanged;
             }
             try
             {
-                Files.deleteIfExists(canonical);
+                Files.deleteIfExists(physical);
             }
             catch (AccessDeniedException denied)
             {
@@ -443,14 +489,14 @@ public final class AtomicFileReplace
             }
             return Outcome.ok();
         }
-        Path directory = canonical.getParent();
+        Path directory = physical.getParent();
         if (directory != null)
         {
             Files.createDirectories(directory);
         }
         Path stagingDirectory = directory == null ? Path.of(".") : directory; //$NON-NLS-1$
-        cleanupStaleTemporaryFiles(canonical, stagingDirectory);
-        Path temporary = createTemporaryFile(canonical, stagingDirectory);
+        cleanupStaleTemporaryFiles(physical, stagingDirectory);
+        Path temporary = createTemporaryFile(physical, stagingDirectory);
         IOException failure = null;
         try
         {
@@ -459,12 +505,12 @@ public final class AtomicFileReplace
             {
                 afterStaging.run();
             }
-            Outcome stillUnchanged = holdsWhatWasRead(canonical, expectedFingerprint);
+            Outcome stillUnchanged = holdsWhatWasRead(physical, expectedFingerprint);
             if (!stillUnchanged.isOk())
             {
                 return stillUnchanged;
             }
-            moveReplacing(temporary, canonical);
+            moveReplacing(temporary, physical);
             return Outcome.ok();
         }
         catch (IOException e)
@@ -492,17 +538,17 @@ public final class AtomicFileReplace
     /**
      * Tells whether the target still holds the content the caller read.
      *
-     * @param canonical the normalized target
+     * @param physical the physical target
      * @param expectedFingerprint the fingerprint the caller read, or {@code null} to skip comparing
      * @return {@link Outcome#ok()} when it does, otherwise the refusal
      */
-    private static Outcome holdsWhatWasRead(Path canonical, String expectedFingerprint)
+    private static Outcome holdsWhatWasRead(Path physical, String expectedFingerprint)
     {
         if (expectedFingerprint == null)
         {
             return Outcome.ok();
         }
-        if (Files.notExists(canonical))
+        if (Files.notExists(physical))
         {
             return NO_FILE_FINGERPRINT.equals(expectedFingerprint)
                 ? Outcome.ok()
@@ -511,7 +557,7 @@ public final class AtomicFileReplace
         byte[] bytes;
         try
         {
-            bytes = Files.readAllBytes(canonical);
+            bytes = Files.readAllBytes(physical);
         }
         catch (IOException e)
         {
@@ -530,15 +576,15 @@ public final class AtomicFileReplace
      * another process, or by this one - refuses with {@link #LOCK_REFUSED}.
      * </p>
      *
-     * @param canonical the normalized target, which exists
+     * @param physical the physical target, which exists
      * @return {@link Outcome#ok()} when the file is writable and unlocked, otherwise the refusal
      * @throws IOException when the file cannot be opened for a reason other than access
      */
-    private static Outcome probeWritableAndUnlocked(Path canonical) throws IOException
+    private static Outcome probeWritableAndUnlocked(Path physical) throws IOException
     {
         try
         {
-            try (FileChannel channel = FileChannel.open(canonical, StandardOpenOption.WRITE))
+            try (FileChannel channel = FileChannel.open(physical, StandardOpenOption.WRITE))
             {
                 try
                 {
@@ -604,9 +650,9 @@ public final class AtomicFileReplace
      * </p>
      *
      * @param workspaceFile the workspace handle of the target; may be {@code null}
-     * @param canonical the normalized target, for the log line
+     * @param physical the physical target, for the log line
      */
-    private static void refreshQuietly(IFile workspaceFile, Path canonical)
+    private static void refreshQuietly(IFile workspaceFile, Path physical)
     {
         if (workspaceFile == null)
         {
@@ -618,7 +664,7 @@ public final class AtomicFileReplace
         }
         catch (CoreException e)
         {
-            Activator.logWarning("The workspace could not refresh " + canonical.getFileName() //$NON-NLS-1$
+            Activator.logWarning("The workspace could not refresh " + physical.getFileName() //$NON-NLS-1$
                 + " after it was written: " + e.getMessage()); //$NON-NLS-1$
         }
     }
@@ -780,12 +826,12 @@ public final class AtomicFileReplace
     /**
      * The lock file one target is written through.
      *
-     * @param canonical the normalized target
+     * @param physical the physical target
      * @return the lock file's path
      */
-    static Path lockFileOf(Path canonical)
+    static Path lockFileOf(Path physical)
     {
-        return lockDirectory().resolve(digest(canonical) + ".lock"); //$NON-NLS-1$
+        return lockDirectory().resolve(digest(physical) + ".lock"); //$NON-NLS-1$
     }
 
     /**
@@ -795,15 +841,15 @@ public final class AtomicFileReplace
      * two never name the same file.
      * </p>
      *
-     * @param canonical the normalized target
+     * @param physical the physical target
      * @return the hexadecimal SHA-256 of the path's text
      */
-    private static String digest(Path canonical)
+    private static String digest(Path physical)
     {
         try
         {
             byte[] hash = MessageDigest.getInstance("SHA-256") //$NON-NLS-1$
-                .digest(canonical.toString().getBytes(StandardCharsets.UTF_8));
+                .digest(physical.toString().getBytes(StandardCharsets.UTF_8));
             StringBuilder hex = new StringBuilder(hash.length * 2);
             for (byte value : hash)
             {
@@ -814,7 +860,7 @@ public final class AtomicFileReplace
         }
         catch (NoSuchAlgorithmException impossible)
         {
-            return Integer.toHexString(canonical.hashCode());
+            return Integer.toHexString(physical.hashCode());
         }
     }
 
