@@ -139,10 +139,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         if ("start_client".equals(normalized)) //$NON-NLS-1$
         {
             // The delegate updates the infobase before starting only when the caller asks for it
-            // (default false, read the way ClientSessionStarter reads it), and that update is the
-            // work update_database is weighed for. Without it the call keeps its previous answer,
-            // the delegate's own name, which weighs nothing.
-            return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", false) //$NON-NLS-1$
+            // (default false, decided the way ClientSessionStarter decides it), and that update is
+            // the work update_database is weighed for. Without it the call keeps its previous
+            // answer, the delegate's own name, which weighs nothing.
+            return DebugSessionStarter.launchUpdate(arguments, false).update //$NON-NLS-1$
                 ? "update_database" : ClientSessionStarter.NAME; //$NON-NLS-1$
         }
         Supplier<IMcpTool> delegate = DESCRIBED.get(normalized);

@@ -927,19 +927,13 @@ public final class BmTemplateHelper
             SpreadsheetDocument spreadsheet = (SpreadsheetDocument) spreadsheetDocument;
             // A picture reference the project cannot resolve serializes as ref="v8ui:/", which
             // the platform then refuses to load. Better to refuse the write here, before any
-            // byte of the file is touched, and name what is missing.
-            List<String> unresolved = unresolvedPictureRefs(spreadsheet);
-            if (!unresolved.isEmpty())
+            // byte of the file is touched, and name what is missing. The writing operations ask
+            // the same question before the document changes (requireResolvablePictures); this
+            // check is the last line of defense for a caller that changed the document first.
+            String unresolved = unresolvedPictureRefusal(spreadsheet);
+            if (unresolved != null)
             {
-                int shown = Math.min(unresolved.size(), 3);
-                return "the template holds " + unresolved.size() //$NON-NLS-1$
-                    + " picture reference(s) that do not resolve in the project (" //$NON-NLS-1$
-                    + String.join(", ", unresolved.subList(0, shown)) //$NON-NLS-1$
-                    + (unresolved.size() > shown ? ", ..." : "") //$NON-NLS-1$ //$NON-NLS-2$
-                    + "). Writing would serialize them as ref=\"v8ui:/\", which the platform " //$NON-NLS-1$
-                    + "refuses to load. Copy the named common pictures into the project first. " //$NON-NLS-1$
-                    + "Removing the drawings does not help: the reference stays in the " //$NON-NLS-1$
-                    + "document's picture table. Template.mxlx was not changed."; //$NON-NLS-1$
+                return unresolved + " Template.mxlx was not changed."; //$NON-NLS-1$
             }
             // The moxel serializer dereferences the document's column set, so a document built
             // without one dies inside save() with a NullPointerException. Give it the default
@@ -1343,6 +1337,66 @@ public final class BmTemplateHelper
             }
         }
         return unresolved;
+    }
+
+    /**
+     * The refusal for a document whose picture references the project cannot resolve, or
+     * {@code null} when every reference resolves.
+     * <p>
+     * The moxel serializer writes an unresolved reference as {@code ref="v8ui:/"}, which the
+     * platform refuses to load, so a write carrying one is stopped rather than persisted. The
+     * sentence names what is missing; whether anything was changed is the caller's to say, because
+     * the writing operations refuse before changing anything while the persist step refuses with
+     * the file still untouched.
+     * </p>
+     *
+     * @param doc the spreadsheet document; must not be <code>null</code>
+     * @return the refusal, or {@code null} when the document holds no unresolved reference
+     */
+    public static String unresolvedPictureRefusal(SpreadsheetDocument doc)
+    {
+        List<String> unresolved = unresolvedPictureRefs(doc);
+        if (unresolved.isEmpty())
+        {
+            return null;
+        }
+        int shown = Math.min(unresolved.size(), 3);
+        return "the template holds " + unresolved.size() //$NON-NLS-1$
+            + " picture reference(s) that do not resolve in the project (" //$NON-NLS-1$
+            + String.join(", ", unresolved.subList(0, shown)) //$NON-NLS-1$
+            + (unresolved.size() > shown ? ", ..." : "") //$NON-NLS-1$ //$NON-NLS-2$
+            + "). Writing would serialize them as ref=\"v8ui:/\", which the platform " //$NON-NLS-1$
+            + "refuses to load. Copy the named common pictures into the project first. " //$NON-NLS-1$
+            + "Removing the drawings does not help: the reference stays in the " //$NON-NLS-1$
+            + "document's picture table."; //$NON-NLS-1$
+    }
+
+    /**
+     * The guard a write on a spreadsheet document asks before the document changes.
+     * <p>
+     * A template with picture references the project cannot resolve cannot be written to
+     * Template.mxlx at all, so the write is refused before the operation changes anything: the
+     * guard runs inside the write transaction ahead of the mutation, and the refusal it throws
+     * rolls that transaction back with the document exactly as it was and the file untouched - a
+     * refused write cannot leave the model and the file diverging. A dry run passes through the
+     * same guard, so the preview of a write that would not persist answers with the same refusal.
+     * </p>
+     *
+     * @param doc the document the write is about to change; must not be <code>null</code>
+     */
+    public static void requireResolvablePictures(SpreadsheetDocument doc)
+    {
+        String refusal = unresolvedPictureRefusal(doc);
+        if (refusal == null)
+        {
+            return;
+        }
+        MetadataGuards.ErrorTag tag = new MetadataGuards.ErrorTag("unresolvedPictureRefs"); //$NON-NLS-1$
+        tag.put("pictures", unresolvedPictureRefs(doc)); //$NON-NLS-1$
+        throw new MetadataGuards.BlockedGuardException(MetadataGuards.Verdict.block(
+            refusal + " Nothing was changed: neither the document nor Template.mxlx.", //$NON-NLS-1$
+            "Copy the named common pictures into the project, then write again.", //$NON-NLS-1$
+            tag));
     }
 
     /**
@@ -6221,6 +6275,29 @@ public final class BmTemplateHelper
         }
         doc.getDrawings().add(d);
         return id;
+    }
+
+    /**
+     * Whether the spreadsheet holds a drawing with the given id.
+     *
+     * @param doc the document; may be <code>null</code>
+     * @param drawingId the drawing id
+     * @return whether a drawing with that id is there
+     */
+    public static boolean hasDrawing(SpreadsheetDocument doc, int drawingId)
+    {
+        if (doc == null)
+        {
+            return false;
+        }
+        for (Drawing d : doc.getDrawings())
+        {
+            if (d != null && d.getDrawingId() == drawingId)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

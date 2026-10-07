@@ -791,8 +791,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] contentErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 String contentError = BmTemplateHelper.setCellContent(doc, rowF, colF, text,
                     textPassed, language, fillType, parameter);
                 if (contentError != null)
@@ -874,8 +873,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.addNamedArea(doc, areaNameF, kindF, fromRowF, fromColF, toRowF,
                     toColF);
                 if (!dryRun)
@@ -929,8 +927,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 removedRef[0] = BmTemplateHelper.removeNamedArea(doc, areaNameF);
                 if (!removedRef[0])
                 {
@@ -1013,8 +1010,7 @@ public class MxlWorkshopTool implements IMcpTool
         final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, rowF, countF,
                     formatF);
                 outcomeRef[0] = outcome;
@@ -1098,8 +1094,7 @@ public class MxlWorkshopTool implements IMcpTool
         final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, rowF, countF);
                 outcomeRef[0] = outcome;
                 if (outcome.error != null)
@@ -1184,8 +1179,7 @@ public class MxlWorkshopTool implements IMcpTool
         final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.copyRows(doc, fromRowF,
                     toRowF, countF);
                 outcomeRef[0] = outcome;
@@ -1280,8 +1274,7 @@ public class MxlWorkshopTool implements IMcpTool
             new BmTemplateHelper.ColumnOutcome[] { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.insertColumns(doc, colF,
                     countF, formatF);
                 outcomeRef[0] = outcome;
@@ -1366,8 +1359,7 @@ public class MxlWorkshopTool implements IMcpTool
             new BmTemplateHelper.ColumnOutcome[] { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, colF,
                     countF);
                 outcomeRef[0] = outcome;
@@ -1455,8 +1447,7 @@ public class MxlWorkshopTool implements IMcpTool
             new BmTemplateHelper.ColumnOutcome[] { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.copyColumns(doc, fromColF,
                     toColF, countF);
                 outcomeRef[0] = outcome;
@@ -1648,8 +1639,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.mergeCells(doc, fromRowF, fromColF, toRowF, toColF);
                 if (!dryRun)
                 {
@@ -1857,8 +1847,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] formatErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 String written = ""; //$NON-NLS-1$
                 if (cellsF)
                 {
@@ -2066,8 +2055,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 int cellCount = 0;
                 int mergeCount = 0;
                 if (layoutF.cells != null)
@@ -2182,8 +2170,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+                SpreadsheetDocument doc = writableDocument(owner, templateName);
                 int id = BmTemplateHelper.addDrawing(doc, canonicalTypeF, beginRowF, beginColF,
                     endRowF, endColF, beginRowOffsetF, beginColOffsetF, endRowOffsetF,
                     endColOffsetF, formatIndexF, zOrderF, textF, languageF);
@@ -2242,9 +2229,10 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                MdObject template = resolveTemplate(owner, templateName);
-                SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
-                boolean removed = BmTemplateHelper.removeDrawing(doc, drawingIdF);
+                // Resolved without the guard: a removal that matches nothing changes nothing and
+                // writes nothing, and the guard inside asks only the removal that will.
+                SpreadsheetDocument doc = resolvedDocument(owner, templateName);
+                boolean removed = guardedRemoveDrawing(doc, drawingIdF);
                 removedRef[0] = removed;
                 if (removed && !dryRun)
                 {
@@ -2432,6 +2420,69 @@ public class MxlWorkshopTool implements IMcpTool
         {
             r.tags.put("templateMutationPersistFailed", persistError); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The document a writing operation of this tool changes, refused before anything changes when
+     * the template holds picture references the project cannot resolve.
+     * <p>
+     * Such a template cannot reach Template.mxlx: the serializer would write each unresolved
+     * reference as {@code ref="v8ui:/"}, which the platform refuses to load. The guard runs inside
+     * the write transaction ahead of the mutation and throws, so the transaction rolls back with
+     * the document exactly as it was and the file untouched - a refused write cannot leave the
+     * model and the file diverging. A dry run answers the same refusal: it previews a write that
+     * would not persist. The reading operations resolve the document without this guard, so a
+     * template that already holds such references stays readable, and a removal that would change
+     * nothing asks the guard only when it finds something to remove.
+     * </p>
+     *
+     * @param owner the object {@code ownerFqn} resolved to
+     * @param templateName the template's name
+     * @return the template's spreadsheet document
+     */
+    static SpreadsheetDocument writableDocument(MdObject owner, String templateName)
+    {
+        SpreadsheetDocument doc = resolvedDocument(owner, templateName);
+        BmTemplateHelper.requireResolvablePictures(doc);
+        return doc;
+    }
+
+    /**
+     * The document behind a template name, with no guard asked of it.
+     *
+     * @param owner the object {@code ownerFqn} resolved to
+     * @param templateName the template's name
+     * @return the template's spreadsheet document
+     */
+    static SpreadsheetDocument resolvedDocument(MdObject owner, String templateName)
+    {
+        MdObject template = resolveTemplate(owner, templateName);
+        return BmTemplateHelper.getOrCreateSpreadsheet(template);
+    }
+
+    /**
+     * Removes a drawing the way a write does, with the unresolved-picture guard asking only a
+     * removal that would really change the document.
+     * <p>
+     * A drawing that is not there is the idempotent skip it always was - neither the document nor
+     * Template.mxlx would move - and trading that no-op success for the guard's refusal would tell
+     * the caller a write was stopped when none was ever going to happen. The guard asks exactly
+     * the removal that will change something, so a template with unresolved references still
+     * refuses to lose a drawing it has.
+     * </p>
+     *
+     * @param doc the document the removal addresses
+     * @param drawingId the drawing to remove
+     * @return whether a drawing was removed
+     */
+    static boolean guardedRemoveDrawing(SpreadsheetDocument doc, int drawingId)
+    {
+        if (!BmTemplateHelper.hasDrawing(doc, drawingId))
+        {
+            return false;
+        }
+        BmTemplateHelper.requireResolvablePictures(doc);
+        return BmTemplateHelper.removeDrawing(doc, drawingId);
     }
 
     /**

@@ -160,7 +160,8 @@ public class YaxunitTestRunnerTest
     public void theInfobaseIsUpdatedBeforeTheLaunchUnlessTheCallTurnsItOff()
     {
         List<String> asked = new ArrayList<>();
-        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(true, "Proj", "app-1",
+        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(
+            DebugSessionStarter.launchUpdate(Boolean.TRUE, true), "Proj", "app-1",
             (project, application) -> {
                 asked.add(project + "/" + application); //$NON-NLS-1$
                 return anInfobaseAlreadyUpToDate();
@@ -170,7 +171,8 @@ public class YaxunitTestRunnerTest
         assertEquals("the step runs once, for this project and application", 1, asked.size());
         assertEquals("Proj/app-1", asked.get(0));
 
-        String notAsked = YaxunitTestRunner.preLaunchUpdateRefusal(false, "Proj", "app-1",
+        String notAsked = YaxunitTestRunner.preLaunchUpdateRefusal(
+            DebugSessionStarter.launchUpdate(Boolean.FALSE, true), "Proj", "app-1",
             (project, application) -> {
                 asked.add("called anyway"); //$NON-NLS-1$
                 return ApplicationUpdater.Result.failed("boom"); //$NON-NLS-1$
@@ -187,7 +189,8 @@ public class YaxunitTestRunnerTest
     @Test
     public void anUpdateThatDidNotFinishRefusesTheLaunchAndNamesTheWayOut()
     {
-        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(true, "Proj", "app-1",
+        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(
+            DebugSessionStarter.launchUpdate(Boolean.TRUE, true), "Proj", "app-1",
             (project, application) -> ApplicationUpdater.Result.failed("the load stopped at row 40")); //$NON-NLS-1$
 
         assertNotNull(refusal);
@@ -205,9 +208,11 @@ public class YaxunitTestRunnerTest
     public void theUpdateDefaultsToOnAndTheCacheDefaultsToOff()
     {
         assertTrue("the infobase is updated when the call does not say", //$NON-NLS-1$
-            YaxunitTestRunner.updateBeforeLaunch(new HashMap<String, String>()));
-        assertTrue(YaxunitTestRunner.updateBeforeLaunch(params("updateBeforeLaunch", "true"))); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(YaxunitTestRunner.updateBeforeLaunch(params("updateBeforeLaunch", "false"))); //$NON-NLS-1$ //$NON-NLS-2$
+            YaxunitTestRunner.updateBeforeLaunch(new HashMap<String, String>()).asks);
+        assertTrue(YaxunitTestRunner.updateBeforeLaunch(
+            params("updateBeforeLaunch", "true")).asks); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(YaxunitTestRunner.updateBeforeLaunch(
+            params("updateBeforeLaunch", "false")).asks); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertFalse("a second call runs the tests again unless it asks for the report", //$NON-NLS-1$
             YaxunitTestRunner.reuseRecent(new HashMap<String, String>()));
@@ -310,7 +315,7 @@ public class YaxunitTestRunnerTest
             refusal.get("error").getAsString().contains("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
 
         JsonObject pending = JsonParser.parseString(
-            YaxunitTestRunner.publish(YaxunitTestRunner.pendingText(Path.of("report-dir")))) //$NON-NLS-1$
+            YaxunitTestRunner.publish(YaxunitTestRunner.pendingText(Path.of("report-dir"), false))) //$NON-NLS-1$
             .getAsJsonObject();
         assertTrue(pending.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(pending.get("output").getAsString(), //$NON-NLS-1$
@@ -324,7 +329,7 @@ public class YaxunitTestRunnerTest
         try
         {
             String raw = YaxunitTestRunner.handOverFinishedLaunch(runKey, onePassingReport(report),
-                new YaxunitTestRunner.RunContext("Proj", null, null, null), //$NON-NLS-1$
+                new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
                 fields -> RunReceipts.writeTo(receipts, fields));
             JsonObject result = JsonParser.parseString(YaxunitTestRunner.publish(raw)).getAsJsonObject();
             assertTrue(result.get("success").getAsBoolean()); //$NON-NLS-1$
@@ -384,7 +389,7 @@ public class YaxunitTestRunnerTest
         String runKey = "repeat-" + System.nanoTime(); //$NON-NLS-1$
         YaxunitTestRunner.noteUndelivered(runKey);
         File report = onePassingReport(root);
-        YaxunitTestRunner.RunContext context = new YaxunitTestRunner.RunContext("Proj", null, null, null); //$NON-NLS-1$
+        YaxunitTestRunner.RunContext context = new YaxunitTestRunner.RunContext("Proj", null, null, null, false); //$NON-NLS-1$
         try
         {
             JsonObject first = JsonParser.parseString(YaxunitTestRunner.handOverFinishedLaunch(runKey, report,
@@ -418,7 +423,7 @@ public class YaxunitTestRunnerTest
         Path receipts = root.resolve("receipts"); //$NON-NLS-1$
         String runKey = "race-" + System.nanoTime(); //$NON-NLS-1$
         File report = onePassingReport(root);
-        YaxunitTestRunner.RunContext context = new YaxunitTestRunner.RunContext("Proj", null, null, null); //$NON-NLS-1$
+        YaxunitTestRunner.RunContext context = new YaxunitTestRunner.RunContext("Proj", null, null, null, false); //$NON-NLS-1$
         CyclicBarrier barrier = new CyclicBarrier(2);
         YaxunitTestRunner.noteUndelivered(runKey);
         YaxunitTestRunner.beforeClaim = () -> {
@@ -476,7 +481,7 @@ public class YaxunitTestRunnerTest
         try
         {
             String raw = YaxunitTestRunner.handOverFinishedLaunch(runKey, onePassingReport(root),
-                new YaxunitTestRunner.RunContext("Proj", "Ext", "Module", "Module.Test"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                new YaxunitTestRunner.RunContext("Proj", "Ext", "Module", "Module.Test", false), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
                 fields -> RunReceipts.writeResolving(fields, tool -> {
                     throw new IllegalStateException("plugin state is gone"); //$NON-NLS-1$
                 }));
@@ -512,7 +517,7 @@ public class YaxunitTestRunnerTest
         try
         {
             File report = onePassingReport(directory);
-            YaxunitTestRunner.RunContext context = new YaxunitTestRunner.RunContext("Proj", null, null, null); //$NON-NLS-1$
+            YaxunitTestRunner.RunContext context = new YaxunitTestRunner.RunContext("Proj", null, null, null, false); //$NON-NLS-1$
             Path receipts = directory.resolve("receipts"); //$NON-NLS-1$
             String raw = fromLaunch
                 ? YaxunitTestRunner.handOverFinishedLaunch(runKey, report, context,

@@ -507,8 +507,9 @@ pressed by itself, and a label matching no button or several is refused rather t
 infobase-update question does not have to appear at all: `launch_debugger action=launch` updates
 before launching by default, and `infobase_admin operation=start_client` does so with
 `updateBeforeLaunch=true`. A preset that disabled `update_database` (Read-only, Debug & Test,
-Code Review) refuses that update - and with it the launch - before anything starts, naming
-`updateBeforeLaunch=false`.
+Code Review) refuses an explicitly asked update - and with it the launch - before anything starts,
+naming `updateBeforeLaunch=false`; a launch that named no argument runs without updating under
+such a preset.
 
 ## Tests
 
@@ -517,8 +518,10 @@ Code Review) refuses that update - and with it the launch - before anything star
 (default true) runs the infobase update before the launch and refuses the run when that update did
 not finish, naming `updateBeforeLaunch=false` as the way to launch without one; that update is why
 `validate_for_export` matters here too. A preset that disabled `update_database` (Read-only, Debug
-& Test, Code Review) refuses both modes before the update and before the launch - under Debug &
-Test a call without an explicit `updateBeforeLaunch=false` does not run. `reuseRecent=true` (`mode=run`) answers with a run that finished within
+& Test, Code Review) refuses an explicit `true` before the update and before the launch, while a
+call without the argument launches without updating - and every answer of that run, the finished
+report, the `Pending` one and the report a repeat call picks up, carries
+`databaseUpdate=SKIPPED_BY_PRESET`. `reuseRecent=true` (`mode=run`) answers with a run that finished within
 the last five minutes instead of starting another, saying so with `cached: true` and the moment it
 finished.
 
@@ -789,10 +792,11 @@ no drawings, against a `Template.mxlx` that is not the empty skeleton (the bytes
 or that skeleton with `<indexTo>1</indexTo>` right after `<index>0</index>`), is refused and the file
 stays byte for byte; a read names the mismatch as `templateModelFileMismatch`.
 
-A picture reference that does not resolve in the project refuses the write before the file changes,
-naming the count and the first names. An empty picture placeholder does not refuse the write. A
-document with no column set receives a column set of size 0 before the save, the same shape as an empty
-template.
+A picture reference that does not resolve in the project refuses the write before anything
+changes - the document and `Template.mxlx` stay as they were, and `dryRun` answers with the same
+refusal - naming the count and the first names. An empty picture placeholder does not refuse the
+write. A document with no column set receives a column set of size 0 before the save, the same
+shape as an empty template.
 
 `create_template` with `ownerFqn=CommonTemplate.<Name>` and the same `templateName` creates that common
 template as a spreadsheet and an empty `Template.mxlx`. An existing common template is not overwritten.

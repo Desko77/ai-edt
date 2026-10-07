@@ -174,7 +174,10 @@ public final class DebugSessionStarter implements IMcpTool
                 "Exact name of an EDT debug launch configuration, either runtime client or Attach. " //$NON-NLS-1$
                     + "Use this for Attach configurations or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "true updates the database before launching (default: true; ignored for Attach)") //$NON-NLS-1$
+                "Updates the database before launching (default true; ignored for Attach). Under a " //$NON-NLS-1$
+                    + "preset that disabled update_database an omitted argument launches without " //$NON-NLS-1$
+                    + "updating (the answer carries databaseUpdate=SKIPPED_BY_PRESET); an explicit " //$NON-NLS-1$
+                    + "true is refused.") //$NON-NLS-1$
             .integerProperty("debugServerPort", //$NON-NLS-1$
                 "Debug server port for this launch only, 1..65535; the saved configuration is " //$NON-NLS-1$
                     + "not changed. Use when another 1C:EDT holds the default port, which the " //$NON-NLS-1$
@@ -236,21 +239,21 @@ public final class DebugSessionStarter implements IMcpTool
      * Names the database update this launch runs before the client starts, so the road weighs the
      * call by it.
      * <p>
-     * The update runs unless {@code updateBeforeLaunch} opts out (default true, read exactly as
-     * {@link #execute} reads it), and it is the work {@code update_database} is weighed for. The
-     * route cannot tell an Attach configuration from a runtime client, so a launch that names an
-     * Attach configuration is weighed although the update is skipped there.
+     * The update runs unless {@code updateBeforeLaunch} opts out (default true, decided exactly as
+     * {@link #execute} decides it - including the preset dropping an unnamed update), and it is
+     * the work {@code update_database} is weighed for. The route cannot tell an Attach
+     * configuration from a runtime client, so a launch that names an Attach configuration is
+     * weighed although the update is skipped there.
      * </p>
      *
      * @param arguments the call arguments, as the client sent them; may be <code>null</code>
      * @return {@code update_database} when the call updates the infobase before launching,
-     *         <code>null</code> when it opts out
+     *         <code>null</code> when it opts out or the preset drops the unnamed update
      */
     @Override
     public String routesTo(Map<String, String> arguments)
     {
-        return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", true) //$NON-NLS-1$
-            ? "update_database" : null; //$NON-NLS-1$
+        return launchUpdate(arguments).update ? "update_database" : null; //$NON-NLS-1$
     }
 
     /**
@@ -279,7 +282,7 @@ public final class DebugSessionStarter implements IMcpTool
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
-        boolean updateBeforeLaunch = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
+        Boolean updateAsked = JsonUtils.extractBooleanArgumentNullable(params, "updateBeforeLaunch"); //$NON-NLS-1$
         int debugServerPort = JsonUtils.extractIntArgument(params, "debugServerPort", 0); //$NON-NLS-1$
         if (debugServerPort != 0 && (debugServerPort < 1 || debugServerPort > 65535))
         {
@@ -325,7 +328,7 @@ public final class DebugSessionStarter implements IMcpTool
 
         if (configName != null && !configName.isEmpty())
         {
-            return launchByConfigName(configName, updateBeforeLaunch, debugServerPort,
+            return launchByConfigName(configName, updateAsked, debugServerPort,
                 externalObjectProject, externalObjectName, enableDump, startupOption,
                 new ClientChoice(clientType, runMode), waitForEndpoint, endpointTimeout);
         }
@@ -348,7 +351,7 @@ public final class DebugSessionStarter implements IMcpTool
             return ToolResult.error(notReadyError).toJson();
         }
 
-        return launchDebug(projectName, applicationId, updateBeforeLaunch,
+        return launchDebug(projectName, applicationId, updateAsked,
             externalObjectProject, externalObjectName, debugServerPort, enableDump, startupOption,
             new ClientChoice(clientType, runMode), waitForEndpoint, endpointTimeout);
     }
@@ -397,7 +400,7 @@ public final class DebugSessionStarter implements IMcpTool
         }
     }
 
-    private String launchByConfigName(String configName, boolean updateBeforeLaunch,
+    private String launchByConfigName(String configName, Boolean updateAsked,
         int debugServerPort, String externalObjectProject, String externalObjectName,
         boolean enableDump, String startupOption, ClientChoice choice, String waitForEndpoint,
         Integer endpointTimeout)
@@ -564,33 +567,38 @@ public final class DebugSessionStarter implements IMcpTool
             }
 
             ApplicationUpdater.Result databaseUpdate = null;
-            if (!isAttach && updateBeforeLaunch && configProject != null && !configProject.isEmpty())
+            LaunchUpdate updateDecision = launchUpdate(updateAsked, true);
+            boolean updateSkipped = false;
+            if (!isAttach && updateDecision.asks && configProject != null && !configProject.isEmpty())
             {
-                String presetRefusal = presetUpdateRefusal(updateBeforeLaunch);
-                if (presetRefusal != null)
+                if (updateDecision.refusal != null)
                 {
-                    return ToolResult.error(presetRefusal)
+                    return ToolResult.error(updateDecision.refusal)
                         .put("launchConfiguration", config.getName()) //$NON-NLS-1$
                         .put("applicationId", effectiveAppId) //$NON-NLS-1$
                         .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                         .toJson();
                 }
-                String notReady = ProjectStateGuard.checkReadyOrError(configProject);
-                if (notReady != null)
+                if (updateDecision.update)
                 {
-                    return ToolResult.error(notReady).toJson();
+                    String notReady = ProjectStateGuard.checkReadyOrError(configProject);
+                    if (notReady != null)
+                    {
+                        return ToolResult.error(notReady).toJson();
+                    }
+                    databaseUpdate = updateDatabaseIfNeeded(configProject, effectiveAppId);
+                    String refusal = preLaunchRefusal(databaseUpdate);
+                    if (refusal != null)
+                    {
+                        return ToolResult.error(refusal)
+                            .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                            .put("applicationId", effectiveAppId) //$NON-NLS-1$
+                            .put("databaseUpdate", databaseUpdate.outcome.toString()) //$NON-NLS-1$
+                            .put("databaseState", stateName(databaseUpdate)) //$NON-NLS-1$
+                            .toJson();
+                    }
                 }
-                databaseUpdate = updateDatabaseIfNeeded(configProject, effectiveAppId);
-                String refusal = preLaunchRefusal(databaseUpdate);
-                if (refusal != null)
-                {
-                    return ToolResult.error(refusal)
-                        .put("launchConfiguration", config.getName()) //$NON-NLS-1$
-                        .put("applicationId", effectiveAppId) //$NON-NLS-1$
-                        .put("databaseUpdate", databaseUpdate.outcome.toString()) //$NON-NLS-1$
-                        .put("databaseState", stateName(databaseUpdate)) //$NON-NLS-1$
-                        .toJson();
-                }
+                updateSkipped = updateDecision.skippedByPreset;
             }
 
             ILaunchConfiguration toLaunch = config;
@@ -625,6 +633,7 @@ public final class DebugSessionStarter implements IMcpTool
             final IApplication resolvedApplication = application;
             final String openedObjectName = openedObject;
             final ApplicationUpdater.Result updateDone = databaseUpdate;
+            final boolean updateSkippedByPreset = updateSkipped;
             Function<LaunchOutcome, String> settledAnswer = settled ->
             {
                 if (!settled.started)
@@ -636,10 +645,7 @@ public final class DebugSessionStarter implements IMcpTool
                     .put("configurationType", typeId) //$NON-NLS-1$
                     .put("attach", isAttach) //$NON-NLS-1$
                     .put("mode", "debug"); //$NON-NLS-1$ //$NON-NLS-2$
-                if (updateDone != null)
-                {
-                    result.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
-                }
+                putDatabaseUpdate(result, updateDone, updateSkippedByPreset);
                 if (decidedMode != null)
                 {
                     describeClient(result, decidedMode, appliedFlagState, resolvedApplication);
@@ -726,7 +732,7 @@ public final class DebugSessionStarter implements IMcpTool
     }
 
     private String launchDebug(String projectName, String applicationId,
-        boolean updateBeforeLaunch, String externalObjectProject, String externalObjectName,
+        Boolean updateAsked, String externalObjectProject, String externalObjectName,
         int debugServerPort, boolean enableDump, String startupOption, ClientChoice choice,
         String waitForEndpoint, Integer endpointTimeout)
     {
@@ -871,28 +877,33 @@ public final class DebugSessionStarter implements IMcpTool
             }
 
             ApplicationUpdater.Result databaseUpdate = null;
-            if (updateBeforeLaunch && appManager != null && application != null)
+            LaunchUpdate updateDecision = launchUpdate(updateAsked, true);
+            boolean updateSkipped = false;
+            if (appManager != null && application != null)
             {
-                String presetRefusal = presetUpdateRefusal(updateBeforeLaunch);
-                if (presetRefusal != null)
+                if (updateDecision.refusal != null)
                 {
-                    return ToolResult.error(presetRefusal)
+                    return ToolResult.error(updateDecision.refusal)
                         .put("project", projectName) //$NON-NLS-1$
                         .put("applicationId", applicationId) //$NON-NLS-1$
                         .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                         .toJson();
                 }
-                databaseUpdate = updateDatabase(appManager, application);
-                String refusal = preLaunchRefusal(databaseUpdate);
-                if (refusal != null)
+                if (updateDecision.update)
                 {
-                    return ToolResult.error(refusal)
-                        .put("project", projectName) //$NON-NLS-1$
-                        .put("applicationId", applicationId) //$NON-NLS-1$
-                        .put("databaseUpdate", databaseUpdate.outcome.toString()) //$NON-NLS-1$
-                        .put("databaseState", stateName(databaseUpdate)) //$NON-NLS-1$
-                        .toJson();
+                    databaseUpdate = updateDatabase(appManager, application);
+                    String refusal = preLaunchRefusal(databaseUpdate);
+                    if (refusal != null)
+                    {
+                        return ToolResult.error(refusal)
+                            .put("project", projectName) //$NON-NLS-1$
+                            .put("applicationId", applicationId) //$NON-NLS-1$
+                            .put("databaseUpdate", databaseUpdate.outcome.toString()) //$NON-NLS-1$
+                            .put("databaseState", stateName(databaseUpdate)) //$NON-NLS-1$
+                            .toJson();
+                    }
                 }
+                updateSkipped = updateDecision.skippedByPreset;
             }
 
             ILaunchConfiguration matchingConfig = existingConfig;
@@ -961,6 +972,7 @@ public final class DebugSessionStarter implements IMcpTool
             final boolean createdConfig = autoCreatedConfig;
             final String openedObjectName = openedObject;
             final ApplicationUpdater.Result updateDone = databaseUpdate;
+            final boolean updateSkippedByPreset = updateSkipped;
             final IApplication resolvedApplication = application;
             Function<LaunchOutcome, String> settledAnswer = settled ->
             {
@@ -986,10 +998,7 @@ public final class DebugSessionStarter implements IMcpTool
                     .put("message", createdConfig //$NON-NLS-1$
                         ? "Debug session is now running (a launch configuration was auto-created for it)"
                         : "Debug session is now running");
-                if (updateDone != null)
-                {
-                    successResult.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
-                }
+                putDatabaseUpdate(successResult, updateDone, updateSkippedByPreset);
                 describeClient(successResult, mode, flagState, resolvedApplication);
                 String endpointNote = waitForEndpoint(waitForEndpoint, endpointTimeout, successResult);
                 if (endpointNote != null)
@@ -1151,32 +1160,141 @@ public final class DebugSessionStarter implements IMcpTool
         return ApplicationUpdater.updateIfNeeded(appManager, application, dumpInfo);
     }
 
+    /** The value the {@code databaseUpdate} answer field carries when the preset dropped the update. */
+    static final String DATABASE_UPDATE_SKIPPED_BY_PRESET = "SKIPPED_BY_PRESET"; //$NON-NLS-1$
+
     /**
-     * Says whether the active preset forbids the database update a launch is about to run.
+     * What one launch call decided about the pre-launch infobase update.
+     * <p>
+     * Read once per call and asked by every path that launches with an update (a debug launch by
+     * project or by configuration name, a client start, the two YAXUnit modes), so the named and
+     * the unnamed argument are told apart in one place rather than per branch.
+     * </p>
+     */
+    static final class LaunchUpdate
+    {
+        /** Whether the call's own words ask for the update: an explicit value, or the unnamed default. */
+        final boolean asks;
+
+        /** Whether the update step runs. */
+        final boolean update;
+
+        /**
+         * Whether the update was dropped because the call named no argument and the active preset
+         * forbids it - the answer names this in {@code databaseUpdate}.
+         */
+        final boolean skippedByPreset;
+
+        /** The refusal stopping the launch: an explicit ask under a preset that forbids the update. */
+        final String refusal;
+
+        LaunchUpdate(boolean asks, boolean update, boolean skippedByPreset, String refusal)
+        {
+            this.asks = asks;
+            this.update = update;
+            this.skippedByPreset = skippedByPreset;
+            this.refusal = refusal;
+        }
+    }
+
+    /**
+     * The one decision every launching path asks about the pre-launch infobase update.
      * <p>
      * {@code update_database} is a name every write-blocking preset disables, and a launch that
-     * carries {@code updateBeforeLaunch=true} would run that very work by another road - so every
-     * path that launches with an update (a debug launch by project or by configuration name, a
-     * client start, the two YAXUnit modes) asks here, before anything is updated or started. A
-     * call that opted out of the update has nothing to ask about.
+     * carries {@code updateBeforeLaunch=true} would run that very work by another road. A preset
+     * meant for launching and debugging must not demand the argument on every call, so the unnamed
+     * default bends under such a preset: the launch goes without the update, exactly as
+     * {@code updateBeforeLaunch=false} would, and the answer says so. An explicit {@code true}
+     * under that preset is still refused before anything is updated or started - the caller asked
+     * for an update the preset forbids, and silently dropping an explicit ask is not the same as
+     * filling in an omitted one.
      * </p>
      *
-     * @param updateBeforeLaunch whether this launch asked for the update
-     * @return the refusal sentence naming the way out, or {@code null} when the launch may go on
+     * @param named the {@code updateBeforeLaunch} argument as the call carried it:
+     *            {@link Boolean#TRUE}, {@link Boolean#FALSE}, or <code>null</code> when unnamed
+     * @param unnamedDefault what an unnamed argument means for this caller
+     * @return the decision
      */
-    static String presetUpdateRefusal(boolean updateBeforeLaunch)
+    static LaunchUpdate launchUpdate(Boolean named, boolean unnamedDefault)
     {
-        if (!updateBeforeLaunch)
+        boolean asks = named != null ? named.booleanValue() : unnamedDefault;
+        if (!asks)
         {
-            return null;
+            return new LaunchUpdate(false, false, false, null);
         }
         String gate = ToolGate.gateIfPresetDisabled(DatabaseUpdater.NAME);
         if (gate == null)
         {
-            return null;
+            return new LaunchUpdate(true, true, false, null);
         }
-        return gate + " Nothing was launched or updated. Retry with updateBeforeLaunch=false to " //$NON-NLS-1$
-            + "launch against the infobase as it stands."; //$NON-NLS-1$
+        if (named == null)
+        {
+            return new LaunchUpdate(true, false, true, null);
+        }
+        return new LaunchUpdate(true, false, false, gate + " Nothing was launched or updated. Retry with " //$NON-NLS-1$
+            + "updateBeforeLaunch=false to launch against the infobase as it stands."); //$NON-NLS-1$
+    }
+
+    /**
+     * The decision for a call whose {@code updateBeforeLaunch} defaults to true when unnamed.
+     *
+     * @param params the call arguments; may be <code>null</code>
+     * @return the decision
+     */
+    static LaunchUpdate launchUpdate(Map<String, String> params)
+    {
+        return launchUpdate(params, true);
+    }
+
+    /**
+     * The decision for a call whose {@code updateBeforeLaunch} carries the given default when
+     * unnamed - {@code false} for a plain client start.
+     *
+     * @param params the call arguments; may be <code>null</code>
+     * @param unnamedDefault what an unnamed argument means for this caller
+     * @return the decision
+     */
+    static LaunchUpdate launchUpdate(Map<String, String> params, boolean unnamedDefault)
+    {
+        return launchUpdate(JsonUtils.extractBooleanArgumentNullable(params, "updateBeforeLaunch"), //$NON-NLS-1$
+            unnamedDefault);
+    }
+
+    /**
+     * The note that goes with {@link #DATABASE_UPDATE_SKIPPED_BY_PRESET} on every answer carrying
+     * it, whatever shape that answer takes.
+     *
+     * @return the note sentence
+     */
+    static String databaseUpdateNoteText()
+    {
+        return "The infobase was not updated before this launch: the " //$NON-NLS-1$
+            + "active tool preset disables update_database and the call did not ask for the " //$NON-NLS-1$
+            + "update. Bring it up to date with infobase_admin operation=update_database " //$NON-NLS-1$
+            + "under a preset that allows it."; //$NON-NLS-1$
+    }
+
+    /**
+     * Puts the {@code databaseUpdate} field on a launch answer: the outcome of an update that ran,
+     * or the skip marker when the preset dropped an unnamed update.
+     *
+     * @param result the answer being built
+     * @param updateDone the outcome of the update that ran, or <code>null</code> when none did
+     * @param skippedByPreset whether the preset dropped this launch's unnamed update
+     */
+    static void putDatabaseUpdate(ToolResult result, ApplicationUpdater.Result updateDone,
+        boolean skippedByPreset)
+    {
+        if (updateDone != null)
+        {
+            result.put("databaseUpdate", updateDone.outcome.toString()); //$NON-NLS-1$
+            return;
+        }
+        if (skippedByPreset)
+        {
+            result.put("databaseUpdate", DATABASE_UPDATE_SKIPPED_BY_PRESET) //$NON-NLS-1$
+                .put("databaseUpdateNote", databaseUpdateNoteText()); //$NON-NLS-1$
+        }
     }
 
     /**

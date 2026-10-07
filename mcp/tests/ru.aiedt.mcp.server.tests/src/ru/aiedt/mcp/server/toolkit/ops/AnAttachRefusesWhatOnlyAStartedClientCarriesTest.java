@@ -36,7 +36,7 @@ public class AnAttachRefusesWhatOnlyAStartedClientCarriesTest
     {
         Class<?> choice = Class.forName(DebugSessionStarter.class.getName() + "$ClientChoice"); //$NON-NLS-1$
         Method launch = DebugSessionStarter.class.getDeclaredMethod("launchByConfigName", //$NON-NLS-1$
-            String.class, boolean.class, int.class, String.class, String.class,
+            String.class, Boolean.class, int.class, String.class, String.class,
             boolean.class, String.class, choice, String.class, Integer.class);
         assertNotNull(launch);
     }
