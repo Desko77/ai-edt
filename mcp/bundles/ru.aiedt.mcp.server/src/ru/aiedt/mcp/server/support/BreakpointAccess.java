@@ -182,6 +182,45 @@ public final class BreakpointAccess
     }
 
     /**
+     * Makes the line breakpoint of a call, with the manager the caller resolved; a seam so the
+     * replacement below can be exercised without EDT's own breakpoint classes.
+     */
+    interface LineBreakpointFactory
+    {
+        /**
+         * @param file the module file
+         * @param lineNumber the line, counting from 1
+         * @param manager the breakpoint manager to register with
+         * @return the breakpoint
+         * @throws Exception when the breakpoint cannot be created
+         */
+        IBreakpoint create(IFile file, int lineNumber, IBreakpointManager manager) throws Exception;
+    }
+
+    /**
+     * Puts a line breakpoint on a module, in place of any breakpoint already on that line.
+     * <p>
+     * Two breakpoints on one line both stop the debugger, both show in the breakpoints view, and a
+     * removal by coordinates takes only the first of them away - so a line asked for twice would leave
+     * a breakpoint nobody asked to keep. The one that was there goes first, and the one that comes back
+     * carries the options of this call.
+     * </p>
+     *
+     * @param file the module file
+     * @param lineNumber the line, counting from 1
+     * @param manager the breakpoint manager to search and register with
+     * @param factory how the new breakpoint is made
+     * @return the registered breakpoint
+     * @throws Exception if the old one cannot be removed or the new one cannot be created
+     */
+    static IBreakpoint replaceLineBreakpoint(IFile file, int lineNumber, IBreakpointManager manager,
+        LineBreakpointFactory factory) throws Exception
+    {
+        removeBreakpointAt(file, lineNumber, manager);
+        return factory.create(file, lineNumber, manager);
+    }
+
+    /**
      * Puts a line breakpoint on a BSL module.
      *
      * @param file the module file; must not be <code>null</code>
@@ -197,7 +236,21 @@ public final class BreakpointAccess
         requireLine(lineNumber);
 
         IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
+        return replaceLineBreakpoint(file, lineNumber, manager, BreakpointAccess::createLineBreakpointOnce);
+    }
 
+    /**
+     * Makes the line breakpoint itself, with the manager the caller already resolved.
+     *
+     * @param file the module file
+     * @param lineNumber the line, counting from 1
+     * @param manager the breakpoint manager to register with
+     * @return the breakpoint, an EDT one where its class is to be had and a marker-backend one otherwise
+     * @throws Exception if even a plain Eclipse marker cannot be created
+     */
+    private static IBreakpoint createLineBreakpointOnce(IFile file, int lineNumber,
+        IBreakpointManager manager) throws Exception
+    {
         IBreakpoint edtBreakpoint = createEdtLineBreakpoint(file, lineNumber, manager);
         if (edtBreakpoint != null)
         {
@@ -394,8 +447,25 @@ public final class BreakpointAccess
      */
     public static boolean removeBreakpointAt(IFile file, int line) throws Exception
     {
-        IBreakpointManager manager = DebugPlugin.getDefault().getBreakpointManager();
+        return removeBreakpointAt(file, line, DebugPlugin.getDefault().getBreakpointManager());
+    }
 
+    /**
+     * Takes the line breakpoint off a file and line, searching the manager the caller resolved.
+     * <p>
+     * The search is one place on purpose: the same coordinates are looked up before a breakpoint is
+     * created and before one is removed, and a set that searches differently from a remove leaves a
+     * breakpoint behind that no removal by coordinates can reach.
+     * </p>
+     *
+     * @param file the module file; must not be <code>null</code>
+     * @param line the line, counting from 1
+     * @param manager the breakpoint manager to search
+     * @return whether one was found and removed
+     * @throws Exception if the platform refuses the removal
+     */
+    static boolean removeBreakpointAt(IFile file, int line, IBreakpointManager manager) throws Exception
+    {
         for (IBreakpoint breakpoint : manager.getBreakpoints())
         {
             if (!(breakpoint instanceof ILineBreakpoint))
