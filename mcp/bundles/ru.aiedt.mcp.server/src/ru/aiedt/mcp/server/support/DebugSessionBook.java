@@ -314,6 +314,28 @@ public final class DebugSessionBook
     }
 
     /**
+     * The id this registry issued for a live thread, so an answer can name the threads it acted on.
+     *
+     * @param thread a thread handed out earlier; may be <code>null</code>
+     * @return the id, or -1 when this registry never issued one for that thread
+     */
+    public synchronized long threadIdOf(IThread thread)
+    {
+        if (thread == null)
+        {
+            return -1L;
+        }
+        for (Map.Entry<Long, IThread> entry : threadsById.entrySet())
+        {
+            if (entry.getValue() == thread)
+            {
+                return entry.getKey().longValue();
+            }
+        }
+        return -1L;
+    }
+
+    /**
      * @param frameRef a frame reference handed out earlier
      * @return the frame, or <code>null</code> when the reference is stale
      */
