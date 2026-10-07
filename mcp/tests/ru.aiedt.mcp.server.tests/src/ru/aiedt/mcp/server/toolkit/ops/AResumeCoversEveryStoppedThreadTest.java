@@ -114,6 +114,8 @@ public class AResumeCoversEveryStoppedThreadTest
         assertEquals("a named thread is one thread", "thread", answer.get("scope").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertEquals("the named thread was resumed", 1, second.resumeRequests); //$NON-NLS-1$
         assertEquals("no other thread of the session was touched", 0, first.resumeRequests); //$NON-NLS-1$
+        assertFalse("a thread addressed by id leaves no stale snapshot for the caller's wait", //$NON-NLS-1$
+            registry.hasSnapshot(APP));
     }
 
     @Test
