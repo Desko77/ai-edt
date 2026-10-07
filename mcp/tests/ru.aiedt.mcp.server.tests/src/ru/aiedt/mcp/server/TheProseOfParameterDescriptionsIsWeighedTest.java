@@ -658,6 +658,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * preset-dropped update in databaseUpdate, and the facade schema says so beside the debug one.
      * Measured 07.10: 104784.
      * </p>
+     * <p>
+     * And by 384 for itemPath, mode and the commands sentence on edit_metadata:
+     * set_excluded_commands names the form object whose exclusions it changes, the three modes it
+     * applies them under, and the names themselves as standard command names of that object.
+     * Measured 08.10: 105168.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 104784;
+    private static final int DOCUMENT_PROSE = 105168;
 }

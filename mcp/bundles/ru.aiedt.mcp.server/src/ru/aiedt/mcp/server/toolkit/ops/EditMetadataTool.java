@@ -123,6 +123,7 @@ public class EditMetadataTool implements IMcpTool
     private final FormAppearanceOps formAppearanceOps = new FormAppearanceOps();
     private final FormCommandInterfaceOps formCommandInterfaceOps = new FormCommandInterfaceOps();
     private final FormCreateOps formCreateOps = new FormCreateOps();
+    private final FormExcludedCommandsOps formExcludedCommandsOps = new FormExcludedCommandsOps();
     private final FormItemsOps formItemsOps = new FormItemsOps();
     private final MiscOps miscOps = new MiscOps();
 
@@ -421,7 +422,9 @@ public class EditMetadataTool implements IMcpTool
                 "set_command_placement / set_command_order: the command-interface group - a friendly name, a " //$NON-NLS-1$
                 + "platform token, or CommandGroup.<name>. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("commands", //$NON-NLS-1$
-                "set_command_order: JSON array of command FQNs in the wanted leading order.") //$NON-NLS-1$
+                "set_command_order: JSON array of command FQNs in the wanted leading order. " //$NON-NLS-1$
+                + "set_excluded_commands: JSON array of standard command names, " //$NON-NLS-1$
+                + "case-insensitive; empty clears the exclusions under mode=replace.") //$NON-NLS-1$
             .stringProperty("visible", //$NON-NLS-1$
                 "true shows, false hides, for the visibility operations.") //$NON-NLS-1$
             .stringProperty("role", //$NON-NLS-1$
@@ -488,6 +491,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("formFqn", //$NON-NLS-1$
                 "FQN of the form for form operations (e.g. Catalog.Users.Form.ItemForm, " //$NON-NLS-1$
                     + "CommonForm.X.Form).") //$NON-NLS-1$
+            .stringProperty("itemPath", //$NON-NLS-1$
+                "set_excluded_commands: whose exclusions to change - the form (empty or Form), " //$NON-NLS-1$
+                    + "FormCommandPanelGlobalCommands, or a form item as Item.<name> or <name>.") //$NON-NLS-1$
+            .stringProperty("mode", //$NON-NLS-1$
+                "set_excluded_commands: replace (default), add or remove. add and remove need " //$NON-NLS-1$
+                    + "at least one name in commands.") //$NON-NLS-1$
             .stringProperty("itemNames", //$NON-NLS-1$
                 "add_form_appearance_rule: form items to style, comma-separated; omitted = whole form.") //$NON-NLS-1$
             .stringProperty("field", //$NON-NLS-1$
@@ -2984,7 +2993,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_web_service_operation", "Services HTTP/SOAP", "", p -> serviceOps.opRemoveWebServiceOperation(p));
         reg(m, "add_operation_parameter", "Services HTTP/SOAP", "typed Web operation parameter", p -> serviceOps.opAddOperationParameter(p));
 
-        // ---- Forms (30) ----
+        // ---- Forms (33) ----
         reg(m, "create_form", "Forms", "", p -> formCreateOps.opCreateForm(p));
         reg(m, "add_form_attribute", "Forms", "", p -> formItemsOps.opAddFormAttribute(p));
         reg(m, "add_form_attribute_column", "Forms", "", p -> formItemsOps.opAddFormAttributeColumn(p));
@@ -3017,6 +3026,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "add_form_appearance_rule", "Forms", "conditional appearance rule: itemNames, condition, appearance", p -> formAppearanceOps.opAddFormAppearanceRule(p));
         reg(m, "list_form_appearance_rules", "Forms", "the form's conditional appearance rules", p -> formAppearanceOps.opListFormAppearanceRules(p));
         reg(m, "remove_form_appearance_rule", "Forms", "remove a rule by index or by the field of its condition", p -> formAppearanceOps.opRemoveFormAppearanceRule(p));
+        reg(m, "set_excluded_commands", "Forms", "keep standard commands out of a form object's command interface: itemPath, commands, mode", p -> formExcludedCommandsOps.opSetExcludedCommands(p));
 
         // ---- Templates (6) ----
         reg(m, "add_template", "Templates", "", p -> templateOps.opAddTemplate(p));

@@ -209,8 +209,14 @@ public class TheToolListHasAWeightBudgetTest
      * so beside the debug one. The yaxunit_tests entry stayed inside its per-tool headroom; the
      * sum crossed the document. Measured 07.10: 188223.
      * </p>
+     * <p>
+     * And from 188223 to 188695 for itemPath, mode and the commands sentence on edit_metadata:
+     * set_excluded_commands takes the address of the form object whose exclusions it changes, the
+     * three modes it applies them under, and the names themselves. The edit_metadata entry stayed
+     * inside its per-tool headroom; the sum crossed the document. Measured 08.10: 188695.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 188223;
+    private static final int DOCUMENT_BUDGET = 188695;
 
     private LiveServer server;
 
