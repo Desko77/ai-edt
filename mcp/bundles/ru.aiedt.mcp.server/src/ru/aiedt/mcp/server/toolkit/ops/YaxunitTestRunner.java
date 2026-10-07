@@ -233,9 +233,8 @@ public final class YaxunitTestRunner
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
                     + "finish refuses the launch. Set false to launch against the infobase as it " //$NON-NLS-1$
-                    + "stands. Under a preset that disabled update_database (Read-only, Debug & " //$NON-NLS-1$
-                    + "Test, Code Review) an omitted argument launches without updating; an " //$NON-NLS-1$
-                    + "explicit true is refused before anything starts.") //$NON-NLS-1$
+                    + "stands. Under a preset that disabled update_database an omitted argument " //$NON-NLS-1$
+                    + "launches without updating; an explicit true is refused.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
                 "Default false. Set true to take the report of a run that finished within the last " //$NON-NLS-1$
                     + "5 minutes instead of running the tests again.") //$NON-NLS-1$

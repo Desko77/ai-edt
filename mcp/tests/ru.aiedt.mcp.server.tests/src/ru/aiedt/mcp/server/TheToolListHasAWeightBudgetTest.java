@@ -196,8 +196,15 @@ public class TheToolListHasAWeightBudgetTest
      * entry stayed inside its per-tool headroom; the sum crossed the document. Measured 06.10:
      * 187873.
      * </p>
+     * <p>
+     * And from 187873 to 188169 for updateBeforeLaunch on launch_debugger and yaxunit_tests: under
+     * a preset that disabled update_database an omitted argument now launches without updating,
+     * and the schema is where a client learns the default bent before its call is refused or its
+     * answer carries SKIPPED_BY_PRESET. Both entries stayed inside their per-tool headroom; the
+     * sum crossed the document. Measured 07.10: 188169.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 187873;
+    private static final int DOCUMENT_BUDGET = 188169;
 
     private LiveServer server;
 

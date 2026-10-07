@@ -175,10 +175,9 @@ public final class DebugSessionStarter implements IMcpTool
                     + "Use this for Attach configurations or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Updates the database before launching (default true; ignored for Attach). Under a " //$NON-NLS-1$
-                    + "preset that disabled update_database (Read-only, Debug & Test, Code Review) an " //$NON-NLS-1$
-                    + "omitted argument launches without updating and the answer carries " //$NON-NLS-1$
-                    + "databaseUpdate=SKIPPED_BY_PRESET; an explicit true is refused before anything " //$NON-NLS-1$
-                    + "starts.") //$NON-NLS-1$
+                    + "preset that disabled update_database an omitted argument launches without " //$NON-NLS-1$
+                    + "updating (the answer carries databaseUpdate=SKIPPED_BY_PRESET); an explicit " //$NON-NLS-1$
+                    + "true is refused.") //$NON-NLS-1$
             .integerProperty("debugServerPort", //$NON-NLS-1$
                 "Debug server port for this launch only, 1..65535; the saved configuration is " //$NON-NLS-1$
                     + "not changed. Use when another 1C:EDT holds the default port, which the " //$NON-NLS-1$

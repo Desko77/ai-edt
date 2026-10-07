@@ -313,7 +313,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // way to tell them apart.
         // Raised by 534 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
         // add_breakpoint (measured 29.09: 4720).
-        PROSE.put("launch_debugger", Integer.valueOf(4720));
+        // Raised by 249 for updateBeforeLaunch naming the preset that launches an omitted update
+        // without updating and refuses an explicit one (measured 07.10: 4969).
+        PROSE.put("launch_debugger", Integer.valueOf(4969));
         // Each argument is one sentence naming the unit the call takes, and the row and column
         // operations share the sentences of count, formatFrom and the coordinate pairs. Measured
         // 05.10: 4820.
@@ -339,7 +341,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 1077 to 1123 for reuseRecent on the facade: the flag that takes a report of a
         // run finished within the last five minutes, whose default (false) is the whole point of it
         // - a second call after a delivered report runs the tests again (measured 29.09: 1123).
-        PROSE.put("yaxunit_tests", Integer.valueOf(1123));
+        // Raised by 121 for updateBeforeLaunch naming the preset that launches an omitted update
+        // without updating (measured 07.10: 1244).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1244));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -642,6 +646,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 88 for pointId on git: delete_merge_restore_point names the point it deletes, and the
      * sentence saying so sits on the argument both operations share. Measured 06.10: 104434.
      * </p>
+     * <p>
+     * And by 296 for updateBeforeLaunch on launch_debugger and yaxunit_tests: under a preset that
+     * disabled update_database an omitted argument launches without updating, and the sentence a
+     * client reads before that happens is the schema's. The two hidden aliases carry the same
+     * sentence and are not weighed here. Measured 07.10: 104730.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 104434;
+    private static final int DOCUMENT_PROSE = 104730;
 }

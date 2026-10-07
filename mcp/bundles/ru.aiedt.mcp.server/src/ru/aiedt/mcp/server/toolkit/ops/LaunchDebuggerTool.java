@@ -111,10 +111,9 @@ public class LaunchDebuggerTool implements IMcpTool
                     + "scheduled jobs) or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "launch: update the database before launching (default true; ignored for Attach). " //$NON-NLS-1$
-                    + "Under a preset that disabled update_database (Read-only, Debug & Test, Code " //$NON-NLS-1$
-                    + "Review) an omitted argument launches without updating and the answer carries " //$NON-NLS-1$
-                    + "databaseUpdate=SKIPPED_BY_PRESET; an explicit true is refused before anything " //$NON-NLS-1$
-                    + "starts.") //$NON-NLS-1$
+                    + "Under a preset that disabled update_database an omitted argument launches " //$NON-NLS-1$
+                    + "without updating (the answer carries databaseUpdate=SKIPPED_BY_PRESET); an " //$NON-NLS-1$
+                    + "explicit true is refused.") //$NON-NLS-1$
             .integerProperty("debugServerPort", //$NON-NLS-1$
                 "launch: debug server port, 1..65535, when another 1C:EDT holds the default.") //$NON-NLS-1$
             .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$

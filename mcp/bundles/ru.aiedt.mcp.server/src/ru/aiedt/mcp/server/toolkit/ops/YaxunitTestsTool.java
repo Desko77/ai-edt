@@ -115,9 +115,8 @@ public class YaxunitTestsTool implements IMcpTool
                 "Polling window in seconds (default 60). Legacy alias: timeout.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. Set false to skip pre-launch infobase sync. Under a preset that " //$NON-NLS-1$
-                    + "disabled update_database (Read-only, Debug & Test, Code Review) an omitted " //$NON-NLS-1$
-                    + "argument launches without updating; an explicit true is refused before " //$NON-NLS-1$
-                    + "anything starts.") //$NON-NLS-1$
+                    + "disabled update_database an omitted argument launches without updating; an " //$NON-NLS-1$
+                    + "explicit true is refused.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
                 "Default false. Set true to take the report of a run that finished within the " //$NON-NLS-1$
                     + "last 5 minutes instead of running the tests again.") //$NON-NLS-1$

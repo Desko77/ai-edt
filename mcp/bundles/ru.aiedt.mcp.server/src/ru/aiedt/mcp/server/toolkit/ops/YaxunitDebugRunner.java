@@ -93,10 +93,9 @@ public final class YaxunitDebugRunner implements IMcpTool
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
                     + "finish refuses the launch. Set false to launch against the infobase as it " //$NON-NLS-1$
-                    + "stands. Under a preset that disabled update_database (Read-only, Debug & " //$NON-NLS-1$
-                    + "Test, Code Review) an omitted argument launches without updating and the " //$NON-NLS-1$
-                    + "answer carries databaseUpdate=SKIPPED_BY_PRESET; an explicit true is refused " //$NON-NLS-1$
-                    + "before anything starts.") //$NON-NLS-1$
+                    + "stands. Under a preset that disabled update_database an omitted argument " //$NON-NLS-1$
+                    + "launches without updating (the answer carries " //$NON-NLS-1$
+                    + "databaseUpdate=SKIPPED_BY_PRESET); an explicit true is refused.") //$NON-NLS-1$
             .build();
     }
 
