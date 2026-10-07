@@ -72,9 +72,10 @@ public final class BslModuleAccess
     /**
      * Matches a method header. Group 1 is the method name, group 2 is everything from just after the
      * opening parenthesis to the end of the line.
+     * The header may open with the {@code Async} modifier.
      */
     public static final Pattern METHOD_START_PATTERN = Pattern.compile(
-        "^\\s*(?:\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0430|\u0424\u0443\u043D\u043A\u0446\u0438\u044F|Procedure|Function)\\s+(\\S+?)\\s*\\((.*)$", //$NON-NLS-1$
+        "^\\s*(?:(?:\u0410\u0441\u0438\u043D\u0445|Async)\\s+)?(?:\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0430|\u0424\u0443\u043D\u043A\u0446\u0438\u044F|Procedure|Function)\\s+(\\S+?)\\s*\\((.*)$", //$NON-NLS-1$
         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     /** Matches the line that ends a method. */
@@ -84,7 +85,7 @@ public final class BslModuleAccess
 
     /** Matches a header that begins a function, telling it apart from a procedure. */
     public static final Pattern FUNC_KEYWORD_PATTERN = Pattern.compile(
-        "^\\s*(?:\u0424\u0443\u043D\u043A\u0446\u0438\u044F|Function)\\s", //$NON-NLS-1$
+        "^\\s*(?:(?:\u0410\u0441\u0438\u043D\u0445|Async)\\s+)?(?:\u0424\u0443\u043D\u043A\u0446\u0438\u044F|Function)\\s", //$NON-NLS-1$
         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     /** Matches a region header. Group 1 is the region name. */

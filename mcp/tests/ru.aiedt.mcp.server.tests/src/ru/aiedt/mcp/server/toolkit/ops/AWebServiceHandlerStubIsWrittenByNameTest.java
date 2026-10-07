@@ -255,4 +255,19 @@ public class AWebServiceHandlerStubIsWrittenByNameTest
         append.setAccessible(true);
         return (String)append.invoke(null, probe.project, "Заказы", handler); //$NON-NLS-1$
     }
+
+    /** A function declared with the Async modifier is a declared function, in either language. */
+    @Test
+    public void anAsyncFunctionIsADeclaredFunction() throws Exception
+    {
+        String russian = "\u0410\u0441\u0438\u043D\u0445 \u0424\u0443\u043D\u043A\u0446\u0438\u044F Handler()\n" //$NON-NLS-1$
+            + "\u041A\u043E\u043D\u0435\u0446\u0424\u0443\u043D\u043A\u0446\u0438\u0438\n"; //$NON-NLS-1$
+        String english = "Async Function Handler()\nEndFunction\n"; //$NON-NLS-1$
+        String procedure = "Async Procedure Handler()\nEndProcedure\n"; //$NON-NLS-1$
+
+        org.junit.Assert.assertTrue(BslMethodDeclarations.declaresFunction(russian, "handler")); //$NON-NLS-1$
+        org.junit.Assert.assertTrue(BslMethodDeclarations.declaresFunction(english, "Handler")); //$NON-NLS-1$
+        org.junit.Assert.assertFalse(BslMethodDeclarations.declaresFunction(procedure, "Handler")); //$NON-NLS-1$
+        org.junit.Assert.assertEquals(1, BslMethodDeclarations.parse(procedure).size());
+    }
 }
