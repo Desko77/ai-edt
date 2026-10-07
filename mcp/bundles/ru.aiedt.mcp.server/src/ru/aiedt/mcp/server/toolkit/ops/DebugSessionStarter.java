@@ -1261,6 +1261,20 @@ public final class DebugSessionStarter implements IMcpTool
     }
 
     /**
+     * The note that goes with {@link #DATABASE_UPDATE_SKIPPED_BY_PRESET} on every answer carrying
+     * it, whatever shape that answer takes.
+     *
+     * @return the note sentence
+     */
+    static String databaseUpdateNoteText()
+    {
+        return "The infobase was not updated before this launch: the " //$NON-NLS-1$
+            + "active tool preset disables update_database and the call did not ask for the " //$NON-NLS-1$
+            + "update. Bring it up to date with infobase_admin operation=update_database " //$NON-NLS-1$
+            + "under a preset that allows it."; //$NON-NLS-1$
+    }
+
+    /**
      * Puts the {@code databaseUpdate} field on a launch answer: the outcome of an update that ran,
      * or the skip marker when the preset dropped an unnamed update.
      *
@@ -1279,10 +1293,7 @@ public final class DebugSessionStarter implements IMcpTool
         if (skippedByPreset)
         {
             result.put("databaseUpdate", DATABASE_UPDATE_SKIPPED_BY_PRESET) //$NON-NLS-1$
-                .put("databaseUpdateNote", "The infobase was not updated before this launch: the " //$NON-NLS-1$
-                    + "active tool preset disables update_database and the call did not ask for the " //$NON-NLS-1$
-                    + "update. Bring it up to date with infobase_admin operation=update_database " //$NON-NLS-1$
-                    + "under a preset that allows it."); //$NON-NLS-1$
+                .put("databaseUpdateNote", databaseUpdateNoteText()); //$NON-NLS-1$
         }
     }
 

@@ -115,7 +115,8 @@ public class YaxunitTestsTool implements IMcpTool
                 "Polling window in seconds (default 60). Legacy alias: timeout.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. Set false to skip pre-launch infobase sync. Under a preset that " //$NON-NLS-1$
-                    + "disabled update_database an omitted argument launches without updating; an " //$NON-NLS-1$
+                    + "disabled update_database an omitted argument launches without updating " //$NON-NLS-1$
+                    + "(the answer carries databaseUpdate=SKIPPED_BY_PRESET); an " //$NON-NLS-1$
                     + "explicit true is refused.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
                 "Default false. Set true to take the report of a run that finished within the " //$NON-NLS-1$
@@ -303,6 +304,13 @@ public class YaxunitTestsTool implements IMcpTool
             // run's" is the text. Said again as a field, because a client reading fields rather
             // than prose would otherwise read a reused report as this call's result.
             answered.put("cached", true); //$NON-NLS-1$
+        }
+        if (YaxunitTestRunner.isUpdateSkippedAnswer(result))
+        {
+            // The pending answer is markdown too, and the preset-dropped update it names in its
+            // text is said again as the same field pair a finished answer carries - set by the
+            // same putDatabaseUpdate, so the two answers cannot drift apart.
+            DebugSessionStarter.putDatabaseUpdate(answered, null, true);
         }
         return answered.toJson();
     }

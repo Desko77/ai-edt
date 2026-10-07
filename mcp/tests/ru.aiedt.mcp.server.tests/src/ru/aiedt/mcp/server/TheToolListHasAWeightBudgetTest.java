@@ -203,8 +203,14 @@ public class TheToolListHasAWeightBudgetTest
      * answer carries SKIPPED_BY_PRESET. Both entries stayed inside their per-tool headroom; the
      * sum crossed the document. Measured 07.10: 188169.
      * </p>
+     * <p>
+     * And from 188169 to 188223 for the same sentence on the run side: every answer of a run-mode
+     * YAXUnit call names the preset-dropped update in databaseUpdate, and the facade schema says
+     * so beside the debug one. The yaxunit_tests entry stayed inside its per-tool headroom; the
+     * sum crossed the document. Measured 07.10: 188223.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 188169;
+    private static final int DOCUMENT_BUDGET = 188223;
 
     private LiveServer server;
 

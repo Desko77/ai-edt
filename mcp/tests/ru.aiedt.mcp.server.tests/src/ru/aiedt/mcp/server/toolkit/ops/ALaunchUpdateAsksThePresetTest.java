@@ -10,9 +10,15 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Stream;
 
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.junit.After;
@@ -26,6 +32,7 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.support.ApplicationUpdater;
+import ru.aiedt.mcp.server.support.RunReceipts;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
@@ -195,5 +202,112 @@ public class ALaunchUpdateAsksThePresetTest
         DebugSessionStarter.putDatabaseUpdate(silent, null, false);
         assertFalse(JsonParser.parseString(silent.toJson()).getAsJsonObject()
             .has("databaseUpdate")); //$NON-NLS-1$
+    }
+
+    /**
+     * Every answer of a run-mode call names a preset-dropped update: the report handed over when
+     * the launch finishes inside the call, the report a later call picks up by the same arguments,
+     * and the pending text that waits for both - each in {@code databaseUpdate} with the same note
+     * the debug-mode answer carries, and a run whose call dropped nothing says nothing.
+     *
+     * @throws Exception when a stand-in report cannot be written
+     */
+    @Test
+    public void everyRunModeAnswerNamesTheDrop() throws Exception
+    {
+        Path root = Files.createTempDirectory("yaxunit-skip"); //$NON-NLS-1$
+        try
+        {
+            JsonObject pending = JsonParser.parseString(YaxunitTestRunner.publish(
+                YaxunitTestRunner.pendingText(root, true))).getAsJsonObject();
+            assertEquals(DebugSessionStarter.DATABASE_UPDATE_SKIPPED_BY_PRESET,
+                pending.get("databaseUpdate").getAsString()); //$NON-NLS-1$
+            assertEquals("the pending text carries the phrase the fields carry", //$NON-NLS-1$
+                DebugSessionStarter.databaseUpdateNoteText(),
+                pending.get("databaseUpdateNote").getAsString()); //$NON-NLS-1$
+            assertTrue(pending.get("output").getAsString(), //$NON-NLS-1$
+                pending.get("output").getAsString().contains(YaxunitTestRunner.UPDATE_SKIPPED_MARK)); //$NON-NLS-1$
+            assertFalse("a pending run that dropped nothing says nothing", JsonParser.parseString( //$NON-NLS-1$
+                YaxunitTestRunner.publish(YaxunitTestRunner.pendingText(root, false)))
+                    .getAsJsonObject().has("databaseUpdate")); //$NON-NLS-1$
+
+            File report = onePassingReport(root);
+            Path receipts = root.resolve("receipts"); //$NON-NLS-1$
+            YaxunitTestRunner.RunContext skipped =
+                new YaxunitTestRunner.RunContext("Proj", null, null, null, true); //$NON-NLS-1$
+
+            String finishedKey = "skip-finished-" + System.nanoTime(); //$NON-NLS-1$
+            YaxunitTestRunner.noteUndelivered(finishedKey);
+            try
+            {
+                JsonObject finished = JsonParser.parseString(YaxunitTestRunner.handOverFinishedLaunch(
+                    finishedKey, report, skipped, fields -> RunReceipts.writeTo(receipts, fields)))
+                    .getAsJsonObject();
+                assertEquals(DebugSessionStarter.DATABASE_UPDATE_SKIPPED_BY_PRESET,
+                    finished.get("databaseUpdate").getAsString()); //$NON-NLS-1$
+                assertEquals(DebugSessionStarter.databaseUpdateNoteText(),
+                    finished.get("databaseUpdateNote").getAsString()); //$NON-NLS-1$
+            }
+            finally
+            {
+                YaxunitTestRunner.forgetUndelivered(finishedKey);
+            }
+
+            JsonObject pickedUp = JsonParser.parseString(YaxunitTestRunner.handOverCached(
+                "skip-pickup-" + System.nanoTime(), report, true, skipped, //$NON-NLS-1$
+                fields -> RunReceipts.writeTo(receipts, fields))).getAsJsonObject();
+            assertEquals(DebugSessionStarter.DATABASE_UPDATE_SKIPPED_BY_PRESET,
+                pickedUp.get("databaseUpdate").getAsString()); //$NON-NLS-1$
+
+            JsonObject silent = JsonParser.parseString(YaxunitTestRunner.handOverCached(
+                "skip-silent-" + System.nanoTime(), report, true, //$NON-NLS-1$
+                new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
+                fields -> RunReceipts.writeTo(receipts, fields))).getAsJsonObject();
+            assertFalse(silent.has("databaseUpdate")); //$NON-NLS-1$
+        }
+        finally
+        {
+            deleteTree(root);
+        }
+    }
+
+    /**
+     * Writes a one-test JUnit report.
+     *
+     * @param directory where {@code junit.xml} is written; created when missing
+     * @return the report file
+     * @throws Exception when the file cannot be written
+     */
+    private static File onePassingReport(Path directory) throws Exception
+    {
+        Files.createDirectories(directory);
+        Path report = directory.resolve("junit.xml"); //$NON-NLS-1$
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" //$NON-NLS-1$
+            + "<testsuite name=\"Run\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\">" //$NON-NLS-1$
+            + "<testcase name=\"passes\" classname=\"Module\"/>" //$NON-NLS-1$
+            + "</testsuite>"; //$NON-NLS-1$
+        Files.write(report, xml.getBytes(StandardCharsets.UTF_8));
+        return report.toFile();
+    }
+
+    /**
+     * Deletes a temporary tree.
+     *
+     * @param root the tree
+     * @throws Exception when a file cannot be deleted
+     */
+    private static void deleteTree(Path root) throws Exception
+    {
+        if (root == null || !Files.exists(root))
+        {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(root))
+        {
+            for (Path path : walk.sorted(Comparator.reverseOrder()).toList())
+            {
+                Files.deleteIfExists(path);
+            }
+        }
     }
 }

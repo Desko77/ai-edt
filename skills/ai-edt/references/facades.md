@@ -519,8 +519,9 @@ such a preset.
 not finish, naming `updateBeforeLaunch=false` as the way to launch without one; that update is why
 `validate_for_export` matters here too. A preset that disabled `update_database` (Read-only, Debug
 & Test, Code Review) refuses an explicit `true` before the update and before the launch, while a
-call without the argument launches without updating (in `mode=debug` the answer carries
-`databaseUpdate=SKIPPED_BY_PRESET`). `reuseRecent=true` (`mode=run`) answers with a run that finished within
+call without the argument launches without updating - and every answer of that run, the finished
+report, the `Pending` one and the report a repeat call picks up, carries
+`databaseUpdate=SKIPPED_BY_PRESET`. `reuseRecent=true` (`mode=run`) answers with a run that finished within
 the last five minutes instead of starting another, saying so with `cached: true` and the moment it
 finished.
 
