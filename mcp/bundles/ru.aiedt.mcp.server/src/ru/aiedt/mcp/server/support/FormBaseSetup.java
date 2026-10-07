@@ -176,11 +176,16 @@ public final class FormBaseSetup
      * generator's bar.
      *
      * @param form the form root
-     * @return true when the form holds a command bar carrying both settings
+     * @return true when the form holds a command bar carrying both settings - and, for a container
+     *         this call built, also the name and id every form EDT writes gives it. A bar that
+     *         answered no name setter is a container the client renders as an unnamed panel, so it
+     *         does not count as the generator's bar; a bar the form already held is judged on its
+     *         settings alone, since naming it was not this call's work.
      */
     private static boolean configureAutoCommandBar(Object form)
     {
         Object bar = invokeNoArgGetter(form, "getAutoCommandBar"); //$NON-NLS-1$
+        boolean named = true;
         if (bar == null)
         {
             Object factory = formFactory();
@@ -193,8 +198,9 @@ public final class FormBaseSetup
             {
                 return false;
             }
-            applyOne(bar, "Id", AUTO_COMMAND_BAR_ID); //$NON-NLS-1$
-            applyOne(bar, "Name", AUTO_COMMAND_BAR_NAME); //$NON-NLS-1$
+            boolean idSet = applyOne(bar, "Id", AUTO_COMMAND_BAR_ID); //$NON-NLS-1$
+            boolean nameSet = applyOne(bar, "Name", AUTO_COMMAND_BAR_NAME); //$NON-NLS-1$
+            named = idSet && nameSet;
             if (!invokeObjectSetter(form, "setAutoCommandBar", bar)) //$NON-NLS-1$
             {
                 return false;
@@ -202,7 +208,7 @@ public final class FormBaseSetup
         }
         boolean aligned = applyOne(bar, "HorizontalAlign", "LEFT"); //$NON-NLS-1$ //$NON-NLS-2$
         boolean filled = applyOne(bar, "AutoFill", "true"); //$NON-NLS-1$ //$NON-NLS-2$
-        return aligned && filled;
+        return aligned && filled && named;
     }
 
     /**

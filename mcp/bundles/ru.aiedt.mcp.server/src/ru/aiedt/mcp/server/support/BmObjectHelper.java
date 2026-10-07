@@ -1811,7 +1811,97 @@ public final class BmObjectHelper
                 return localString;
             }
         }
+        Object formReference = resolveFormReference(owner, s, targetType);
+        if (formReference != null)
+        {
+            return formReference;
+        }
         return value;
+    }
+
+    /**
+     * Resolves text that names one of the owner's forms into the form object a reference setter
+     * takes.
+     * <p>
+     * The default-form slots hold a form, not a scalar: {@code setDefaultForm(BasicForm)} on a data
+     * processor or report, {@code setDefaultObjectForm(CatalogForm)} and its siblings on the types
+     * that keep one slot per purpose. With only text to pass, no operation could change one - the
+     * write reached the setter and came back as a refusal about a composite value. The text is the
+     * form's name or its address ({@code DataProcessor.Обработка.Form.Форма}); a name the owner does
+     * not declare, and an address naming another owner's form, are refused with the forms this owner
+     * has, so the caller corrects it in one round trip.
+     * </p>
+     *
+     * @param owner the object being written
+     * @param text what the caller gave
+     * @param targetType what the setter takes
+     * @return the form to pass to the setter, or <code>null</code> when this is not a form reference
+     */
+    private static Object resolveFormReference(EObject owner, String text, Class<?> targetType)
+    {
+        if (owner == null || text == null || text.isEmpty())
+        {
+            return null;
+        }
+        EList<? extends EObject> forms = getChildListByKind(owner, "Form"); //$NON-NLS-1$
+        // The parameter type decides: an owner holds forms whatever the property is, and only a
+        // setter that takes one of them is a reference to resolve. Comparing against the owner's
+        // first form covers the per-purpose types without naming any of them - the plugin does not
+        // compile against them.
+        if (forms == null || forms.isEmpty() || !targetType.isInstance(forms.get(0)))
+        {
+            return null;
+        }
+        String name = text;
+        int lastDot = text.lastIndexOf('.');
+        if (lastDot >= 0)
+        {
+            name = addressesOneOfTheseForms(owner, text) ? text.substring(lastDot + 1) : null;
+        }
+        EObject form = name == null ? null : findChildByNameReflective(forms, name);
+        if (form != null)
+        {
+            return form;
+        }
+        List<String> names = new ArrayList<>();
+        for (EObject child : forms)
+        {
+            String childName = eObjectName(child);
+            if (childName != null)
+            {
+                names.add(childName);
+            }
+        }
+        throw new IllegalArgumentException(TextSuggest.invalidValue("form", text, names)); //$NON-NLS-1$
+    }
+
+    /**
+     * Tells whether a form address names a form of this owner: the address ends in a form kind and
+     * a name, and the part before them is the owner's own address.
+     *
+     * @param owner the object being written
+     * @param address the address the caller wrote
+     * @return true when the address is one of this owner's form addresses
+     */
+    private static boolean addressesOneOfTheseForms(EObject owner, String address)
+    {
+        String[] segments = address.split("\\."); //$NON-NLS-1$
+        if (segments.length < 3 || !"Form".equals(canonicalChildKind(segments[segments.length - 2]))) //$NON-NLS-1$
+        {
+            return false;
+        }
+        String ownerName = eObjectName(owner);
+        if (ownerName == null)
+        {
+            return false;
+        }
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < segments.length - 2; i++)
+        {
+            prefix.append(i == 0 ? "" : ".").append(segments[i]); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String ownerAddress = owner.eClass().getName() + "." + ownerName; //$NON-NLS-1$
+        return MetadataTypeCatalog.normalizeFqn(prefix.toString()).equalsIgnoreCase(ownerAddress);
     }
 
     /**
@@ -2283,20 +2373,36 @@ public final class BmObjectHelper
         }
         for (EObject child : list)
         {
-            try
+            String childName = eObjectName(child);
+            if (childName != null && name.equalsIgnoreCase(childName))
             {
-                Object nm = child.getClass().getMethod("getName").invoke(child); //$NON-NLS-1$
-                if (nm != null && name.equalsIgnoreCase(nm.toString()))
-                {
-                    return child;
-                }
-            }
-            catch (Exception ignored)
-            {
-                // child exposes no getName() - skip
+                return child;
             }
         }
         return null;
+    }
+
+    /**
+     * The name a metadata child answers to, or {@code null} when it exposes no {@code getName()}.
+     *
+     * @param child the object to read
+     * @return its name, or {@code null}
+     */
+    private static String eObjectName(EObject child)
+    {
+        if (child == null)
+        {
+            return null;
+        }
+        try
+        {
+            Object name = child.getClass().getMethod("getName").invoke(child); //$NON-NLS-1$
+            return name == null ? null : name.toString();
+        }
+        catch (Exception noName)
+        {
+            return null;
+        }
     }
 
     /** {@code true} when the kind segment names the StandardAttribute collection. */
