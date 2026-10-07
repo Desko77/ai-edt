@@ -2216,14 +2216,16 @@ public class MarkerManager
 
     /**
      * Writes the bytes through the workspace, the route used when the file has no location on
-     * disk or was never read by this manager.
+     * disk or was never read by this manager. An existing read-only file is refused here as it
+     * is on the locked route: a forced workspace write clears the read-only flag and overwrites
+     * the file while telling the caller it was saved.
      *
      * @param project the project
      * @param file the marker file handle
      * @param bytes the bytes to write
      * @return <code>true</code> when the file was written
      */
-    private static boolean saveThroughWorkspace(IProject project, IFile file, byte[] bytes)
+    static boolean saveThroughWorkspace(IProject project, IFile file, byte[] bytes)
     {
         try
         {
@@ -2231,6 +2233,12 @@ public class MarkerManager
             if (!settingsFolder.exists())
             {
                 settingsFolder.create(true, true, null);
+            }
+            if (file.exists() && !canOverwrite(file))
+            {
+                Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                    + ": the file is read-only", null); //$NON-NLS-1$
+                return false;
             }
             try (InputStream input = new ByteArrayInputStream(bytes))
             {
