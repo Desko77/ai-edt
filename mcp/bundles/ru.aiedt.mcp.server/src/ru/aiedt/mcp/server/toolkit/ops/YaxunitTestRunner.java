@@ -1003,7 +1003,7 @@ public final class YaxunitTestRunner
      * never named: the marker the answers name in {@code databaseUpdate}, and the note that goes
      * with it - both from the place the debug-mode answer takes them.
      *
-     * @return the skip line, or <code>null</code> when the call dropped nothing
+     * @return the skip line
      */
     static String updateSkipNote()
     {
