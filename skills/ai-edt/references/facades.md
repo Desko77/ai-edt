@@ -791,10 +791,11 @@ no drawings, against a `Template.mxlx` that is not the empty skeleton (the bytes
 or that skeleton with `<indexTo>1</indexTo>` right after `<index>0</index>`), is refused and the file
 stays byte for byte; a read names the mismatch as `templateModelFileMismatch`.
 
-A picture reference that does not resolve in the project refuses the write before the file changes,
-naming the count and the first names. An empty picture placeholder does not refuse the write. A
-document with no column set receives a column set of size 0 before the save, the same shape as an empty
-template.
+A picture reference that does not resolve in the project refuses the write before anything
+changes - the document and `Template.mxlx` stay as they were, and `dryRun` answers with the same
+refusal - naming the count and the first names. An empty picture placeholder does not refuse the
+write. A document with no column set receives a column set of size 0 before the save, the same
+shape as an empty template.
 
 `create_template` with `ownerFqn=CommonTemplate.<Name>` and the same `templateName` creates that common
 template as a spreadsheet and an empty `Template.mxlx`. An existing common template is not overwritten.

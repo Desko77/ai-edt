@@ -53,6 +53,52 @@ public class AnUnresolvedPictureReferenceRefusesTheWriteTest
         assertEquals(Arrays.asList("Stamp"), names); //$NON-NLS-1$
     }
 
+    /**
+     * The guard a writing operation asks before it touches the document: an unresolved reference
+     * refuses the write with nothing changed, and the refusal names the pictures rather than
+     * speaking of a change that reached the model.
+     */
+    @Test
+    public void theWriteGuardRefusesBeforeAnythingChangesAndNamesThePictures()
+    {
+        SpreadsheetDocument doc = MoxelFactory.eINSTANCE.createSpreadsheetDocument();
+        doc.getPictures().add(proxy(
+            "platform:/resource/P/src/CommonPictures/Stamp/Stamp.mdo#//")); //$NON-NLS-1$
+        int picturesBefore = doc.getPictures().size();
+        try
+        {
+            BmTemplateHelper.requireResolvablePictures(doc);
+            fail("an unresolved picture reference refuses the write"); //$NON-NLS-1$
+        }
+        catch (MetadataGuards.BlockedGuardException refused)
+        {
+            String error = refused.verdict.error;
+            assertTrue(error, error.contains("1 picture reference")); //$NON-NLS-1$
+            assertTrue(error, error.contains("Stamp")); //$NON-NLS-1$
+            assertTrue(error, error.contains("Nothing was changed")); //$NON-NLS-1$
+            assertFalse("the refusal no longer speaks of a change that reached the model: " + error, //$NON-NLS-1$
+                error.contains("was changed in memory")); //$NON-NLS-1$
+            assertEquals("the guard changes nothing of the document it refuses", //$NON-NLS-1$
+                picturesBefore, doc.getPictures().size());
+            assertEquals(Arrays.asList("Stamp"), //$NON-NLS-1$
+                refused.verdict.tag.data.get("pictures")); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * A document without unresolved references - empty, an empty placeholder, a reference that
+     * resolves - passes the guard, so its writes go through.
+     */
+    @Test
+    public void aDocumentWithoutUnresolvedReferencesPassesTheWriteGuard()
+    {
+        BmTemplateHelper.requireResolvablePictures(
+            MoxelFactory.eINSTANCE.createSpreadsheetDocument());
+        SpreadsheetDocument placeholder = MoxelFactory.eINSTANCE.createSpreadsheetDocument();
+        placeholder.getPictures().add(McoreFactory.eINSTANCE.createPictureRef());
+        BmTemplateHelper.requireResolvablePictures(placeholder);
+    }
+
     @Test
     public void aCommonPictureMarkerAndABareMdoSegmentAreStripped()
     {
