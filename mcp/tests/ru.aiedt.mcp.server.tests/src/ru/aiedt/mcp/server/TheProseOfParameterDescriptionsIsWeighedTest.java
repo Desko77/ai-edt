@@ -342,8 +342,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // run finished within the last five minutes, whose default (false) is the whole point of it
         // - a second call after a delivered report runs the tests again (measured 29.09: 1123).
         // Raised by 121 for updateBeforeLaunch naming the preset that launches an omitted update
-        // without updating (measured 07.10: 1244).
-        PROSE.put("yaxunit_tests", Integer.valueOf(1244));
+        // without updating (measured 07.10: 1244), and by 54 more for the sentence saying every
+        // answer of the run names the drop in databaseUpdate (measured 07.10: 1298).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1298));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -652,6 +653,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * client reads before that happens is the schema's. The two hidden aliases carry the same
      * sentence and are not weighed here. Measured 07.10: 104730.
      * </p>
+     * <p>
+     * And by 54 for the same sentence on the run side: every answer of a YAXUnit run names the
+     * preset-dropped update in databaseUpdate, and the facade schema says so beside the debug one.
+     * Measured 07.10: 104784.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 104730;
+    private static final int DOCUMENT_PROSE = 104784;
 }
