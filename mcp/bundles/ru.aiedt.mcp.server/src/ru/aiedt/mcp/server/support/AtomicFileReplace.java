@@ -342,7 +342,8 @@ public final class AtomicFileReplace
         }
         try
         {
-            Outcome done = runUnderTheLockFile(physical, expectedFingerprint, content, waitMillis, afterStaging);
+            Outcome done = runUnderTheLockFile(physical, target, expectedFingerprint, content, waitMillis,
+                afterStaging);
             if (done.isOk())
             {
                 refreshQuietly(workspaceFile, physical);
@@ -392,14 +393,15 @@ public final class AtomicFileReplace
      * Runs one replacement or removal while holding the lock file of the target.
      *
      * @param physical the physical target
+     * @param requested the path the caller named; a removal unlinks this one
      * @param expectedFingerprint the fingerprint the caller read, or {@code null} to skip comparing
      * @param content the bytes to write, or {@code null} to remove the file
      * @param waitMillis how long to wait for the lock file
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
      * @return what the write did
      */
-    private static Outcome runUnderTheLockFile(Path physical, String expectedFingerprint, byte[] content,
-        long waitMillis, Runnable afterStaging)
+    private static Outcome runUnderTheLockFile(Path physical, Path requested, String expectedFingerprint,
+        byte[] content, long waitMillis, Runnable afterStaging)
     {
         Path lockFile;
         try
@@ -423,7 +425,7 @@ public final class AtomicFileReplace
             }
             try
             {
-                return writeHoldingTheLockFile(physical, expectedFingerprint, content, afterStaging);
+                return writeHoldingTheLockFile(physical, requested, expectedFingerprint, content, afterStaging);
             }
             finally
             {
@@ -446,14 +448,16 @@ public final class AtomicFileReplace
      * Replaces or removes the target, both fingerprint checks and the staging under the lock file.
      *
      * @param physical the physical target
+     * @param requested the path the caller named. A removal deletes this path, so a link is
+     *            unlinked and the file it points at stays; the checks before it read the physical file
      * @param expectedFingerprint the fingerprint the caller read, or {@code null} to skip comparing
      * @param content the bytes to write, or {@code null} to remove the file
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
      * @return what the write did
      * @throws IOException when the file cannot be read, staged or replaced
      */
-    private static Outcome writeHoldingTheLockFile(Path physical, String expectedFingerprint, byte[] content,
-        Runnable afterStaging) throws IOException
+    private static Outcome writeHoldingTheLockFile(Path physical, Path requested, String expectedFingerprint,
+        byte[] content, Runnable afterStaging) throws IOException
     {
         if (Files.exists(physical))
         {
@@ -481,7 +485,7 @@ public final class AtomicFileReplace
             }
             try
             {
-                Files.deleteIfExists(physical);
+                Files.deleteIfExists(requested);
             }
             catch (AccessDeniedException denied)
             {

@@ -546,6 +546,42 @@ public class AtomicFileReplaceTest
     }
 
     /**
+     * Removing a target that is a link unlinks the link. The file it points at is not this
+     * project's to delete and stays with its content.
+     *
+     * @throws Exception when the link cannot be made
+     */
+    @Test
+    public void removingALinkLeavesTheFileItPointsAt() throws Exception
+    {
+        Path file = aFileWith(ORIGINAL);
+        Path link = aLinkTo(file, directory.resolve("aiedt-clusters-linked.yaml")); //$NON-NLS-1$
+        org.junit.Assume.assumeTrue("no link could be created", link != null); //$NON-NLS-1$
+
+        AtomicFileReplace.Outcome outcome = AtomicFileReplace.remove(link, fingerprint(ORIGINAL), null);
+
+        assertTrue(String.valueOf(outcome), outcome.isOk());
+        assertFalse("the link is gone", Files.exists(link, java.nio.file.LinkOption.NOFOLLOW_LINKS)); //$NON-NLS-1$
+        assertEquals("the file behind the link keeps its content", ORIGINAL, Files.readString(file)); //$NON-NLS-1$
+    }
+
+    /**
+     * Removing a plain file removes it, as before the link handling.
+     *
+     * @throws Exception when the file cannot be written
+     */
+    @Test
+    public void removingAPlainFileRemovesIt() throws Exception
+    {
+        Path file = aFileWith(ORIGINAL);
+
+        AtomicFileReplace.Outcome outcome = AtomicFileReplace.remove(file, fingerprint(ORIGINAL), null);
+
+        assertTrue(String.valueOf(outcome), outcome.isOk());
+        assertFalse(Files.exists(file));
+    }
+
+    /**
      * Writes the file under test and returns it.
      *
      * @param content the file contents
