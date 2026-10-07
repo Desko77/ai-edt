@@ -398,10 +398,13 @@
 `databaseState`, а запущенная сессия - `databaseUpdate`. Ответ `FULL_UPDATE_REQUIRED` ведет к полному
 обновлению, а проверка "уже запущено" идет до обновления.
 
-Пресет, выключивший `update_database` (Read-only, Debug & Test, Code Review), отказывает запуск с
-`updateBeforeLaunch=true` до обновления и до запуска текстом выключенного инструмента; ответ называет
-`updateBeforeLaunch=false` как способ запустить базу как есть. `start_client` и оба режима `yaxunit_tests`
-отказывают так же.</details>
+Пресет, выключивший `update_database` (Read-only, Debug & Test, Code Review), с явным
+`updateBeforeLaunch=true` отказывает запуск до обновления и до запуска текстом выключенного инструмента,
+называя `updateBeforeLaunch=false` как способ запустить базу как есть. Вызов без довода под таким
+пресетом запускает без обновления и отвечает `databaseUpdate=SKIPPED_BY_PRESET` с пояснением
+`databaseUpdateNote`; обновить базу - `infobase_admin operation=update_database` под пресетом, который
+это разрешает. `start_client` (умолчание довода `false`) и оба режима `yaxunit_tests` решают тем же
+правилом.</details>
 
 <a id="diagnostics"></a>
 <details>
@@ -586,8 +589,9 @@
 
 Перед запуском читается `updateBeforeLaunch` (по умолчанию true): не завершившееся обновление базы отказывает,
 называя `updateBeforeLaunch=false` способом запустить без обновления. Пресет, выключивший `update_database`
-(Read-only, Debug & Test, Code Review), отказывает оба режима до обновления и до запуска - вызов без
-явного `updateBeforeLaunch=false` под Debug & Test не проходит. Довод `reuseRecent` (по умолчанию false,
+(Read-only, Debug & Test, Code Review), с явным `true` отказывает оба режима до обновления и до запуска, а
+вызов без довода запускает без обновления (в ответе `mode=debug` - `databaseUpdate=SKIPPED_BY_PRESET`).
+Довод `reuseRecent` (по умолчанию false,
 читается только при `mode=run`) отвечает результатом прогона, завершенного за последние 5 минут, с полем
 `cached: true` и пометкой с временем завершения. Прогон, начатый этим же сервером и еще не выданный,
 забирает вызов без пометки: такой вызов считается первым, пишет квитанцию и отдает отчет как свой

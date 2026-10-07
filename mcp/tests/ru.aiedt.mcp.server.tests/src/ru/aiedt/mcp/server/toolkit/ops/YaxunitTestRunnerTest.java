@@ -160,7 +160,8 @@ public class YaxunitTestRunnerTest
     public void theInfobaseIsUpdatedBeforeTheLaunchUnlessTheCallTurnsItOff()
     {
         List<String> asked = new ArrayList<>();
-        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(true, "Proj", "app-1",
+        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(
+            DebugSessionStarter.launchUpdate(Boolean.TRUE, true), "Proj", "app-1",
             (project, application) -> {
                 asked.add(project + "/" + application); //$NON-NLS-1$
                 return anInfobaseAlreadyUpToDate();
@@ -170,7 +171,8 @@ public class YaxunitTestRunnerTest
         assertEquals("the step runs once, for this project and application", 1, asked.size());
         assertEquals("Proj/app-1", asked.get(0));
 
-        String notAsked = YaxunitTestRunner.preLaunchUpdateRefusal(false, "Proj", "app-1",
+        String notAsked = YaxunitTestRunner.preLaunchUpdateRefusal(
+            DebugSessionStarter.launchUpdate(Boolean.FALSE, true), "Proj", "app-1",
             (project, application) -> {
                 asked.add("called anyway"); //$NON-NLS-1$
                 return ApplicationUpdater.Result.failed("boom"); //$NON-NLS-1$
@@ -187,7 +189,8 @@ public class YaxunitTestRunnerTest
     @Test
     public void anUpdateThatDidNotFinishRefusesTheLaunchAndNamesTheWayOut()
     {
-        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(true, "Proj", "app-1",
+        String refusal = YaxunitTestRunner.preLaunchUpdateRefusal(
+            DebugSessionStarter.launchUpdate(Boolean.TRUE, true), "Proj", "app-1",
             (project, application) -> ApplicationUpdater.Result.failed("the load stopped at row 40")); //$NON-NLS-1$
 
         assertNotNull(refusal);
@@ -205,9 +208,11 @@ public class YaxunitTestRunnerTest
     public void theUpdateDefaultsToOnAndTheCacheDefaultsToOff()
     {
         assertTrue("the infobase is updated when the call does not say", //$NON-NLS-1$
-            YaxunitTestRunner.updateBeforeLaunch(new HashMap<String, String>()));
-        assertTrue(YaxunitTestRunner.updateBeforeLaunch(params("updateBeforeLaunch", "true"))); //$NON-NLS-1$ //$NON-NLS-2$
-        assertFalse(YaxunitTestRunner.updateBeforeLaunch(params("updateBeforeLaunch", "false"))); //$NON-NLS-1$ //$NON-NLS-2$
+            YaxunitTestRunner.updateBeforeLaunch(new HashMap<String, String>()).asks);
+        assertTrue(YaxunitTestRunner.updateBeforeLaunch(
+            params("updateBeforeLaunch", "true")).asks); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(YaxunitTestRunner.updateBeforeLaunch(
+            params("updateBeforeLaunch", "false")).asks); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertFalse("a second call runs the tests again unless it asks for the report", //$NON-NLS-1$
             YaxunitTestRunner.reuseRecent(new HashMap<String, String>()));

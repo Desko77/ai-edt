@@ -110,7 +110,11 @@ public class LaunchDebuggerTool implements IMcpTool
                     + "Use for Attach configurations (server-side debug: HTTP services, background jobs, " //$NON-NLS-1$
                     + "scheduled jobs) or to select a specific client configuration by name.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "launch: update the database before launching (default true; ignored for Attach).") //$NON-NLS-1$
+                "launch: update the database before launching (default true; ignored for Attach). " //$NON-NLS-1$
+                    + "Under a preset that disabled update_database (Read-only, Debug & Test, Code " //$NON-NLS-1$
+                    + "Review) an omitted argument launches without updating and the answer carries " //$NON-NLS-1$
+                    + "databaseUpdate=SKIPPED_BY_PRESET; an explicit true is refused before anything " //$NON-NLS-1$
+                    + "starts.") //$NON-NLS-1$
             .integerProperty("debugServerPort", //$NON-NLS-1$
                 "launch: debug server port, 1..65535, when another 1C:EDT holds the default.") //$NON-NLS-1$
             .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
@@ -200,11 +204,12 @@ public class LaunchDebuggerTool implements IMcpTool
      * <p>
      * The action is normalized exactly as {@link #execute} normalizes it. {@code launch} and
      * {@code debug_launch} hand the call to {@link DebugSessionStarter}, which updates the infobase
-     * first unless {@code updateBeforeLaunch} opts out (default true, read the same way that tool
-     * reads it), and that update is the work {@code update_database} is weighed for; every other
-     * action starts no update and is answered with <code>null</code>, as before. The route cannot
-     * tell an Attach configuration from a runtime client, so a launch that names an Attach
-     * configuration is weighed although the update is skipped there.
+     * first unless {@code updateBeforeLaunch} opts out (default true, decided the same way that
+     * tool decides it - including the preset dropping an unnamed update), and that update is the
+     * work {@code update_database} is weighed for; every other action starts no update and is
+     * answered with <code>null</code>, as before. The route cannot tell an Attach configuration
+     * from a runtime client, so a launch that names an Attach configuration is weighed although
+     * the update is skipped there.
      * </p>
      *
      * @param arguments the call arguments, as the client sent them; may be <code>null</code>
@@ -220,8 +225,7 @@ public class LaunchDebuggerTool implements IMcpTool
         {
             return null;
         }
-        return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", true) //$NON-NLS-1$
-            ? "update_database" : null; //$NON-NLS-1$
+        return DebugSessionStarter.launchUpdate(arguments).update ? "update_database" : null; //$NON-NLS-1$
     }
 
     /**

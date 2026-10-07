@@ -203,7 +203,8 @@ public final class YaxunitTestRunner
             + "JSON whose output opens with **Pending** - invoke this tool again with the same arguments to keep waiting and " //$NON-NLS-1$
             + "pick up the result once the launch finishes. The launch itself is not aborted on timeout. " //$NON-NLS-1$
             + "The infobase is updated before the launch unless updateBeforeLaunch=false; an update "
-            + "that does not finish refuses the launch and nothing is started. "
+            + "that does not finish refuses the launch and nothing is started. Under a preset that "
+            + "disabled update_database an omitted updateBeforeLaunch launches without updating. "
             + "A report handed over for a run already collected is not reused: the tests run again. "
             + "Pass reuseRecent=true to take a report written within the last 5 minutes instead. "
             + "A complete Markdown report is also saved to report.md alongside junit.xml. " //$NON-NLS-1$
@@ -231,7 +232,10 @@ public final class YaxunitTestRunner
                     + "timeoutMs). If it expires, the result is Pending - call again to keep waiting.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
-                    + "finish refuses the launch. Set false to launch against the infobase as it stands.") //$NON-NLS-1$
+                    + "finish refuses the launch. Set false to launch against the infobase as it " //$NON-NLS-1$
+                    + "stands. Under a preset that disabled update_database (Read-only, Debug & " //$NON-NLS-1$
+                    + "Test, Code Review) an omitted argument launches without updating; an " //$NON-NLS-1$
+                    + "explicit true is refused before anything starts.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
                 "Default false. Set true to take the report of a run that finished within the last " //$NON-NLS-1$
                     + "5 minutes instead of running the tests again.") //$NON-NLS-1$
@@ -318,14 +322,16 @@ public final class YaxunitTestRunner
     }
 
     /**
-     * Whether the call asked for the infobase to be updated before the launch.
+     * The decision about the infobase update the call's {@code updateBeforeLaunch} argument names,
+     * read the way every launching path reads it.
      *
      * @param params the call arguments.
-     * @return the flag, {@code true} when the call does not name it
+     * @return the decision
      */
-    static boolean updateBeforeLaunch(Map<String, String> params)
+    static DebugSessionStarter.LaunchUpdate updateBeforeLaunch(Map<String, String> params)
     {
-        return JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
+        return DebugSessionStarter.launchUpdate(
+            JsonUtils.extractBooleanArgumentNullable(params, "updateBeforeLaunch"), true); //$NON-NLS-1$
     }
 
     /**
@@ -407,33 +413,30 @@ public final class YaxunitTestRunner
      * that the decision, the default and the refusal can be exercised without an infobase.
      * </p>
      *
-     * @param updateBeforeLaunch whether the caller asked for the update; the callers read it with
-     *            the default {@code true}.
+     * @param update the decision the call's {@code updateBeforeLaunch} argument resolved to; the
+     *            callers read it with the default {@code true}.
      * @param projectName the project the launch belongs to.
      * @param applicationId the application the launch starts.
      * @param updateStep the update itself.
      * @return the sentence refusing the launch, or <code>null</code> when it may go on
      */
-    static String preLaunchUpdateRefusal(boolean updateBeforeLaunch, String projectName,
+    static String preLaunchUpdateRefusal(DebugSessionStarter.LaunchUpdate update, String projectName,
         String applicationId, BiFunction<String, String, ApplicationUpdater.Result> updateStep)
     {
-        if (!updateBeforeLaunch)
+        if (update.refusal != null)
+        {
+            return update.refusal;
+        }
+        if (!update.update)
         {
             return null;
-        }
-        // The preset is asked before the update step runs, so a preset that forbids
-        // update_database refuses the launch having updated nothing at all. Both YAXUnit modes
-        // (run and debug) come through here, and so does every other launching path.
-        String presetRefusal = DebugSessionStarter.presetUpdateRefusal(true);
-        if (presetRefusal != null)
-        {
-            return presetRefusal;
         }
         return DebugSessionStarter.preLaunchRefusal(updateStep.apply(projectName, applicationId));
     }
 
     private String runTests(String configName, String projectName, String applicationId, String extensions,
-        String modules, String tests, int timeout, boolean updateBeforeLaunch, boolean reuseRecent)
+        String modules, String tests, int timeout, DebugSessionStarter.LaunchUpdate update,
+        boolean reuseRecent)
     {
         try
         {
@@ -577,7 +580,7 @@ public final class YaxunitTestRunner
             // Only a launch needs an infobase that is up to date: a call answered from a report
             // that is already there starts nothing. Run outside the launch lock, which is held for
             // the launch itself and would otherwise be held for the length of an update.
-            String updateRefusal = preLaunchUpdateRefusal(updateBeforeLaunch, projectName,
+            String updateRefusal = preLaunchUpdateRefusal(update, projectName,
                 applicationId, DebugSessionStarter::updateDatabaseIfNeeded);
             if (updateRefusal != null)
             {
