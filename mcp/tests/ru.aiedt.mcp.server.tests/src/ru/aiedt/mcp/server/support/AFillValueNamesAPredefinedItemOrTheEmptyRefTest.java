@@ -288,4 +288,29 @@ public class AFillValueNamesAPredefinedItemOrTheEmptyRefTest
         assertSame(warehouses.getPredefined().getItems().get(1),
             ((ReferenceValue)attribute.getFillValue()).getValue());
     }
+
+    /** The EmptyRef addressed by its whole owner lands; a beginning of the owner address is refused. */
+    @Test
+    public void aQualifiedEmptyRefNeedsTheWholeOwnerAddress()
+    {
+        Catalog warehouses = catalogWithPredefined();
+        MdTypeFactory types = MdTypeFactory.eINSTANCE;
+        MdRefType refType = types.createMdRefType();
+        refType.setEmptyRef(types.createEmptyRef());
+        CatalogTypes catalogTypes = types.createCatalogTypes();
+        catalogTypes.setRefType(refType);
+        warehouses.setProducedTypes(catalogTypes);
+        Configuration config = configurationWith(warehouses);
+
+        CatalogAttribute whole = attributeTyped("CatalogRef.Склады"); //$NON-NLS-1$
+        assertNull(BmDefinedTypeHelper.applyFillValue(whole, "Catalog.Склады.EmptyRef", config)); //$NON-NLS-1$
+        assertSame(refType.getEmptyRef(), ((ReferenceValue)whole.getFillValue()).getValue());
+
+        for (String partial : new String[] {"Catalog.EmptyRef", "Catalog.С.EmptyRef", "Catalog.Склад.EmptyRef"}) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            CatalogAttribute attribute = attributeTyped("CatalogRef.Склады"); //$NON-NLS-1$
+            org.junit.Assert.assertNotNull(partial, BmDefinedTypeHelper.applyFillValue(attribute, partial, config));
+            assertNull(partial, attribute.getFillValue());
+        }
+    }
 }

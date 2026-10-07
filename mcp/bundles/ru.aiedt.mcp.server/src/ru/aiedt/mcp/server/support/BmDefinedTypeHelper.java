@@ -1853,7 +1853,8 @@ public final class BmDefinedTypeHelper
         {
             return false;
         }
-        return v.regionMatches(true, 0, kind + "." + parts[1], 0, tail); //$NON-NLS-1$
+        // The whole owner address, not a beginning of it: "Catalog.EmptyRef" names no type.
+        return v.substring(0, tail).equalsIgnoreCase(kind + "." + parts[1]); //$NON-NLS-1$
     }
 
     /**
