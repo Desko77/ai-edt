@@ -215,6 +215,29 @@ public class AnExternalClustersFileIsReadAndNotReplacedTest
     }
 
     /**
+     * Removing the last cluster deletes a file that lies on disk outside the resource tree too.
+     * <p>
+     * The delete is decided by the disk: a file the tree does not know is still the project's
+     * clusters, and answering {@code noChange} for it would keep the clusters the user had just
+     * removed and tell them nothing changed.
+     * </p>
+     *
+     * @throws Exception when the file cannot be written or read back
+     */
+    @Test
+    public void aFileOnlyOnDiskIsDeletedWhenTheLastClusterGoes() throws Exception
+    {
+        writeBehindTheTree(TWO_CLUSTERS);
+        ClusterStore loaded = store.load(probe.project);
+        assertEquals(2, loaded.getClusterCount());
+
+        loaded.setGroups(new ArrayList<>());
+        assertTrue("an empty set removes a disk file the tree does not know", //$NON-NLS-1$
+            store.save(probe.project, loaded).isOk());
+        assertFalse(Files.exists(probe.clustersFile()));
+    }
+
+    /**
      * A store that never read the project does not replace a file that is there. Guard of the
      * behaviour, not a regression test: the refusal itself is not new.
      *
