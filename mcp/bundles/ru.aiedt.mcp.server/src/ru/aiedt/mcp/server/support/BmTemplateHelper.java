@@ -510,6 +510,34 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The spreadsheet document a template already holds in its content slot, without creating one.
+     * The get-or-create this class otherwise resolves through attaches a fresh document to an
+     * empty slot, and a caller that means to say the model did not move has to know the document
+     * was there before the call.
+     *
+     * @param template the template, may be <code>null</code>
+     * @return the attached spreadsheet document, or {@code null} when the slot holds none
+     */
+    public static SpreadsheetDocument existingSpreadsheetOf(MdObject template)
+    {
+        if (template == null)
+        {
+            return null;
+        }
+        try
+        {
+            java.lang.reflect.Method getter = template.getClass().getMethod("getTemplate"); //$NON-NLS-1$
+            Object current = getter.invoke(template);
+            return current instanceof SpreadsheetDocument ? (SpreadsheetDocument) current : null;
+        }
+        catch (Exception e)
+        {
+            // A template that will not answer the question holds no document this caller can name.
+            return null;
+        }
+    }
+
+    /**
      * Initializes the {@code template} content slot with a fresh content
      * object matching {@code canonicalType}. Currently supports only
      * SpreadsheetDocument (other template types return without action - their

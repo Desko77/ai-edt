@@ -146,6 +146,50 @@ public final class BmObjectHelper
         public String fqn;
         public String message;
         public Map<String, Object> tags = new LinkedHashMap<>();
+
+        /**
+         * Whether the action answered {@link Unchanged} - the model did not move - so the write
+         * owes the owner no export.
+         */
+        public boolean modelUnchanged;
+    }
+
+    /**
+     * The answer of a writing action that changed nothing in the model. The write entry skips the
+     * owner export for it: an export of an owner whose model did not move rewrites the file it
+     * came from and waits out a synchronization that has nothing to carry, and the warnings that
+     * export can leave on an answer would describe a write that never happened. An action may
+     * answer with it only when nothing it touched moved - a get-or-create that attached a fresh
+     * object changed the model even when the edit the caller named did not take place.
+     */
+    public static final class Unchanged
+    {
+        private final String message;
+
+        /**
+         * @param message the answer the caller reads, worded as the operation's own
+         */
+        private Unchanged(String message)
+        {
+            this.message = message;
+        }
+
+        /**
+         * The unchanged answer of an operation whose own wording the caller keeps reading.
+         *
+         * @param message the answer the caller reads, worded as the operation's own
+         * @return the marker the write entry skips the owner export for
+         */
+        public static Unchanged of(String message)
+        {
+            return new Unchanged(message);
+        }
+
+        @Override
+        public String toString()
+        {
+            return message;
+        }
     }
 
     /**
@@ -330,6 +374,21 @@ public final class BmObjectHelper
         MdObjectAction action)
     {
         return executeOnObject(project, ownerFqn, true, action, null, false, false);
+    }
+
+    /**
+     * Whether a finished write still owes the owner an export: it succeeded, it was not a preview,
+     * and its action did not answer that the model did not move. The unchanged answer owes nothing
+     * - an export of an owner whose model did not move rewrites the file it came from and waits out
+     * a synchronization that has nothing to carry.
+     *
+     * @param r the result of the write
+     * @param dryRun whether the call asked for a preview
+     * @return whether the owner export runs
+     */
+    static boolean exportOwed(Result r, boolean dryRun)
+    {
+        return r.ok && !dryRun && !r.modelUnchanged;
     }
 
     /**
@@ -574,6 +633,10 @@ public final class BmObjectHelper
                         {
                             r.message = actionResult.toString();
                         }
+                        if (actionResult instanceof Unchanged)
+                        {
+                            r.modelUnchanged = true;
+                        }
                         if (dryRun)
                         {
                             // Throw to abort the transaction - the model preserves no state.
@@ -645,8 +708,9 @@ public final class BmObjectHelper
         // add_template, set_object_property, ...) live only in the BM in-memory
         // index - they are visible to get_metadata_details and to validators,
         // but the parent .mdo file on disk does not reflect them. dryRun is
-        // skipped because the transaction was rolled back.
-        if (r.ok && !dryRun)
+        // skipped because the transaction was rolled back, and an action that
+        // answered Unchanged is skipped because there is no mutation to carry.
+        if (exportOwed(r, dryRun))
         {
             try
             {
