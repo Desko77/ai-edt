@@ -1251,6 +1251,12 @@ final class MetadataFormatter
      * {@code Catalog.X.EmptyRef} come out right. The object itself always contributes something: a
      * nameless non-MdObject is named by its model class, which is the EmptyRef case.
      * </p>
+     * <p>
+     * The walk stops below the configuration: every object of a loaded model hangs off a
+     * {@code Configuration}, which is itself an MdObject and would otherwise put a
+     * {@code Configuration.<name>.} segment in front of every address - a spelling no write path
+     * accepts.
+     * </p>
      *
      * @param object the object, not <code>null</code>
      * @return the qualified name
@@ -1260,6 +1266,11 @@ final class MetadataFormatter
         StringBuilder fqn = new StringBuilder(ownSegmentOf(object));
         for (EObject container = object.eContainer(); container != null; container = container.eContainer())
         {
+            if (container instanceof Configuration)
+            {
+                // The configuration every object hangs off is not part of the address.
+                break;
+            }
             if (!(container instanceof MdObject) && nameOf(container) == null)
             {
                 // A pure holder: transparent in the qualified name.

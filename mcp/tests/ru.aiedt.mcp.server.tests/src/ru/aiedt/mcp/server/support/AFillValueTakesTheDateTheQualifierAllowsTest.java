@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
@@ -172,5 +173,41 @@ public class AFillValueTakesTheDateTheQualifierAllowsTest
 
         assertTrue(BmDefinedTypeHelper.applyFillValue(attribute, "StandardBeginningDate") //$NON-NLS-1$
             .contains("Date")); //$NON-NLS-1$
+    }
+
+    /**
+     * A date the shape allows but no calendar holds is refused naming the value, and the attribute
+     * keeps the value it carried: the mcore Date constructor throws without a message, and an empty
+     * refusal would read as success with nothing written.
+     */
+    @Test
+    public void anImpossibleCalendarDateIsRefusedAndKeepsTheOldValue()
+    {
+        for (String literal : new String[] { "2024-02-30", "0000-01-01" }) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            CatalogAttribute attribute = dateAttribute(DateFractions.DATE);
+            DateValue carried = McoreFactory.eINSTANCE.createDateValue();
+            carried.setValue(new com._1c.g5.v8.dt.mcore.util.Date(2020, 1, 1, 0, 0, 0));
+            attribute.setFillValue(carried);
+
+            String refused = BmDefinedTypeHelper.applyFillValue(attribute, literal);
+
+            assertTrue("the refusal names the value: " + refused, refused != null //$NON-NLS-1$
+                && !refused.trim().isEmpty() && refused.contains(literal));
+            assertSame("the carried value stays: " + literal, carried, attribute.getFillValue());
+        }
+    }
+
+    /** A month or an hour no calendar holds is refused the same way. */
+    @Test
+    public void anImpossibleMonthOrHourIsRefused()
+    {
+        String refusedMonth = BmDefinedTypeHelper.applyFillValue(dateAttribute(DateFractions.DATE),
+            "2024-13-01"); //$NON-NLS-1$
+        String refusedHour = BmDefinedTypeHelper.applyFillValue(
+            dateAttribute(DateFractions.DATE_TIME), "2024-01-01T25:00:00"); //$NON-NLS-1$
+
+        assertTrue(refusedMonth != null && !refusedMonth.trim().isEmpty());
+        assertTrue(refusedHour != null && !refusedHour.trim().isEmpty());
     }
 }

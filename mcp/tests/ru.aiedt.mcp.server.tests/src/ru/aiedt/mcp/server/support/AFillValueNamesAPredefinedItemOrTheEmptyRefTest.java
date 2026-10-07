@@ -198,4 +198,94 @@ public class AFillValueNamesAPredefinedItemOrTheEmptyRefTest
 
         assertTrue(refused.contains("produced types")); //$NON-NLS-1$
     }
+
+    private static CatalogPredefinedItem folderNamed(String name)
+    {
+        CatalogPredefinedItem folder = MdClassFactory.eINSTANCE.createCatalogPredefinedItem();
+        folder.setName(name);
+        folder.setIsFolder(true);
+        return folder;
+    }
+
+    /** A catalog whose predefined items sit inside folders, one item per folder. */
+    private static Catalog catalogWithNestedPredefined()
+    {
+        Catalog warehouses = MdClassFactory.eINSTANCE.createCatalog();
+        warehouses.setName("Склады"); //$NON-NLS-1$
+        CatalogPredefined predefined = MdClassFactory.eINSTANCE.createCatalogPredefined();
+        predefined.getItems().add(itemNamed("Основной")); //$NON-NLS-1$
+        CatalogPredefinedItem retail = folderNamed("Группы"); //$NON-NLS-1$
+        retail.getContent().add(itemNamed("Розничные")); //$NON-NLS-1$
+        predefined.getItems().add(retail);
+        warehouses.setPredefined(predefined);
+        return warehouses;
+    }
+
+    /** An item inside a folder resolves by its bare name when that name is unique. */
+    @Test
+    public void aNestedItemNameLandsAsTheCatalogOwnObject()
+    {
+        Catalog warehouses = catalogWithNestedPredefined();
+        Configuration config = configurationWith(warehouses);
+        CatalogAttribute attribute = attributeTyped("CatalogRef.Склады"); //$NON-NLS-1$
+
+        assertNull(BmDefinedTypeHelper.applyFillValue(attribute, "Розничные", config)); //$NON-NLS-1$
+
+        assertSame(warehouses.getPredefined().getItems().get(1).getContent().get(0),
+            ((ReferenceValue)attribute.getFillValue()).getValue());
+    }
+
+    /** The full path of a nested item - folder name, then item name - lands as the same object. */
+    @Test
+    public void theNestedFullPathLandsAsTheSameObject()
+    {
+        Catalog warehouses = catalogWithNestedPredefined();
+        Configuration config = configurationWith(warehouses);
+        CatalogAttribute attribute = attributeTyped("CatalogRef.Склады"); //$NON-NLS-1$
+
+        assertNull(BmDefinedTypeHelper.applyFillValue(attribute,
+            "Catalog.Склады.Группы.Розничные", config)); //$NON-NLS-1$
+
+        assertSame(warehouses.getPredefined().getItems().get(1).getContent().get(0),
+            ((ReferenceValue)attribute.getFillValue()).getValue());
+    }
+
+    /** A name two nested items share is refused with the full paths that disambiguate. */
+    @Test
+    public void aNameTwoNestedItemsShareIsRefusedWithThePaths()
+    {
+        Catalog warehouses = MdClassFactory.eINSTANCE.createCatalog();
+        warehouses.setName("Склады"); //$NON-NLS-1$
+        CatalogPredefined predefined = MdClassFactory.eINSTANCE.createCatalogPredefined();
+        CatalogPredefinedItem retail = folderNamed("Розничные"); //$NON-NLS-1$
+        retail.getContent().add(itemNamed("Оптовые")); //$NON-NLS-1$
+        CatalogPredefinedItem spare = folderNamed("Запасные"); //$NON-NLS-1$
+        spare.getContent().add(itemNamed("Оптовые")); //$NON-NLS-1$
+        predefined.getItems().add(retail);
+        predefined.getItems().add(spare);
+        warehouses.setPredefined(predefined);
+        Configuration config = configurationWith(warehouses);
+        CatalogAttribute attribute = attributeTyped("CatalogRef.Склады"); //$NON-NLS-1$
+
+        String refused = BmDefinedTypeHelper.applyFillValue(attribute, "Оптовые", config); //$NON-NLS-1$
+
+        assertTrue(refused.contains("more than once")); //$NON-NLS-1$
+        assertTrue("the refusal offers both full paths: " + refused, //$NON-NLS-1$
+            refused.contains("Catalog.Склады.Розничные.Оптовые") //$NON-NLS-1$
+                && refused.contains("Catalog.Склады.Запасные.Оптовые")); //$NON-NLS-1$
+    }
+
+    /** The folder itself is an item too, and resolves like any other. */
+    @Test
+    public void aFolderNameLandsAsTheFolderObject()
+    {
+        Catalog warehouses = catalogWithNestedPredefined();
+        Configuration config = configurationWith(warehouses);
+        CatalogAttribute attribute = attributeTyped("CatalogRef.Склады"); //$NON-NLS-1$
+
+        assertNull(BmDefinedTypeHelper.applyFillValue(attribute, "Группы", config)); //$NON-NLS-1$
+
+        assertSame(warehouses.getPredefined().getItems().get(1),
+            ((ReferenceValue)attribute.getFillValue()).getValue());
+    }
 }

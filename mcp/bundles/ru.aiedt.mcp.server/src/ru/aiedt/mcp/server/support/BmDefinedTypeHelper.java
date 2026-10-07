@@ -1579,31 +1579,82 @@ public final class BmDefinedTypeHelper
      * Project-aware variant of {@link #applyFillValue(EObject, String)}: the
      * project's configuration is what reference-typed fills are resolved against
      * (an enum value, a predefined item and the produced EmptyRef all live in
-     * objects the configuration holds). A null or unresolved project leaves the
-     * primitive kinds working and the reference kinds refused with the reason.
+     * objects the configuration holds). For an extension project the
+     * configuration of the project it extends is searched second, so a type of
+     * the base configuration the extension did not adopt still resolves. A null
+     * or unresolved project leaves the primitive kinds working and the reference
+     * kinds refused with the reason.
      *
      * @param project the owning project; may be {@code null}
      * @return {@code null} on success, or an error message
      */
     public static String applyFillValue(EObject target, String raw, IProject project)
     {
-        Configuration config = null;
-        if (project != null)
+        return applyFillValue(target, raw, resolutionOrder(project));
+    }
+
+    /**
+     * The configurations a reference fill resolves against, in search order:
+     * the project's own configuration first, then - for an extension project -
+     * the configuration of the project it extends, where the types the
+     * extension did not adopt still live. The parent project comes from the
+     * existing {@link BmCommonModuleGuards#parentProjectOf(IProject)}; this is
+     * the only parent-resolution mechanism the helper uses.
+     *
+     * @param project the owning project; may be {@code null}
+     * @return the configurations in order, empty when none resolves
+     */
+    private static List<Configuration> resolutionOrder(IProject project)
+    {
+        List<Configuration> order = new ArrayList<>();
+        if (project == null)
         {
-            try
+            return order;
+        }
+        com._1c.g5.v8.dt.core.platform.IConfigurationProvider provider = null;
+        try
+        {
+            provider = Activator.getDefault() == null
+                ? null : Activator.getDefault().getConfigurationProvider();
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("applyFillValue: configuration provider unreachable: " //$NON-NLS-1$
+                + e.getMessage());
+        }
+        addConfigurationOf(order, project, provider);
+        IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+        if (parent != null)
+        {
+            addConfigurationOf(order, parent, provider);
+        }
+        return order;
+    }
+
+    /**
+     * Adds a project's configuration to the search order when it resolves; a
+     * project whose configuration does not resolve is skipped, not fatal.
+     */
+    private static void addConfigurationOf(List<Configuration> order, IProject project,
+        com._1c.g5.v8.dt.core.platform.IConfigurationProvider provider)
+    {
+        if (provider == null)
+        {
+            return;
+        }
+        try
+        {
+            Configuration config = provider.getConfiguration(project);
+            if (config != null)
             {
-                com._1c.g5.v8.dt.core.platform.IConfigurationProvider provider =
-                    Activator.getDefault().getConfigurationProvider();
-                config = provider == null ? null : provider.getConfiguration(project);
-            }
-            catch (Exception e)
-            {
-                Activator.logWarning("applyFillValue: configuration resolve failed: " //$NON-NLS-1$
-                    + e.getMessage());
-                config = null;
+                order.add(config);
             }
         }
-        return applyFillValue(target, raw, config);
+        catch (Exception e)
+        {
+            Activator.logWarning("applyFillValue: configuration resolve failed: " //$NON-NLS-1$
+                + e.getMessage());
+        }
     }
 
     /**
@@ -1614,6 +1665,22 @@ public final class BmDefinedTypeHelper
      * @return {@code null} on success, or an error message
      */
     public static String applyFillValue(EObject target, String raw, Configuration config)
+    {
+        return applyFillValue(target, raw,
+            config == null ? new ArrayList<Configuration>() : Arrays.asList(config));
+    }
+
+    /**
+     * Search-order variant reference fills resolve against: each configuration
+     * in the list is searched in turn and the first that holds the type wins,
+     * which is how an extension attribute reaches a base-configuration type the
+     * extension did not adopt. An empty order leaves the primitive kinds
+     * working and the reference kinds refused with the reason.
+     *
+     * @param configs the configurations in search order; may be empty or hold nulls
+     * @return {@code null} on success, or an error message
+     */
+    public static String applyFillValue(EObject target, String raw, List<Configuration> configs)
     {
         if (target == null)
         {
@@ -1639,10 +1706,10 @@ public final class BmDefinedTypeHelper
         {
             value = createMcoreValue("createUndefinedValue", null, null); //$NON-NLS-1$
         }
-        else if (isEmptyRefLiteral(v))
+        else if (isEmptyRefLiteral(v) || namesTheTypesOwnEmptyRef(v, target))
         {
             String[] refusal = new String[1];
-            value = buildEmptyRefValue(target, config, refusal);
+            value = buildEmptyRefValue(target, configs, refusal);
             if (value == null && refusal[0] != null)
             {
                 return refusal[0];
@@ -1709,14 +1776,19 @@ public final class BmDefinedTypeHelper
                 }
                 catch (IllegalArgumentException rejected)
                 {
-                    return rejected.getMessage();
+                    // A null message would read as success; every date refusal
+                    // carries the value and the shape the qualifier allows.
+                    String message = rejected.getMessage();
+                    return message != null && !message.isEmpty() ? message
+                        : "fillValue '" + v + "' is not a valid date (expected " //$NON-NLS-1$ //$NON-NLS-2$
+                            + expectedShape(dateFractionsOf(target)) + ")"; //$NON-NLS-1$
                 }
                 value = createMcoreValue("createDateValue", com._1c.g5.v8.dt.mcore.util.Date.class, //$NON-NLS-1$
                     parsed);
             }
             else
             {
-                return applyReferenceFill(target, v, config);
+                return applyReferenceFill(target, v, configs);
             }
         }
         if (value == null)
@@ -1753,6 +1825,35 @@ public final class BmDefinedTypeHelper
     private static boolean isEmptyRefLiteral(String v)
     {
         return "EmptyRef".equalsIgnoreCase(v) || "ПустаяСсылка".equalsIgnoreCase(v); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Tells the addressed spelling of the empty reference apart from a value
+     * that names something: {@code <Kind>.<Name>.EmptyRef} (Russian tail
+     * accepted) addresses the empty reference of the attribute's own type -
+     * the exact spelling the fill-value report shows for a stored empty
+     * reference. An address that names another type is not this one and is
+     * left to the reference fill, which refuses it as unknown.
+     */
+    private static boolean namesTheTypesOwnEmptyRef(String v, EObject target)
+    {
+        if (v == null || !(target instanceof MdObject))
+        {
+            return false;
+        }
+        String typeFqn = readSingleTypeName((MdObject)target);
+        String[] parts = typeFqn == null ? null : typeFqn.split("\\.", 2); //$NON-NLS-1$
+        String kind = parts != null && parts.length == 2 ? stripTypeKindSuffix(parts[0]) : null;
+        if (kind == null)
+        {
+            return false;
+        }
+        int tail = v.lastIndexOf('.');
+        if (tail < 0 || !isEmptyRefLiteral(v.substring(tail + 1)))
+        {
+            return false;
+        }
+        return v.regionMatches(true, 0, kind + "." + parts[1], 0, tail); //$NON-NLS-1$
     }
 
     /**
@@ -1871,7 +1972,18 @@ public final class BmDefinedTypeHelper
         {
             throw new IllegalArgumentException("fillValue '" + literal + "' is not a real date or time"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        return new com._1c.g5.v8.dt.mcore.util.Date(year, month, day, hour, minute, second);
+        try
+        {
+            return new com._1c.g5.v8.dt.mcore.util.Date(year, month, day, hour, minute, second);
+        }
+        catch (IllegalArgumentException calendarImpossible)
+        {
+            // The mcore Date constructor throws without a message (year outside
+            // 1..9999, a day the month does not have), and a null refusal reads
+            // as success one level up.
+            throw new IllegalArgumentException("fillValue '" + literal //$NON-NLS-1$
+                + "' is not a real calendar date (expected " + expectedShape(fractions) + ")"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
     }
 
     /**
@@ -1914,17 +2026,17 @@ public final class BmDefinedTypeHelper
      * @return the value, or {@code null} with the refusal written into
      *         {@code refusal[0]}
      */
-    private static Object buildEmptyRefValue(EObject target, Configuration config, String[] refusal)
+    private static Object buildEmptyRefValue(EObject target, List<Configuration> configs, String[] refusal)
     {
         String typeFqn = target instanceof MdObject
             ? readSingleTypeName((MdObject)target) : null;
-        String refused = requireSingleReferenceType(typeFqn, config, "the empty reference"); //$NON-NLS-1$
+        String refused = requireSingleReferenceType(typeFqn, configs, "the empty reference"); //$NON-NLS-1$
         if (refused != null)
         {
             refusal[0] = refused;
             return null;
         }
-        MdObject owner = resolveReferenceOwner(typeFqn, config);
+        MdObject owner = resolveReferenceOwner(typeFqn, configs);
         if (owner == null)
         {
             refusal[0] = typeFqn + " is not found in the configuration"; //$NON-NLS-1$
@@ -1961,9 +2073,11 @@ public final class BmDefinedTypeHelper
      * predefined item for an object reference type. Both are matched by name
      * against what the type itself declares, ignoring case; an unknown name is
      * refused with the closest declared names, a name two candidates share is
-     * refused as ambiguous.
+     * refused as ambiguous. Predefined items are collected recursively through
+     * the item content, so an item inside a group resolves by its bare name
+     * (when unique) or by its path from the owner.
      */
-    private static String applyReferenceFill(EObject target, String v, Configuration config)
+    private static String applyReferenceFill(EObject target, String v, List<Configuration> configs)
     {
         if (!(target instanceof MdObject))
         {
@@ -1978,12 +2092,12 @@ public final class BmDefinedTypeHelper
                 + "); give the attribute a single type first"; //$NON-NLS-1$
         }
         String typeFqn = typeNames.isEmpty() ? null : typeNames.iterator().next();
-        String refused = requireSingleReferenceType(typeFqn, config, "a reference fill"); //$NON-NLS-1$
+        String refused = requireSingleReferenceType(typeFqn, configs, "a reference fill"); //$NON-NLS-1$
         if (refused != null)
         {
             return refused;
         }
-        MdObject owner = resolveReferenceOwner(typeFqn, config);
+        MdObject owner = resolveReferenceOwner(typeFqn, configs);
         String[] parts = typeFqn.split("\\.", 2); //$NON-NLS-1$
         if (owner == null)
         {
@@ -1992,6 +2106,7 @@ public final class BmDefinedTypeHelper
         boolean enumType = "EnumRef".equalsIgnoreCase(parts[0]); //$NON-NLS-1$
         List<String> candidates = new ArrayList<>();
         List<Object> items = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
         if (enumType)
         {
             Object values = owner == null ? null : invokeNoArg(owner, "getEnumValues"); //$NON-NLS-1$
@@ -2014,11 +2129,7 @@ public final class BmDefinedTypeHelper
                 return typeFqn + " has no predefined items (only EnumRef types name their values " //$NON-NLS-1$
                     + "and Catalog / Chart / ... types their predefined items)"; //$NON-NLS-1$
             }
-            for (Object item : (EList<?>)list)
-            {
-                candidates.add(String.valueOf(invokeNoArg(item, "getName"))); //$NON-NLS-1$
-                items.add(item);
-            }
+            collectPredefinedItems((EList<?>)list, "", candidates, paths, items); //$NON-NLS-1$
         }
         String wanted = stripReferenceValuePrefix(v, parts[0],
             String.valueOf(invokeNoArg(owner, "getName")), enumType); //$NON-NLS-1$
@@ -2026,7 +2137,17 @@ public final class BmDefinedTypeHelper
         if (picked == AMBIGUOUS_NAME)
         {
             return "fillValue '" + wanted + "' names " + (enumType ? "enum values" : "predefined items") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-                + " of " + typeFqn + " more than once; give the reference itself"; //$NON-NLS-1$ //$NON-NLS-2$
+                + " of " + typeFqn + " more than once" //$NON-NLS-1$ //$NON-NLS-2$
+                + (enumType ? "; give the reference itself" //$NON-NLS-1$
+                    : "; the items: " + fullPathsOf(wanted, candidates, paths, parts[0], //$NON-NLS-1$
+                        String.valueOf(invokeNoArg(owner, "getName"))) //$NON-NLS-1$
+                        + "; give the full path"); //$NON-NLS-1$
+        }
+        if (picked < 0 && !enumType)
+        {
+            // No name matches; the wanted string may still be an item's path
+            // from the owner (Group.Item), which is unique per item.
+            picked = pickByNameIgnoreCase(paths, wanted);
         }
         if (picked < 0)
         {
@@ -2083,9 +2204,11 @@ public final class BmDefinedTypeHelper
 
     /**
      * Refuses everything a reference fill needs that the type does not offer:
-     * no single type, a type that is not a reference, a missing configuration.
+     * no single type, a type that is not a reference, no configuration to
+     * resolve against.
      */
-    private static String requireSingleReferenceType(String typeFqn, Configuration config, String what)
+    private static String requireSingleReferenceType(String typeFqn, List<Configuration> configs,
+        String what)
     {
         if (typeFqn == null)
         {
@@ -2099,7 +2222,7 @@ public final class BmDefinedTypeHelper
                 + "; reference fills resolve EnumRef.<Name>, <Kind>Ref.<Name> of an object " //$NON-NLS-1$
                 + "(Catalog / Document / Chart / Task / ...)"; //$NON-NLS-1$
         }
-        if (config == null)
+        if (configs == null || configs.isEmpty())
         {
             return "fillValue cannot resolve " + what + " without the project configuration " //$NON-NLS-1$ //$NON-NLS-2$
                 + "(unavailable on this call)"; //$NON-NLS-1$
@@ -2109,12 +2232,70 @@ public final class BmDefinedTypeHelper
 
     /**
      * Finds the metadata object a reference type FQN points at, or {@code null}
-     * when the configuration does not hold it.
+     * when no configuration of the search order holds it. Each configuration is
+     * asked in turn and the first hit wins, which is how an extension's
+     * attribute reaches an object of the base configuration the extension did
+     * not adopt.
      */
-    private static MdObject resolveReferenceOwner(String typeFqn, Configuration config)
+    private static MdObject resolveReferenceOwner(String typeFqn, List<Configuration> configs)
     {
         String[] parts = typeFqn.split("\\.", 2); //$NON-NLS-1$
-        return MetadataTypeCatalog.findObject(config, stripTypeKindSuffix(parts[0]), parts[1]);
+        for (Configuration config : configs)
+        {
+            MdObject found = config == null ? null
+                : MetadataTypeCatalog.findObject(config, stripTypeKindSuffix(parts[0]), parts[1]);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Collects predefined items recursively, with the path each one is
+     * addressed by: the names from the owner's top level down to the item,
+     * dot-joined ({@code Group.Item}). That is the spelling between the owner
+     * segment and the item in what the fill-value report shows
+     * ({@code Catalog.X.Group.Item}), so reading and writing converge. An item
+     * kind without content (a flat one) contributes no recursion.
+     */
+    private static void collectPredefinedItems(EList<?> siblings, String parentPath,
+        List<String> names, List<String> paths, List<Object> items)
+    {
+        for (Object item : siblings)
+        {
+            String name = String.valueOf(invokeNoArg(item, "getName")); //$NON-NLS-1$
+            String path = parentPath.isEmpty() ? name : parentPath + "." + name; //$NON-NLS-1$
+            names.add(name);
+            paths.add(path);
+            items.add(item);
+            Object nested = invokeNoArg(item, "getContent"); //$NON-NLS-1$
+            if (nested instanceof EList && !((EList<?>)nested).isEmpty())
+            {
+                collectPredefinedItems((EList<?>)nested, path, names, paths, items);
+            }
+        }
+    }
+
+    /**
+     * The full addresses of every item whose name matches the wanted one, for
+     * the ambiguity refusal: the caller reads them as the spellings that
+     * disambiguate ({@code Catalog.X.Group.Item}).
+     */
+    private static String fullPathsOf(String wanted, List<String> names, List<String> paths,
+        String kind, String ownerName)
+    {
+        List<String> full = new ArrayList<>();
+        String prefix = stripTypeKindSuffix(kind) + "." + ownerName + "."; //$NON-NLS-1$ //$NON-NLS-2$
+        for (int i = 0; i < names.size(); i++)
+        {
+            if (names.get(i) != null && names.get(i).trim().equalsIgnoreCase(wanted.trim()))
+            {
+                full.add(prefix + paths.get(i));
+            }
+        }
+        return String.join(", ", full); //$NON-NLS-1$
     }
 
     /**
