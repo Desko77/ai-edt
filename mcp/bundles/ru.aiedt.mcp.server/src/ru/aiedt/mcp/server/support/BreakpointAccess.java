@@ -202,8 +202,9 @@ public final class BreakpointAccess
      * <p>
      * Two breakpoints on one line both stop the debugger, both show in the breakpoints view, and a
      * removal by coordinates takes only the first of them away - so a line asked for twice would leave
-     * a breakpoint nobody asked to keep. The one that was there goes first, and the one that comes back
-     * carries the options of this call.
+     * a breakpoint nobody asked to keep. The replacement is made first and the one that was there is
+     * taken off afterwards, so a replacement that cannot be made leaves the line with the breakpoint
+     * it had, working; the one that comes back carries the options of this call.
      * </p>
      *
      * @param file the module file
@@ -211,13 +212,74 @@ public final class BreakpointAccess
      * @param manager the breakpoint manager to search and register with
      * @param factory how the new breakpoint is made
      * @return the registered breakpoint
-     * @throws Exception if the old one cannot be removed or the new one cannot be created
+     * @throws Exception if the new one cannot be created, or the old one cannot then be removed -
+     *             in which case the half-made replacement is taken back off and the line keeps the
+     *             breakpoint it had
      */
     static IBreakpoint replaceLineBreakpoint(IFile file, int lineNumber, IBreakpointManager manager,
         LineBreakpointFactory factory) throws Exception
     {
-        removeBreakpointAt(file, lineNumber, manager);
-        return factory.create(file, lineNumber, manager);
+        IBreakpoint existing = lineBreakpointAt(file, lineNumber, manager);
+        if (existing == null)
+        {
+            return factory.create(file, lineNumber, manager);
+        }
+
+        IBreakpoint replacement = factory.create(file, lineNumber, manager);
+        try
+        {
+            manager.removeBreakpoint(existing, true);
+        }
+        catch (Exception removalRefused)
+        {
+            // The line keeps the breakpoint it had; the half-made replacement comes back off
+            // rather than leaving two breakpoints where one was asked for.
+            try
+            {
+                manager.removeBreakpoint(replacement, true);
+            }
+            catch (Exception rollbackRefused)
+            {
+                Activator.logWarning("Failed to take a replacement back off a line whose old " //$NON-NLS-1$
+                    + "breakpoint would not come off: " + rollbackRefused.getMessage()); //$NON-NLS-1$
+            }
+            throw removalRefused;
+        }
+        return replacement;
+    }
+
+    /**
+     * Finds the line breakpoint occupying a file and line, without touching it.
+     * <p>
+     * The one coordinate search both the replacement and the removal go through: a set that
+     * searches differently from a remove leaves a breakpoint behind that no removal by
+     * coordinates can reach.
+     * </p>
+     *
+     * @param file the module file
+     * @param line the line, counting from 1
+     * @param manager the breakpoint manager to search
+     * @return the breakpoint on that line, or <code>null</code> when none is
+     * @throws CoreException when a registered breakpoint cannot be read
+     */
+    static IBreakpoint lineBreakpointAt(IFile file, int line, IBreakpointManager manager)
+        throws CoreException
+    {
+        for (IBreakpoint breakpoint : manager.getBreakpoints())
+        {
+            if (!(breakpoint instanceof ILineBreakpoint))
+            {
+                continue;
+            }
+
+            IMarker marker = breakpoint.getMarker();
+            if (marker != null && file.equals(marker.getResource())
+                && ((ILineBreakpoint)breakpoint).getLineNumber() == line)
+            {
+                return breakpoint;
+            }
+        }
+        return null;
     }
 
     /**
@@ -466,22 +528,13 @@ public final class BreakpointAccess
      */
     static boolean removeBreakpointAt(IFile file, int line, IBreakpointManager manager) throws Exception
     {
-        for (IBreakpoint breakpoint : manager.getBreakpoints())
+        IBreakpoint breakpoint = lineBreakpointAt(file, line, manager);
+        if (breakpoint == null)
         {
-            if (!(breakpoint instanceof ILineBreakpoint))
-            {
-                continue;
-            }
-
-            IMarker marker = breakpoint.getMarker();
-            if (marker != null && file.equals(marker.getResource())
-                && ((ILineBreakpoint)breakpoint).getLineNumber() == line)
-            {
-                manager.removeBreakpoint(breakpoint, true);
-                return true;
-            }
+            return false;
         }
-        return false;
+        manager.removeBreakpoint(breakpoint, true);
+        return true;
     }
 
     /**
