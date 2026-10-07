@@ -203,9 +203,12 @@ public final class SuspendWaiter implements IMcpTool
                 }
             }
         }
-        catch (Exception ignore)
+        catch (Exception e)
         {
-            // best-effort; fall through to the normal wait
+            // Best-effort: the wait goes on. The failure is still said out loud, because a scan that
+            // could not look and a session that had nothing to find are the same answer otherwise.
+            Activator.logWarning("wait_for_break could not scan application " + applicationId //$NON-NLS-1$
+                + " for an already suspended thread: " + e); //$NON-NLS-1$
         }
     }
 

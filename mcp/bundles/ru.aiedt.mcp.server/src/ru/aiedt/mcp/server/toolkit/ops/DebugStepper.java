@@ -53,8 +53,9 @@ public final class DebugStepper implements IMcpTool
             .integerProperty("threadId", "Thread id obtained from wait_for_break (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("kind", "Which step to perform: over, into, out (return behaves as out) (required)", true) //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "How long to wait, in seconds (default: 30). Legacy aliases: timeout (seconds), " //$NON-NLS-1$
-                    + "timeoutMs (milliseconds).") //$NON-NLS-1$
+                "How long to wait for the step to land, in seconds: 50 at most (default: 30). A longer " //$NON-NLS-1$
+                    + "ask is cut to 50 and the answer says so; the step is already sent, so wait_for_break " //$NON-NLS-1$
+                    + "catches it when it lands. Legacy aliases: timeout (seconds), timeoutMs (milliseconds).") //$NON-NLS-1$
             .build();
     }
 
@@ -74,7 +75,9 @@ public final class DebugStepper implements IMcpTool
             // The facade passes mode (over/into/out) for the bare step action; accept it as a fallback
             kind = JsonUtils.extractStringArgument(params, "mode"); //$NON-NLS-1$
         }
-        int timeout = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT, 1, 0);
+        Integer requested = TimeoutArgs.requestedSeconds(params);
+        int timeout = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT, 1, SuspendWaiter.MAX_TIMEOUT);
+        boolean capped = requested != null && requested.intValue() > SuspendWaiter.MAX_TIMEOUT;
 
         if (threadId <= 0)
         {
@@ -124,9 +127,6 @@ public final class DebugStepper implements IMcpTool
 
         try
         {
-            // Clear the current snapshot so waitForSuspend only catches the NEW suspend after the step.
-            registry.clearSnapshot(appId);
-
             switch (kind.toLowerCase())
             {
             case "over": //$NON-NLS-1$
@@ -134,6 +134,9 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step over right now").toJson(); //$NON-NLS-1$
                 }
+                // The snapshot describes where the debugger was, and it goes only once the step is
+                // really sent: a step the thread refuses leaves the session as describable as before.
+                registry.clearSnapshot(appId);
                 stepper.stepOver();
                 break;
             case "into": //$NON-NLS-1$
@@ -141,6 +144,7 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step into right now").toJson(); //$NON-NLS-1$
                 }
+                registry.clearSnapshot(appId);
                 stepper.stepInto();
                 break;
             case "out": //$NON-NLS-1$
@@ -149,6 +153,7 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step out right now").toJson(); //$NON-NLS-1$
                 }
+                registry.clearSnapshot(appId);
                 stepper.stepReturn();
                 break;
             default:
@@ -160,8 +165,17 @@ public final class DebugStepper implements IMcpTool
                 timeout * 1000L);
             if (snapshot == null)
             {
-                return ToolResult.success().put("hit", false) //$NON-NLS-1$
-                    .put("reason", "timeout").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                ToolResult noStop = ToolResult.success().put("hit", false) //$NON-NLS-1$
+                    .put("reason", "timeout") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("waitedSeconds", Integer.valueOf(timeout)) //$NON-NLS-1$
+                    .put("note", "The step was sent to the thread and it had not stopped it within " //$NON-NLS-1$
+                        + timeout + " seconds. It may still finish: call wait_for_break to catch the stop."); //$NON-NLS-1$
+                if (capped)
+                {
+                    noStop.put("timeoutCapped", Boolean.TRUE) //$NON-NLS-1$
+                        .put("requestedSeconds", requested); //$NON-NLS-1$
+                }
+                return noStop.toJson();
             }
             return SuspendWaiter.buildSnapshotResponse(snapshot, registry, appId, false);
         }
