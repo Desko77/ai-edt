@@ -114,6 +114,9 @@ public final class FakeDebugFrames
         /** When set, {@code resume()} throws it instead of resuming. */
         public Exception resumeRefusal;
 
+        /** Run inside {@code resume()}, for the platform events a test wants delivered while the resume is being made. */
+        public Runnable onResumeRequest;
+
         /** How many resumes the thread received. */
         public int resumeRequests;
 
@@ -194,6 +197,11 @@ public final class FakeDebugFrames
                 throw resumeRefusal;
             }
             suspended = false;
+            Runnable hook = onResumeRequest;
+            if (hook != null)
+            {
+                hook.run();
+            }
         }
 
         /**
@@ -446,6 +454,18 @@ public final class FakeDebugFrames
     public static Session session(String applicationId)
     {
         return new Session(applicationId);
+    }
+
+    /**
+     * Delivers the registry side of the platform's RESUME event: everything the application issued
+     * is dropped, the way the event listener does it. A resume hook that wants the event to arrive
+     * while the resume is still being made calls this.
+     *
+     * @param applicationId the application that resumed
+     */
+    public static void resumeEvent(String applicationId)
+    {
+        DebugSessionBook.get().forget(applicationId);
     }
 
     /** A variable of a frame, remembering what was written into it. */

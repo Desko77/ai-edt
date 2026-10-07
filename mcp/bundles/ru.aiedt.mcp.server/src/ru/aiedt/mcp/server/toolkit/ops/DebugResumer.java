@@ -94,10 +94,12 @@ public final class DebugResumer implements IMcpTool
                         + ")").toJson(); //$NON-NLS-1$
                 }
                 String owner = DebugSessionBook.findApplicationIdFor(thread);
+                DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(owner);
                 thread.resume();
-                // Drop the snapshot here rather than waiting for the platform's RESUME event: the
-                // caller is told to wait right after this answer, and the event arrives later.
-                registry.clearSnapshot(owner);
+                // Drop the stop this call leaves behind, and only that one: a thread that stops
+                // again while the resume is being made has already recorded a newer stop, which is
+                // what the wait that follows this answer reads.
+                registry.clearSnapshotIfCurrent(owner, leftBehind);
                 return ToolResult.success().put("resumed", true) //$NON-NLS-1$
                     .put("scope", "thread").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
             }
@@ -143,10 +145,10 @@ public final class DebugResumer implements IMcpTool
      * names every thread it acted on whatever route found it.
      * </p>
      * <p>
-     * The application's snapshot is dropped before the threads are resumed, so it cannot survive a
-     * resume that fails partway through the list. The platform reports a resume asynchronously, and a
-     * caller that waits right after this answer would otherwise read the stop that has just been left
-     * behind.
+     * The snapshot this call found is dropped as each thread resumes, and only while it is still the
+     * one that was found: a resume that fails partway through the list has already taken the earlier
+     * threads away, while a thread that stops again while the resumes are being made leaves its
+     * newer stop standing for the caller's wait.
      * </p>
      *
      * @param registry the session registry
@@ -182,14 +184,16 @@ public final class DebugResumer implements IMcpTool
             return null;
         }
 
-        // Dropped before the resume rather than after it: a resume that fails on the second thread
-        // would otherwise leave a snapshot standing for the first one, which is already away.
-        registry.clearSnapshot(applicationId);
+        DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(applicationId);
 
         List<Long> resumedIds = new ArrayList<>();
         for (IThread thread : toResume)
         {
             thread.resume();
+            // Dropped per thread, and only while the snapshot is still the one this call found: a
+            // resume that fails partway through the list has already taken the earlier threads
+            // away, while a thread that stops again leaves its newer stop for the caller's wait.
+            registry.clearSnapshotIfCurrent(applicationId, leftBehind);
             resumedIds.add(Long.valueOf(registry.threadIdOf(thread)));
         }
 

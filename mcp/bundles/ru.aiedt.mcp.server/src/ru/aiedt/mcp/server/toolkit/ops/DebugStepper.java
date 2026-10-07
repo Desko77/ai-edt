@@ -125,6 +125,10 @@ public final class DebugStepper implements IMcpTool
             return ToolResult.error("unable to resolve an applicationId for this thread").toJson(); //$NON-NLS-1$
         }
 
+        // The stop this step leaves behind, read before the step is sent, so the drop in each
+        // branch takes it and not a stop another thread of the application records meanwhile.
+        DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(appId);
+
         try
         {
             switch (kind.toLowerCase())
@@ -136,7 +140,7 @@ public final class DebugStepper implements IMcpTool
                 }
                 // The snapshot describes where the debugger was, and it goes only once the step is
                 // really sent: a step the thread refuses leaves the session as describable as before.
-                registry.clearSnapshot(appId);
+                registry.clearSnapshotIfCurrent(appId, leftBehind);
                 stepper.stepOver();
                 break;
             case "into": //$NON-NLS-1$
@@ -144,7 +148,7 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step into right now").toJson(); //$NON-NLS-1$
                 }
-                registry.clearSnapshot(appId);
+                registry.clearSnapshotIfCurrent(appId, leftBehind);
                 stepper.stepInto();
                 break;
             case "out": //$NON-NLS-1$
@@ -153,7 +157,7 @@ public final class DebugStepper implements IMcpTool
                 {
                     return ToolResult.error("this thread cannot step out right now").toJson(); //$NON-NLS-1$
                 }
-                registry.clearSnapshot(appId);
+                registry.clearSnapshotIfCurrent(appId, leftBehind);
                 stepper.stepReturn();
                 break;
             default:

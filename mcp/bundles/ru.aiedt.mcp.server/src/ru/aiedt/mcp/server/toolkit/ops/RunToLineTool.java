@@ -197,10 +197,12 @@ public class RunToLineTool implements IMcpTool
             IBreakpoint bp = creator.create(file, lineNumber);
             markerId = bp != null && bp.getMarker() != null ? bp.getMarker().getId() : -1L;
 
+            DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(appId);
             thread.resume();
-            // Drop the snapshot here rather than waiting for the platform's RESUME event: the answer
-            // tells the caller to wait, and the event arrives on a listener thread afterwards.
-            registry.clearSnapshot(appId);
+            // Drop the stop this call leaves behind, and only that one: a thread that reaches its
+            // line while the resume is being made has already recorded a newer stop, which is what
+            // the wait the answer invites is for.
+            registry.clearSnapshotIfCurrent(appId, leftBehind);
 
             Activator.logInfo("run_to_line: " + file.getFullPath() + ":" + lineNumber //$NON-NLS-1$ //$NON-NLS-2$
                 + " (resumed thread)"); //$NON-NLS-1$
