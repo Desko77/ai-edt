@@ -2229,8 +2229,10 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                SpreadsheetDocument doc = writableDocument(owner, templateName);
-                boolean removed = BmTemplateHelper.removeDrawing(doc, drawingIdF);
+                // Resolved without the guard: a removal that matches nothing changes nothing and
+                // writes nothing, and the guard inside asks only the removal that will.
+                SpreadsheetDocument doc = resolvedDocument(owner, templateName);
+                boolean removed = guardedRemoveDrawing(doc, drawingIdF);
                 removedRef[0] = removed;
                 if (removed && !dryRun)
                 {
@@ -2430,7 +2432,8 @@ public class MxlWorkshopTool implements IMcpTool
      * the document exactly as it was and the file untouched - a refused write cannot leave the
      * model and the file diverging. A dry run answers the same refusal: it previews a write that
      * would not persist. The reading operations resolve the document without this guard, so a
-     * template that already holds such references stays readable.
+     * template that already holds such references stays readable, and a removal that would change
+     * nothing asks the guard only when it finds something to remove.
      * </p>
      *
      * @param owner the object {@code ownerFqn} resolved to
@@ -2439,10 +2442,47 @@ public class MxlWorkshopTool implements IMcpTool
      */
     static SpreadsheetDocument writableDocument(MdObject owner, String templateName)
     {
-        MdObject template = resolveTemplate(owner, templateName);
-        SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
+        SpreadsheetDocument doc = resolvedDocument(owner, templateName);
         BmTemplateHelper.requireResolvablePictures(doc);
         return doc;
+    }
+
+    /**
+     * The document behind a template name, with no guard asked of it.
+     *
+     * @param owner the object {@code ownerFqn} resolved to
+     * @param templateName the template's name
+     * @return the template's spreadsheet document
+     */
+    static SpreadsheetDocument resolvedDocument(MdObject owner, String templateName)
+    {
+        MdObject template = resolveTemplate(owner, templateName);
+        return BmTemplateHelper.getOrCreateSpreadsheet(template);
+    }
+
+    /**
+     * Removes a drawing the way a write does, with the unresolved-picture guard asking only a
+     * removal that would really change the document.
+     * <p>
+     * A drawing that is not there is the idempotent skip it always was - neither the document nor
+     * Template.mxlx would move - and trading that no-op success for the guard's refusal would tell
+     * the caller a write was stopped when none was ever going to happen. The guard asks exactly
+     * the removal that will change something, so a template with unresolved references still
+     * refuses to lose a drawing it has.
+     * </p>
+     *
+     * @param doc the document the removal addresses
+     * @param drawingId the drawing to remove
+     * @return whether a drawing was removed
+     */
+    static boolean guardedRemoveDrawing(SpreadsheetDocument doc, int drawingId)
+    {
+        if (!BmTemplateHelper.hasDrawing(doc, drawingId))
+        {
+            return false;
+        }
+        BmTemplateHelper.requireResolvablePictures(doc);
+        return BmTemplateHelper.removeDrawing(doc, drawingId);
     }
 
     /**

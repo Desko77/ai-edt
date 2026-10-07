@@ -6278,6 +6278,29 @@ public final class BmTemplateHelper
     }
 
     /**
+     * Whether the spreadsheet holds a drawing with the given id.
+     *
+     * @param doc the document; may be <code>null</code>
+     * @param drawingId the drawing id
+     * @return whether a drawing with that id is there
+     */
+    public static boolean hasDrawing(SpreadsheetDocument doc, int drawingId)
+    {
+        if (doc == null)
+        {
+            return false;
+        }
+        for (Drawing d : doc.getDrawings())
+        {
+            if (d != null && d.getDrawingId() == drawingId)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Removes the drawing with the given id from the spreadsheet, together with
      * the data sources that fed it - a source pointing at a drawing that no
      * longer exists reads nothing. Returns {@code true} when a drawing was
