@@ -2089,7 +2089,8 @@ public class MarkerManager
      * Another process writes the file - git checks a branch out, an editor outside the
      * workspace saves it - while the tree still answers that there is no such resource. The
      * bytes on disk are the ones the project has, so they are read directly when the tree has
-     * no file.
+     * no file. The disk decides the other way around too: a file the tree remembers that the
+     * disk no longer has counts as no file, not as a read error.
      * </p>
      *
      * @param file the marker file handle
@@ -2099,6 +2100,14 @@ public class MarkerManager
      */
     private static byte[] readMarkersBytes(IFile file) throws CoreException, IOException
     {
+        IPath location = file.getLocation();
+        Path onDisk = location == null ? null : location.toFile().toPath();
+        if (onDisk != null && !Files.exists(onDisk))
+        {
+            // The tree may still remember a file the disk no longer has - a delete the
+            // workspace was never told about. The disk decides whether there is a file.
+            return null;
+        }
         if (file.exists())
         {
             try (InputStream input = file.getContents())
@@ -2106,13 +2115,7 @@ public class MarkerManager
                 return input.readAllBytes();
             }
         }
-        IPath location = file.getLocation();
-        if (location == null)
-        {
-            return null;
-        }
-        Path path = location.toFile().toPath();
-        return Files.exists(path) ? Files.readAllBytes(path) : null;
+        return onDisk == null ? null : Files.readAllBytes(onDisk);
     }
 
     /**
@@ -2170,7 +2173,7 @@ public class MarkerManager
      * <p>
      * The write runs under the file's lock, against the fingerprint of the bytes the storage
      * was read from, and replaces the file atomically: a file that changed after it was read is
-     * left as the changing party wrote it. The settings folder is created on disk when missing,
+     * left as the changing party wrote it. A tree that still remembers a file the disk no The settings folder is created on disk when missing,
      * and the workspace is refreshed after the write. A project whose file has no location on
      * disk, or whose file was never read, is written through the workspace as before.
      * </p>
