@@ -191,4 +191,19 @@ public class AFormNamedForADefaultSlotIsResolvedTest
         assertNull(String.valueOf(refusal), refusal);
         assertEquals("Другое", owner.getName()); //$NON-NLS-1$
     }
+
+    /** A setter that takes any model object is not a form reference, though a form would fit it. */
+    @Test
+    public void aSetterTakingAnyObjectIsNotAFormReference()
+    {
+        DataProcessorForm sample = form("Первая"); //$NON-NLS-1$
+
+        org.junit.Assert.assertFalse(BmObjectHelper.takesAForm(org.eclipse.emf.ecore.EObject.class, sample));
+        org.junit.Assert.assertFalse(BmObjectHelper.takesAForm(Object.class, sample));
+        org.junit.Assert.assertTrue(BmObjectHelper.takesAForm(
+            com._1c.g5.v8.dt.metadata.mdclass.BasicForm.class, sample));
+        org.junit.Assert.assertTrue(BmObjectHelper.takesAForm(DataProcessorForm.class, sample));
+        org.junit.Assert.assertFalse(BmObjectHelper.takesAForm(
+            com._1c.g5.v8.dt.metadata.mdclass.CatalogForm.class, sample));
+    }
 }

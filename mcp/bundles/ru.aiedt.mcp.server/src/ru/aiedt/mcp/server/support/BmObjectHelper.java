@@ -1820,6 +1820,75 @@ public final class BmObjectHelper
     }
 
     /**
+     * Whether a setter parameter type is a form type the given form fits.
+     * <p>
+     * A form is an {@code EObject}, so a setter that takes any {@code EObject} would accept one too;
+     * such a property is not a form reference, and text written to it is not a form's name. The
+     * parameter has to be the model's form interface or one of its per-purpose subtypes.
+     * </p>
+     *
+     * @param targetType what the setter takes
+     * @param form one of the owner's forms
+     * @return <code>true</code> when the setter takes a form and this form is one it takes
+     */
+    static boolean takesAForm(Class<?> targetType, EObject form)
+    {
+        if (targetType == null || form == null || !targetType.isInstance(form))
+        {
+            return false;
+        }
+        Class<?> formBase = interfaceNamed(form.getClass(), "BasicForm"); //$NON-NLS-1$
+        return formBase != null && formBase.isAssignableFrom(targetType);
+    }
+
+    /**
+     * Finds an interface by its simple name among everything a class implements.
+     *
+     * @param type the class to look through, with its superclasses and their interfaces
+     * @param simpleName the interface's simple name
+     * @return the interface, or <code>null</code> when the class implements none by that name
+     */
+    private static Class<?> interfaceNamed(Class<?> type, String simpleName)
+    {
+        for (Class<?> current = type; current != null; current = current.getSuperclass())
+        {
+            for (Class<?> declared : current.getInterfaces())
+            {
+                Class<?> found = interfaceNamedAmong(declared, simpleName);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds an interface by its simple name in one interface and everything it extends.
+     *
+     * @param candidate the interface to look at first
+     * @param simpleName the interface's simple name
+     * @return the interface, or <code>null</code> when neither it nor a parent carries that name
+     */
+    private static Class<?> interfaceNamedAmong(Class<?> candidate, String simpleName)
+    {
+        if (candidate.getSimpleName().equals(simpleName))
+        {
+            return candidate;
+        }
+        for (Class<?> parent : candidate.getInterfaces())
+        {
+            Class<?> found = interfaceNamedAmong(parent, simpleName);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Resolves text that names one of the owner's forms into the form object a reference setter
      * takes.
      * <p>
@@ -1848,7 +1917,7 @@ public final class BmObjectHelper
         // setter that takes one of them is a reference to resolve. Comparing against the owner's
         // first form covers the per-purpose types without naming any of them - the plugin does not
         // compile against them.
-        if (forms == null || forms.isEmpty() || !targetType.isInstance(forms.get(0)))
+        if (forms == null || forms.isEmpty() || !takesAForm(targetType, forms.get(0)))
         {
             return null;
         }
