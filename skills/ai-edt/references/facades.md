@@ -222,6 +222,19 @@ Two things worth knowing before the first call:
   `Form.form`, and a file that will not write is reported as `persistWarning`. The list answers a
   colour as `#RRGGBB`, a font as `Face,height[,bold][,italic]`, and a condition group as `groupType`
   with its `items`.
+- `set_excluded_commands` keeps standard commands out of the command interface of a form object:
+  `itemPath` names the object - the form (`Form` or empty), the global command source
+  (`FormCommandPanelGlobalCommands`) or an item (`Item.<Name>`, or the bare name) - and `commands`
+  names the commands to exclude, taken without regard to case. `mode` is `replace` (the default: the
+  list becomes exactly the names passed, and an empty `commands` clears it), `add` or `remove`;
+  `add` and `remove` need at least one name. Only the form, a table, a field and the global command
+  source keep such a list: a command bar, a context menu or a button group is refused with the
+  address of the source its commands come from. Every name is checked against the object's own
+  `getCommands()` before anything is written, and a name outside it is refused with the allowed names
+  and the nearest match. New elements are taken from that same list, never built. An object whose
+  command list is not built is refused in its own words. The answer carries `excludedCommands` (the
+  final list in model order), `added`, `removed` and `changed`; a result equal to the list already
+  there answers `changed: false` and writes nothing. A refusal carries `availableCommands`.
 - `add_form_event_handler` and `add_command_handler` append the handler procedure to the form module
   (`writeStub`, default true). The stub goes into the module region before its `#КонецОбласти`:
   `ОбработчикиСобытийФормы`, `ОбработчикиСобытийЭлементовШапкиФормы`,
@@ -267,8 +280,10 @@ Reading a form back: `get_form_structure` collects the empty containers by walki
 `emptyTabRows` and `emptyPages`. A group with a command source, an `Addition`, and a container whose
 items could not be read are not empty. `picture` is `StdPicture.<Name>` or `CommonPicture.<Name>`,
 `commandSource` is `Form`, `FormCommandPanelGlobalCommands` or `Item.<Name>`, and the height of a
-field is read from its extended information. `commandName` of a button is the command's path as the
-form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
+field is read from its extended information. `excludedCommands` is the standard commands the object
+keeps out of its command interface, as an array of names; it is emitted only when the object keeps
+some, and the names are the ones `set_excluded_commands` takes back. `commandName` of a button is the
+command's path as the form file writes it: `Form.Command.X`, `Form.StandardCommand.X`,
 `Form.Item.<Item>.StandardCommand.X`, `CommonCommand.X`, `<Kind>.<Object>.Command.X`, or
 `<Kind>.<Object>.StandardCommand.X`. The answer carries a `conditionalAppearance` section.
 
