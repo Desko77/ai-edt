@@ -596,7 +596,9 @@ public class DependencyGraphTool implements IMcpTool
                             && selfFqn.equals(edge.fromFqn)
                                 ? BmReferencesHelper.Side.FORWARD
                                 : BmReferencesHelper.Side.BACKWARD;
-                        if (!addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
+                        if (!endpointsFitTheNodeCap(result, visited, edge.fromFqn, edge.toFqn,
+                            maxNodes)
+                            || !addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
                         {
                             return;
                         }
@@ -609,6 +611,37 @@ public class DependencyGraphTool implements IMcpTool
             currentDepth++;
         }
         return result;
+    }
+
+    /**
+     * Says whether both ends of an edge are in the graph or can still be taken into it.
+     * <p>
+     * An edge is recorded before its ends are, so an end the node cap keeps out would leave an edge
+     * pointing at a node the answer does not list. Such an edge is left out and the answer is marked
+     * truncated; an edge between two modules already in the graph passes whatever the node count.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param visited the FQNs already recorded
+     * @param fromFqn the caller's FQN
+     * @param toFqn the callee's FQN
+     * @param maxNodes the node cap
+     * @return <code>true</code> when recording the edge leaves no end outside the node list
+     */
+    static boolean endpointsFitTheNodeCap(BmReferencesHelper.BfsResult result,
+        java.util.Set<String> visited, String fromFqn, String toFqn, int maxNodes)
+    {
+        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        {
+            return true; // not an edge at all; the add step refuses it
+        }
+        int missing = (visited.contains(fromFqn) ? 0 : 1) + (visited.contains(toFqn) ? 0 : 1);
+        if (missing > 0 && result.nodes.size() + missing > maxNodes)
+        {
+            result.truncated = true;
+            return false;
+        }
+        return true;
     }
 
     /**

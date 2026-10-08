@@ -508,7 +508,7 @@ public class MarkerManager
      * one attempt at the file.
      * <p>
      * The load happens once, inside {@link #getMarkerStorage(IProject)}; the signs it left are read
-     * straight after it, and no read of the file happens in between.
+     * straight after it under the same hold of the lock, so no other read comes in between.
      * </p>
      *
      * @param project the project; may be {@code null}
@@ -520,7 +520,17 @@ public class MarkerManager
         {
             return new MarkerRead(new MarkerStore(), null);
         }
-        return new MarkerRead(getMarkerStorage(project), refusalOfTheLastRead(project));
+        // One hold of the lock over both: another request reading the same project in between
+        // would leave its own signs, and the markers of this read would carry that one's refusal.
+        lock.writeLock().lock();
+        try
+        {
+            return new MarkerRead(getMarkerStorage(project), refusalOfTheLastRead(project));
+        }
+        finally
+        {
+            lock.writeLock().unlock();
+        }
     }
 
     /**
