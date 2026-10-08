@@ -1066,6 +1066,9 @@ public final class BmSupportRegistryHelper
         {
             registry.parents.add(describeParent(info));
         }
+        // The platform hands the support object to a configuration written from scratch too, so
+        // its presence says nothing: a project is on support when it names a vendor configuration.
+        registry.onSupport = !registry.parents.isEmpty();
         return registry;
     }
 
