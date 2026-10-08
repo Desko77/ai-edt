@@ -48,7 +48,7 @@ public class FoldPresetHazardTest
             List.of("search_in_code", "find_references", "go_to_definition", "get_method_call_hierarchy", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                 "get_symbol_info", "get_content_assist", "get_outgoing_structures")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Map.entry("yaxunit_tests", //$NON-NLS-1$
-            List.of("run_yaxunit_tests", "debug_yaxunit_tests")), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of("run_yaxunit_tests", "debug_yaxunit_tests", "install_extension")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Map.entry("config_io", //$NON-NLS-1$
             List.of("unpack_external_binary", "import_configuration_from_binary")), //$NON-NLS-1$ //$NON-NLS-2$
         Map.entry("git", //$NON-NLS-1$
@@ -80,7 +80,10 @@ public class FoldPresetHazardTest
      * extension_workshop route registered standalones through {@code ToolGate.gateOrNull}; yaxunit_tests
      * gates its debug MODE (debug_yaxunit_tests is the DEBUG-group name a preset disables, reached as a
      * mode and backed today by a deprecated alias) through {@code ToolGate.gateIfPresetDisabled}, so the
-     * gate keeps holding once that alias is retired.
+     * gate keeps holding once that alias is retired. Its install pre-step is gated the same way:
+     * installYaxunit=true writes the infobase through the call install_extension performs, a name
+     * Debug &amp; Test disables while keeping the whole facade and both runner names on - the pre-step
+     * asks the door before its first write.
      * <p>
      * {@code extension_workshop/extension_lifecycle} joined them once the presets that block writing
      * started disabling that composite: it borrows an object and appends a handler stub, so leaving it
@@ -108,6 +111,9 @@ public class FoldPresetHazardTest
         "extension_workshop/list_extension", "extension_workshop/export_extension", //$NON-NLS-1$ //$NON-NLS-2$
         "extension_workshop/extension_lifecycle", //$NON-NLS-1$
         "yaxunit_tests/debug_yaxunit_tests", //$NON-NLS-1$
+        // The install pre-step of the facade: it writes the infobase through the call
+        // install_extension performs, and the runner-name gate above does not cover it.
+        "yaxunit_tests/install_extension", //$NON-NLS-1$
         "config_io/unpack_external_binary", //$NON-NLS-1$
         "config_io/import_configuration_from_binary", //$NON-NLS-1$
         "git/git_commit", "git/git_checkout", "git/git_revert_file", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$

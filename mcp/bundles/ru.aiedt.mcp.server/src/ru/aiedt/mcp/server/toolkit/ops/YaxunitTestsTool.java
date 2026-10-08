@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.List;
 import java.util.Map;
 
 import com.google.gson.JsonElement;
@@ -157,6 +158,24 @@ public class YaxunitTestsTool implements IMcpTool
         return "run_yaxunit_tests"; //$NON-NLS-1$
     }
 
+    /**
+     * The install door of the {@code installYaxunit} pre-step.
+     * <p>
+     * The facade reads and runs under Debug &amp; Test, and so do both of its folded runner names -
+     * yet the pre-step installs an engine extension through the same write
+     * {@code install_extension} performs, and that name is one the test preset disables. The step
+     * asks {@code ToolGate.gateIfPresetDisabled} about it before its first write, which is what
+     * keeps the preset's promise here.
+     * </p>
+     *
+     * @return the standalone name gating this tool's install pre-step
+     */
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of("install_extension"); //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
@@ -212,6 +231,19 @@ public class YaxunitTestsTool implements IMcpTool
         String installSummary = null;
         if (installYaxunit)
         {
+            // The pre-step writes the infobase through the very call install_extension
+            // makes, and the preset gate above checks only the runner names - which a
+            // test preset keeps on. First action of the branch, then: ask the install
+            // door, so a preset that blocks writing refuses before the infobase is
+            // touched instead of after the engine is already in it.
+            String installGate = ToolGate.gateIfPresetDisabled("install_extension"); //$NON-NLS-1$
+            if (installGate != null)
+            {
+                return ToolResult.error(installGate)
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .put("installYaxunit", "blocked by preset") //$NON-NLS-1$ //$NON-NLS-2$
+                    .toJson();
+            }
             installSummary = ensureYaxunitInstalled(params);
             if (installSummary == null || installSummary.startsWith("ERROR:")) //$NON-NLS-1$
             {
