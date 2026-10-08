@@ -56,7 +56,7 @@ DELEGATE = re.compile(r"new\s+(\w+)\(\)\.(?:execute|dispatch)\(")
 # A read set short of what an operation needs is what makes the guard refuse a call that works, so
 # a helper of this shape belonging to neither list fails the check - see unclassified_helpers.
 READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalInt", "boolArg",
-                  "intArg", "isTrue", "parseNumericArgument", "objectArgumentProblem")
+                  "intArg", "isTrue", "parseNumericArgument", "objectArgumentProblem", "present")
 # dispatchExport and dispatchRestore take the map and the project name, and read nothing by literal
 # name themselves: their callers extract the arguments and hand them down, so the operation's
 # vocabulary is established at the facade (`read in place`) and not here.
