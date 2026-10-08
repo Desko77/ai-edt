@@ -121,4 +121,57 @@ public class AnObjectInAnUndrawnClusterStaysVisibleTest
         assertFalse("a cluster of another project is never drawn here", //$NON-NLS-1$
             RenderedClusterPaths.isDrawn(probe.project, new Cluster("Shelf", "Other"))); //$NON-NLS-1$ //$NON-NLS-2$
     }
+
+    /**
+     * A deleted parent cluster leaves no drawn path behind: a cluster later placed at the path
+     * the deletion vacated hides nothing, because no node will ever show it.
+     * <p>
+     * The drawn path stayed in the registry after the delete, and a cluster taking the vacated
+     * path was answered as drawn - its members were hidden from their normal place while no node
+     * showed them anywhere. The change notification now forgets what the tree drew, and the
+     * redraw notes again only what it draws then.
+     * </p>
+     */
+    @Test
+    public void aDeletedParentsPathStopsHiding()
+    {
+        manager.addClusterChangeListener(new ClusterTreeContent());
+        RenderedClusterPaths.noteCollectionDrawn(probe.project, "Catalogs"); //$NON-NLS-1$
+        RenderedClusterPaths.noteClusterNodeDrawn(probe.project, "Catalogs/Shelf"); //$NON-NLS-1$
+        assertTrue("while the node is drawn, its member hides from the normal place", //$NON-NLS-1$
+            ClusterViewFilter.shownUnderADrawnCluster(manager.getAllClusters(probe.project),
+                probe.project, "Catalog.Products")); //$NON-NLS-1$
+
+        assertTrue(manager.deleteCluster(probe.project, "Catalogs/Shelf").succeeded()); //$NON-NLS-1$
+        assertTrue(manager.createCluster(probe.project, "Later", "Catalogs/Shelf", null).succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.Later", "Catalogs/Shelf/Later") //$NON-NLS-1$ //$NON-NLS-2$
+            .succeeded());
+        RenderedClusterPaths.noteCollectionDrawn(probe.project, "Catalogs"); //$NON-NLS-1$
+
+        assertFalse("the vacated path no longer hides: no node shows that cluster", //$NON-NLS-1$
+            ClusterViewFilter.shownUnderADrawnCluster(manager.getAllClusters(probe.project),
+                probe.project, "Catalog.Later")); //$NON-NLS-1$
+    }
+
+    /**
+     * A renamed cluster leaves no drawn path behind either: a cluster later created under the
+     * name the rename vacated hides nothing until the tree draws it.
+     */
+    @Test
+    public void aRenamedParentsPathStopsHiding()
+    {
+        manager.addClusterChangeListener(new ClusterTreeContent());
+        RenderedClusterPaths.noteCollectionDrawn(probe.project, "Catalogs"); //$NON-NLS-1$
+        RenderedClusterPaths.noteClusterNodeDrawn(probe.project, "Catalogs/Shelf"); //$NON-NLS-1$
+
+        assertTrue(manager.renameCluster(probe.project, "Catalogs/Shelf", "Case").succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.createCluster(probe.project, "Again", "Catalogs/Shelf", null).succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.Again", "Catalogs/Shelf/Again") //$NON-NLS-1$ //$NON-NLS-2$
+            .succeeded());
+        RenderedClusterPaths.noteCollectionDrawn(probe.project, "Catalogs"); //$NON-NLS-1$
+
+        assertFalse("the renamed-away path no longer hides: no node shows that cluster", //$NON-NLS-1$
+            ClusterViewFilter.shownUnderADrawnCluster(manager.getAllClusters(probe.project),
+                probe.project, "Catalog.Again")); //$NON-NLS-1$
+    }
 }

@@ -27,9 +27,9 @@ import ru.aiedt.mcp.server.folders.model.Cluster;
  * </p>
  * <p>
  * The state is per workbench, filled on the display thread and read there; the concurrent maps
- * keep it sound when a test or another thread touches it. Nothing is ever removed: a collection
- * once drawn is a collection the tree can draw again, and the set grows no faster than the
- * tree's own collections.
+ * keep it sound when a test or another thread touches it. A project's paths are forgotten when
+ * its clusters change, and the redraw notes again everything the tree draws then: a path left
+ * behind by a rename or a delete would keep hiding objects that no node shows anymore.
  * </p>
  */
 public final class RenderedClusterPaths
@@ -103,6 +103,27 @@ public final class RenderedClusterPaths
         }
         Set<String> nodes = DRAWN_CLUSTER_NODES.get(project.getName());
         return nodes != null && nodes.contains(cluster.getPath());
+    }
+
+    /**
+     * Forgets everything a project drew, so a path nothing draws anymore stops hiding objects.
+     * <p>
+     * Called when a project's clusters change, before the tree redraws: a collection or a parent
+     * cluster that a rename or a delete took away leaves its path behind, and a path still
+     * answered as drawn hid objects from their normal place that no node would ever show. The
+     * redraw notes again everything the tree draws then.
+     * </p>
+     *
+     * @param project the project whose drawn paths to forget; {@code null} forgets nothing
+     */
+    public static void forget(IProject project)
+    {
+        if (project == null)
+        {
+            return;
+        }
+        DRAWN_COLLECTIONS.remove(project.getName());
+        DRAWN_CLUSTER_NODES.remove(project.getName());
     }
 
     /**

@@ -226,6 +226,10 @@ public class ClusterTreeContent
     @Override
     public void onClustersChanged(IProject project)
     {
+        // The paths the tree drew name clusters that may be gone or renamed now; the redraw
+        // re-notes everything it draws. Before the viewer check: the drawn state is stale with or
+        // without a viewer to refresh.
+        RenderedClusterPaths.forget(project);
         StructuredViewer current = viewer;
         if (current == null)
         {
