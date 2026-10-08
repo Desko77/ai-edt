@@ -216,6 +216,12 @@ public class TagAdminFacadeTool
                     FacadeHelpSearch.describe(buildHelp(null, null, getInputSchema())))
                 + "\n\nAllowed: " + KNOWN + ".").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
+        String previewRefusal = previewRefusal(operation,
+            JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
+        if (previewRefusal != null)
+        {
+            return ToolResult.error(previewRefusal).toJson();
+        }
         switch (operation)
         {
             case "create_tag": //$NON-NLS-1$
@@ -657,6 +663,28 @@ public class TagAdminFacadeTool
             unique.add(name == null ? "" : name.trim()); //$NON-NLS-1$
         }
         return new ArrayList<>(unique);
+    }
+
+    /**
+     * Refuses a preview asked of an operation that has none.
+     * <p>
+     * Only {@code delete_tag} reads {@code dryRun}. A caller that passes {@code dryRun=true} to
+     * another operation expects nothing to be written; running the write regardless would answer
+     * success for a change the caller asked only to see.
+     * </p>
+     *
+     * @param operation the operation named by the call
+     * @param dryRun the {@code dryRun} argument
+     * @return the refusal text, or <code>null</code> when the call may proceed
+     */
+    static String previewRefusal(String operation, boolean dryRun)
+    {
+        if (!dryRun || "delete_tag".equals(operation)) //$NON-NLS-1$
+        {
+            return null;
+        }
+        return "dryRun is read by delete_tag only: " + operation + " has no preview, and running " //$NON-NLS-1$ //$NON-NLS-2$
+            + "it would write. Nothing was written - call it again without dryRun."; //$NON-NLS-1$
     }
 
     /**
