@@ -124,7 +124,8 @@ public final class EventLogReader
         /** Keep only records of this user. */
         public String user = ""; //$NON-NLS-1$
 
-        /** Keep only this severity: I, W, E or N. */
+        /** Keep only this severity, by its single letter (I, W, E, N) or its name
+         * (Information, Warning, Error, Note) - matched exactly, not as a substring. */
         public String severity = ""; //$NON-NLS-1$
 
         /** Most rows to return. */
@@ -350,7 +351,56 @@ public final class EventLogReader
         {
             return false;
         }
-        return q.severity.isEmpty() || contains(row.get("severity"), q.severity); //$NON-NLS-1$
+        return q.severity.isEmpty() || severityMatches(row.get("severity"), q.severity); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a row's severity is the one the query names.
+     * <p>
+     * The row carries the severity spelled out ({@code Error}, {@code Note}), while a query may
+     * name either that spelling or the log's own single letter - both are documented interfaces
+     * of this filter - so both sides are compared as the letter. A substring would be wrong
+     * twice over: {@code E} also sits inside {@code Note}, and {@code N} inside almost every
+     * name there is.
+     * </p>
+     *
+     * @param value the row's severity, as decoded.
+     * @param wanted what the query asked to keep.
+     * @return true when they name the same severity.
+     */
+    private static boolean severityMatches(Object value, String wanted)
+    {
+        return value != null
+            && severityLetter(String.valueOf(value)).equals(severityLetter(wanted));
+    }
+
+    /**
+     * The single letter a severity spelling stands for.
+     *
+     * @param severity a severity as spelled out or as the log's single letter.
+     * @return the letter: {@code i}, {@code w}, {@code e} or {@code n}; an unknown spelling
+     *         comes back lowercased, so a query naming it still matches itself
+     */
+    private static String severityLetter(String severity)
+    {
+        String s = severity.trim().toLowerCase(Locale.ROOT);
+        switch (s)
+        {
+            case "i": //$NON-NLS-1$
+            case "information": //$NON-NLS-1$
+                return "i"; //$NON-NLS-1$
+            case "w": //$NON-NLS-1$
+            case "warning": //$NON-NLS-1$
+                return "w"; //$NON-NLS-1$
+            case "e": //$NON-NLS-1$
+            case "error": //$NON-NLS-1$
+                return "e"; //$NON-NLS-1$
+            case "n": //$NON-NLS-1$
+            case "note": //$NON-NLS-1$
+                return "n"; //$NON-NLS-1$
+            default:
+                return s;
+        }
     }
 
     /**
