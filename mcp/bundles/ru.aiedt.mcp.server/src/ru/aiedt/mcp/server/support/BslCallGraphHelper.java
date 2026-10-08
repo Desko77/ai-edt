@@ -25,9 +25,11 @@ import org.eclipse.xtext.ui.editor.findrefs.IReferenceFinder;
 
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.integration.IBmModel;
-import com._1c.g5.v8.dt.bsl.model.FeatureEntry;
+import com._1c.g5.v8.dt.bsl.model.DynamicFeatureAccess;
+import com._1c.g5.v8.dt.bsl.model.Invocation;
 import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
+import com._1c.g5.v8.dt.bsl.model.StaticFeatureAccess;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess;
@@ -216,16 +218,15 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * Returns the set of modules called by {@code sourceModule}. Walks the BSL AST of
-     * {@code sourceModule} and collects the module of every call target it holds.
+     * Returns the set of modules called by {@code sourceModule}. Walks the
+     * BSL AST of {@code sourceModule} and collects the module of every method the module calls.
      * <p>
-     * Two links carry a call and both are read: {@code Method.getCallees}, which holds the called
-     * methods, and {@code FeatureEntry.getFeature} of a call site, which holds the same methods
-     * resolved - a call to a common module resolves to that module. Both are written by the
-     * module's type state, so a module whose state was never computed answers an empty list here
-     * although it calls other modules; the production source asks for that state first and reports
-     * its absence as {@code null}, which leaves the module out of the graph instead of showing it
-     * as one that calls nobody.
+     * Two links carry that relation in the BSL model and both are read: {@code Method.getCallees},
+     * which already holds the called methods, and the invocation sites, whose
+     * {@code FeatureEntry.getFeature} resolves to the same methods. A module whose links are not
+     * resolved answers an empty list, which is not the same as a module that calls nothing - the
+     * incoming lookup draws that distinction with {@code null}, and this direction has no
+     * equivalent failure to report, since the links are read off the module itself.
      * </p>
      */
     public static List<String> calleesOfModule(Module sourceModule)
@@ -273,12 +274,6 @@ public final class BslCallGraphHelper
      * points the other way - it holds the blocks that call the method, and those blocks live in the
      * calling modules - so following it here recorded a call in the wrong direction, from the
      * module being walked to the module that calls it.
-     * <p>
-     * A call site is read through the feature entry it carries. The entry's own reference to the
-     * target is transient, so the reference loop below skips it, and the access holding the entry
-     * reaches the entry by containment - which the loop skips as well. Without this branch a call
-     * between modules is invisible to the walk, and a module calling several of them reads as one
-     * that calls nobody.
      * </p>
      */
     private static Collection<EObject> referencedExternalEObjects(EObject node)
@@ -286,23 +281,6 @@ public final class BslCallGraphHelper
         if (node == null)
         {
             return Collections.emptyList();
-        }
-        if (node instanceof FeatureEntry)
-        {
-            List<EObject> resolved = new ArrayList<>(1);
-            try
-            {
-                EObject feature = ((FeatureEntry)node).getFeature();
-                if (feature != null)
-                {
-                    resolved.add(feature);
-                }
-            }
-            catch (Exception notResolved)
-            {
-                return Collections.emptyList();
-            }
-            return resolved;
         }
         if (node instanceof Method)
         {
@@ -547,8 +525,7 @@ public final class BslCallGraphHelper
 
         /**
          * @param module the module whose callees to list
-         * @return the called modules' FQNs, empty when the module calls nothing outside itself, or
-         *         {@code null} when the module's call targets could not be read
+         * @return the called modules' FQNs, empty when the module calls nothing outside itself
          */
         List<String> calleesOf(Module module);
 
@@ -586,25 +563,120 @@ public final class BslCallGraphHelper
         @Override
         public List<String> calleesOf(Module module)
         {
-            if (module == null)
-            {
-                return Collections.emptyList();
-            }
-            // A module's call targets are written by its type state: the resolved feature of a call
-            // site and the method's own callee list are both filled while that state is computed.
-            // Read without it, every call site answers no target, and a module that calls others is
-            // reported as one that calls nobody - so the state is asked for first, and a module
-            // whose state is not ready is left out of the graph rather than answered about.
-            BslModuleAccess.TypeState state = BslModuleAccess.resolveCrossReferences(module.eResource());
-            if (state != BslModuleAccess.TypeState.READY)
-            {
-                Activator.logWarning("BslCallGraphHelper: the call targets of a module are not read, " //$NON-NLS-1$
-                    + "its type state is " + state //$NON-NLS-1$
-                    + ", so its outgoing call edges are left out"); //$NON-NLS-1$
-                return null;
-            }
-            return calleesOfModule(module);
+            return calleesByCommonModuleName(module, commonModuleNames());
         }
+
+        /** The project's common modules by lower-cased name, read from the source folder once. */
+        private java.util.Map<String, String> commonModuleNames()
+        {
+            if (commonModules == null)
+            {
+                java.util.Map<String, String> names = new java.util.HashMap<>();
+                try
+                {
+                    org.eclipse.core.resources.IFolder folder =
+                        project.getFolder("src/CommonModules"); //$NON-NLS-1$
+                    if (folder.exists())
+                    {
+                        for (org.eclipse.core.resources.IResource member : folder.members())
+                        {
+                            if (member instanceof org.eclipse.core.resources.IFolder)
+                            {
+                                names.put(member.getName().toLowerCase(java.util.Locale.ROOT),
+                                    member.getName());
+                            }
+                        }
+                    }
+                }
+                catch (org.eclipse.core.runtime.CoreException | RuntimeException unreadable)
+                {
+                    Activator.logWarning("BslCallGraphHelper: the common modules of project " //$NON-NLS-1$
+                        + project.getName() + " could not be listed, so outgoing call edges are " //$NON-NLS-1$
+                        + "left out: " + unreadable.getMessage()); //$NON-NLS-1$
+                    return null;
+                }
+                commonModules = names;
+            }
+            return commonModules;
+        }
+
+        private java.util.Map<String, String> commonModules;
+    }
+
+    /**
+     * The common modules a module calls, read off the text of its call sites.
+     * <p>
+     * A call into a common module is written {@code ModuleName.Method(...)}: a member access whose
+     * source is a plain name. The name is matched against the project's common modules without
+     * resolving the link behind it - resolving runs the linker of the environment, which is slow
+     * over a whole project and fails outright on modules whose state was never computed. What this
+     * reads is therefore calls into common modules; a call through a manager, an object or a
+     * variable is not an edge here. The incoming direction reads the reference index and is not
+     * limited this way.
+     * </p>
+     *
+     * @param module the module whose call sites to read
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        when they could not be listed
+     * @return the called modules' FQNs, or {@code null} when the common modules are not known
+     */
+    static List<String> calleesByCommonModuleName(Module module,
+        java.util.Map<String, String> commonModules)
+    {
+        if (module == null)
+        {
+            return Collections.emptyList();
+        }
+        if (commonModules == null)
+        {
+            return null;
+        }
+        String selfFqn = moduleFqn(module);
+        Set<String> called = new LinkedHashSet<>();
+        java.util.Iterator<EObject> contents = module.eAllContents();
+        while (contents.hasNext())
+        {
+            EObject node = contents.next();
+            if (!(node instanceof DynamicFeatureAccess))
+            {
+                continue;
+            }
+            // Only a call counts: the access has to be what an invocation invokes, so reading an
+            // exported variable of a module is not an edge.
+            EObject holder = node.eContainer();
+            if (!(holder instanceof Invocation) || ((Invocation)holder).getMethodAccess() != node)
+            {
+                continue;
+            }
+            EObject source = ((DynamicFeatureAccess)node).getSource();
+            if (!(source instanceof StaticFeatureAccess))
+            {
+                continue;
+            }
+            String fqn = commonModuleFqn(((StaticFeatureAccess)source).getName(), commonModules);
+            if (fqn != null && !fqn.equals(selfFqn))
+            {
+                called.add(fqn);
+            }
+        }
+        return new ArrayList<>(called);
+    }
+
+    /**
+     * The FQN of the common module a name stands for.
+     *
+     * @param name the name a call site starts with; may be {@code null}
+     * @param commonModules the project's common modules, lower-cased name to name
+     * @return the module FQN, or {@code null} when the name is not a common module
+     */
+    static String commonModuleFqn(String name, java.util.Map<String, String> commonModules)
+    {
+        if (name == null)
+        {
+            return null;
+        }
+        String known = commonModules.get(name.toLowerCase(java.util.Locale.ROOT));
+        return known == null ? null : "CommonModule." + known + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -619,8 +691,7 @@ public final class BslCallGraphHelper
      * <p>
      * Incoming edges are skipped when the caller lookup could not run: a failed lookup carries no
      * statement about who calls this module, so it emits nothing rather than an empty answer
-     * dressed as a graph. A failed callee lookup - a module whose call targets could not be read -
-     * is skipped the same way and for the same reason.
+     * dressed as a graph.
      * </p>
      *
      * @param module the module to walk
@@ -656,13 +727,9 @@ public final class BslCallGraphHelper
         }
         if (includeOutgoing)
         {
-            List<String> callees = source.calleesOf(module);
-            if (callees != null)
+            for (String callee : source.calleesOf(module))
             {
-                for (String callee : callees)
-                {
-                    visitor.visit(new ModuleEdge(selfFqn, callee, 1));
-                }
+                visitor.visit(new ModuleEdge(selfFqn, callee, 1));
             }
         }
     }

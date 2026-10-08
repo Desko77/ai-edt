@@ -94,7 +94,8 @@ public class DependencyGraphTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("level", //$NON-NLS-1$
-                "metadata | modules | mixed (default metadata)") //$NON-NLS-1$
+                "metadata | modules | mixed (default metadata); on modules an outgoing edge is a call " //$NON-NLS-1$
+                    + "into a common module, an incoming edge is any call") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "project | subsystem | object | module; absent, the selectors decide the root") //$NON-NLS-1$
             .stringProperty("subsystemName", "Subsystem name when scope=subsystem") //$NON-NLS-1$ //$NON-NLS-2$

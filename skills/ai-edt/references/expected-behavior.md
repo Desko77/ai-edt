@@ -209,6 +209,8 @@ one - and is written when it is greater than 1. `edgeKinds` keeps only the named
 the walk never saw is `unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied
 (`edgeKinds: notApplied`) and `calls` edges merge the same way.
 
+On `level=modules` an incoming edge (`direction=in`) is any call the reference index holds, and an outgoing edge (`direction=out`) is a call written `CommonModuleName.Method(...)`: calls through a manager, an object or a variable are not outgoing edges. With `direction=both` the incoming edges are collected first and may fill `maxNodes` before the outgoing ones.
+
 ## Cancelling an update that never gave you a runKey
 
 `update_database` can be cancelled without one, addressed by `projectName` instead: that is what
