@@ -138,40 +138,55 @@ public class McpSettingsPage
         }
         toolsTab.performOk();
 
-        if (pendingRestart.due(toolsChanged))
+        McpHttpEndpoint server = Activator.getDefault().getMcpServer();
+        if (server == null)
         {
-            McpHttpEndpoint server = Activator.getDefault().getMcpServer();
-            if (server != null && server.isRunning())
+            // No endpoint has ever been created, so there is nothing this save could be owed to: one
+            // created later reads the store for itself.
+            return super.performOk();
+        }
+
+        PendingRestart.Action action = pendingRestart.actionFor(toolsChanged, server.isRunning());
+        if (action != PendingRestart.Action.NOTHING)
+        {
+            try
             {
-                try
+                if (action == PendingRestart.Action.RESTART)
                 {
                     // Strictly the registry re-reads the disabled set per request, so this is not
                     // needed to apply the change - but it drops the open connections, which is
                     // observable, so it stays.
                     server.restart(generalTab.getPort());
-                    pendingRestart.applied();
                     Activator.logInfo("MCP Server restarted following a tool configuration change"); //$NON-NLS-1$
                 }
-                catch (IOException e)
+                else
                 {
-                    // The settings are saved by this point; the restart is not. Closing the page on
-                    // a server that is now stopped would leave the user to find that out from a
-                    // client that no longer connects, so the page stays open and says so. The tools
-                    // tab has already written the store, so the next OK would see no change at all -
-                    // the debt is what keeps the restart owed until one returns.
-                    pendingRestart.refused();
-                    Activator.logError("MCP Server restart failed after a tool change", e); //$NON-NLS-1$
-                    setErrorMessage("The tool settings were saved, but the MCP server could not be " //$NON-NLS-1$
-                        + "restarted and is stopped: " + e.getMessage()); //$NON-NLS-1$
-                    return false;
+                    // A restart that failed left the server stopped. Nothing else brings it back:
+                    // the tools tab has already written the store, so this OK is the last one that
+                    // knows a server was running a moment ago.
+                    server.start(generalTab.getPort());
+                    Activator.logInfo("MCP Server started after a failed restart"); //$NON-NLS-1$
                 }
-            }
-            else
-            {
-                // Nothing is running to restart, and a server started later reads the store for
-                // itself: the save does not stand between this page and a server that has not seen
-                // it, so the page may close.
                 pendingRestart.applied();
+            }
+            catch (IOException e)
+            {
+                // The settings are saved by this point; the server is not running on them. Closing
+                // the page would leave the user to find that out from a client that no longer
+                // connects, so the page stays open and says so. The tools tab has already written
+                // the store, so the next OK would see no change at all - the debt is what keeps the
+                // server owed until one of the two returns.
+                pendingRestart.refused();
+                boolean restarted = action == PendingRestart.Action.RESTART;
+                Activator.logError(restarted
+                    ? "MCP Server restart failed after a tool change" //$NON-NLS-1$
+                    : "MCP Server start failed after a failed restart", e); //$NON-NLS-1$
+                setErrorMessage(restarted
+                    ? "The tool settings were saved, but the MCP server could not be restarted " //$NON-NLS-1$
+                        + "and is stopped: " + e.getMessage() //$NON-NLS-1$
+                    : "The tool settings were saved, but the MCP server is stopped and could not be " //$NON-NLS-1$
+                        + "started: " + e.getMessage()); //$NON-NLS-1$
+                return false;
             }
         }
 
