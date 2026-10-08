@@ -547,7 +547,7 @@ public class MarkerManager
         {
             if (unreadable.contains(project))
             {
-                return UNREADABLE_MARKER_FILE + " Nothing was read, so the markers of project " //$NON-NLS-1$
+                return UNREADABLE_MARKER_FILE + ". Nothing was read, so the markers of project " //$NON-NLS-1$
                     + safeName(project) + " cannot be listed."; //$NON-NLS-1$
             }
             if (readFailed.contains(project))
