@@ -35,8 +35,13 @@ public class ANestedSubsystemIsNavigatedAsAWholeTest
 
     private Subsystem retail;
 
+    private Subsystem selfNamed;
+
+    private Subsystem nestedSelfNamed;
+
     /**
-     * A configuration with Sales holding Retail nested inside it.
+     * A configuration with Sales holding Retail nested inside it, a top-level subsystem whose
+     * own name reads "Subsystem", and one nested under Sales with the same name.
      */
     @Before
     public void salesHoldingRetail()
@@ -49,6 +54,12 @@ public class ANestedSubsystemIsNavigatedAsAWholeTest
         retail.setName("Retail"); //$NON-NLS-1$
         sales.getSubsystems().add(retail);
         configuration.getSubsystems().add(sales);
+        selfNamed = MdClassFactory.eINSTANCE.createSubsystem();
+        selfNamed.setName("Subsystem"); //$NON-NLS-1$
+        configuration.getSubsystems().add(selfNamed);
+        nestedSelfNamed = MdClassFactory.eINSTANCE.createSubsystem();
+        nestedSelfNamed.setName("Subsystem"); //$NON-NLS-1$
+        sales.getSubsystems().add(nestedSelfNamed);
     }
 
     /** The kind written once per level reaches the nested subsystem. */
@@ -80,5 +91,28 @@ public class ANestedSubsystemIsNavigatedAsAWholeTest
         Subsystem sales = configuration.getSubsystems().get(0);
         assertNotNull(tool.navigateSubsystem(configuration, "Subsystem.Sales")); //$NON-NLS-1$
         assertSame(sales, tool.navigateSubsystem(configuration, "Subsystem.Sales")); //$NON-NLS-1$
+    }
+
+    /** A top-level subsystem whose own name reads "Subsystem" resolves as a name. */
+    @Test
+    public void aSelfNamedSubsystemResolves()
+    {
+        assertSame(selfNamed, tool.navigateSubsystem(configuration, "Subsystem.Subsystem")); //$NON-NLS-1$
+    }
+
+    /** A nested subsystem whose own name reads "Subsystem" resolves past its parent. */
+    @Test
+    public void aNestedSelfNamedSubsystemResolves()
+    {
+        assertSame(nestedSelfNamed,
+            tool.navigateSubsystem(configuration, "Subsystem.Sales.Subsystem.Subsystem")); //$NON-NLS-1$
+    }
+
+    /** A path that stops at the parent of a self-named subsystem resolves to the parent. */
+    @Test
+    public void theParentOfASelfNamedSubsystemStillResolves()
+    {
+        Subsystem sales = configuration.getSubsystems().get(0);
+        assertSame(sales, tool.navigateSubsystem(configuration, "Subsystem.Sales.Subsystem")); //$NON-NLS-1$
     }
 }
