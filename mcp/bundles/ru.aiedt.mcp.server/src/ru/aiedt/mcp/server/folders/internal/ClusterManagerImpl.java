@@ -251,6 +251,50 @@ public class ClusterManagerImpl
 
 
     /**
+     * Answers a question from the project's store without copying the store.
+     * <p>
+     * The Navigator filter asks about every object it draws, on the UI thread. A detached copy of
+     * the whole store per question would allocate the store once per object; the question is put
+     * to the cached store under the lock instead, and detaches only what it returns.
+     * </p>
+     *
+     * @param <T> what the question answers
+     * @param project the project; <code>null</code> is answered from an empty store
+     * @param question reads the store and returns a value that shares nothing with it
+     * @return the answer
+     */
+    private <T> T serveFromStorage(IProject project, java.util.function.Function<ClusterStore, T> question)
+    {
+        if (project == null)
+        {
+            return question.apply(new ClusterStore());
+        }
+        cacheLock.readLock().lock();
+        try
+        {
+            ClusterStore cached = projectStorageCache.get(project.getName());
+            if (cached != null)
+            {
+                return question.apply(cached);
+            }
+        }
+        finally
+        {
+            cacheLock.readLock().unlock();
+        }
+        cacheLock.writeLock().lock();
+        try
+        {
+            ClusterStore loaded = loadStorageLocked(project);
+            return question.apply(loaded == null ? new ClusterStore() : loaded);
+        }
+        finally
+        {
+            cacheLock.writeLock().unlock();
+        }
+    }
+
+    /**
 
      * Takes the service down: stops listening, stops the watcher, and clears the cache and listeners.
 
@@ -376,27 +420,7 @@ public class ClusterManagerImpl
     public List<Cluster> getClustersAtPath(IProject project, String path)
 
     {
-
-        ClusterStore storage = getClusterStorage(project);
-
-        cacheLock.readLock().lock();
-
-        try
-
-        {
-
-            return detachedCopies(storage.getClustersAtPath(path));
-
-        }
-
-        finally
-
-        {
-
-            cacheLock.readLock().unlock();
-
-        }
-
+        return serveFromStorage(project, storage -> detachedCopies(storage.getClustersAtPath(path)));
     }
 
 
@@ -406,27 +430,7 @@ public class ClusterManagerImpl
     public List<Cluster> getAllClusters(IProject project)
 
     {
-
-        ClusterStore storage = getClusterStorage(project);
-
-        cacheLock.readLock().lock();
-
-        try
-
-        {
-
-            return detachedCopies(storage.getGroups());
-
-        }
-
-        finally
-
-        {
-
-            cacheLock.readLock().unlock();
-
-        }
-
+        return serveFromStorage(project, storage -> detachedCopies(storage.getGroups()));
     }
 
 
@@ -630,29 +634,10 @@ public class ClusterManagerImpl
     public Cluster findClusterForObject(IProject project, String objectFqn)
 
     {
-
-        ClusterStore storage = getClusterStorage(project);
-
-        cacheLock.readLock().lock();
-
-        try
-
-        {
-
+        return serveFromStorage(project, storage -> {
             Cluster found = storage.findClusterForObject(objectFqn);
-
             return found == null ? null : found.detachedCopy();
-
-        }
-
-        finally
-
-        {
-
-            cacheLock.readLock().unlock();
-
-        }
-
+        });
     }
 
 
