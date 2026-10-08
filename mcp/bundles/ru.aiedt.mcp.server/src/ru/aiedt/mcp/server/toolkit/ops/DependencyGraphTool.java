@@ -521,17 +521,29 @@ public class DependencyGraphTool implements IMcpTool
      * @param watch the cancel signal of the call
      * @return the walk
      */
-    private BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
+    static BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
         LinkedHashMap<String, Module> rootModules, ModuleLookup lookup,
         BmReferencesHelper.Direction direction, int depth, int maxNodes, int maxEdges,
         IProgressMonitor monitor, WatchForCancel watch)
     {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         java.util.Deque<Module> queue = new java.util.ArrayDeque<>();
-        java.util.Set<String> visited = new java.util.LinkedHashSet<>(rootModules.keySet());
+        java.util.Set<String> visited = new java.util.LinkedHashSet<>();
         for (Map.Entry<String, Module> entry : rootModules.entrySet())
         {
-            if (entry.getValue() != null)
+            if (entry.getValue() == null)
+            {
+                continue;
+            }
+            if (result.nodes.size() >= maxNodes)
+            {
+                // The seed obeys the cap it hands the walk: a project of five hundred modules used
+                // to enter the graph whole whatever maxNodes said, and the walk then ended on its
+                // first ring check without one edge.
+                result.truncated = true;
+                continue;
+            }
+            if (visited.add(entry.getKey()))
             {
                 result.nodes.put(entry.getKey(), (IBmObject)entry.getValue());
                 queue.add(entry.getValue());
@@ -548,8 +560,10 @@ public class DependencyGraphTool implements IMcpTool
                     result.truncated = true;
                     return result;
                 }
-                if (result.nodes.size() >= maxNodes || result.edges.size() >= maxEdges)
+                if (result.edges.size() >= maxEdges)
                 {
+                    // The node cap is not read here: it forbids new nodes, which the add step
+                    // refuses, and a module already in the graph is walked whatever the node count.
                     result.truncated = true;
                     return result;
                 }
