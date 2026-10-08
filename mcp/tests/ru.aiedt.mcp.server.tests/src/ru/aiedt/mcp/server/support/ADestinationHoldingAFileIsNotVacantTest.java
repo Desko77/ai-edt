@@ -42,21 +42,26 @@ public class ADestinationHoldingAFileIsNotVacantTest
     }
 
     /**
-     * Clears the directory.
+     * Clears the directory, contents first.
      *
      * @throws IOException when it cannot be cleared
      */
     @After
     public void theScratchDirectoryGoes() throws IOException
     {
-        try (java.util.stream.Stream<Path> entries = Files.list(dir))
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir))
         {
-            for (Path entry : entries.toArray(Path[]::new))
-            {
-                Files.deleteIfExists(entry);
-            }
+            walk.sorted(java.util.Comparator.reverseOrder()).forEach(path -> {
+                try
+                {
+                    Files.deleteIfExists(path);
+                }
+                catch (IOException ignored)
+                {
+                    // best-effort cleanup of a scratch directory
+                }
+            });
         }
-        Files.deleteIfExists(dir);
     }
 
     /** A regular file at the destination is not vacant. */
