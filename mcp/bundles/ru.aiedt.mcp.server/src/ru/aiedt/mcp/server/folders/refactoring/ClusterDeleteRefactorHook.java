@@ -22,14 +22,18 @@ import com._1c.g5.v8.dt.refactoring.core.RefactoringStatus;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.folders.ClusterWriteOutcome;
 import ru.aiedt.mcp.server.folders.IClusterManager;
+import ru.aiedt.mcp.server.folders.model.ClusterStore;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
 /**
  * Cleans a deleted metadata object out of {@code aiedt-clusters.yaml}.
  * <p>
- * When EDT deletes an object, this contributes an operation that removes the object's name from every
- * cluster that held it, and only when it was in a cluster at all - so a cluster is never left pointing at
- * something that has gone.
+ * When EDT deletes an object, this contributes an operation that removes the object's name, and the
+ * names nested under it, from every cluster that held either - and only when a cluster held one of
+ * them at all, so a cluster is never left pointing at something that has gone. The gate asks about
+ * the object and everything nested under it: a delete that asks only about the exact name leaves
+ * the memberships of the children in the file, where they attach themselves to the next object
+ * that reuses the name.
  * </p>
  */
 public class ClusterDeleteRefactorHook
@@ -46,11 +50,28 @@ public class ClusterDeleteRefactorHook
             return null;
         }
         IClusterManager service = Activator.getClusterServiceStatic();
-        if (service == null || service.findClusterForObject(project, fqn) == null)
+        if (service == null || !service.holdsObjectOrDescendant(project, fqn))
         {
             return null;
         }
         return new RefactoringOperationDescriptor(new ClusterObjectRemoveOperation(project, fqn));
+    }
+
+    /**
+     * Tells whether a delete of {@code objectFqn} has cluster membership to clean.
+     * <p>
+     * True when a cluster holds that name or a name nested under it. The contributor calls this
+     * before it builds an operation, so a cluster that holds only a child of the deleted object is
+     * not skipped.
+     * </p>
+     *
+     * @param storage the project's clusters; <code>null</code> counts as none
+     * @param objectFqn the name being deleted
+     * @return <code>true</code> when the hook must contribute an operation
+     */
+    static boolean holdsObjectOrDescendant(ClusterStore storage, String objectFqn)
+    {
+        return storage != null && storage.holdsObjectOrDescendant(objectFqn);
     }
 
     @Override

@@ -976,20 +976,21 @@ public class ClusterManagerImpl
     }
 
     /**
-     * Removes an object from every cluster that holds it.
+     * Removes an object, and every name nested under it, from every cluster that held either.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return {@link ClusterSaveOutcome#NO_CHANGE} when the object is not held, otherwise the save
+     * @return {@link ClusterSaveOutcome#NO_CHANGE} when neither the object nor a nested name is
+     *         held, otherwise the save
      */
     private ClusterWriteOutcome removeHeldObject(IProject project, String objectFqn)
     {
         return mutate(project, storage -> {
-            if (storage.findClusterForObject(objectFqn) == null)
+            if (!storage.holdsObjectOrDescendant(objectFqn))
             {
                 return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
             }
-            storage.removeObjectFromAllClusters(objectFqn);
+            storage.removeObjectTree(objectFqn);
             return null;
         });
     }

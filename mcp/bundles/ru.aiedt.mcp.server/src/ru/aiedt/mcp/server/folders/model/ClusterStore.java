@@ -283,6 +283,31 @@ public class ClusterStore
     }
 
     /**
+     * Removes an object and every object nested under it from every cluster holding either.
+     * <p>
+     * A nested name continues past {@code objectFqn} with a dot, the same rule
+     * {@link #holdsObjectOrDescendant(String)} reads. A delete of a metadata object takes its
+     * attributes and forms with it, so the memberships of those names go in the same step - a
+     * name left behind attaches itself to the next object that reuses it.
+     * </p>
+     *
+     * @param objectFqn the fully qualified name of the object
+     * @return <code>true</code> when the object or a nested one was held
+     */
+    public boolean removeObjectTree(String objectFqn)
+    {
+        boolean removed = false;
+        for (Cluster cluster : clusters)
+        {
+            if (cluster.removeChildTree(objectFqn))
+            {
+                removed = true;
+            }
+        }
+        return removed;
+    }
+
+    /**
      * Collects the objects held by every cluster at a collection path or nested below it.
      *
      * @param path the collection path

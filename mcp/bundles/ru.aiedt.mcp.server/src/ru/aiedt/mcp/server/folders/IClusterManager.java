@@ -192,11 +192,13 @@ public interface IClusterManager
     ClusterWriteOutcome renameObject(IProject project, String oldFqn, String newFqn);
 
     /**
-     * Removes an object from every cluster naming it. Refactoring support for a deleted object.
+     * Removes an object, and every name nested under it, from every cluster naming either.
+     * Refactoring support for a deleted object: its attributes and forms go with it.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return the outcome. {@link ClusterSaveOutcome#NO_CHANGE} when the object is not in a cluster
+     * @return the outcome. {@link ClusterSaveOutcome#NO_CHANGE} when neither the object nor a
+     *         nested name is in a cluster
      */
     ClusterWriteOutcome removeObject(IProject project, String objectFqn);
 
