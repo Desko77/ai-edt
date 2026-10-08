@@ -71,8 +71,19 @@ public final class BslCallGraphHelper
 
     /**
      * Returns the set of modules that call exported methods of {@code targetModule}.
-     * Best-effort: when the Xtext reference index is not reachable, returns an
-     * empty list (caller decides whether to fall back).
+     * <p>
+     * Returns {@code null} (NOT an empty list) when the lookup could not run - the Xtext resource
+     * provider or {@link IReferenceFinder} is unavailable, or {@code findAllReferences} throws.
+     * An empty list is reserved for a lookup that ran and found no calling module: a broken or
+     * unbuilt index must not read as "nothing calls this module", the same distinction
+     * {@link #countCallers(Method)} draws with {@code -1}.
+     * </p>
+     *
+     * @param project the project the module belongs to
+     * @param bmModel the BM model the module lives in
+     * @param targetModule the module whose callers to list
+     * @return the calling modules' FQNs, an empty list when none, or {@code null} when the lookup
+     *         could not run
      */
     public static List<String> callersOfModule(IProject project, IBmModel bmModel,
         Module targetModule)
@@ -85,13 +96,33 @@ public final class BslCallGraphHelper
             .getResourceServiceProvider(BslModuleAccess.BSL_LOOKUP_URI);
         if (rsp == null)
         {
-            return Collections.emptyList();
+            return null;
         }
         IReferenceFinder finder = rsp.get(IReferenceFinder.class);
         if (finder == null)
         {
-            return Collections.emptyList();
+            return null;
         }
+        return callersOfModule(finder, targetModule);
+    }
+
+    /**
+     * The walk behind {@link #callersOfModule(IProject, IBmModel, Module)} over a finder the
+     * caller resolved: the modules whose code references an exported method of the target, with
+     * the target's own module filtered out.
+     * <p>
+     * Returns {@code null} when {@code findAllReferences} throws, so a failed lookup stays
+     * distinguishable from a module nothing calls. A target with no exported method cannot be
+     * called from outside, which answers as an empty list.
+     * </p>
+     *
+     * @param finder the reference finder to walk with
+     * @param targetModule the module whose callers to list
+     * @return the calling modules' FQNs, an empty list when none, or {@code null} when the lookup
+     *         could not run
+     */
+    static List<String> callersOfModule(IReferenceFinder finder, Module targetModule)
+    {
         // Collect URIs of all exported methods inside the target module.
         List<URI> targets = new ArrayList<>();
         for (Method method : targetModule.allMethods())
@@ -124,6 +155,7 @@ public final class BslCallGraphHelper
         catch (Exception e)
         {
             Activator.logWarning("BslCallGraphHelper.callersOfModule failed: " + e.getMessage()); //$NON-NLS-1$
+            return null;
         }
         // Filter self-references.
         String selfFqn = moduleFqnOf(targetModule);
@@ -397,6 +429,11 @@ public final class BslCallGraphHelper
 
     /**
      * Convenience: emit edges for a single module in both directions.
+     * <p>
+     * Incoming edges are skipped when the caller lookup could not run: a failed lookup carries no
+     * statement about who calls this module, so it emits nothing rather than an empty answer
+     * dressed as a graph.
+     * </p>
      */
     public static void emitEdgesForModule(IProject project, IBmModel bmModel, Module module,
         boolean includeIncoming, boolean includeOutgoing, ModuleEdgeVisitor visitor)
@@ -412,9 +449,13 @@ public final class BslCallGraphHelper
         }
         if (includeIncoming)
         {
-            for (String caller : callersOfModule(project, bmModel, module))
+            List<String> callers = callersOfModule(project, bmModel, module);
+            if (callers != null)
             {
-                visitor.visit(new ModuleEdge(caller, selfFqn, 1));
+                for (String caller : callers)
+                {
+                    visitor.visit(new ModuleEdge(caller, selfFqn, 1));
+                }
             }
         }
         if (includeOutgoing)
