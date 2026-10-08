@@ -63,7 +63,7 @@ public final class TaggedObjectsReader implements IMcpTool
             .stringArrayProperty("tags", //$NON-NLS-1$
                 "Marker names to filter on, e.g. ['Important', 'NeedsReview']. " //$NON-NLS-1$
                     + "Objects matching at least one listed marker are returned. Mandatory.") //$NON-NLS-1$
-            .integerProperty("limit", "Upper bound on objects returned for each marker. Defaults to 100") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("limit", "Upper bound on objects returned for each marker. Defaults to 100, capped at 1000; a non-number or a value below 1 is refused") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
     }
 
@@ -92,6 +92,23 @@ public final class TaggedObjectsReader implements IMcpTool
             return ToolResult.error("A project name must be supplied").toJson(); //$NON-NLS-1$
         }
 
+        int limit = 100;
+        if (limitStr != null && !limitStr.isEmpty())
+        {
+            try
+            {
+                limit = Integer.parseInt(limitStr);
+            }
+            catch (NumberFormatException e)
+            {
+                return ToolResult.error("limit must be a whole number, got: " + limitStr).toJson(); //$NON-NLS-1$
+            }
+            if (limit < 1)
+            {
+                return ToolResult.error("limit must be 1 or greater, got: " + limit).toJson(); //$NON-NLS-1$
+            }
+            limit = Math.min(limit, 1000);
+        }
         String notReadyError = ProjectStateGuard.checkReadyOrError(projectName);
         if (notReadyError != null)
         {
@@ -104,18 +121,6 @@ public final class TaggedObjectsReader implements IMcpTool
             return ToolResult.error("A markers array must be supplied, for example: [\"Important\", \"NeedsReview\"]").toJson(); //$NON-NLS-1$
         }
 
-        int limit = 100;
-        if (limitStr != null && !limitStr.isEmpty())
-        {
-            try
-            {
-                limit = Math.min(Integer.parseInt(limitStr), 1000);
-            }
-            catch (NumberFormatException e)
-            {
-                // keep the default
-            }
-        }
 
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)

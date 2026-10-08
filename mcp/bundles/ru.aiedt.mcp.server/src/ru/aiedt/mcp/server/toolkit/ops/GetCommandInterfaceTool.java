@@ -394,15 +394,21 @@ public class GetCommandInterfaceTool implements IMcpTool
         return (name != null && !name.isEmpty()) ? type + "." + name : type; //$NON-NLS-1$
     }
 
-    /** Navigates a (possibly nested) Subsystem.A.Subsystem.B FQN. */
-    private Subsystem navigateSubsystem(Configuration config, String ownerFqn)
+    /** Navigates a (possibly nested) Subsystem FQN: Subsystem.A.Subsystem.B or Subsystem.A.B. */
+    Subsystem navigateSubsystem(Configuration config, String ownerFqn)
     {
         String[] segs = ownerFqn.split("\\."); //$NON-NLS-1$
-        // odd indices carry the names: Subsystem, A, Subsystem, B -> [A, B]
+        // Every segment after the leading type is part of the path; a repeated Subsystem token
+        // names the kind again rather than another level, so Subsystem.A.Subsystem.B and
+        // Subsystem.A.B both read as the path [A, B]. Reading only the odd indices silently
+        // dropped everything after a name given without the kind repeated.
         List<String> names = new ArrayList<>();
-        for (int i = 1; i < segs.length; i += 2)
+        for (int i = 1; i < segs.length; i++)
         {
-            names.add(segs[i]);
+            if (!"Subsystem".equalsIgnoreCase(segs[i])) //$NON-NLS-1$
+            {
+                names.add(segs[i]);
+            }
         }
         if (names.isEmpty())
         {
