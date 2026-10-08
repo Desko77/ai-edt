@@ -445,11 +445,13 @@ public class MxlWorkshopTool implements IMcpTool
      * The divergence between the template's file and what the model currently holds for it.
      * <p>
      * Asked before every content operation, so a write against a model that has not loaded the
-     * file yet is refused before it serializes the empty model over the real template. The probe
-     * runs in a read transaction that rolls back, so the {@code getOrCreateSpreadsheet} attachment
-     * of an empty document it may do reaches nothing. Anything the probe cannot establish - a
-     * missing argument, an unresolvable project, a template that is not there - answers
-     * <code>null</code> and the operation's own validation reports it.
+     * file yet is refused before it serializes the empty model over the real template. The file it
+     * compares against is the one the write itself would land in: the folder is built from the
+     * names the resolved owner and template carry, not from the words the caller addressed them
+     * with. The probe runs in a read transaction that rolls back, so the
+     * {@code getOrCreateSpreadsheet} attachment of an empty document it may do reaches nothing.
+     * Anything the probe cannot establish - a missing argument, an unresolvable project, a template
+     * that is not there - answers <code>null</code> and the operation's own validation reports it.
      * </p>
      *
      * @param params the call's arguments
@@ -480,8 +482,8 @@ public class MxlWorkshopTool implements IMcpTool
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
-                mismatch[0] = BmTemplateHelper.modelFileMismatch(project, ownerFqn,
-                    templateName, doc);
+                mismatch[0] = BmTemplateHelper.modelFileMismatch(project,
+                    BmTemplateHelper.modelOwnerFqn(ownerFqn, owner), template.getName(), doc);
                 return templateName;
             });
         return inspected.ok ? mismatch[0] : null;
@@ -547,8 +549,13 @@ public class MxlWorkshopTool implements IMcpTool
             return createCommonTemplate(projectName, project, ownerFqn, templateName,
                 canonicalType, dryRun);
         }
+        final String[] modelOwnerRef = { null };
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
+                // The empty Template.mxlx is written after the commit, where the resolved owner is
+                // out of reach: its own name is taken here, so the file lands in the folder the
+                // template's .mdo is written to.
+                modelOwnerRef[0] = BmTemplateHelper.modelOwnerFqn(ownerFqn, owner);
                 @SuppressWarnings("unchecked")
                 EList<MdObject> templates = (EList<MdObject>) invokeListGetter(owner,
                     "getTemplates"); //$NON-NLS-1$
@@ -589,12 +596,15 @@ public class MxlWorkshopTool implements IMcpTool
         // requiring a manual EDT GUI open-and-save first.
         if (r.ok && !dryRun && "SpreadsheetDocument".equals(canonicalType)) //$NON-NLS-1$
         {
-            String mxlxErr = BmTemplateHelper.writeEmptyMxlxFile(project, ownerFqn,
+            // The owner's own name, taken in the callback above: the folder is the one its .mdo
+            // lives in, whichever case the caller spelled the FQN with.
+            String modelOwnerFqn = modelOwnerRef[0] == null ? ownerFqn : modelOwnerRef[0];
+            String mxlxErr = BmTemplateHelper.writeEmptyMxlxFile(project, modelOwnerFqn,
                 templateName, canonicalType);
             if (mxlxErr != null)
             {
                 ru.aiedt.mcp.server.Activator.logWarning(
-                    "create_template Template.mxlx write for " + ownerFqn //$NON-NLS-1$
+                    "create_template Template.mxlx write for " + modelOwnerFqn //$NON-NLS-1$
                         + "/" + templateName + ": " + mxlxErr); //$NON-NLS-1$ //$NON-NLS-2$
                 r.tags.put("templateContentInitWarning", mxlxErr); //$NON-NLS-1$
             }
@@ -804,8 +814,8 @@ public class MxlWorkshopTool implements IMcpTool
                 // only live in the in-memory moxel model.
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project,
-                        ownerFqn, templateName, doc);
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
+                        templateName, doc);
                     if (pErr != null)
                     {
                         persistErrorRef[0] = pErr;
@@ -878,7 +888,7 @@ public class MxlWorkshopTool implements IMcpTool
                     toColF);
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -938,7 +948,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1021,7 +1031,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1104,7 +1114,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1190,7 +1200,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1285,7 +1295,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1370,7 +1380,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1458,7 +1468,7 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -1643,8 +1653,8 @@ public class MxlWorkshopTool implements IMcpTool
                 BmTemplateHelper.mergeCells(doc, fromRowF, fromColF, toRowF, toColF);
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project,
-                        ownerFqn, templateName, doc);
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
+                        templateName, doc);
                     if (pErr != null)
                     {
                         persistErrorRef[0] = pErr;
@@ -1875,8 +1885,8 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project,
-                        ownerFqn, templateName, doc);
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
+                        templateName, doc);
                     if (pErr != null)
                     {
                         persistErrorRef[0] = pErr;
@@ -2076,8 +2086,8 @@ public class MxlWorkshopTool implements IMcpTool
                 }
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project,
-                        ownerFqn, templateName, doc);
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
+                        templateName, doc);
                     if (pErr != null)
                     {
                         persistErrorRef[0] = pErr;
@@ -2176,7 +2186,7 @@ public class MxlWorkshopTool implements IMcpTool
                 drawingIdRef[0] = id;
                 if (!dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, doc);
                     if (pErr != null)
                     {
@@ -2234,7 +2244,7 @@ public class MxlWorkshopTool implements IMcpTool
                 removedRef[0] = removal.removed;
                 if (removal.removed && !dryRun)
                 {
-                    String pErr = BmTemplateHelper.persistTemplateMxlx(project, ownerFqn,
+                    String pErr = persistTemplateWithModelNames(project, ownerFqn, owner,
                         templateName, removal.doc);
                     if (pErr != null)
                     {
@@ -2460,6 +2470,52 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     /**
+     * The template's name as the model holds it - the name the folder a write lands in is built
+     * from.
+     * <p>
+     * {@link #resolveTemplate} finds the template whatever case the caller spelled, so the name
+     * that reached the model is the one to write under: a caller's spelling of it is nobody's
+     * contract, and the folder belongs to the template the call addressed, not to the word that
+     * named it.
+     * </p>
+     *
+     * @param owner the object {@code ownerFqn} resolved to
+     * @param templateName the template's name as the caller passed it
+     * @return the template's own name
+     * @throws RuntimeException when the owner holds no templates or does not hold this one
+     */
+    static String modelTemplateName(MdObject owner, String templateName)
+    {
+        return resolveTemplate(owner, templateName).getName();
+    }
+
+    /**
+     * Serializes the document to the template's {@code Template.mxlx} under the names the model
+     * holds for the owner and the template.
+     * <p>
+     * Every write of this tool persists through this one call, so the rule is stated once: the
+     * folder comes from the objects the call resolved, never from the words that addressed them.
+     * A name in another case resolves to its template either way - writing under the caller's
+     * spelling would have put the content in a second folder and left the template the call wrote
+     * to reading from the first.
+     * </p>
+     *
+     * @param project the EDT project
+     * @param ownerFqn the owner FQN the caller passed
+     * @param owner the object the FQN resolved to
+     * @param templateName the template name the caller passed
+     * @param doc the document to serialize
+     * @return <code>null</code> on success, or the reason the file was not written
+     */
+    static String persistTemplateWithModelNames(IProject project, String ownerFqn, MdObject owner,
+        String templateName, SpreadsheetDocument doc)
+    {
+        return BmTemplateHelper.persistTemplateMxlx(project,
+            BmTemplateHelper.modelOwnerFqn(ownerFqn, owner),
+            modelTemplateName(owner, templateName), doc);
+    }
+
+    /**
      * Removes a drawing the way a write does, with the unresolved-picture guard asking only a
      * removal that would really change the document.
      * <p>
@@ -2567,8 +2623,10 @@ public class MxlWorkshopTool implements IMcpTool
     {
         if (owner instanceof CommonTemplate)
         {
-            // Exact case: the write operations build the template folder from the caller's name.
-            if (!owner.getName().equals(templateName))
+            // The name is matched the way the object itself was resolved - ignoring case. The
+            // write folder comes from the name the model holds (modelTemplateName), so a caller
+            // spelling it differently reaches the template instead of being refused for it.
+            if (!owner.getName().equalsIgnoreCase(templateName))
             {
                 throw new RuntimeException("ownerFqn addresses the common template '" //$NON-NLS-1$
                     + owner.getName() + "', which is the template itself: pass templateName='" //$NON-NLS-1$

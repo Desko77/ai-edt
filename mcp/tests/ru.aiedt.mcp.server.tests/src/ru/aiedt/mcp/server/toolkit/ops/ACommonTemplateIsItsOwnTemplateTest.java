@@ -43,20 +43,12 @@ public class ACommonTemplateIsItsOwnTemplateTest
     }
 
     @Test
-    public void aNameInAnotherCaseIsRefused()
+    public void aNameInAnotherCaseResolvesToTheSameTemplate()
     {
-        // The write operations build the template folder from the name the caller passed, and a
-        // folder in another case is another folder on a case-sensitive file system.
+        // The name addressed the object, and the folder a write lands in is built from the name
+        // the model holds, so another case reaches the template instead of a second folder.
         CommonTemplate template = commonTemplate("ПечатнаяФорма"); //$NON-NLS-1$
-        try
-        {
-            MxlWorkshopTool.resolveTemplate(template, "печатнаяформа"); //$NON-NLS-1$
-            fail("a name in another case would be written to another folder"); //$NON-NLS-1$
-        }
-        catch (RuntimeException e)
-        {
-            assertTrue(e.getMessage(), e.getMessage().contains("templateName='ПечатнаяФорма'")); //$NON-NLS-1$
-        }
+        assertSame(template, MxlWorkshopTool.resolveTemplate(template, "печатнаяформа")); //$NON-NLS-1$
     }
 
     @Test

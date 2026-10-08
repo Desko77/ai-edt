@@ -1203,6 +1203,41 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The owner FQN with the name part spelled the way the model holds it.
+     * <p>
+     * An FQN resolves to its object whatever case the caller wrote: the name of an object is data,
+     * and no caller's spelling of it is a contract. The folder a template is written into is built
+     * from the FQN's text, so a name in another case addressed the object and then placed the write
+     * in a folder spelled by the caller - a new folder on a case-sensitive file system, and a
+     * second name for the same template on any of them. Taking the name from the object the FQN
+     * resolved to keeps the write in the folder the object's own files live in.
+     * </p>
+     * <p>
+     * The type prefix stays as the caller wrote it: it carries the language and feeds
+     * {@link #englishTypePlural}, and every recognized spelling of a type resolves to one folder.
+     * </p>
+     *
+     * @param ownerFqn the caller's FQN, {@code <Type>.<Name>}
+     * @param owner the object the FQN resolved to; a <code>null</code> or unnamed object leaves the
+     *            FQN as it came
+     * @return the FQN with the owner's own name, or the FQN unchanged when it names no object
+     */
+    public static String modelOwnerFqn(String ownerFqn, MdObject owner)
+    {
+        int dot = ownerFqn == null ? -1 : ownerFqn.indexOf('.');
+        if (dot <= 0 || dot == ownerFqn.length() - 1 || owner == null)
+        {
+            return ownerFqn;
+        }
+        String name = owner.getName();
+        if (name == null || name.isEmpty())
+        {
+            return ownerFqn;
+        }
+        return ownerFqn.substring(0, dot + 1) + name;
+    }
+
+    /**
      * The template's folder relative to the project root, or <code>null</code> when the owner FQN or
      * the template name cannot address one.
      * <p>
