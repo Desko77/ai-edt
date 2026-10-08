@@ -145,6 +145,26 @@ public class ATextMatchAcrossALineBreakIsAHitTest
         assertTrue(found, found.contains("6: КонецФункции")); //$NON-NLS-1$
     }
 
+    /** An end-of-line anchor matches at the end of every line, not only at the end of the text. */
+    @Test
+    public void anEndOfLineAnchorMatchesOnEveryLine()
+    {
+        String found = new CodeTextSearcher().execute(args("projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "query", ";$", "isRegex", "true", "outputMode", "count")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+
+        assertTrue(found, found.contains("**Total hits:** 2 across **1** modules")); //$NON-NLS-1$
+    }
+
+    /** A start-of-line anchor matches at the start of every line. */
+    @Test
+    public void aStartOfLineAnchorMatchesOnEveryLine()
+    {
+        String found = new CodeTextSearcher().execute(args("projectName", PROJECT, //$NON-NLS-1$ //$NON-NLS-2$
+            "query", "^Конец", "isRegex", "true", "outputMode", "count")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+
+        assertTrue(found, found.contains("**Total hits:** 2 across **1** modules")); //$NON-NLS-1$
+    }
+
     private static Map<String, String> args(String... pairs)
     {
         Map<String, String> map = new HashMap<>();

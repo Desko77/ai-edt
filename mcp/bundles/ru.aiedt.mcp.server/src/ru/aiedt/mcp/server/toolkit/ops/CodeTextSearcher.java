@@ -218,7 +218,10 @@ public class CodeTextSearcher
         Pattern pattern;
         try
         {
-            int flags = Pattern.UNICODE_CHARACTER_CLASS;
+            // The text is scanned as a whole, so a match may span lines; MULTILINE keeps ^ and $
+            // meaning the start and the end of each line, as they did when lines were scanned
+            // one at a time.
+            int flags = Pattern.UNICODE_CHARACTER_CLASS | Pattern.MULTILINE;
             if (!caseSensitive)
             {
                 flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
@@ -419,7 +422,7 @@ public class CodeTextSearcher
             }
             sb.append(Pattern.quote(parts[i]));
         }
-        int flags = Pattern.UNICODE_CHARACTER_CLASS;
+        int flags = Pattern.UNICODE_CHARACTER_CLASS | Pattern.MULTILINE;
         if (!caseSensitive)
         {
             flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
@@ -768,7 +771,12 @@ public class CodeTextSearcher
         int from = start;
         for (int i = start; i < end && Character.isWhitespace(content.charAt(i)); i++)
         {
-            if (content.charAt(i) == '\n' && i + 1 < end)
+            char symbol = content.charAt(i);
+            // A line ends at a line feed, or at a carriage return that no line feed follows;
+            // the carriage return of a CRLF pair is left to its line feed, so the pair counts once.
+            boolean loneReturn = symbol == '\r'
+                && (i + 1 >= content.length() || content.charAt(i + 1) != '\n');
+            if ((symbol == '\n' || loneReturn) && i + 1 < end)
             {
                 from = i + 1;
             }
