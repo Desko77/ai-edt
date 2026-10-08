@@ -64,6 +64,15 @@ public class ACallSiteNamesTheCommonModuleItCallsTest
         method.getFormalParams().add(param);
 
         assertEquals(java.util.List.of(), BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
+
+        // The same name declared in a sibling method hides nothing here.
+        method.getFormalParams().clear();
+        com._1c.g5.v8.dt.bsl.model.Procedure sibling = factory.createProcedure();
+        module.getMethods().add(sibling);
+        sibling.getFormalParams().add(param);
+
+        assertEquals(java.util.List.of("CommonModule.ОбщегоНазначения.Module"), //$NON-NLS-1$
+            BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
     }
 
     /** Common modules that could not be listed answer null, not an empty list. */

@@ -634,17 +634,18 @@ public final class BslCallGraphHelper
         }
         String selfFqn = moduleFqn(module);
         Set<String> called = new LinkedHashSet<>();
-        // A parameter or a variable of the module may carry the name of a common module, and a call
-        // through it is a call through a variable. The names are taken module-wide: a name declared
-        // anywhere in the module is not read as a common module anywhere in it.
-        Set<String> shadowed = new HashSet<>();
+        // A parameter or a variable may carry the name of a common module, and a call through it
+        // is a call through a variable. A name declared in a method hides the module in that method
+        // only; a name declared outside every method hides it in the whole module (key null).
+        java.util.Map<Method, Set<String>> shadowed = new java.util.HashMap<>();
         java.util.Iterator<EObject> declared = module.eAllContents();
         while (declared.hasNext())
         {
             EObject node = declared.next();
             if (node instanceof Variable && ((Variable)node).getName() != null)
             {
-                shadowed.add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
+                shadowed.computeIfAbsent(enclosingMethod(node), scope -> new HashSet<>())
+                    .add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
             }
         }
         java.util.Iterator<EObject> contents = module.eAllContents();
@@ -668,7 +669,13 @@ public final class BslCallGraphHelper
                 continue;
             }
             String name = ((StaticFeatureAccess)source).getName();
-            if (name == null || shadowed.contains(name.toLowerCase(java.util.Locale.ROOT)))
+            if (name == null)
+            {
+                continue;
+            }
+            String lowered = name.toLowerCase(java.util.Locale.ROOT);
+            if (shadowed.getOrDefault(null, Collections.emptySet()).contains(lowered)
+                || shadowed.getOrDefault(enclosingMethod(node), Collections.emptySet()).contains(lowered))
             {
                 continue;
             }
@@ -679,6 +686,24 @@ public final class BslCallGraphHelper
             }
         }
         return new ArrayList<>(called);
+    }
+
+    /**
+     * The method a node of a module sits in.
+     *
+     * @param node a node of the module
+     * @return the method, or {@code null} for a node outside every method
+     */
+    private static Method enclosingMethod(EObject node)
+    {
+        for (EObject current = node; current != null; current = current.eContainer())
+        {
+            if (current instanceof Method)
+            {
+                return (Method)current;
+            }
+        }
+        return null;
     }
 
     /**
