@@ -264,7 +264,8 @@ public class DependencyGraphTool implements IMcpTool
                         else
                         {
                             result = buildModuleGraph(project, bmModel, rootModules, lookup,
-                                direction, depth, maxNodes, maxEdges, monitor, watch);
+                                modulesUnloaded, direction, depth, maxNodes, maxEdges, monitor,
+                                watch);
                         }
                     }
                     else
@@ -522,6 +523,7 @@ public class DependencyGraphTool implements IMcpTool
      * @param bmModel the project's object model, which the caller lookup needs
      * @param rootModules the root modules, keyed by the FQN their address names
      * @param lookup the module lookup, which turns an edge's FQN back into a module to walk
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
      * @param direction in (back) | out (forward) | both
      * @param depth how many rings to expand past the roots
      * @param maxNodes the node cap
@@ -531,7 +533,7 @@ public class DependencyGraphTool implements IMcpTool
      * @return the walk
      */
     static BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
-        LinkedHashMap<String, Module> rootModules, ModuleLookup lookup,
+        LinkedHashMap<String, Module> rootModules, ModuleLookup lookup, List<String> unloaded,
         BmReferencesHelper.Direction direction, int depth, int maxNodes, int maxEdges,
         IProgressMonitor monitor, WatchForCancel watch)
     {
@@ -598,8 +600,10 @@ public class DependencyGraphTool implements IMcpTool
                         {
                             return;
                         }
-                        addModuleNodeIfNew(result, queue, visited, lookup, edge.fromFqn, maxNodes);
-                        addModuleNodeIfNew(result, queue, visited, lookup, edge.toFqn, maxNodes);
+                        addModuleNodeIfNew(result, queue, visited, lookup, edge.fromFqn, maxNodes,
+                            unloaded);
+                        addModuleNodeIfNew(result, queue, visited, lookup, edge.toFqn, maxNodes,
+                            unloaded);
                     });
             }
             currentDepth++;
@@ -666,10 +670,11 @@ public class DependencyGraphTool implements IMcpTool
      * @param lookup the module lookup, which turns the FQN into the module to walk
      * @param fqn the module's FQN as the edge names it
      * @param maxNodes the node cap
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
      */
-    private static void addModuleNodeIfNew(BmReferencesHelper.BfsResult result,
+    static void addModuleNodeIfNew(BmReferencesHelper.BfsResult result,
         java.util.Deque<Module> queue, java.util.Set<String> visited, ModuleLookup lookup,
-        String fqn, int maxNodes)
+        String fqn, int maxNodes, List<String> unloaded)
     {
         if (fqn == null || visited.contains(fqn))
         {
@@ -681,11 +686,19 @@ public class DependencyGraphTool implements IMcpTool
             return;
         }
         visited.add(fqn);
-        Module module = lookup.byFqn(fqn).module;
+        ModuleResolution resolution = lookup.byFqn(fqn);
+        Module module = resolution.module;
         result.nodes.put(fqn, (IBmObject)module); // the renderer reads the key; the walk needs the object
         if (module != null)
         {
             queue.add(module);
+        }
+        else if (resolution.addressPresent && !unloaded.contains(fqn))
+        {
+            // The edge ends on an address whose file is there and whose model did not load: the
+            // walk stops at this neighbour, and an answer that stayed silent about it read as a
+            // module with no calls.
+            unloaded.add(fqn);
         }
     }
 

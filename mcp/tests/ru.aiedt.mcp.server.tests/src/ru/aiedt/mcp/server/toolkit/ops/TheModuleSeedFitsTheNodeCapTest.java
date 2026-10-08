@@ -71,8 +71,8 @@ public class TheModuleSeedFitsTheNodeCapTest
         }
 
         BmReferencesHelper.BfsResult walk = DependencyGraphTool.buildModuleGraph(null, null, roots,
-            fqn -> DependencyGraphTool.ModuleResolution.absent(), BmReferencesHelper.Direction.OUT,
-            0, 3, 500, null, null);
+            fqn -> DependencyGraphTool.ModuleResolution.absent(), new ArrayList<>(),
+            BmReferencesHelper.Direction.OUT, 0, 3, 500, null, null);
 
         assertEquals("five roots under a cap of three", 3, walk.nodes.size()); //$NON-NLS-1$
         assertTrue("the cut seed says truncated", walk.truncated); //$NON-NLS-1$
@@ -87,8 +87,8 @@ public class TheModuleSeedFitsTheNodeCapTest
         roots.put("CommonModule.Stock.Module", module("CommonModule.Stock.Module")); //$NON-NLS-1$ //$NON-NLS-2$
 
         BmReferencesHelper.BfsResult walk = DependencyGraphTool.buildModuleGraph(null, null, roots,
-            fqn -> DependencyGraphTool.ModuleResolution.absent(), BmReferencesHelper.Direction.OUT,
-            0, 3, 500, null, null);
+            fqn -> DependencyGraphTool.ModuleResolution.absent(), new ArrayList<>(),
+            BmReferencesHelper.Direction.OUT, 0, 3, 500, null, null);
 
         assertEquals(List.copyOf(roots.keySet()), List.copyOf(walk.nodes.keySet()));
         assertTrue("nothing was cut", !walk.truncated); //$NON-NLS-1$
