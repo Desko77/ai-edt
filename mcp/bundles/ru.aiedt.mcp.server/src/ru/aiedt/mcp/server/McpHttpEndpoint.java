@@ -899,14 +899,48 @@ public class McpHttpEndpoint
 
     /**
      * Closes the endpoint and opens it again, possibly on a different port.
+     * <p>
+     * A restart is a stop and a start, and the port asked for can be held by another program, so the
+     * failure would land on a server that is no longer listening at all. When the new port cannot be
+     * taken, one attempt is made on the port the server was already on: the caller asked for a move,
+     * not for the endpoint to go away, and it has no other port to offer. That attempt failing too
+     * leaves the endpoint stopped, and the answer is the first refusal - it names the port that was
+     * asked for, where the fallback's own text would name a port the caller never set.
+     * </p>
      *
      * @param serverPort the TCP port to listen on
-     * @throws IOException when the port is taken, or the socket cannot be opened
+     * @throws IOException when neither the port asked for nor the one the server was on can be
+     *         opened
      */
     public void restart(int serverPort) throws IOException
     {
+        // Read before stopping: start() writes the field with every port it tries, so after a failure
+        // it no longer names the port the server was serving on.
+        int previousPort = port;
         stop();
-        start(serverPort);
+        try
+        {
+            start(serverPort);
+        }
+        catch (IOException refused)
+        {
+            // Nothing to fall back to when the server was never on a port of its own, or was already
+            // on the one being asked for: the attempt just refused would be made a second time.
+            if (previousPort <= 0 || previousPort == serverPort)
+            {
+                throw refused;
+            }
+            try
+            {
+                start(previousPort);
+            }
+            catch (IOException alsoRefused)
+            {
+                throw refused;
+            }
+            Activator.logWarning("MCP server could not take port " + serverPort //$NON-NLS-1$
+                + " and stayed on " + previousPort + ": " + refused.getMessage()); //$NON-NLS-1$
+        }
     }
 
     /**

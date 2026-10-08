@@ -990,6 +990,40 @@ public class McpStatusBarItem
         }
     }
 
+    /**
+     * Reports a failure of the strip's own Start and Restart to the user and to the log.
+     * <p>
+     * The log keeps the stack, and the log is not where the user looks: without the notice the strip
+     * goes on reading "off" with nothing to say why, which looks like a menu item that did nothing.
+     * The endpoint's own words are the part the user can act on - which ports were tried, and who
+     * holds them - so they are carried into the notice unchanged.
+     * </p>
+     *
+     * @param action what was being done, in the infinitive - <code>start</code> or
+     *        <code>restart</code>
+     * @param failure what the endpoint refused with
+     * @param show how the text reaches the user; the strip opens a dialog over itself
+     */
+    public static void reportServerControlFailure(String action, IOException failure,
+        java.util.function.Consumer<String> show)
+    {
+        Activator.logError("MCP server failed to " + action + " from the status bar", failure); //$NON-NLS-1$ //$NON-NLS-2$
+        show.accept("MCP server failed to " + action + ": " + failure.getMessage()); //$NON-NLS-1$
+    }
+
+    /**
+     * Shows a notice about the server over the strip.
+     *
+     * @param message what to tell the user
+     */
+    private void showFailure(String message)
+    {
+        if (container != null && !container.isDisposed())
+        {
+            MessageDialog.openWarning(container.getShell(), "AI-EDT", message); //$NON-NLS-1$
+        }
+    }
+
     private void startServer()
     {
         McpHttpEndpoint server = Activator.getDefault() != null ? Activator.getDefault().getMcpServer() : null;
@@ -1001,7 +1035,7 @@ public class McpStatusBarItem
             }
             catch (IOException e)
             {
-                Activator.logError("MCP server failed to start from the status bar", e); //$NON-NLS-1$
+                reportServerControlFailure("start", e, this::showFailure); //$NON-NLS-1$
             }
         }
         updateStatus();
@@ -1028,7 +1062,7 @@ public class McpStatusBarItem
             }
             catch (IOException e)
             {
-                Activator.logError("MCP server failed to restart from the status bar", e); //$NON-NLS-1$
+                reportServerControlFailure("restart", e, this::showFailure); //$NON-NLS-1$
             }
         }
         updateStatus();

@@ -150,7 +150,13 @@ public class McpSettingsPage
                 }
                 catch (IOException e)
                 {
+                    // The settings are saved by this point; the restart is not. Closing the page on
+                    // a server that is now stopped would leave the user to find that out from a
+                    // client that no longer connects, so the page stays open and says so.
                     Activator.logError("MCP Server restart failed after a tool change", e); //$NON-NLS-1$
+                    setErrorMessage("The tool settings were saved, but the MCP server could not be " //$NON-NLS-1$
+                        + "restarted and is stopped: " + e.getMessage()); //$NON-NLS-1$
+                    return false;
                 }
             }
         }
