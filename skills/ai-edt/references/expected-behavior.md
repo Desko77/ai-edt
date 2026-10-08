@@ -189,7 +189,8 @@ closed projects it did not read.
 the selector: `objectFqn` an object, `moduleFqn` a module, `subsystemName` a subsystem, and
 nothing the whole project. A selector under `scope=project`, a selector the scope does not
 take, and two selectors together are refused by name - never dropped in silence, which used to
-walk the whole project and read as thousands of nodes with no edges. The seed of the walk fits
+walk the whole project and read as thousands of nodes with no edges. A root that does not exist
+answers with the `rootNotFound` tag. The seed of the walk fits
 `maxNodes` like the walk itself: more roots than the cap are cut, the answer says
 `truncated=true`, and the edges of the roots it took are in it. The module level resolves its
 modules through the project files; a module whose file is there and whose model did not load is

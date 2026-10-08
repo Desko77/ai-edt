@@ -31,7 +31,9 @@ environment requires to change with it. A mode is a declared setting - `CHANGES_
 has a mode of its own and must be set to `CHANGES_ALLOWED` before any other object can be; request
 it as `objectFqn=Configuration`. Where a configuration descends from several vendors, a mode belongs
 to a pair of object and vendor: `object_mode` reports per vendor, and `list_objects` requires
-`parentId`.
+`parentId`. `status` answers `onSupport = true` only when the list of vendor configurations is not
+empty; an object of a project with no vendor shows `Support Mode` = `not on support` in
+`get_metadata_details`.
 
 `restore_modes` finds an object by `bmGetId` / `getObjectById` and puts the mode back on its
 attributes, tabular sections, tabular-section attributes, forms, templates, commands and nested
@@ -153,7 +155,10 @@ metadata objects, stored per project in `.settings/aiedt-markers.yaml`. Reading 
 tags, the objects carrying one - stays in `workspace_marks` (`get_tags`, `get_objects_by_tags`).
 Both reads answer a JSON error document - `isError` on the wire - when that file does not parse or
 its bytes cannot be read at all, so that neither reads as a project defining no tags. An absent file
-is not a refusal, and the answer is that the project defines no tags.
+is not a refusal, and the answer is that the project defines no tags. `get_objects_by_tags` refuses a
+`limit` that is not a whole number or is below 1 and caps an accepted one at 1000; `get_bookmarks`
+answers the same structured refusal for an unknown project and for a failed read instead of a line
+of text.
 
 The five writes each pass their own door, so a write-blocking preset refuses them before the file is
 read: `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a color the
@@ -242,7 +247,10 @@ Two things worth knowing before the first call:
   `autoFill=true`; a bar the form lacked is created named `ФормаКоманднаяПанель` with `id` -1) and an
   empty `commandInterface` with its navigation and command panels; the answer
   carries `formScaffolded`, the count of properties applied, when any was applied, and a property
-  with no matching setter on the running EDT build is skipped. A common form
+  with no matching setter on the running EDT build is skipped; a command bar the scaffold created
+  is reported under `autoCommandBarAdded`. `setAsDefault` writes the default-form property of the
+  purpose (`defaultListForm` for a list and so on), and for a report or a data processor the single
+  `defaultForm` slot. A common form
   (`ownerFqn=CommonForm.<Name>`) is created through `create_object` and its inner form receives
   the same properties.
 - `add_form_appearance_rule`, `list_form_appearance_rules` and `remove_form_appearance_rule` are the
@@ -699,9 +707,9 @@ Not every tool belongs to a facade. These are called by name.
 
 | Tool | Use it for |
 |---|---|
-| `get_metadata_objects` | The objects of a configuration, filtered by type and name. Omit `projectName` to search every open project at once - useful when you are looking for where an object lives. |
+| `get_metadata_objects` | The objects of a configuration, filtered by type and name. Omit `projectName` to search every open project at once - useful when you are looking for where an object lives. The synonym language is resolved from its code and Markdown cells are escaped; against an external project the type filter is not claimed. |
 | `get_metadata_details` | One object in depth: attributes, tabular sections, forms, modules. |
-| `get_command_interface` | The command interface of a subsystem: what it shows and in what order. Checks that the project is ready and reads the interface inside a model read transaction. |
+| `get_command_interface` | The command interface of a subsystem: what it shows and in what order. Checks that the project is ready and reads the interface inside a model read transaction. A nested subsystem address is taken in both forms, `Subsystem.A.Subsystem.B` and `Subsystem.A.B`. |
 | `generate_event_handlers` | Handler stubs for the events of an OBJECT module - catalogs, documents, registers. Not for form handlers: those come from the form operations of `edit_metadata`. Read the stub before relying on it; the parameter lists come from a table here, not from the platform. |
 | `copy_object` | Copies an object into another project as its own, not adopted; forms, modules and presentation travel with it. |
 | `find_dead_code` | Exported methods nobody calls. |
@@ -714,7 +722,8 @@ Not every tool belongs to a facade. These are called by name.
 
 Three more are reached through a facade rather than by name, because the Canonical preset hides
 them: `extension_workshop operation=list_interceptors`, `project_admin operation=self_upkeep` and
-`project_admin operation=answer_dialog`.
+`project_admin operation=answer_dialog`. `list_interceptors` reads the annotation only where it is
+declared: an annotation commented out (`// &Перед(...)`) is not an interceptor.
 
 Debug & Test switches off the destructive members of the applications group by name, so these are
 refused under it both as a direct call and as the facade operation: `update_database`,
@@ -822,7 +831,8 @@ merges fully inside the source repeated over the target while the merges fully i
 target come off first. There is no shift, an overlap of the two ranges is refused, named areas are
 neither copied nor moved, and the target may run past the current end. The answer carries
 `shiftedRows`, `resizedMerges`, `removedMerges`, `resizedNamedAreas`, `removedNamedAreas`,
-`removedDrawings` and `lastRow`.
+`removedDrawings`, `removedDataSources` and `lastRow`; a drawing that goes takes its data source
+with it and the count is in `removedDataSources`.
 
 `insert_columns`, `delete_columns` and `copy_columns` work in whole columns. `insert_columns` puts
 `count` columns before `col` (the last column + 1 appends) and shifts everything from that column
@@ -839,7 +849,8 @@ parameter, detail and format, the notes, and the merges fully inside the source 
 target while the merges fully inside the replaced target come off first. There is no shift, an overlap
 of the two ranges is refused, named areas are neither copied nor moved, and the target may run past
 the current end. The answer carries `shiftedColumns`, `resizedMerges`, `removedMerges`,
-`resizedNamedAreas`, `removedNamedAreas`, `removedDrawings` and `lastColumn`.
+`resizedNamedAreas`, `removedNamedAreas`, `removedDrawings`, `removedDataSources` and `lastColumn`;
+a drawing that goes takes its data source with it and the count is in `removedDataSources`.
 
 A write while the project is not ready is refused with the same readiness sentence as `update_database`
 and `validate_query`, and the file is left as it is. A read is refused with that sentence while the
@@ -850,7 +861,7 @@ stays byte for byte; a read names the mismatch as `templateModelFileMismatch`.
 
 A picture reference that does not resolve in the project refuses the write before anything
 changes - the document and `Template.mxlx` stay as they were, and `dryRun` answers with the same
-refusal - naming the count and the first names. An empty picture placeholder does not refuse the
+refusal - naming the count and the first names under the `unresolvedPictureRefs` tag. An empty picture placeholder does not refuse the
 write. A document with no column set receives a column set of size 0 before the save, the same
 shape as an empty template.
 
