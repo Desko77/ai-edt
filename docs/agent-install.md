@@ -124,6 +124,24 @@ Remove-Item -Recurse -Force "$env:TEMP\ai-edt-skill"
 The folder is four files: `SKILL.md` plus `references/facades.md`, `references/workflows.md` and
 `references/expected-behavior.md`, which the agent loads on demand rather than all at once.
 
+**8. Connect the client and call the server once.** An installed plugin answers on
+`http://localhost:12250/mcp`; the client still has to be told so. [clients.md](clients.md) carries the
+configuration fragment of each client - write the one for the client you are running in, and
+nothing else. For Claude Code it is one command:
+
+```powershell
+claude mcp add --transport http --scope user AI-EDT http://localhost:12250/mcp
+```
+
+The port is the one `GET /health` answered on in step 6; a server moved off the default port is
+connected by that port. When **Require bearer token** is on in the AI-EDT preferences, the client
+also needs the `Authorization: Bearer <token>` header - ask the user for the token, do not look for
+it yourself.
+
+A client reads its server list at start, so the new entry answers in the next session. Say so, and
+have the first call of that session be `get_edt_version`: the EDT version in the answer is what
+tells an installed and connected server from a configuration line that points at nothing.
+
 ## Or run the bundled script
 
 `scripts/edt-selfupdate.ps1` implements the whole sequence above, including the graceful close

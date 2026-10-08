@@ -204,6 +204,10 @@ to answer status: ok.
 Then install the skill from the repository's skills/ai-edt folder for yourself -
 without it you drive the server blind. The procedure is in skills/README.md.
 
+Then connect the client you are running in to the server: its configuration
+fragment is in docs/clients.md of the same repository. Tell me when a new
+session has to be started, and make get_edt_version the first call in it.
+
 Never force-kill anything. If EDT will not close on its own, stop and tell me.
 ```
 
