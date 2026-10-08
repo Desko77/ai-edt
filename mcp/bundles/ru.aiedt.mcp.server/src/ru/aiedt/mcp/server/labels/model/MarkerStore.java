@@ -120,8 +120,10 @@ public class MarkerStore
     }
 
     /**
-     * Removes a marker and strips its name from every object it was assigned to. Emptied assignment
-     * entries are left in place; nothing here prunes them.
+     * Removes a marker and strips its name from every object it was assigned to. An object whose
+     * last marker this was loses its assignment entry altogether, the way
+     * {@link #unassignMarker(String, String)} leaves the map, so an entry in the map always means
+     * the object still carries something.
      *
      * @param markerName the name of the marker to remove
      * @return <code>true</code> when the marker existed
@@ -134,9 +136,14 @@ public class MarkerStore
             return false;
         }
         markers.remove(marker);
-        for (List<String> names : assignments.values())
+        for (java.util.Iterator<List<String>> it = assignments.values().iterator(); it.hasNext();)
         {
+            List<String> names = it.next();
             names.remove(markerName);
+            if (names.isEmpty())
+            {
+                it.remove();
+            }
         }
         return true;
     }
@@ -201,7 +208,9 @@ public class MarkerStore
         {
             return Set.of();
         }
-        Set<Marker> result = new HashSet<>();
+        // Linked, so the order follows the assignment list: the first marker the user put on the
+        // object reads as the first one everywhere the set is iterated.
+        Set<Marker> result = new java.util.LinkedHashSet<>();
         for (String name : names)
         {
             Marker marker = getMarkerByName(name);
@@ -352,37 +361,76 @@ public class MarkerStore
     }
 
     /**
-     * Replaces this storage's markers and assignments with a copy of {@code source}.
+     * Puts this storage back to the state of {@code source}, in place.
      * <p>
      * Used when a write to disk failed after the live storage was already changed, so the memory
-     * matches the file again. The replacement is a copy, so later edits of {@code source} do not leak
-     * back in.
+     * matches the file again. The marker list keeps its own instances - a dialog or a tree that
+     * holds one sees the fields return to the restored values rather than silently keeping the
+     * values of the edit that was rolled back - and their fields are reset from the source.
+     * Entries the edit added are dropped, entries it removed come back as fresh copies, and the
+     * assignment map is replaced with a copy, so later edits of {@code source} do not leak back
+     * in.
      * </p>
      *
      * @param source the storage to restore from; not modified
      */
     public void restoreFrom(MarkerStore source)
     {
-        MarkerStore fresh = source.copy();
-        this.markers = fresh.markers;
-        this.assignments = fresh.assignments;
+        List<Marker> restored = source.copy().getTags();
+        for (int i = 0; i < restored.size(); i++)
+        {
+            Marker wanted = restored.get(i);
+            if (i < markers.size())
+            {
+                markers.get(i).setName(wanted.getName());
+                markers.get(i).setColor(wanted.getColor());
+                markers.get(i).setDescription(wanted.getDescription());
+            }
+            else
+            {
+                markers.add(new Marker(wanted.getName(), wanted.getColor(), wanted.getDescription()));
+            }
+        }
+        if (markers.size() > restored.size())
+        {
+            markers.subList(restored.size(), markers.size()).clear();
+        }
+        this.assignments = source.copy().getAssignments();
     }
 
     /**
-     * Drops all assignments for an object, as when the object is deleted.
+     * Drops all assignments for an object and for every object nested under it, as when the object
+     * is deleted and its attributes and forms go with it.
+     * <p>
+     * A name is nested when it continues past {@code objectFqn} with a dot, the same rule
+     * {@link #holdsObjectOrDescendant(String)} reads; a sibling that merely shares a prefix is
+     * left alone.
+     * </p>
      *
      * @param objectFqn the fully qualified name of the object
-     * @return <code>true</code> when the object had assignments
+     * @return <code>true</code> when the object or a nested one had assignments
      */
     public boolean removeObject(String objectFqn)
     {
-        List<String> names = assignments.get(objectFqn);
-        if (names == null || names.isEmpty())
+        if (objectFqn == null || objectFqn.isEmpty())
         {
             return false;
         }
-        assignments.remove(objectFqn);
-        return true;
+        String nestedPrefix = objectFqn + "."; //$NON-NLS-1$
+        boolean removed = false;
+        for (String key : new ArrayList<>(assignments.keySet()))
+        {
+            if (key == null)
+            {
+                continue;
+            }
+            if (key.equals(objectFqn) || key.startsWith(nestedPrefix))
+            {
+                assignments.remove(key);
+                removed = true;
+            }
+        }
+        return removed;
     }
 
     /**

@@ -245,11 +245,11 @@ public class MarkerFilterDialog
             for (IProject project : projectsWithMarkers)
             {
                 Set<Marker> checked = new HashSet<>();
-                for (Marker marker : service.getMarkers(project))
+                for (MarkerRow row : rowsOf(project))
                 {
-                    if (treeViewer.getChecked(marker))
+                    if (treeViewer.getChecked(row))
                     {
-                        checked.add(marker);
+                        checked.add(row.marker);
                     }
                 }
                 if (!checked.isEmpty())
@@ -378,11 +378,11 @@ public class MarkerFilterDialog
             {
                 continue;
             }
-            for (Marker marker : service.getMarkers(project))
+            for (MarkerRow row : rowsOf(project))
             {
-                if (names.contains(marker.getName()))
+                if (names.contains(row.name()))
                 {
-                    treeViewer.setChecked(marker, true);
+                    treeViewer.setChecked(row, true);
                 }
             }
             updateProjectState(project);
@@ -410,18 +410,14 @@ public class MarkerFilterDialog
         {
             IProject project = (IProject)element;
             treeViewer.setGrayed(project, false);
-            for (Marker marker : service.getMarkers(project))
+            for (MarkerRow row : rowsOf(project))
             {
-                treeViewer.setChecked(marker, checked);
+                treeViewer.setChecked(row, checked);
             }
         }
-        else if (element instanceof Marker)
+        else if (element instanceof MarkerRow)
         {
-            IProject project = projectOf((Marker)element);
-            if (project != null)
-            {
-                updateProjectState(project);
-            }
+            updateProjectState(((MarkerRow)element).project);
         }
     }
 
@@ -432,11 +428,11 @@ public class MarkerFilterDialog
      */
     private void updateProjectState(IProject project)
     {
-        List<Marker> markers = service.getMarkers(project);
+        List<MarkerRow> rows = rowsOf(project);
         int checkedCount = 0;
-        for (Marker marker : markers)
+        for (MarkerRow row : rows)
         {
-            if (treeViewer.getChecked(marker))
+            if (treeViewer.getChecked(row))
             {
                 checkedCount++;
             }
@@ -446,7 +442,7 @@ public class MarkerFilterDialog
             treeViewer.setGrayed(project, false);
             treeViewer.setChecked(project, false);
         }
-        else if (checkedCount == markers.size())
+        else if (checkedCount == rows.size())
         {
             treeViewer.setGrayed(project, false);
             treeViewer.setChecked(project, true);
@@ -466,9 +462,9 @@ public class MarkerFilterDialog
     {
         for (IProject project : projectsWithMarkers)
         {
-            for (Marker marker : service.getMarkers(project))
+            for (MarkerRow row : rowsOf(project))
             {
-                treeViewer.setChecked(marker, checked);
+                treeViewer.setChecked(row, checked);
             }
             updateProjectState(project);
         }
@@ -481,16 +477,13 @@ public class MarkerFilterDialog
     {
         IStructuredSelection selection = treeViewer.getStructuredSelection();
         Object first = selection.getFirstElement();
-        if (!(first instanceof Marker))
+        if (!(first instanceof MarkerRow))
         {
             return;
         }
-        Marker marker = (Marker)first;
-        IProject project = projectOf(marker);
-        if (project == null)
-        {
-            return;
-        }
+        MarkerRow row = (MarkerRow)first;
+        Marker marker = row.marker;
+        IProject project = row.project;
         MarkerEditDialog dialog = new MarkerEditDialog(getShell(), marker);
         if (dialog.open() == Window.OK)
         {
@@ -518,27 +511,75 @@ public class MarkerFilterDialog
         }
     }
 
-    /**
-     * Finds the project a marker instance belongs to.
-     *
-     * @param marker the marker
-     * @return its project, or <code>null</code>
-     */
-    private IProject projectOf(Marker marker)
-    {
-        for (IProject project : projectsWithMarkers)
-        {
-            for (Marker candidate : service.getMarkers(project))
-            {
-                if (candidate == marker)
-                {
-                    return project;
-                }
-            }
-        }
-        return null;
-    }
 
+
+    /**
+     * One marker of one project, the way the checkbox tree addresses it.
+     * <p>
+     * A {@link Marker} is equal to another marker by name alone, so two projects that each define
+     * a marker of the same name would share one check state - and one node - in a tree keyed on
+     * the markers themselves. The row carries the project beside the marker and compares both, so
+     * ticking one project's marker leaves the other project's alone.
+     * </p>
+     */
+    private static final class MarkerRow
+    {
+        /** The project the marker is defined in. */
+        final IProject project;
+
+        /** The marker itself. */
+        final Marker marker;
+
+        MarkerRow(IProject project, Marker marker)
+        {
+            this.project = project;
+            this.marker = marker;
+        }
+
+        /**
+         * @return the marker name
+         */
+        String name()
+        {
+            return marker.getName();
+        }
+
+        @Override
+        public boolean equals(Object obj)
+        {
+            if (this == obj)
+            {
+                return true;
+            }
+            if (!(obj instanceof MarkerRow))
+            {
+                return false;
+            }
+            MarkerRow other = (MarkerRow)obj;
+            return project.equals(other.project) && java.util.Objects.equals(name(), other.name());
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return project.hashCode() * 31 + java.util.Objects.hashCode(name());
+        }
+    }
+    /**
+     * The marker rows of a project, in the order the markers are defined.
+     *
+     * @param project the project
+     * @return one row per marker
+     */
+    private List<MarkerRow> rowsOf(IProject project)
+    {
+        List<MarkerRow> rows = new ArrayList<>();
+        for (Marker marker : service.getMarkers(project))
+        {
+            rows.add(new MarkerRow(project, marker));
+        }
+        return rows;
+    }
     /**
      * Supplies the tree structure: projects at the root, their markers beneath.
      */
@@ -556,7 +597,7 @@ public class MarkerFilterDialog
         {
             if (parentElement instanceof IProject)
             {
-                return service.getMarkers((IProject)parentElement).toArray();
+                return rowsOf((IProject)parentElement).toArray();
             }
             return new Object[0];
         }
@@ -564,7 +605,7 @@ public class MarkerFilterDialog
         @Override
         public Object getParent(Object element)
         {
-            return element instanceof Marker ? projectOf((Marker)element) : null;
+            return element instanceof MarkerRow ? ((MarkerRow)element).project : null;
         }
 
         @Override
@@ -587,9 +628,9 @@ public class MarkerFilterDialog
             {
                 return ((IProject)element).getName();
             }
-            if (element instanceof Marker)
+            if (element instanceof MarkerRow)
             {
-                return ((Marker)element).getName();
+                return ((MarkerRow)element).name();
             }
             return super.getText(element);
         }
@@ -597,9 +638,9 @@ public class MarkerFilterDialog
         @Override
         public Image getImage(Object element)
         {
-            if (element instanceof Marker)
+            if (element instanceof MarkerRow)
             {
-                return resourceManager.create(MarkerIconFactory.getColorIcon(((Marker)element).getColor()));
+                return resourceManager.create(MarkerIconFactory.getColorIcon(((MarkerRow)element).marker.getColor()));
             }
             return null;
         }
@@ -622,11 +663,11 @@ public class MarkerFilterDialog
         @Override
         public boolean select(Viewer viewer, Object parentElement, Object element)
         {
-            if (query.isEmpty() || !(element instanceof Marker))
+            if (query.isEmpty() || !(element instanceof MarkerRow))
             {
                 return true;
             }
-            Marker marker = (Marker)element;
+            Marker marker = ((MarkerRow)element).marker;
             return marker.getName().toLowerCase().contains(query)
                 || marker.getDescription().toLowerCase().contains(query);
         }

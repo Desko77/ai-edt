@@ -74,6 +74,14 @@ public class MarkerQueryFilter
      */
     public MarkerQueryFilter()
     {
+        subscribe();
+    }
+
+    /**
+     * Subscribes the filter to marker changes, if it is not subscribed already.
+     */
+    private void subscribe()
+    {
         try
         {
             MarkerManager.getInstance().addMarkerChangeListener(this);
@@ -81,6 +89,40 @@ public class MarkerQueryFilter
         catch (RuntimeException e)
         {
             // The workspace is not up yet. The cache still clears when the filter is applied again.
+        }
+    }
+
+    /**
+     * Prepares the filter for use by an installed viewer and subscribes it to marker changes.
+     * <p>
+     * The controller calls this when it installs the filter in the Navigator. A filter that was
+     * taken out and put back must hear about marker changes again: the cache it keeps is only as
+     * fresh as the notifications that clear it.
+     * </p>
+     */
+    public void activate()
+    {
+        subscribe();
+    }
+
+    /**
+     * Takes the filter out of use: it stops listening to marker changes, so an inactive filter
+     * holds no live reference and gets told about nothing.
+     * <p>
+     * The controller calls this when it removes the filter from the Navigator. Without it the
+     * subscription made at construction outlives the filter's use and keeps firing into a cache
+     * nobody reads.
+     * </p>
+     */
+    public void deactivate()
+    {
+        try
+        {
+            MarkerManager.getInstance().removeMarkerChangeListener(this);
+        }
+        catch (RuntimeException e)
+        {
+            // The workspace is going away; the listener list goes with it.
         }
     }
 
@@ -432,7 +474,17 @@ public class MarkerQueryFilter
         Set<String> result;
         if (showUnmarkedOnly)
         {
-            result = new HashSet<>(MarkerManager.getInstance().getMarkerStorage(project).getAssignments().keySet());
+            // Only objects that still carry a marker count as marked; an entry left with an empty
+            // list - a tag deleted since the entry was written - hides nothing.
+            result = new HashSet<>();
+            for (java.util.Map.Entry<String, java.util.List<String>> entry : MarkerManager.getInstance()
+                .getMarkerStorage(project).getAssignments().entrySet())
+            {
+                if (entry.getValue() != null && !entry.getValue().isEmpty())
+                {
+                    result.add(entry.getKey());
+                }
+            }
         }
         else
         {
@@ -449,6 +501,52 @@ public class MarkerQueryFilter
     }
 
     /**
+     * Asks the Navigator to repaint itself on the UI thread.
+     * <p>
+     * Dropping the cached matches changes what {@link #select} answers, but a viewer only asks a
+     * filter again when it refreshes, so a marker change under an active filter would leave the
+     * tree showing the previous answer until something else refreshed it. The change can arrive on
+     * any thread, and {@code asyncExec} is the one Display entry point that may be called from any
+     * thread, so the repaint is scheduled through it.
+     * </p>
+     */
+    private void refreshNavigator()
+    {
+        if (!dialogMode)
+        {
+            return;
+        }
+        try
+        {
+            if (!org.eclipse.ui.PlatformUI.isWorkbenchRunning())
+            {
+                return;
+            }
+            org.eclipse.ui.IWorkbenchWindow window =
+                org.eclipse.ui.PlatformUI.getWorkbench().getActiveWorkbenchWindow();
+            org.eclipse.ui.IWorkbenchPage page = window == null ? null : window.getActivePage();
+            org.eclipse.ui.IViewPart view = page == null ? null
+                : page.findView(ru.aiedt.mcp.server.labels.MarkerKeys.NAVIGATOR_VIEW_ID);
+            if (!(view instanceof org.eclipse.ui.navigator.CommonNavigator))
+            {
+                return;
+            }
+            org.eclipse.swt.widgets.Display display = org.eclipse.swt.widgets.Display.getDefault();
+            if (display == null || display.isDisposed())
+            {
+                return;
+            }
+            org.eclipse.ui.navigator.CommonViewer viewer =
+                ((org.eclipse.ui.navigator.CommonNavigator)view).getCommonViewer();
+            display.asyncExec(viewer::refresh);
+        }
+        catch (RuntimeException e)
+        {
+            // The workbench is going away; the next filter application repaints the tree.
+        }
+    }
+
+    /**
      * Drops the cached matches for a project whose marker definitions changed.
      *
      * @param project the affected project
@@ -457,6 +555,7 @@ public class MarkerQueryFilter
     public void onMarkersChanged(IProject project)
     {
         matchCache.invalidate(project);
+        refreshNavigator();
     }
 
     /**
@@ -469,6 +568,7 @@ public class MarkerQueryFilter
     public void onAssignmentsChanged(IProject project, String objectFqn)
     {
         matchCache.invalidate(project);
+        refreshNavigator();
     }
 
     /**

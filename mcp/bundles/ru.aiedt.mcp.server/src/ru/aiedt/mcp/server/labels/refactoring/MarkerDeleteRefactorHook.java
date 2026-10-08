@@ -50,7 +50,10 @@ public class MarkerDeleteRefactorHook
         {
             return null;
         }
-        if (MarkerManager.getInstance().getObjectMarkers(project, fqn).isEmpty())
+        // The gate asks about the object and everything nested under it: a delete that asks only
+        // about the exact FQN leaves the assignments of the children in the file, where they
+        // attach themselves to the next object that reuses the name.
+        if (!MarkerManager.getInstance().holdsObjectOrDescendant(project, fqn))
         {
             return null;
         }

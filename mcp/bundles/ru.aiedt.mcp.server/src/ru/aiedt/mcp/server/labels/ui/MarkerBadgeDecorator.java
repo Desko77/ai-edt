@@ -340,7 +340,31 @@ public class MarkerBadgeDecorator
 
         {
 
-            display.timerExec((int)REFRESH_DEBOUNCE_MS, this::executeRefresh);
+            // The timer is armed from the UI thread: a marker change can arrive on the resource
+
+            // thread or an HTTP thread, timerExec expects the thread that owns the display, and
+
+            // a refusal thrown there would leave refreshPending set and the decoration stale
+
+            // until restart. asyncExec may be called from any thread, and when the display goes
+
+            // away before the runnable runs, the flag is put back so a later request re-arms.
+
+            display.asyncExec(() -> {
+
+                if (display.isDisposed())
+
+                {
+
+                    refreshPending = false;
+
+                    return;
+
+                }
+
+                display.timerExec((int)REFRESH_DEBOUNCE_MS, this::executeRefresh);
+
+            });
 
         }
 
