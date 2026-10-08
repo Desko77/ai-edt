@@ -606,13 +606,53 @@ public class TagAdminFacadeTool
      */
     private static List<String> requestedTags(Map<String, String> params)
     {
-        List<String> raw = JsonUtils.extractArrayArgument(params, "tags"); //$NON-NLS-1$
-        if (raw == null)
+        return tagNames(JsonUtils.extractStringArgument(params, "tags"), //$NON-NLS-1$
+            JsonUtils.extractArrayArgument(params, "tags")); //$NON-NLS-1$
+    }
+
+    /**
+     * Turns the {@code tags} argument into names without losing a member.
+     * <p>
+     * The shared array reader keeps only primitive members, so a JSON {@code null}, an object or a
+     * nested array would vanish before any check saw it and the rest of the list would be written.
+     * A JSON array is therefore read here member by member: a string gives its trimmed text, and
+     * anything else gives the empty name, which the caller refuses as {@code invalidName}.
+     * </p>
+     *
+     * @param rawArgument the argument as the call carried it, or <code>null</code>
+     * @param sharedReading what the shared array reader made of it, used when the argument is not a
+     *     JSON array
+     * @return the names in the caller's order, each once; empty when the call brought none
+     */
+    static List<String> tagNames(String rawArgument, List<String> sharedReading)
+    {
+        Set<String> unique = new LinkedHashSet<>();
+        String text = rawArgument == null ? "" : rawArgument.trim(); //$NON-NLS-1$
+        if (text.startsWith("[")) //$NON-NLS-1$
+        {
+            try
+            {
+                com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(text);
+                if (parsed.isJsonArray())
+                {
+                    for (com.google.gson.JsonElement member : parsed.getAsJsonArray())
+                    {
+                        boolean isText = member.isJsonPrimitive() && member.getAsJsonPrimitive().isString();
+                        unique.add(isText ? member.getAsString().trim() : ""); //$NON-NLS-1$
+                    }
+                    return new ArrayList<>(unique);
+                }
+            }
+            catch (com.google.gson.JsonParseException malformed)
+            {
+                // Not JSON after all: the shared reading below decides what the text names.
+            }
+        }
+        if (sharedReading == null)
         {
             return List.of();
         }
-        Set<String> unique = new LinkedHashSet<>();
-        for (String name : raw)
+        for (String name : sharedReading)
         {
             unique.add(name == null ? "" : name.trim()); //$NON-NLS-1$
         }

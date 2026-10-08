@@ -2306,10 +2306,13 @@ public class MarkerManager
     {
         IPath location = file.getLocation();
         Path onDisk = location == null ? null : location.toFile().toPath();
-        if (onDisk != null && !Files.exists(onDisk))
+        if (onDisk != null && Files.notExists(onDisk))
         {
             // The tree may still remember a file the disk no longer has - a delete the
             // workspace was never told about. The disk decides whether there is a file.
+            // notExists, not !exists: a path whose existence cannot be determined - a drive
+            // that is away, a directory that may not be listed - is not a missing file, and
+            // falls through to the read below, which fails with the reason.
             return null;
         }
         if (file.exists())
