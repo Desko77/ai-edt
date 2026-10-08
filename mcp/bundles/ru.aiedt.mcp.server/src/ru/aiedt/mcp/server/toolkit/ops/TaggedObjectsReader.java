@@ -188,13 +188,13 @@ public final class TaggedObjectsReader implements IMcpTool
      */
     String getObjectsByMarkers(IProject project, List<String> markerNames, int limit)
     {
-        MarkerManager markerService = MarkerManager.getInstance();
-        String refusal = markerService.markerReadRefusal(project);
+        MarkerManager.MarkerRead read = MarkerManager.getInstance().readMarkers(project);
+        String refusal = read.refusal();
         if (refusal != null)
         {
             return ToolResult.error(refusal).toJson();
         }
-        MarkerStore storage = markerService.getMarkerStorage(project);
+        MarkerStore storage = read.storage();
         StringBuilder sb = new StringBuilder();
         sb.append("# Metadata Objects Marked in Project: " + project.getName() + "\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
 

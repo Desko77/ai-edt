@@ -110,13 +110,13 @@ public final class TagsReader implements IMcpTool
      */
     String getMarkers(IProject project)
     {
-        MarkerManager markerService = MarkerManager.getInstance();
-        String refusal = markerService.markerReadRefusal(project);
+        MarkerManager.MarkerRead read = MarkerManager.getInstance().readMarkers(project);
+        String refusal = read.refusal();
         if (refusal != null)
         {
             return ToolResult.error(refusal).toJson();
         }
-        MarkerStore storage = markerService.getMarkerStorage(project);
+        MarkerStore storage = read.storage();
         List<Marker> markers = storage.getTags();
         if (markers.isEmpty())
         {
