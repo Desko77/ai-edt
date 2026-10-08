@@ -1077,32 +1077,46 @@ public class ClusterManagerImpl
      */
 
     private void invalidateCache(IProject project)
-
     {
-
-        cacheLock.writeLock().lock();
-
-        try
-
+        // Called from the resource-change notification, which runs under the workspace lock. A
+        // writer may hold the cache lock while the workspace refreshes the file it replaced, so
+        // waiting here would be the other half of a deadlock. When the lock is busy the entry is
+        // dropped from another thread, which holds no workspace lock.
+        if (cacheLock.writeLock().tryLock())
         {
-
-            projectStorageCache.remove(project.getName());
-
-            failedLoads.remove(project.getName());
-
+            try
+            {
+                dropCached(project);
+            }
+            finally
+            {
+                cacheLock.writeLock().unlock();
+            }
+            return;
         }
-
-        finally
-
-        {
-
-            cacheLock.writeLock().unlock();
-
-        }
-
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            cacheLock.writeLock().lock();
+            try
+            {
+                dropCached(project);
+            }
+            finally
+            {
+                cacheLock.writeLock().unlock();
+            }
+        });
     }
 
-
+    /**
+     * Forgets a project's cache entry and its failed load. The caller holds the cache write lock.
+     *
+     * @param project the project
+     */
+    private void dropCached(IProject project)
+    {
+        projectStorageCache.remove(project.getName());
+        failedLoads.remove(project.getName());
+    }
 
     /**
 

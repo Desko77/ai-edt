@@ -1895,37 +1895,48 @@ public class MarkerManager
      */
 
     private void evict(IProject project)
-
     {
-
-        lock.writeLock().lock();
-
-        try
-
+        // Called from the resource-change notification, which runs under the workspace lock. A
+        // writer holds this manager's lock while it asks the workspace to refresh the file it has
+        // just replaced, so waiting for the lock here would be the other half of a deadlock. When
+        // the lock is busy the eviction runs on another thread, which holds no workspace lock.
+        if (lock.writeLock().tryLock())
         {
-
-            cache.remove(project);
-
-            unreadable.remove(project);
-
-            readFailed.remove(project);
-
-            fingerprints.remove(project);
-
+            try
+            {
+                dropCached(project);
+            }
+            finally
+            {
+                lock.writeLock().unlock();
+            }
+            return;
         }
-
-        finally
-
-        {
-
-            lock.writeLock().unlock();
-
-        }
-
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            lock.writeLock().lock();
+            try
+            {
+                dropCached(project);
+            }
+            finally
+            {
+                lock.writeLock().unlock();
+            }
+        });
     }
 
-
-
+    /**
+     * Forgets everything cached for a project. The caller holds the write lock.
+     *
+     * @param project the project to forget
+     */
+    private void dropCached(IProject project)
+    {
+        cache.remove(project);
+        unreadable.remove(project);
+        readFailed.remove(project);
+        fingerprints.remove(project);
+    }
 
     /**
 
