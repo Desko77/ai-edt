@@ -39,6 +39,9 @@ public class McpSettingsPage
 
     private ToolsPrefTab toolsTab;
 
+    /** A tool selection this page has saved and the running server has not been given yet. */
+    private final PendingRestart pendingRestart = new PendingRestart();
+
     /**
      * Binds the page to the plugin store and gives it its heading.
      */
@@ -135,7 +138,7 @@ public class McpSettingsPage
         }
         toolsTab.performOk();
 
-        if (toolsChanged)
+        if (pendingRestart.due(toolsChanged))
         {
             McpHttpEndpoint server = Activator.getDefault().getMcpServer();
             if (server != null && server.isRunning())
@@ -146,18 +149,29 @@ public class McpSettingsPage
                     // needed to apply the change - but it drops the open connections, which is
                     // observable, so it stays.
                     server.restart(generalTab.getPort());
+                    pendingRestart.applied();
                     Activator.logInfo("MCP Server restarted following a tool configuration change"); //$NON-NLS-1$
                 }
                 catch (IOException e)
                 {
                     // The settings are saved by this point; the restart is not. Closing the page on
                     // a server that is now stopped would leave the user to find that out from a
-                    // client that no longer connects, so the page stays open and says so.
+                    // client that no longer connects, so the page stays open and says so. The tools
+                    // tab has already written the store, so the next OK would see no change at all -
+                    // the debt is what keeps the restart owed until one returns.
+                    pendingRestart.refused();
                     Activator.logError("MCP Server restart failed after a tool change", e); //$NON-NLS-1$
                     setErrorMessage("The tool settings were saved, but the MCP server could not be " //$NON-NLS-1$
                         + "restarted and is stopped: " + e.getMessage()); //$NON-NLS-1$
                     return false;
                 }
+            }
+            else
+            {
+                // Nothing is running to restart, and a server started later reads the store for
+                // itself: the save does not stand between this page and a server that has not seen
+                // it, so the page may close.
+                pendingRestart.applied();
             }
         }
 

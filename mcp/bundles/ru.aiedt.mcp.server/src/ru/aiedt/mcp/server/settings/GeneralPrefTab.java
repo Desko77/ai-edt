@@ -281,12 +281,25 @@ public class GeneralPrefTab
      * trimmed. The marker style is written only when the combo has a selection. The token is the
      * one field that has to reach the disk before it counts, which is why this can fail.
      * </p>
+     * <p>
+     * An update address the policy refuses stops the save before its first write, so a caller that
+     * is told what to fix finds the tab exactly as it was and not half written.
+     * </p>
      *
      * @return <code>null</code> when everything was saved, otherwise what was not and why
      */
     public String performOk()
     {
-        // The token first: it is the one field that has to reach the disk before it counts, and
+        // The update address is refused before a single value is written, and not after. A refusal
+        // that arrived later would already have changed the tab: the token below starts answering on
+        // the socket the moment it is published, so a save told afterwards not to keep the address
+        // would have put a new token in force and left every field above it rewritten.
+        String upkeepRefused = validateUpkeepSite();
+        if (upkeepRefused != null)
+        {
+            return upkeepRefused;
+        }
+        // The token next: it is the one field that has to reach the disk before it counts, and
         // a save that fails must leave the other fields as they were, not half applied.
         String notSaved = publishToken();
         if (notSaved != null)
@@ -316,14 +329,7 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_HISTORY_DISK_ENABLED, historyDiskCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_DISK_DAYS, historyDiskDaysSpinner.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_DISK_PATH, historyDiskPathField.getText().trim());
-        String upkeepNotSaved = writeUpkeep();
-        if (upkeepNotSaved != null)
-        {
-            // Start and Restart reach here without passing the page's own refusal, and an update
-            // address the user was told would not be kept must not be the price of starting a
-            // server: they are told what to fix instead.
-            return upkeepNotSaved;
-        }
+        writeUpkeep();
         store.setValue(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR, showMarkersCheck.getSelection());
         MarkerSettingsMigration.mirrorToLegacyKey(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
             Boolean.toString(showMarkersCheck.getSelection()));
@@ -339,35 +345,27 @@ public class GeneralPrefTab
     }
 
     /**
-     * Writes the update settings, but only as a whole and only when the address is usable.
+     * Writes the five update keys.
      * <p>
-     * The page refuses OK while the address is rejected, but the Start and Restart buttons on this
-     * tab call {@link #performOk()} directly - they have to commit the port before opening the
-     * socket - and so reach this code without passing that refusal. Writing anyway would store an
-     * address the page has just told the user it will not accept.
+     * All five move together because they are only meaningful together: writing the local-source
+     * flag on its own would combine a new flag with a previously stored address and produce a
+     * pairing the user never chose.
      * </p>
      * <p>
-     * All five keys move together because they are only meaningful together: writing the
-     * local-source flag on its own would combine a new flag with a previously stored address and
-     * produce a pairing the user never chose. The rejected text stays in the field.
+     * The address is not checked here. {@link #performOk()} refuses it at the top, before anything
+     * is written, because the Start and Restart buttons on this tab call that method directly - they
+     * have to commit the port before opening the socket - and reach it without passing the page's
+     * own refusal. Checking in this method instead would have left everything written before it in
+     * the store, which is the half-applied save the refusal exists to prevent.
      * </p>
-     *
-     * @return <code>null</code> when the five keys were written, otherwise the reason the address
-     *         was refused
      */
-    private String writeUpkeep()
+    private void writeUpkeep()
     {
-        String problem = validateUpkeepSite();
-        if (problem != null)
-        {
-            return problem;
-        }
         store.setValue(PrefKeys.PREF_UPKEEP_ENABLED, upkeepEnabledCheck.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_SITE_URL, upkeepSiteText.getText().trim());
         store.setValue(PrefKeys.PREF_UPKEEP_INTERVAL_HOURS, upkeepIntervalSpinner.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_NOTIFY_POPUP, upkeepNotifyCheck.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_ALLOW_LOCAL_SITE, upkeepAllowLocalCheck.getSelection());
-        return null;
     }
 
     /**

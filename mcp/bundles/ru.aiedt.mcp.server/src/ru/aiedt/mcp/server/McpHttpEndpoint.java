@@ -499,6 +499,25 @@ public class McpHttpEndpoint
      */
     public synchronized void start(int serverPort) throws IOException
     {
+        startWithin(serverPort, portSpan());
+    }
+
+    /**
+     * Opens the endpoint, trying a run of consecutive ports from the one asked for.
+     * <p>
+     * Everything above the loop is done here rather than left to the caller, so that a start which
+     * binds nothing still leaves the catalogue full and the token adopted - which is why the
+     * fallback in {@link #restart(int)} comes through this method rather than straight to
+     * {@link #open(int)}.
+     * </p>
+     *
+     * @param serverPort the first TCP port to try
+     * @param span how many consecutive ports from it may be tried; one asks for that port alone,
+     *        with no neighbour to move to
+     * @throws IOException when every port in the span is taken, or no socket can be opened
+     */
+    private void startWithin(int serverPort, int span) throws IOException
+    {
         if (running)
         {
             stop();
@@ -523,7 +542,6 @@ public class McpHttpEndpoint
         // happened here, and each needed its port set by hand in preferences before it would start
         // - a step nobody remembers until a server silently is not there. A span of one restores
         // the old behaviour exactly, for anybody who has written the port into a client config.
-        int span = portSpan();
         // Computed wide and clamped, because 65535 + 10 is not a port: InetSocketAddress rejects it
         // with an unchecked exception, which would come out of a start() that had already opened
         // listeners on the way there.
@@ -903,9 +921,11 @@ public class McpHttpEndpoint
      * A restart is a stop and a start, and the port asked for can be held by another program, so the
      * failure would land on a server that is no longer listening at all. When the new port cannot be
      * taken, one attempt is made on the port the server was already on: the caller asked for a move,
-     * not for the endpoint to go away, and it has no other port to offer. That attempt failing too
-     * leaves the endpoint stopped, and the answer is the first refusal - it names the port that was
-     * asked for, where the fallback's own text would name a port the caller never set.
+     * not for the endpoint to go away, and it has no other port to offer. That attempt names that
+     * port alone - the port span belongs to the first start, where a neighbour is a better answer
+     * than no server, and not here, where taking a neighbour would leave a server that quietly is
+     * not where everything reads it to be. That attempt failing too leaves the endpoint stopped, and
+     * the answer names both ports.
      * </p>
      *
      * @param serverPort the TCP port to listen on
@@ -932,11 +952,17 @@ public class McpHttpEndpoint
             }
             try
             {
-                start(previousPort);
+                // Exactly the port it was on, with no neighbour to fall back to: a walk from there
+                // would take the next free port and come back reporting success, leaving the server
+                // one port away from where the caller, its own label and every configured client
+                // read it, with nothing on screen saying it had moved.
+                startWithin(previousPort, 1);
             }
             catch (IOException alsoRefused)
             {
-                throw refused;
+                throw new IOException("MCP server could not take port " + serverPort //$NON-NLS-1$
+                    + " and could not go back to " + previousPort + ": " //$NON-NLS-1$
+                    + alsoRefused.getMessage(), refused);
             }
             Activator.logWarning("MCP server could not take port " + serverPort //$NON-NLS-1$
                 + " and stayed on " + previousPort + ": " + refused.getMessage()); //$NON-NLS-1$

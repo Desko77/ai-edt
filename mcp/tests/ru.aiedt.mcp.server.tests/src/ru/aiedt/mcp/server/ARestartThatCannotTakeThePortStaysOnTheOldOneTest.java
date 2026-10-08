@@ -40,9 +40,9 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  * been on. The endpoint therefore goes back to that port, and only gives up when that is gone too.
  * </p>
  * <p>
- * The port span is held at one for the whole test: with the shipped span of ten, a restart that
- * cannot take the port asked for would quietly take the next one, which is the behaviour being
- * distinguished from the fallback here.
+ * The port span is held at one except where a test widens it on purpose: with the shipped span of
+ * ten, a start walks forward, and a fallback written as an ordinary start would quietly take the
+ * next free port and report that the server had stayed where it was.
  * </p>
  */
 public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
@@ -132,9 +132,9 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
         }
     }
 
-    /** The refusal that comes out names the port that was asked for, not the one fallen back to. */
+    /** The refusal that comes out names both ports, so whoever reads it knows what was tried. */
     @Test
-    public void theRefusalNamesThePortThatWasAskedFor() throws IOException
+    public void theRefusalNamesBothPorts() throws IOException
     {
         int wasOn = endpoint.getPort();
         int taken = LiveServer.freePort();
@@ -152,11 +152,58 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
             {
                 assertTrue("the answer has to name the port the caller set: " + refused.getMessage(), //$NON-NLS-1$
                     refused.getMessage().contains(String.valueOf(taken)));
-                assertFalse("and it must not name the port that was only fallen back to", //$NON-NLS-1$
+                assertTrue("and the port the server had been serving on: " + refused.getMessage(), //$NON-NLS-1$
                     refused.getMessage().contains(String.valueOf(wasOn)));
             }
         }
         assertFalse("nothing may be left listening", endpoint.isRunning()); //$NON-NLS-1$
+    }
+
+    /**
+     * Going back to the old port takes that port alone, not a run of ports starting at it.
+     * <p>
+     * With a span wider than one, a fallback that walked would find the free port next to the old
+     * one, bind it and return as though the move had been refused and the server left where it was:
+     * the strip, the registry and every client would name a port nothing is listening on.
+     * </p>
+     */
+    @Test
+    public void theFallbackDoesNotMoveTheServerToTheNextPort() throws IOException
+    {
+        int wasOn = endpoint.getPort();
+        // The span is the shipped kind of walk, set for this test alone: the port after the old one
+        // is left free on purpose, so a fallback that walked would take it and answer success.
+        store.setValue(PrefKeys.PREF_PORT_SPAN, 2);
+        int askedFor = wasOn + 2;
+        // Holding these two makes the first start fail over its whole span; the port between them
+        // stays free for the walk the fallback must not make.
+        endpoint.stop();
+        try (ServerSocket oldPort = hold(wasOn);
+            ServerSocket firstAsked = hold(askedFor);
+            ServerSocket secondAsked = hold(askedFor + 1))
+        {
+            try
+            {
+                endpoint.restart(askedFor);
+                fail("a fallback that cannot have the old port has to refuse, not move aside"); //$NON-NLS-1$
+            }
+            catch (IOException refused)
+            {
+                assertTrue("the answer has to name the port the caller set: " + refused.getMessage(), //$NON-NLS-1$
+                    refused.getMessage().contains(String.valueOf(askedFor)));
+                assertTrue("and the port the server was on: " + refused.getMessage(), //$NON-NLS-1$
+                    refused.getMessage().contains(String.valueOf(wasOn)));
+            }
+            assertFalse("nothing may be left listening", endpoint.isRunning()); //$NON-NLS-1$
+            // A bind that succeeds is the whole assertion: had the fallback moved aside, the port
+            // next to the old one would already be this process's and this would not open.
+            try (ServerSocket neighbour = new ServerSocket(wasOn + 1, 1,
+                InetAddress.getByName(LOOPBACK)))
+            {
+                assertTrue("the port next to the old one must still be free", //$NON-NLS-1$
+                    neighbour.isBound());
+            }
+        }
     }
 
     /**
