@@ -304,6 +304,78 @@ public class ProjectProblemsReader
         return countMatching(markerManager, checkRepository, filter, targetProjects(projectName)).value;
     }
 
+    /** What stands in for the object of a marker whose object data the environment has not computed. */
+    static final String OBJECT_NOT_COMPUTED = "(object data not computed)"; //$NON-NLS-1$
+
+    /** How many markers of the call in progress on this thread had no computed object data. */
+    private static final ThreadLocal<int[]> UNCOMPUTED_MARKERS = ThreadLocal.withInitial(() -> new int[1]);
+
+    /**
+     * Reads the object a marker is reported on, and survives a marker that cannot say.
+     * <p>
+     * The environment computes a marker's object data apart from the marker itself, and a marker
+     * can be met before that has happened - or after it failed: reading the presentation then
+     * throws from inside the marker. One such marker must not cost the caller every other row, so
+     * it is counted and given a placeholder: it matches no object or file filter, and is listed
+     * under the placeholder when nothing narrows the question.
+     * </p>
+     *
+     * @param marker the marker
+     * @return the presentation, or {@link #OBJECT_NOT_COMPUTED} when the marker cannot give one
+     */
+    static String presentationOf(Marker marker)
+    {
+        return presentationFrom(marker::getObjectPresentation);
+    }
+
+    /**
+     * Runs a read of a marker's object presentation and survives its failure.
+     *
+     * @param read the read; the seam a test drives without a marker of the environment
+     * @return what the read answered, or {@link #OBJECT_NOT_COMPUTED} when it threw
+     */
+    static String presentationFrom(java.util.function.Supplier<String> read)
+    {
+        try
+        {
+            return read.get();
+        }
+        catch (RuntimeException notComputed)
+        {
+            UNCOMPUTED_MARKERS.get()[0]++;
+            return OBJECT_NOT_COMPUTED;
+        }
+    }
+
+    /**
+     * The sentence an answer ends with when markers without computed object data were met.
+     *
+     * @param uncomputed how many such markers the call met
+     * @return the note, or an empty string when there were none
+     */
+    static String uncomputedNote(int uncomputed)
+    {
+        if (uncomputed <= 0)
+        {
+            return ""; //$NON-NLS-1$
+        }
+        return "\n\n_" + uncomputed + " marker(s) carry no computed object data: they match no object or " //$NON-NLS-1$ //$NON-NLS-2$
+            + "file filter and are listed as " + OBJECT_NOT_COMPUTED + " when nothing narrows the question. " //$NON-NLS-1$ //$NON-NLS-2$
+            + "project_admin operation=clean_project rebuilds that data._\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * What a failed read says: the exception's own text, or its class when it carries none.
+     *
+     * @param failure what was thrown
+     * @return a description that is never the word null
+     */
+    static String failureText(Throwable failure)
+    {
+        String message = failure.getMessage();
+        return message == null || message.isBlank() ? failure.getClass().getSimpleName() : message;
+    }
+
     /**
      * The full entry point.
      *
@@ -320,6 +392,27 @@ public class ProjectProblemsReader
      * @return the markdown report, or a {@code # Error} document
      */
     public static String getProjectErrors(String projectName, String severity, String checkId,
+        List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh,
+        boolean compact, boolean extraInfo)
+    {
+        int[] uncomputed = UNCOMPUTED_MARKERS.get();
+        uncomputed[0] = 0;
+        try
+        {
+            String answer = collectProjectErrors(projectName, severity, checkId, objects, limit, scope,
+                fileFilter, waitForRefresh, compact, extraInfo);
+            return answer + uncomputedNote(uncomputed[0]);
+        }
+        finally
+        {
+            UNCOMPUTED_MARKERS.remove();
+        }
+    }
+
+    /**
+     * The body of {@link #getProjectErrors}, without the count of markers that had no object data.
+     */
+    private static String collectProjectErrors(String projectName, String severity, String checkId,
         List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh,
         boolean compact, boolean extraInfo)
     {
@@ -437,7 +530,7 @@ public class ProjectProblemsReader
         }
         catch (Exception e)
         {
-            return "# Request Failed\n\nCould not collect project errors: " + e.getMessage(); //$NON-NLS-1$
+            return "# Request Failed\n\nCould not collect project errors: " + failureText(e); //$NON-NLS-1$
         }
     }
 
@@ -907,7 +1000,7 @@ public class ProjectProblemsReader
             line = -1;
         }
         return new ErrorInfo(checkCode, resolvedCheckId, hasDocumentation, marker.getMessage(),
-            marker.getObjectPresentation(), severityNative, line, charStart, charEnd, extraRendered);
+            presentationOf(marker), severityNative, line, charStart, charEnd, extraRendered);
     }
 
     /**
@@ -1631,7 +1724,7 @@ public class ProjectProblemsReader
                     return false;
                 }
             }
-            return matchesPresentation(marker.getObjectPresentation());
+            return matchesPresentation(presentationOf(marker));
         }
 
         boolean matchesEclipse(MarkerSeverity mapped, String sourceId, String presentation)
