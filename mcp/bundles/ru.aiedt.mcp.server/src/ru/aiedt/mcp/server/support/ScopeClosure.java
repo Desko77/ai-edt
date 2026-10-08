@@ -220,20 +220,7 @@ public final class ScopeClosure
             }
             Collection<IBmObject> roots = new ArrayList<>();
             Set<String> asked = new LinkedHashSet<>();
-            for (String name : names)
-            {
-                MdObject found = BmSubsystemHelper.resolveByFqn(configuration, name);
-                if (found instanceof IBmObject)
-                {
-                    roots.add((IBmObject)found);
-                    asked.add(name);
-                    closure.requested.add(name);
-                }
-                else
-                {
-                    closure.notFound.add(name);
-                }
-            }
+            resolveRoots(configuration, names, closure, roots, asked);
             if (roots.isEmpty())
             {
                 closure.cannotTell = "none of the names given is an object of this configuration"; //$NON-NLS-1$
@@ -243,31 +230,81 @@ public final class ScopeClosure
                 BmReferencesHelper.Direction.OUT, MAX_NODES, MAX_EDGES, depth, monitor::isCanceled);
             closure.truncated = found.truncated;
             closure.referencesFollowed = found.edges.size();
-            for (java.util.Map.Entry<String, IBmObject> reached : found.nodes.entrySet())
-            {
-                // The roots come back among the nodes; what a person weighs is what came WITH them.
-                if (asked.contains(reached.getKey()))
-                {
-                    continue;
-                }
-                // Metadata objects only. Measured: the walk also returns the model's own
-                // furniture - a module's context index, a Type node, a ContextDef - and those are
-                // not things a move carries. A list a person cannot act on is worse than a short
-                // one, because it reads as if the move were larger than it is.
-                if (reached.getValue() instanceof MdObject)
-                {
-                    closure.added.add(reached.getKey());
-                }
-                else
-                {
-                    closure.internalNodes++;
-                }
-            }
+            classifyReached(found, asked, closure);
         }
         catch (RuntimeException | LinkageError cannotWalk)
         {
             closure.cannotTell = "the references could not be followed: " + cannotWalk; //$NON-NLS-1$
             Activator.logDebug("scope closure failed: " + cannotWalk); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Resolves the names a caller asked for into the walk's roots, and into the keys their nodes
+     * are excluded by.
+     * <p>
+     * The exclusion keys are canonical. The resolver answers a name in any spelling of its type -
+     * a Russian one, a plural - while the walk's nodes are keyed by the canonical FQN the model
+     * reports, so a root asked for in another spelling is still that root, and the answer must not
+     * count it among what the move drags along.
+     * </p>
+     *
+     * @param configuration the configuration to resolve against.
+     * @param names the objects asked for, as the caller wrote them.
+     * @param closure the answer being built: {@code requested} and {@code notFound} are filled.
+     * @param roots the resolved roots, filled.
+     * @param asked the canonical keys of the roots, filled.
+     */
+    static void resolveRoots(Configuration configuration, List<String> names, Closure closure,
+        Collection<IBmObject> roots, Set<String> asked)
+    {
+        for (String name : names)
+        {
+            MdObject found = BmSubsystemHelper.resolveByFqn(configuration, name);
+            if (found instanceof IBmObject)
+            {
+                roots.add((IBmObject)found);
+                asked.add(MetadataTypeCatalog.normalizeFqn(name));
+                closure.requested.add(name);
+            }
+            else
+            {
+                closure.notFound.add(name);
+            }
+        }
+    }
+
+    /**
+     * Sorts the nodes the walk reached into what the answer reports.
+     * <p>
+     * The roots come back among the nodes; what a person weighs is what came WITH them, so a node
+     * asked for is skipped, not added. Metadata objects only. Measured: the walk also returns the
+     * model's own furniture - a module's context index, a Type node, a ContextDef - and those are
+     * not things a move carries. A list a person cannot act on is worse than a short one, because
+     * it reads as if the move were larger than it is.
+     * </p>
+     *
+     * @param found the nodes the walk reached, keyed by canonical FQN.
+     * @param asked the canonical keys of the roots, from {@link #resolveRoots}.
+     * @param closure the answer being built: {@code added} and {@code internalNodes} are filled.
+     */
+    static void classifyReached(BmReferencesHelper.BfsResult found, Set<String> asked,
+        Closure closure)
+    {
+        for (java.util.Map.Entry<String, IBmObject> reached : found.nodes.entrySet())
+        {
+            if (asked.contains(reached.getKey()))
+            {
+                continue;
+            }
+            if (reached.getValue() instanceof MdObject)
+            {
+                closure.added.add(reached.getKey());
+            }
+            else
+            {
+                closure.internalNodes++;
+            }
         }
     }
 }
