@@ -25,6 +25,7 @@ import org.eclipse.xtext.ui.editor.findrefs.IReferenceFinder;
 
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.bsl.model.FeatureEntry;
 import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
 
@@ -215,15 +216,16 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * Returns the set of modules called by {@code sourceModule}. Walks the
-     * BSL AST of {@code sourceModule} and collects the module of every method the module calls.
+     * Returns the set of modules called by {@code sourceModule}. Walks the BSL AST of
+     * {@code sourceModule} and collects the module of every call target it holds.
      * <p>
-     * Two links carry that relation in the BSL model and both are read: {@code Method.getCallees},
-     * which already holds the called methods, and the invocation sites, whose
-     * {@code FeatureEntry.getFeature} resolves to the same methods. A module whose links are not
-     * resolved answers an empty list, which is not the same as a module that calls nothing - the
-     * incoming lookup draws that distinction with {@code null}, and this direction has no
-     * equivalent failure to report, since the links are read off the module itself.
+     * Two links carry a call and both are read: {@code Method.getCallees}, which holds the called
+     * methods, and {@code FeatureEntry.getFeature} of a call site, which holds the same methods
+     * resolved - a call to a common module resolves to that module. Both are written by the
+     * module's type state, so a module whose state was never computed answers an empty list here
+     * although it calls other modules; the production source asks for that state first and reports
+     * its absence as {@code null}, which leaves the module out of the graph instead of showing it
+     * as one that calls nobody.
      * </p>
      */
     public static List<String> calleesOfModule(Module sourceModule)
@@ -271,6 +273,12 @@ public final class BslCallGraphHelper
      * points the other way - it holds the blocks that call the method, and those blocks live in the
      * calling modules - so following it here recorded a call in the wrong direction, from the
      * module being walked to the module that calls it.
+     * <p>
+     * A call site is read through the feature entry it carries. The entry's own reference to the
+     * target is transient, so the reference loop below skips it, and the access holding the entry
+     * reaches the entry by containment - which the loop skips as well. Without this branch a call
+     * between modules is invisible to the walk, and a module calling several of them reads as one
+     * that calls nobody.
      * </p>
      */
     private static Collection<EObject> referencedExternalEObjects(EObject node)
@@ -278,6 +286,23 @@ public final class BslCallGraphHelper
         if (node == null)
         {
             return Collections.emptyList();
+        }
+        if (node instanceof FeatureEntry)
+        {
+            List<EObject> resolved = new ArrayList<>(1);
+            try
+            {
+                EObject feature = ((FeatureEntry)node).getFeature();
+                if (feature != null)
+                {
+                    resolved.add(feature);
+                }
+            }
+            catch (Exception notResolved)
+            {
+                return Collections.emptyList();
+            }
+            return resolved;
         }
         if (node instanceof Method)
         {
@@ -520,7 +545,8 @@ public final class BslCallGraphHelper
 
         /**
          * @param module the module whose callees to list
-         * @return the called modules' FQNs, empty when the module calls nothing outside itself
+         * @return the called modules' FQNs, empty when the module calls nothing outside itself, or
+         *         {@code null} when the module's call targets could not be read
          */
         List<String> calleesOf(Module module);
 
@@ -558,6 +584,23 @@ public final class BslCallGraphHelper
         @Override
         public List<String> calleesOf(Module module)
         {
+            if (module == null)
+            {
+                return Collections.emptyList();
+            }
+            // A module's call targets are written by its type state: the resolved feature of a call
+            // site and the method's own callee list are both filled while that state is computed.
+            // Read without it, every call site answers no target, and a module that calls others is
+            // reported as one that calls nobody - so the state is asked for first, and a module
+            // whose state is not ready is left out of the graph rather than answered about.
+            BslModuleAccess.TypeState state = BslModuleAccess.resolveCrossReferences(module.eResource());
+            if (state != BslModuleAccess.TypeState.READY)
+            {
+                Activator.logWarning("BslCallGraphHelper: the call targets of a module are not read, " //$NON-NLS-1$
+                    + "its type state is " + state //$NON-NLS-1$
+                    + ", so its outgoing call edges are left out"); //$NON-NLS-1$
+                return null;
+            }
             return calleesOfModule(module);
         }
     }
@@ -574,7 +617,8 @@ public final class BslCallGraphHelper
      * <p>
      * Incoming edges are skipped when the caller lookup could not run: a failed lookup carries no
      * statement about who calls this module, so it emits nothing rather than an empty answer
-     * dressed as a graph.
+     * dressed as a graph. A failed callee lookup - a module whose call targets could not be read -
+     * is skipped the same way and for the same reason.
      * </p>
      *
      * @param module the module to walk
@@ -610,9 +654,13 @@ public final class BslCallGraphHelper
         }
         if (includeOutgoing)
         {
-            for (String callee : source.calleesOf(module))
+            List<String> callees = source.calleesOf(module);
+            if (callees != null)
             {
-                visitor.visit(new ModuleEdge(selfFqn, callee, 1));
+                for (String callee : callees)
+                {
+                    visitor.visit(new ModuleEdge(selfFqn, callee, 1));
+                }
             }
         }
     }
