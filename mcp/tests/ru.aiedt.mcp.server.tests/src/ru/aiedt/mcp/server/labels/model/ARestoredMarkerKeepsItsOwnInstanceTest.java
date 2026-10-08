@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.labels.model;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,5 +62,50 @@ public class ARestoredMarkerKeepsItsOwnInstanceTest
 
         assertEquals(1, store.getTags().size());
         assertNotNull(store.getMarkerByName("kept"));
+    }
+
+    /**
+     * A deletion rolled back keeps the surviving instance on its own name: restoring by list
+     * position would have re-bound that instance to the name of the marker the edit removed.
+     */
+    @Test
+    public void aDeletionRolledBackKeepsTheSurvivorOnItsName()
+    {
+        MarkerStore store = new MarkerStore();
+        store.addMarker(new Marker("First", "#111111", "one"));
+        store.addMarker(new Marker("Second", "#222222", "two"));
+        Marker second = store.getTags().get(1);
+        MarkerStore before = store.copy();
+
+        store.removeMarker("First");
+
+        store.restoreFrom(before);
+
+        assertEquals("Second", second.getName());
+        assertEquals("#222222", second.getColor());
+        assertEquals("two", second.getDescription());
+        assertSame(second, store.getMarkerByName("Second"));
+        assertNotNull(store.getMarkerByName("First"));
+    }
+
+    /** A reorder rolled back keeps every instance on its own name and the list on its own order. */
+    @Test
+    public void aReorderRolledBackKeepsEachInstanceOnItsName()
+    {
+        MarkerStore store = new MarkerStore();
+        store.addMarker(new Marker("First", "#111111", "one"));
+        store.addMarker(new Marker("Second", "#222222", "two"));
+        Marker first = store.getTags().get(0);
+        Marker second = store.getTags().get(1);
+        MarkerStore before = store.copy();
+
+        store.moveMarkerUp("Second");
+
+        store.restoreFrom(before);
+
+        assertEquals("First", first.getName());
+        assertEquals("Second", second.getName());
+        assertSame(first, store.getTags().get(0));
+        assertSame(second, store.getTags().get(1));
     }
 }

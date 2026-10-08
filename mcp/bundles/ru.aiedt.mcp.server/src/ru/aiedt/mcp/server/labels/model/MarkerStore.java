@@ -364,38 +364,87 @@ public class MarkerStore
      * Puts this storage back to the state of {@code source}, in place.
      * <p>
      * Used when a write to disk failed after the live storage was already changed, so the memory
-     * matches the file again. The marker list keeps its own instances - a dialog or a tree that
-     * holds one sees the fields return to the restored values rather than silently keeping the
-     * values of the edit that was rolled back - and their fields are reset from the source.
-     * Entries the edit added are dropped, entries it removed come back as fresh copies, and the
-     * assignment map is replaced with a copy, so later edits of {@code source} do not leak back
-     * in.
+     * matches the file again. A live instance stays the marker its name says it is: a restored
+     * marker whose name a live instance still carries keeps that instance - so a deletion or a
+     * reorder rolled back cannot re-bind a holder's instance to a different tag - with its fields
+     * reset from the source. A live name the source no longer carries names an instance the edit
+     * renamed or added: renamed ones take their restored name back, matched in list order to the
+     * restored markers that found no live instance under their own name, and the rest are
+     * dropped. The assignment map is replaced with a copy, so later edits of {@code source} do
+     * not leak back in.
      * </p>
      *
      * @param source the storage to restore from; not modified
      */
     public void restoreFrom(MarkerStore source)
     {
-        List<Marker> restored = source.copy().getTags();
-        for (int i = 0; i < restored.size(); i++)
+        MarkerStore snapshot = source.copy();
+        List<Marker> restored = snapshot.getTags();
+        Set<String> restoredNames = new HashSet<>();
+        for (Marker wanted : restored)
         {
-            Marker wanted = restored.get(i);
-            if (i < markers.size())
+            if (wanted != null && wanted.getName() != null)
             {
-                markers.get(i).setName(wanted.getName());
-                markers.get(i).setColor(wanted.getColor());
-                markers.get(i).setDescription(wanted.getDescription());
+                restoredNames.add(wanted.getName());
+            }
+        }
+        Map<String, Marker> liveByName = new HashMap<>();
+        List<Marker> renamedAway = new ArrayList<>();
+        for (Marker marker : markers)
+        {
+            if (marker == null || marker.getName() == null)
+            {
+                continue;
+            }
+            if (restoredNames.contains(marker.getName()))
+            {
+                liveByName.putIfAbsent(marker.getName(), marker);
             }
             else
             {
-                markers.add(new Marker(wanted.getName(), wanted.getColor(), wanted.getDescription()));
+                renamedAway.add(marker);
             }
         }
-        if (markers.size() > restored.size())
+        Marker[] bound = new Marker[restored.size()];
+        Set<Marker> reused = new HashSet<>();
+        List<Integer> unmatched = new ArrayList<>();
+        for (int i = 0; i < restored.size(); i++)
         {
-            markers.subList(restored.size(), markers.size()).clear();
+            Marker wanted = restored.get(i);
+            Marker live = wanted.getName() == null ? null : liveByName.get(wanted.getName());
+            if (live == null || !reused.add(live))
+            {
+                unmatched.add(Integer.valueOf(i));
+                continue;
+            }
+            live.setColor(wanted.getColor());
+            live.setDescription(wanted.getDescription());
+            bound[i] = live;
         }
-        this.assignments = source.copy().getAssignments();
+        int nextRenamed = 0;
+        for (Integer index : unmatched)
+        {
+            Marker wanted = restored.get(index.intValue());
+            if (nextRenamed < renamedAway.size())
+            {
+                Marker renamed = renamedAway.get(nextRenamed++);
+                renamed.setName(wanted.getName());
+                renamed.setColor(wanted.getColor());
+                renamed.setDescription(wanted.getDescription());
+                bound[index.intValue()] = renamed;
+            }
+            else
+            {
+                bound[index.intValue()] =
+                    new Marker(wanted.getName(), wanted.getColor(), wanted.getDescription());
+            }
+        }
+        markers.clear();
+        for (Marker marker : bound)
+        {
+            markers.add(marker);
+        }
+        this.assignments = snapshot.getAssignments();
     }
 
     /**
