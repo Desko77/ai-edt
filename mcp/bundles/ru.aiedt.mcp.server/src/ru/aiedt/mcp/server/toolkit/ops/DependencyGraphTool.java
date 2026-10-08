@@ -232,10 +232,19 @@ public class DependencyGraphTool implements IMcpTool
                 try
                 {
                     Collection<IBmObject> roots = resolveScopeRoots(level, scopeStr, params,
-                        configuration, tx, lookup);
+                        configuration, tx, lookup, modulesUnloaded);
                     if (roots == null)
                     {
-                        notFoundRef.set(rootNotFound(scopeStr, params, configuration));
+                        if (modulesUnloaded.isEmpty())
+                        {
+                            notFoundRef.set(rootNotFound(scopeStr, params, configuration));
+                        }
+                        else
+                        {
+                            // A root whose module would not load is a refused call, not a missing
+                            // one: the address is in the project and the module behind it was not.
+                            notBuiltRef.set(moduleLevelNotBuilt(modulesUnloaded));
+                        }
                         return null;
                     }
                     BmReferencesHelper.BfsResult result;
@@ -781,12 +790,13 @@ public class DependencyGraphTool implements IMcpTool
      * @param configuration the project configuration
      * @param tx the live transaction
      * @param lookup the module lookup, for the root a module FQN names
+     * @param unloaded the addresses whose file exists and whose model did not load, filled
      * @return the roots, possibly empty when the named root has no content, or <code>null</code>
      *         when the root the scope names is absent from the project
      */
-    private Collection<IBmObject> resolveScopeRoots(Level level, String scopeStr,
+    static Collection<IBmObject> resolveScopeRoots(Level level, String scopeStr,
         Map<String, String> params, Configuration configuration, IBmTransaction tx,
-        ModuleLookup lookup)
+        ModuleLookup lookup, List<String> unloaded)
     {
         List<IBmObject> roots = new ArrayList<>();
         switch (scopeStr.toLowerCase())
@@ -857,10 +867,16 @@ public class DependencyGraphTool implements IMcpTool
                 }
                 // A module FQN is not always answered by the top-object index; the loader is the
                 // route the module tools take, and the one this level resolves roots with.
-                Module module = lookup.byFqn(fqn).module;
-                if (module != null)
+                ModuleResolution resolution = lookup.byFqn(fqn);
+                if (resolution.module != null)
                 {
-                    roots.add((IBmObject)module);
+                    roots.add((IBmObject)resolution.module);
+                }
+                else if (resolution.addressPresent)
+                {
+                    // The address is in the project and the model behind it would not load: the
+                    // root is not missing, and the caller refuses with the loader's reason.
+                    unloaded.add(fqn);
                 }
                 return roots.isEmpty() ? null : roots;
             }
@@ -869,7 +885,7 @@ public class DependencyGraphTool implements IMcpTool
         }
     }
 
-    private void addAllTopMdObjects(Configuration configuration, List<IBmObject> roots)
+    private static void addAllTopMdObjects(Configuration configuration, List<IBmObject> roots)
     {
         for (Object item : configuration.eContents())
         {
@@ -934,7 +950,7 @@ public class DependencyGraphTool implements IMcpTool
         }
     }
 
-    private void addAllCommonModuleRoots(Configuration configuration, List<IBmObject> roots)
+    private static void addAllCommonModuleRoots(Configuration configuration, List<IBmObject> roots)
     {
         try
         {
@@ -953,7 +969,7 @@ public class DependencyGraphTool implements IMcpTool
         }
     }
 
-    private Subsystem findSubsystemByName(Configuration configuration, String name)
+    private static Subsystem findSubsystemByName(Configuration configuration, String name)
     {
         try
         {
