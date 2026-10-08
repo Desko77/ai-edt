@@ -2304,6 +2304,9 @@ public final class BmTemplateHelper
             outcome.columnsChanged =
                 applyColumnFormat(doc, fromCol, toCol, autoColumnWidth, columnWidth, widthWeight);
         }
+        // A format can make an empty cell one a reader lists - a turned text, a parameter fill -
+        // and the declared extent has to reach such a cell as it reaches a written one.
+        settleExtent(doc);
         return outcome;
     }
 
@@ -4269,6 +4272,14 @@ public final class BmTemplateHelper
             }
         }
         replaceMergesOverRange(doc, sourceFirst, targetFirst, count, outcome, Axis.COLUMN);
+        Columns declared = doc.getColumns();
+        if (declared != null && declared.getSize() > 0)
+        {
+            // As with rows: the target runs the document to its far end whether or not the source
+            // columns hold anything, so a copy of an empty declared column past the end still
+            // widens the declared set.
+            declared.setSize(Math.max(declared.getSize(), targetFirst + count));
+        }
         settleExtent(doc);
         outcome.lastColumn = lastColumnOf(doc);
         return outcome;
