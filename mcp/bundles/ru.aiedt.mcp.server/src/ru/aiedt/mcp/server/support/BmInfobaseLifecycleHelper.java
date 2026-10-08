@@ -206,15 +206,14 @@ public final class BmInfobaseLifecycleHelper
      *
      * @param project the project
      * @return the context and why it could not be read, when it could not; the default context
-     *         with no failure is a project without branches, a legitimate answer of its own
+     * with no failure is a project without branches, a legitimate answer of its own
      */
     public static ContextRead readAssociationContextOf(IProject project)
     {
         try
         {
-            IInfobaseAssociationContextProvider provider = ServiceAccess.get(IInfobaseAssociationContextProvider.class);
-            InfobaseAssociationContext context = provider == null ? null : provider.get(project);
-            return new ContextRead(context == null ? InfobaseAssociationContext.empty() : context, null);
+            return theProviderAnswered(
+                ServiceAccess.get(IInfobaseAssociationContextProvider.class), project);
         }
         catch (Exception e)
         {
@@ -222,6 +221,29 @@ public final class BmInfobaseLifecycleHelper
             Activator.logWarning("The association context of " + project.getName() + " was not read: " //$NON-NLS-1$ //$NON-NLS-2$
                 + why);
             return new ContextRead(InfobaseAssociationContext.empty(), why);
+        }
+    }
+
+    /**
+     * What one provider answered, with the read's own outcome beside it. Package-visible: the
+     * distinction between a failed read and a project without branches is decided here, and a
+     * test can hand in the provider it wants to see answered.
+     *
+     * @param provider the context provider, or <code>null</code> when there is none
+     * @param project the project
+     * @return the context it named, or the default one with the failure beside it
+     */
+    static ContextRead theProviderAnswered(IInfobaseAssociationContextProvider provider,
+        IProject project)
+    {
+        try
+        {
+            InfobaseAssociationContext context = provider == null ? null : provider.get(project);
+            return new ContextRead(context == null ? InfobaseAssociationContext.empty() : context, null);
+        }
+        catch (Exception e)
+        {
+            return new ContextRead(InfobaseAssociationContext.empty(), firstLine(msg(e)));
         }
     }
 

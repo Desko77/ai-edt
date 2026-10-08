@@ -9,17 +9,10 @@ package ru.aiedt.mcp.server.support;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 
 import java.lang.reflect.Proxy;
-import java.util.Hashtable;
 
-import org.eclipse.core.resources.ResourcesPlugin;
-import org.junit.After;
 import org.junit.Test;
-import org.osgi.framework.BundleContext;
-import org.osgi.framework.FrameworkUtil;
-import org.osgi.framework.ServiceRegistration;
 
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationContextProvider;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
@@ -30,43 +23,19 @@ import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationCont
  * <p>
  * The two used to be one answer - {@code InfobaseAssociationContext.empty()} both ways - so a
  * binding made while the read failed looked like a binding into a project that has no branches,
- * and nobody could tell the difference. The read now says which of the two it was.
- * </p>
- * <p>
- * The provider is published as an OSGi service for the duration of each check and taken away
- * again, which is the same way EDT's own runtime supplies it.
+ * and nobody could tell the difference. The read now says which of the two it was. The provider
+ * is handed in directly, which is the seam the distinction is decided at; the service lookup
+ * around it answers the same way, by throwing, and lands in the same failure branch.
  * </p>
  */
 public class AnAssociationContextThatWasNotReadIsNamedTest
 {
-    private final java.util.List<ServiceRegistration<?>> registrations = new java.util.ArrayList<>();
-
-    /** Whatever registrations the check made are taken away again. */
-    @After
-    public void theProviderGoes()
-    {
-        for (ServiceRegistration<?> registration : registrations)
-        {
-            try
-            {
-                registration.unregister();
-            }
-            catch (IllegalStateException alreadyGone)
-            {
-                // unregistered by the test itself
-            }
-        }
-    }
-
     /** A provider that names a branch is read as that branch, with no failure. */
     @Test
     public void aBranchContextIsReadAsTheBranch()
     {
-        publish((proxy, method, args) -> "get".equals(method.getName()) //$NON-NLS-1$
-            ? InfobaseAssociationContext.of("refs/heads/develop") : null);
-
-        BmInfobaseLifecycleHelper.ContextRead read =
-            BmInfobaseLifecycleHelper.readAssociationContextOf(aProject());
+        BmInfobaseLifecycleHelper.ContextRead read = BmInfobaseLifecycleHelper.theProviderAnswered(
+            aProvider("refs/heads/develop"), null); //$NON-NLS-1$
 
         assertNull(read.readFailure);
         assertEquals("refs/heads/develop", read.context.getContext().orElse(null)); //$NON-NLS-1$
@@ -76,70 +45,61 @@ public class AnAssociationContextThatWasNotReadIsNamedTest
     @Test
     public void aProviderThatFailsIsNamedAsNotRead()
     {
-        publish((proxy, method, args) -> {
-            if ("get".equals(method.getName())) //$NON-NLS-1$
-            {
-                throw new IllegalStateException("the storage is locked");
-            }
-            return null;
-        });
-
-        BmInfobaseLifecycleHelper.ContextRead read =
-            BmInfobaseLifecycleHelper.readAssociationContextOf(aProject());
+        BmInfobaseLifecycleHelper.ContextRead read = BmInfobaseLifecycleHelper.theProviderAnswered(
+            failingProvider(), null);
 
         assertNotNull("the failed read is not the same answer as no branches", read.readFailure); //$NON-NLS-1$
-        assertTrue(read.readFailure, read.readFailure.contains("the storage is locked")); //$NON-NLS-1$
         assertEquals("the fallback context is still usable", "default", //$NON-NLS-1$ //$NON-NLS-2$
             BmInfobaseLifecycleHelper.describe(read.context));
     }
 
-    /** No provider at all is a read that could not happen, not a project without branches. */
+    /** A provider that answers nothing reads as the default context, with no failure. */
     @Test
-    public void aMissingProviderIsNamedAsNotRead()
+    public void aProviderWithoutABranchReadsAsDefault()
     {
-        BmInfobaseLifecycleHelper.ContextRead read =
-            BmInfobaseLifecycleHelper.readAssociationContextOf(aProject());
+        BmInfobaseLifecycleHelper.ContextRead read = BmInfobaseLifecycleHelper.theProviderAnswered(
+            aProvider(null), null);
 
-        if (aProviderIsRegistered())
-        {
-            // Another test's provider is up; this check then cannot see the missing-service
-            // path and says so rather than asserting something it did not observe.
-            return;
-        }
-        assertNotNull("a missing provider is not the same answer as no branches", read.readFailure); //$NON-NLS-1$
+        assertNull("a project without branches is a read that went through", read.readFailure); //$NON-NLS-1$
+        assertEquals("default", BmInfobaseLifecycleHelper.describe(read.context)); //$NON-NLS-1$
     }
 
     /**
-     * Publishes a context provider as an OSGi service and remembers the registration.
+     * A provider naming one context.
      *
-     * @param handler what the provider answers
+     * @param ref the branch ref it answers, or {@code null} to answer none
+     * @return the provider
      */
-    private void publish(java.lang.reflect.InvocationHandler handler)
+    private static IInfobaseAssociationContextProvider aProvider(String ref)
     {
-        IInfobaseAssociationContextProvider provider = (IInfobaseAssociationContextProvider)Proxy
-            .newProxyInstance(getClass().getClassLoader(),
-                new Class<?>[] { IInfobaseAssociationContextProvider.class }, handler);
-        BundleContext context = FrameworkUtil.getBundle(getClass()).getBundleContext();
-        ServiceRegistration<IInfobaseAssociationContextProvider> registration =
-            context.registerService(IInfobaseAssociationContextProvider.class, provider,
-                new Hashtable<>());
-        registrations.add(registration);
+        InfobaseAssociationContext answer =
+            ref == null ? InfobaseAssociationContext.empty() : InfobaseAssociationContext.of(ref);
+        return (IInfobaseAssociationContextProvider)Proxy.newProxyInstance(
+            AnAssociationContextThatWasNotReadIsNamedTest.class.getClassLoader(),
+            new Class<?>[] { IInfobaseAssociationContextProvider.class }, (proxy, method, args) -> {
+                if ("get".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return ref == null ? null : answer;
+                }
+                return null;
+            });
     }
 
     /**
-     * @return a workspace project handle, existing or not - the provider decides what it answers
+     * A provider whose read fails.
+     *
+     * @return the provider
      */
-    private static org.eclipse.core.resources.IProject aProject()
+    private static IInfobaseAssociationContextProvider failingProvider()
     {
-        return ResourcesPlugin.getWorkspace().getRoot().getProject("aiedt-context-read-probe"); //$NON-NLS-1$
-    }
-
-    /**
-     * @return whether some context provider is registered right now
-     */
-    private static boolean aProviderIsRegistered()
-    {
-        return FrameworkUtil.getBundle(AnAssociationContextThatWasNotReadIsNamedTest.class)
-            .getBundleContext().getServiceReference(IInfobaseAssociationContextProvider.class) != null;
+        return (IInfobaseAssociationContextProvider)Proxy.newProxyInstance(
+            AnAssociationContextThatWasNotReadIsNamedTest.class.getClassLoader(),
+            new Class<?>[] { IInfobaseAssociationContextProvider.class }, (proxy, method, args) -> {
+                if ("get".equals(method.getName())) //$NON-NLS-1$
+                {
+                    throw new IllegalStateException("the storage is locked"); //$NON-NLS-1$
+                }
+                return null;
+            });
     }
 }

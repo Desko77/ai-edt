@@ -164,7 +164,7 @@ public class TheBundlesWordForAnExportTest
         Map<String, String> params = new LinkedHashMap<>();
         params.put("operation", "export_database_configuration"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
-        params.put("outputPath", "whatever.cf"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", "C:/temp/whatever.cf"); //$NON-NLS-1$ //$NON-NLS-2$
 
         String answer = new ConfigIoFacadeTool().execute(params);
 
@@ -184,7 +184,7 @@ public class TheBundlesWordForAnExportTest
         params.put("operation", "export_database_extension"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("extensionName", "YAxUnit"); //$NON-NLS-1$ //$NON-NLS-2$
-        params.put("outputPath", "whatever.cfe"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", "C:/temp/whatever.cfe"); //$NON-NLS-1$ //$NON-NLS-2$
 
         String answer = new ConfigIoFacadeTool().execute(params);
 
