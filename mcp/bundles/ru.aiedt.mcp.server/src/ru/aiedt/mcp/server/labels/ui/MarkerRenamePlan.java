@@ -8,7 +8,7 @@ package ru.aiedt.mcp.server.labels.ui;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.function.BiConsumer;
+import java.util.function.BiPredicate;
 
 import ru.aiedt.mcp.server.labels.model.Marker;
 
@@ -41,24 +41,27 @@ public final class MarkerRenamePlan
      * Renames the marker, then returns the assigned names with the old name replaced by the new one.
      * <p>
      * The name passed to {@code rename} is the one the marker had when this method started, before
-     * {@code rename} is allowed to change the instance.
+     * {@code rename} is allowed to change the instance. A rename that answers {@code false} kept
+     * the old name - the service refused it, the name is taken or the file would not write - and
+     * the assigned names are returned as they were, still pointing at the name the marker has, so
+     * a checkbox the user cleared still takes the marker off the object.
      * </p>
      *
      * @param marker the marker being edited; its name is read before {@code rename} runs
      * @param newName the name the dialog asked for
      * @param initiallyAssigned the names that were assigned when the dialog opened
      * @param rename applies the rename to the service; receives the name from before the update and the
-     *        new name
+     *        new name, and answers whether it was stored
      * @return the assigned names after the rename
      */
     public static Set<String> apply(Marker marker, String newName, Set<String> initiallyAssigned,
-        BiConsumer<String, String> rename)
+        BiPredicate<String, String> rename)
     {
         String nameBefore = marker.getName();
         MarkerRenamePlan plan = new MarkerRenamePlan(nameBefore, newName, initiallyAssigned);
-        if (rename != null)
+        if (rename == null || !rename.test(nameBefore, newName))
         {
-            rename.accept(nameBefore, newName);
+            return plan.initiallyAssigned;
         }
         return plan.assignedAfterRename();
     }

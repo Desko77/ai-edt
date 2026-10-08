@@ -177,8 +177,61 @@ public class TheToolListHasAWeightBudgetTest
      * now documents addressing an item by its name beside the number: a form the operation
      * accepts and the schema has to say. Measured 01.10: 186596.
      * </p>
+     * <p>
+     * And from 186760 to 187133 for the three row operations of mxl_workshop: count, formatFrom,
+     * and the sentences row, fromRow and toRow gained naming them. A row shift moves every holder
+     * of its number, and the schema is where a client learns the arguments exist. Measured 05.10:
+     * 187133.
+     * </p>
+     * <p>
+     * And from 187133 to 187572 for the three column operations of mxl_workshop: the sentences
+     * col, fromCol and toCol gained naming them, and the operation list and the facade
+     * description gained the three names. A column shift moves every holder of its number the
+     * same way. Measured 05.10: 187572.
+     * </p>
+     * <p>
+     * And from 187572 to 187873 for delete_merge_restore_point on git: the facade description
+     * gained the deletion and the rule that a file matching the point is not rewritten, the
+     * operation list gained the name, and pointId names the deletion beside the restore. The git
+     * entry stayed inside its per-tool headroom; the sum crossed the document. Measured 06.10:
+     * 187873.
+     * </p>
+     * <p>
+     * And from 187873 to 188169 for updateBeforeLaunch on launch_debugger and yaxunit_tests: under
+     * a preset that disabled update_database an omitted argument now launches without updating,
+     * and the schema is where a client learns the default bent before its call is refused or its
+     * answer carries SKIPPED_BY_PRESET. Both entries stayed inside their per-tool headroom; the
+     * sum crossed the document. Measured 07.10: 188169.
+     * </p>
+     * <p>
+     * And from 188169 to 188223 for the same sentence on the run side: every answer of a run-mode
+     * YAXUnit call names the preset-dropped update in databaseUpdate, and the facade schema says
+     * so beside the debug one. The yaxunit_tests entry stayed inside its per-tool headroom; the
+     * sum crossed the document. Measured 07.10: 188223.
+     * </p>
+     * <p>
+     * And from 188223 to 188695 for itemPath, mode and the commands sentence on edit_metadata:
+     * set_excluded_commands takes the address of the form object whose exclusions it changes, the
+     * three modes it applies them under, and the names themselves. The edit_metadata entry stayed
+     * inside its per-tool headroom; the sum crossed the document. Measured 08.10: 188695.
+     * </p>
+     * <p>
+     * And from 188695 to 191599 for tag_admin: the tag facade and its schema joined the list
+     * (measured 08.10: 2904). Its five write doors are hidden under Canonical and weigh
+     * nothing here.
+     * </p>
+     * <p>
+     * And from 191599 to 191852 for childName and name on extension_workshop: borrow_child reads
+     * the child's name from either spelling, and the schema is the only place a client learns
+     * a parameter exists. Measured 08.10: 191852.
+     * </p>
+     * <p>
+     * And from 191852 to 192404 for yaxunitUnsafeMode on yaxunit_tests: installYaxunit lowers the
+     * two safety flags of the extension it installs, and the schema is where a caller learns that
+     * before the call writes to the infobase. Measured 08.10: 192404.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 186760;
+    private static final int DOCUMENT_BUDGET = 192404;
 
     private LiveServer server;
 
@@ -365,8 +418,8 @@ public class TheToolListHasAWeightBudgetTest
         // (measured 29.09: 7998).
         BUDGETS.put("launch_debugger", Integer.valueOf(7998)); //$NON-NLS-1$
         // The entry names the operations and the model; what each argument takes is the schema's
-        // to say. Measured 7813 bytes.
-        BUDGETS.put("mxl_workshop", Integer.valueOf(7813)); //$NON-NLS-1$
+        // to say. Measured 05.10, with the column operations beside the row ones: 8769.
+        BUDGETS.put("mxl_workshop", Integer.valueOf(8769)); //$NON-NLS-1$
         BUDGETS.put("diagnostics", Integer.valueOf(3532)); //$NON-NLS-1$
         BUDGETS.put("project_admin", Integer.valueOf(3281)); //$NON-NLS-1$
         BUDGETS.put("edit_form", Integer.valueOf(3168)); //$NON-NLS-1$
@@ -384,7 +437,10 @@ public class TheToolListHasAWeightBudgetTest
         // infobase is updated before the launch and that a refused update starts nothing. The two
         // hidden aliases carry the same declarations and are not weighed: tools/list under the
         // default preset does not advertise them. Measured 29.09: 2639.
-        BUDGETS.put("yaxunit_tests", Integer.valueOf(2639)); //$NON-NLS-1$
+        // And to 3366 for yaxunitUnsafeMode, which a caller has to read before installYaxunit lowers
+        // the two safety flags of the extension, and for the sentence that says an unnamed update
+        // is dropped under a preset that disabled update_database. Measured 08.10: 3366.
+        BUDGETS.put("yaxunit_tests", Integer.valueOf(3366)); //$NON-NLS-1$
         // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains
@@ -396,6 +452,9 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("diff_module", Integer.valueOf(1816)); //$NON-NLS-1$
         BUDGETS.put("get_metadata_objects", Integer.valueOf(1802)); //$NON-NLS-1$
         BUDGETS.put("workspace_marks", Integer.valueOf(1771)); //$NON-NLS-1$
+        // First weigh of tag_admin: five operations, the tag node each answer carries, and
+        // the two places the refusals are named. Measured 08.10: 2904.
+        BUDGETS.put("tag_admin", Integer.valueOf(2904)); //$NON-NLS-1$
         BUDGETS.put("get_form_screenshot", Integer.valueOf(1748)); //$NON-NLS-1$
         BUDGETS.put("read_event_log", Integer.valueOf(1673)); //$NON-NLS-1$
         BUDGETS.put("get_metadata_details", Integer.valueOf(1613)); //$NON-NLS-1$

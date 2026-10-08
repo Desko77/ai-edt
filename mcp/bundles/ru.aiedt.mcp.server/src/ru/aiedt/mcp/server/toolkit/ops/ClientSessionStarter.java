@@ -137,9 +137,9 @@ public class ClientSessionStarter
      * Names the database update this start runs before the client starts, so the road weighs the
      * call by it.
      * <p>
-     * The update runs only when {@code updateBeforeLaunch} asks for it (default false, read exactly
-     * as {@link #execute} reads it), and it is the work {@code update_database} is weighed for.
-     * The client itself, which outlives the call, is deliberately not weighed.
+     * The update runs only when {@code updateBeforeLaunch} asks for it (default false, decided
+     * exactly as {@link #execute} decides it), and it is the work {@code update_database} is
+     * weighed for. The client itself, which outlives the call, is deliberately not weighed.
      * </p>
      *
      * @param arguments the call arguments, as the client sent them; may be <code>null</code>
@@ -149,8 +149,7 @@ public class ClientSessionStarter
     @Override
     public String routesTo(Map<String, String> arguments)
     {
-        return JsonUtils.extractBooleanArgument(arguments, "updateBeforeLaunch", false) //$NON-NLS-1$
-            ? "update_database" : null; //$NON-NLS-1$
+        return DebugSessionStarter.launchUpdate(arguments, false).update ? "update_database" : null; //$NON-NLS-1$
     }
 
     @Override
@@ -161,7 +160,8 @@ public class ClientSessionStarter
             String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
             String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
             String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
-            boolean updateFirst = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", false); //$NON-NLS-1$
+            DebugSessionStarter.LaunchUpdate updateFirst = DebugSessionStarter.launchUpdate(
+                JsonUtils.extractBooleanArgumentNullable(params, "updateBeforeLaunch"), false); //$NON-NLS-1$
             boolean allowSecond = JsonUtils.extractBooleanArgument(params, "allowSecondSession", false); //$NON-NLS-1$
             String startupOption = JsonUtils.extractStringArgument(params, "startupOption"); //$NON-NLS-1$
             if (startupOption != null && startupOption.trim().isEmpty())
@@ -295,12 +295,13 @@ public class ClientSessionStarter
      * @param launchManager the launch manager
      * @param config the resolved configuration
      * @param projectName the requested project, used only as a fallback for the update
-     * @param updateFirst whether to update the infobase before launching
+     * @param updateFirst the decision about the pre-launch infobase update (default false here)
      * @param allowSecond whether a second session is permitted
      * @return the JSON reply
      */
     private static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
-        String projectName, boolean updateFirst, boolean allowSecond, String startupOption,
+        String projectName, DebugSessionStarter.LaunchUpdate updateFirst, boolean allowSecond,
+        String startupOption,
         String waitForEndpoint, Integer endpointTimeout, ClientLaunchMode mode, boolean choiceGiven,
         boolean created, IProject project)
     {
@@ -341,7 +342,17 @@ public class ClientSessionStarter
                 .put("configuration", config.getName()) //$NON-NLS-1$
                 .put("applicationId", resolvedAppId); //$NON-NLS-1$
 
-            if (updateFirst)
+            if (updateFirst.refusal != null)
+            {
+                // An update the active preset forbids is refused before the configuration is read
+                // and the application resolved; a call that names nothing updates nothing here.
+                return ToolResult.error(updateFirst.refusal)
+                    .put("configuration", config.getName()) //$NON-NLS-1$
+                    .put("applicationId", resolvedAppId) //$NON-NLS-1$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
+            if (updateFirst.update)
             {
                 // The project comes from the configuration that was actually resolved, not from the
                 // request. A name given as launchConfigurationName wins the resolution, so a

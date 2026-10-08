@@ -250,11 +250,16 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // only previews (measured 29.09: 1553).
         // 1854 for the line endings revert_file names, the editor note on dryRun and the file limit
         // of show_file_changes, and 143 more for pointId of restore_merge_point.
-        PROSE.put("git", Integer.valueOf(1997));
+        // 2085 measured 06.10: pointId names delete_merge_restore_point beside the restore.
+        PROSE.put("git", Integer.valueOf(2085));
         // cluster_admin: one sentence per argument of six operations - the tree the read answers,
         // the two places a create hangs a cluster, the move's model check and collection rule, and
         // the dry run that still passes the write door (measured 30.09: 1590).
         PROSE.put("cluster_admin", Integer.valueOf(1590));
+        // tag_admin: one sentence per argument of five operations - the create, update and delete
+        // of a tag, the assignment batch and its removal, the dry run that still passes the write
+        // door (measured 08.10: 1587).
+        PROSE.put("tag_admin", Integer.valueOf(1587));
         // Grown to 3747: the intent sentence says a changing run records a restore point first.
         PROSE.put("compare_three_way", Integer.valueOf(3747));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
@@ -312,9 +317,13 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // way to tell them apart.
         // Raised by 534 for breakpointEnabled on set_breakpoint_state and replaceModuleSet on
         // add_breakpoint (measured 29.09: 4720).
-        PROSE.put("launch_debugger", Integer.valueOf(4720));
-        // Each argument is one sentence naming the unit the call takes. Measured 4039 bytes.
-        PROSE.put("mxl_workshop", Integer.valueOf(4039));
+        // Raised by 249 for updateBeforeLaunch naming the preset that launches an omitted update
+        // without updating and refuses an explicit one (measured 07.10: 4969).
+        PROSE.put("launch_debugger", Integer.valueOf(4969));
+        // Each argument is one sentence naming the unit the call takes, and the row and column
+        // operations share the sentences of count, formatFrom and the coordinate pairs. Measured
+        // 05.10: 4820.
+        PROSE.put("mxl_workshop", Integer.valueOf(4820));
         PROSE.put("diagnostics", Integer.valueOf(2058));
         PROSE.put("edit_form", Integer.valueOf(2024));
         PROSE.put("project_admin", Integer.valueOf(1767));
@@ -336,7 +345,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised from 1077 to 1123 for reuseRecent on the facade: the flag that takes a report of a
         // run finished within the last five minutes, whose default (false) is the whole point of it
         // - a second call after a delivered report runs the tests again (measured 29.09: 1123).
-        PROSE.put("yaxunit_tests", Integer.valueOf(1123));
+        // Raised by 121 for updateBeforeLaunch naming the preset that launches an omitted update
+        // without updating (measured 07.10: 1244), and by 54 more for the sentence saying every
+        // answer of the run names the drop in databaseUpdate (measured 07.10: 1298).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1581));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -627,6 +639,48 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And for the itemPath of dcs_workshop remove_settings_item, which now documents
      * addressing an item by its name beside the number. Measured 01.10: 103553.
      * </p>
+     * <p>
+     * And for the three row operations of mxl_workshop: the sentences of count, formatFrom, row,
+     * fromRow and toRow. Measured 05.10: 103953.
+     * </p>
+     * <p>
+     * And for the three column operations of the same facade: the sentences col, fromCol and toCol
+     * gained, and count and formatFrom gained the column half of theirs. Measured 05.10: 104346.
+     * </p>
+     * <p>
+     * And by 88 for pointId on git: delete_merge_restore_point names the point it deletes, and the
+     * sentence saying so sits on the argument both operations share. Measured 06.10: 104434.
+     * </p>
+     * <p>
+     * And by 296 for updateBeforeLaunch on launch_debugger and yaxunit_tests: under a preset that
+     * disabled update_database an omitted argument launches without updating, and the sentence a
+     * client reads before that happens is the schema's. The two hidden aliases carry the same
+     * sentence and are not weighed here. Measured 07.10: 104730.
+     * </p>
+     * <p>
+     * And by 54 for the same sentence on the run side: every answer of a YAXUnit run names the
+     * preset-dropped update in databaseUpdate, and the facade schema says so beside the debug one.
+     * Measured 07.10: 104784.
+     * </p>
+     * <p>
+     * And by 384 for itemPath, mode and the commands sentence on edit_metadata:
+     * set_excluded_commands names the form object whose exclusions it changes, the three modes it
+     * applies them under, and the names themselves as standard command names of that object.
+     * Measured 08.10: 105168.
+     * </p>
+     * <p>
+     * And for tag_admin joining the list with the prose of its five operations' arguments.
+     * Measured 08.10: 106755.
+     * </p>
+     * <p>
+     * And by 164 for childName and name on extension_workshop: borrow_child reads the child's
+     * name from either spelling, and a client could not discover either. Measured 08.10: 106919.
+     * </p>
+     * <p>
+     * And by 283 for yaxunitUnsafeMode on yaxunit_tests: the schema says the default, the fresh and
+     * already-installed paths, the single write and control read, the mismatch refusal, and the
+     * explicit opt-out. Measured 08.10: 107202.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 103640;
+    private static final int DOCUMENT_PROSE = 107202;
 }

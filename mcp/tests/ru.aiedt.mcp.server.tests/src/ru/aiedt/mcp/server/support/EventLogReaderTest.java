@@ -55,7 +55,21 @@ public class EventLogReaderTest
         + "{\"P\",\n{2,\n{\"B\",0}\n}\n},\"\",0,0,0,11,0,\n{0}\n},\n"
         + "{20260227090000,N,\n{0,0},2,1,1,8,2,I,\"\",0,\n{\"U\"},\"\",0,0,0,12,0,\n{0}\n}";
 
+    private static final String MIXED_SEVERITIES = "1CV8LOG(ver 2.0)\n"
+        + "e9cf90cc-ef43-4405-8422-ccd0250ccb6c\n\n"
+        + "{20260228090000,N,\n{0,0},1,1,1,7,1,E,\"\",0,\n{\"U\"},\"\",0,0,0,11,0,\n{0}\n},\n"
+        + "{20260228091000,N,\n{0,0},1,1,1,7,1,N,\"\",0,\n{\"U\"},\"\",0,0,0,11,0,\n{0}\n},\n"
+        + "{20260228092000,N,\n{0,0},1,1,1,7,3,I,\"\",0,\n{\"U\"},\"\",0,0,0,11,0,\n{0}\n}";
+
     private Path infobase;
+
+    /**
+     * @return the log directory of the fixture infobase
+     */
+    private Path logDir()
+    {
+        return infobase.resolve(EventLogReader.LOG_DIRECTORY);
+    }
 
     /**
      * Lays out an infobase directory with a log in it.
@@ -166,6 +180,41 @@ public class EventLogReaderTest
         fromDay.from = "2026-02-26"; //$NON-NLS-1$
         assertEquals("a short date should mean that day from midnight", //$NON-NLS-1$
             2, EventLogReader.read(infobase, fromDay).rows.size());
+    }
+
+    /**
+     * The severity filter matches one severity exactly, in either of its two spellings.
+     *
+     * @throws IOException when the record file cannot be written.
+     */
+    @Test
+    public void theSeverityFilterMatchesExactly() throws IOException
+    {
+        Files.write(logDir().resolve("20260228090000.lgp"), MIXED_SEVERITIES //$NON-NLS-1$
+            .getBytes(StandardCharsets.UTF_8));
+
+        EventLogReader.Query byErrorLetter = new EventLogReader.Query();
+        byErrorLetter.severity = "E"; //$NON-NLS-1$
+        EventLogReader.Result errors = EventLogReader.read(infobase, byErrorLetter);
+        assertEquals("one record is an Error", 1, errors.rows.size()); //$NON-NLS-1$
+        assertEquals("Error", errors.rows.get(0).get("severity")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        EventLogReader.Query byNoteName = new EventLogReader.Query();
+        byNoteName.severity = "Note"; //$NON-NLS-1$
+        EventLogReader.Result notes = EventLogReader.read(infobase, byNoteName);
+        assertEquals("one record is a Note", 1, notes.rows.size()); //$NON-NLS-1$
+        assertEquals("Note", notes.rows.get(0).get("severity")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        EventLogReader.Query byLowercaseName = new EventLogReader.Query();
+        byLowercaseName.severity = "error"; //$NON-NLS-1$
+        EventLogReader.Result lowercase = EventLogReader.read(infobase, byLowercaseName);
+        assertEquals("the spelling may be either case", 1, lowercase.rows.size()); //$NON-NLS-1$
+
+        EventLogReader.Query byNoteLetter = new EventLogReader.Query();
+        byNoteLetter.severity = "N"; //$NON-NLS-1$
+        EventLogReader.Result byLetter = EventLogReader.read(infobase, byNoteLetter);
+        assertEquals("a letter that sits inside other names still keeps only its own severity", //$NON-NLS-1$
+            1, byLetter.rows.size());
     }
 
     /** The limit stops the answer and says it did, rather than looking complete. */

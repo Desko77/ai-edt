@@ -134,6 +134,26 @@ public class Cluster
     }
 
     /**
+     * Returns a copy of this cluster that shares nothing with it.
+     * <p>
+     * The service hands clusters it serves to callers that read them outside its lock - the
+     * Navigator on the display thread, the tools on a call thread - while a writer may be editing
+     * this one under the write lock. A copy cannot see those edits, so a reader holding one cannot
+     * collide with them. What a copy shows is a snapshot: changes to this cluster do not reach it.
+     * </p>
+     *
+     * @return the detached copy
+     */
+    public Cluster detachedCopy()
+    {
+        Cluster copy = new Cluster(name, path);
+        copy.setDescription(description);
+        copy.setOrder(order);
+        copy.setChildren(children);
+        return copy;
+    }
+
+    /**
      * Sets the sort order.
      *
      * @param order the new order
@@ -209,6 +229,33 @@ public class Cluster
     public boolean removeChild(String objectFqn)
     {
         return children.remove(objectFqn);
+    }
+
+    /**
+     * Removes a held name and every held name nested under it.
+     * <p>
+     * A nested name is one that continues past {@code objectFqn} with a dot, the same rule
+     * {@link #renameChildTree(String, String)} rewrites by; a sibling that merely shares a prefix
+     * is left alone. This is what a delete has to do: the children of a deleted object go with it.
+     * </p>
+     *
+     * @param objectFqn the fully qualified name of the object
+     * @return <code>true</code> if the cluster held that name or a nested one
+     */
+    public boolean removeChildTree(String objectFqn)
+    {
+        if (objectFqn == null || objectFqn.isEmpty())
+        {
+            return false;
+        }
+        String nestedPrefix = objectFqn + "."; //$NON-NLS-1$
+        boolean removed = children.removeIf(child -> child != null
+            && (child.equals(objectFqn) || child.startsWith(nestedPrefix)));
+        if (removed)
+        {
+            children = new ArrayList<>(new LinkedHashSet<>(children));
+        }
+        return removed;
     }
 
     /**

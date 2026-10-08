@@ -40,7 +40,8 @@ public class EveryFacadeAnswersAboutItsOwnOperationsTest
     private static final Pattern CATALOGUED = Pattern.compile("\\*\\*([a-z0-9_]+)\\*\\*");
 
     /** How many tools answer a catalogue of their own operations. Counted, not estimated. */
-    private static final int EXPECTED_FACADES = 12;
+    // tag_admin joined on 2026-10-08.
+    private static final int EXPECTED_FACADES = 13;
 
     private McpToolCatalog registry;
 

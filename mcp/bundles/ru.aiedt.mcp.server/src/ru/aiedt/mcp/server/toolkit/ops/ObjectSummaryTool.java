@@ -252,6 +252,13 @@ public class ObjectSummaryTool implements IMcpTool
         return -1;
     }
 
+    /**
+     * Counts an object's validation errors by calling {@code get_project_errors}.
+     *
+     * @param projectName the project the errors are counted in
+     * @param objectFqn the object the errors are counted for
+     * @return the count, or -1 when the delegate tool is not registered
+     */
     private static int delegateErrorCount(String projectName, String objectFqn)
     {
         IMcpTool errs = McpToolCatalog.getInstance().getTool("get_project_errors"); //$NON-NLS-1$
@@ -259,6 +266,27 @@ public class ObjectSummaryTool implements IMcpTool
         {
             return -1;
         }
+        return errorCountFrom(errs, projectName, objectFqn);
+    }
+
+    /**
+     * Reads the error count out of a {@code get_project_errors} answer.
+     * <p>
+     * Package-private with the delegate handed in so the parsing is testable without the live
+     * catalogue. Exactly two answers carry a count - {@code No Errors Found} and
+     * {@code **Found:** N}. Anything else means the call itself did not produce a count: reading
+     * table rows off a failure text yielded zero, which is indistinguishable from a clean object,
+     * so an answer without a count is the same unknown (-1) the reference count next to it
+     * already uses.
+     * </p>
+     *
+     * @param errs the {@code get_project_errors} tool
+     * @param projectName the project the errors are counted in
+     * @param objectFqn the object the errors are counted for
+     * @return the count, or -1 when the delegate answered nothing that carries one
+     */
+    static int errorCountFrom(IMcpTool errs, String projectName, String objectFqn)
+    {
         Map<String, String> p = new LinkedHashMap<>();
         p.put("projectName", projectName); //$NON-NLS-1$
         p.put("objects", "[\"" + objectFqn + "\"]"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -270,8 +298,9 @@ public class ObjectSummaryTool implements IMcpTool
             {
                 return -1;
             }
-            // get_project_errors emits "Found: N" or "No Errors Found"
-            if (md.contains("No Errors Found")) //$NON-NLS-1$
+            // The problems reader heads an empty result "# Nothing Found"; the older wording is
+            // kept for an answer that still carries it.
+            if (md.contains("No Errors Found") || md.stripLeading().startsWith("# Nothing Found")) //$NON-NLS-1$ //$NON-NLS-2$
             {
                 return 0;
             }
@@ -280,19 +309,7 @@ public class ObjectSummaryTool implements IMcpTool
             {
                 return Integer.parseInt(m.group(1));
             }
-            // Fallback: count table rows starting with "|" (after header)
-            int count = 0;
-            for (String line : md.split("\\n")) //$NON-NLS-1$
-            {
-                String trim = line.trim();
-                if (trim.startsWith("|") && !trim.startsWith("|--") //$NON-NLS-1$ //$NON-NLS-2$
-                    && !trim.startsWith("| Description")) //$NON-NLS-1$
-                {
-                    count++;
-                }
-            }
-            // Subtract 1 row for header pattern mismatch tolerance
-            return count > 0 ? count - 1 : 0;
+            return -1;
         }
         catch (Exception ignored)
         {

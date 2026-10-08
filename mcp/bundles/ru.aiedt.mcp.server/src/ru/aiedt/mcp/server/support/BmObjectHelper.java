@@ -146,6 +146,50 @@ public final class BmObjectHelper
         public String fqn;
         public String message;
         public Map<String, Object> tags = new LinkedHashMap<>();
+
+        /**
+         * Whether the action answered {@link Unchanged} - the model did not move - so the write
+         * owes the owner no export.
+         */
+        public boolean modelUnchanged;
+    }
+
+    /**
+     * The answer of a writing action that changed nothing in the model. The write entry skips the
+     * owner export for it: an export of an owner whose model did not move rewrites the file it
+     * came from and waits out a synchronization that has nothing to carry, and the warnings that
+     * export can leave on an answer would describe a write that never happened. An action may
+     * answer with it only when nothing it touched moved - a get-or-create that attached a fresh
+     * object changed the model even when the edit the caller named did not take place.
+     */
+    public static final class Unchanged
+    {
+        private final String message;
+
+        /**
+         * @param message the answer the caller reads, worded as the operation's own
+         */
+        private Unchanged(String message)
+        {
+            this.message = message;
+        }
+
+        /**
+         * The unchanged answer of an operation whose own wording the caller keeps reading.
+         *
+         * @param message the answer the caller reads, worded as the operation's own
+         * @return the marker the write entry skips the owner export for
+         */
+        public static Unchanged of(String message)
+        {
+            return new Unchanged(message);
+        }
+
+        @Override
+        public String toString()
+        {
+            return message;
+        }
     }
 
     /**
@@ -330,6 +374,21 @@ public final class BmObjectHelper
         MdObjectAction action)
     {
         return executeOnObject(project, ownerFqn, true, action, null, false, false);
+    }
+
+    /**
+     * Whether a finished write still owes the owner an export: it succeeded, it was not a preview,
+     * and its action did not answer that the model did not move. The unchanged answer owes nothing
+     * - an export of an owner whose model did not move rewrites the file it came from and waits out
+     * a synchronization that has nothing to carry.
+     *
+     * @param r the result of the write
+     * @param dryRun whether the call asked for a preview
+     * @return whether the owner export runs
+     */
+    static boolean exportOwed(Result r, boolean dryRun)
+    {
+        return r.ok && !dryRun && !r.modelUnchanged;
     }
 
     /**
@@ -574,6 +633,10 @@ public final class BmObjectHelper
                         {
                             r.message = actionResult.toString();
                         }
+                        if (actionResult instanceof Unchanged)
+                        {
+                            r.modelUnchanged = true;
+                        }
                         if (dryRun)
                         {
                             // Throw to abort the transaction - the model preserves no state.
@@ -645,8 +708,9 @@ public final class BmObjectHelper
         // add_template, set_object_property, ...) live only in the BM in-memory
         // index - they are visible to get_metadata_details and to validators,
         // but the parent .mdo file on disk does not reflect them. dryRun is
-        // skipped because the transaction was rolled back.
-        if (r.ok && !dryRun)
+        // skipped because the transaction was rolled back, and an action that
+        // answered Unchanged is skipped because there is no mutation to carry.
+        if (exportOwed(r, dryRun))
         {
             try
             {
@@ -1477,18 +1541,37 @@ public final class BmObjectHelper
      */
     public static String setProperty(EObject obj, String propertyName, Object value)
     {
+        return setProperty(obj, propertyName, value, null);
+    }
+
+    /**
+     * Project-aware variant of {@link #setProperty(EObject, String, Object)}:
+     * {@code fillValue} on a reference-typed attribute resolves its enum value,
+     * predefined item or empty reference against the project's configuration,
+     * which needs the project the attribute lives in. Every other property
+     * behaves exactly as in the project-less overload.
+     *
+     * @param project the owning project; may be {@code null}
+     * @return {@code null} on success or an error message
+     */
+    public static String setProperty(EObject obj, String propertyName, Object value,
+        org.eclipse.core.resources.IProject project)
+    {
         if (obj == null || propertyName == null || propertyName.isEmpty())
         {
             return "owner and propertyName are required"; //$NON-NLS-1$
         }
         // fillValue is an mcore.Value EObject (not a scalar) whose subtype
-        // depends on the attribute's own primitive type - delegate to the
-        // defined-type helper which builds the matching Value (Boolean / Number
-        // / String / Undefined). coerceValue cannot do this: it sees only the
-        // setFillValue(Value) parameter type, not the attribute's type.
+        // depends on the attribute's own type - delegate to the defined-type
+        // helper which builds the matching Value (Boolean / Number / String /
+        // Date / Undefined / a ReferenceValue holding an enum value, a
+        // predefined item or the type's EmptyRef). coerceValue cannot do this:
+        // it sees only the setFillValue(Value) parameter type, not the
+        // attribute's type.
         if ("fillValue".equalsIgnoreCase(propertyName)) //$NON-NLS-1$
         {
-            return BmDefinedTypeHelper.applyFillValue(obj, value == null ? null : value.toString());
+            return BmDefinedTypeHelper.applyFillValue(obj,
+                value == null ? null : value.toString(), project);
         }
         String setter = "set" + Character.toUpperCase(propertyName.charAt(0)) //$NON-NLS-1$
             + propertyName.substring(1);
@@ -1747,7 +1830,166 @@ public final class BmObjectHelper
                 return localString;
             }
         }
+        Object formReference = resolveFormReference(owner, s, targetType);
+        if (formReference != null)
+        {
+            return formReference;
+        }
         return value;
+    }
+
+    /**
+     * Whether a setter parameter type is a form type the given form fits.
+     * <p>
+     * A form is an {@code EObject}, so a setter that takes any {@code EObject} would accept one too;
+     * such a property is not a form reference, and text written to it is not a form's name. The
+     * parameter has to be the model's form interface or one of its per-purpose subtypes.
+     * </p>
+     *
+     * @param targetType what the setter takes
+     * @param form one of the owner's forms
+     * @return <code>true</code> when the setter takes a form and this form is one it takes
+     */
+    static boolean takesAForm(Class<?> targetType, EObject form)
+    {
+        if (targetType == null || form == null || !targetType.isInstance(form))
+        {
+            return false;
+        }
+        Class<?> formBase = interfaceNamed(form.getClass(), "BasicForm"); //$NON-NLS-1$
+        return formBase != null && formBase.isAssignableFrom(targetType);
+    }
+
+    /**
+     * Finds an interface by its simple name among everything a class implements.
+     *
+     * @param type the class to look through, with its superclasses and their interfaces
+     * @param simpleName the interface's simple name
+     * @return the interface, or <code>null</code> when the class implements none by that name
+     */
+    private static Class<?> interfaceNamed(Class<?> type, String simpleName)
+    {
+        for (Class<?> current = type; current != null; current = current.getSuperclass())
+        {
+            for (Class<?> declared : current.getInterfaces())
+            {
+                Class<?> found = interfaceNamedAmong(declared, simpleName);
+                if (found != null)
+                {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds an interface by its simple name in one interface and everything it extends.
+     *
+     * @param candidate the interface to look at first
+     * @param simpleName the interface's simple name
+     * @return the interface, or <code>null</code> when neither it nor a parent carries that name
+     */
+    private static Class<?> interfaceNamedAmong(Class<?> candidate, String simpleName)
+    {
+        if (candidate.getSimpleName().equals(simpleName))
+        {
+            return candidate;
+        }
+        for (Class<?> parent : candidate.getInterfaces())
+        {
+            Class<?> found = interfaceNamedAmong(parent, simpleName);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves text that names one of the owner's forms into the form object a reference setter
+     * takes.
+     * <p>
+     * The default-form slots hold a form, not a scalar: {@code setDefaultForm(BasicForm)} on a data
+     * processor or report, {@code setDefaultObjectForm(CatalogForm)} and its siblings on the types
+     * that keep one slot per purpose. With only text to pass, no operation could change one - the
+     * write reached the setter and came back as a refusal about a composite value. The text is the
+     * form's name or its address ({@code DataProcessor.Обработка.Form.Форма}); a name the owner does
+     * not declare, and an address naming another owner's form, are refused with the forms this owner
+     * has, so the caller corrects it in one round trip.
+     * </p>
+     *
+     * @param owner the object being written
+     * @param text what the caller gave
+     * @param targetType what the setter takes
+     * @return the form to pass to the setter, or <code>null</code> when this is not a form reference
+     */
+    private static Object resolveFormReference(EObject owner, String text, Class<?> targetType)
+    {
+        if (owner == null || text == null || text.isEmpty())
+        {
+            return null;
+        }
+        EList<? extends EObject> forms = getChildListByKind(owner, "Form"); //$NON-NLS-1$
+        // The parameter type decides: an owner holds forms whatever the property is, and only a
+        // setter that takes one of them is a reference to resolve. Comparing against the owner's
+        // first form covers the per-purpose types without naming any of them - the plugin does not
+        // compile against them.
+        if (forms == null || forms.isEmpty() || !takesAForm(targetType, forms.get(0)))
+        {
+            return null;
+        }
+        String name = text;
+        int lastDot = text.lastIndexOf('.');
+        if (lastDot >= 0)
+        {
+            name = addressesOneOfTheseForms(owner, text) ? text.substring(lastDot + 1) : null;
+        }
+        EObject form = name == null ? null : findChildByNameReflective(forms, name);
+        if (form != null)
+        {
+            return form;
+        }
+        List<String> names = new ArrayList<>();
+        for (EObject child : forms)
+        {
+            String childName = eObjectName(child);
+            if (childName != null)
+            {
+                names.add(childName);
+            }
+        }
+        throw new IllegalArgumentException(TextSuggest.invalidValue("form", text, names)); //$NON-NLS-1$
+    }
+
+    /**
+     * Tells whether a form address names a form of this owner: the address ends in a form kind and
+     * a name, and the part before them is the owner's own address.
+     *
+     * @param owner the object being written
+     * @param address the address the caller wrote
+     * @return true when the address is one of this owner's form addresses
+     */
+    private static boolean addressesOneOfTheseForms(EObject owner, String address)
+    {
+        String[] segments = address.split("\\."); //$NON-NLS-1$
+        if (segments.length < 3 || !"Form".equals(canonicalChildKind(segments[segments.length - 2]))) //$NON-NLS-1$
+        {
+            return false;
+        }
+        String ownerName = eObjectName(owner);
+        if (ownerName == null)
+        {
+            return false;
+        }
+        StringBuilder prefix = new StringBuilder();
+        for (int i = 0; i < segments.length - 2; i++)
+        {
+            prefix.append(i == 0 ? "" : ".").append(segments[i]); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        String ownerAddress = owner.eClass().getName() + "." + ownerName; //$NON-NLS-1$
+        return MetadataTypeCatalog.normalizeFqn(prefix.toString()).equalsIgnoreCase(ownerAddress);
     }
 
     /**
@@ -2219,20 +2461,36 @@ public final class BmObjectHelper
         }
         for (EObject child : list)
         {
-            try
+            String childName = eObjectName(child);
+            if (childName != null && name.equalsIgnoreCase(childName))
             {
-                Object nm = child.getClass().getMethod("getName").invoke(child); //$NON-NLS-1$
-                if (nm != null && name.equalsIgnoreCase(nm.toString()))
-                {
-                    return child;
-                }
-            }
-            catch (Exception ignored)
-            {
-                // child exposes no getName() - skip
+                return child;
             }
         }
         return null;
+    }
+
+    /**
+     * The name a metadata child answers to, or {@code null} when it exposes no {@code getName()}.
+     *
+     * @param child the object to read
+     * @return its name, or {@code null}
+     */
+    private static String eObjectName(EObject child)
+    {
+        if (child == null)
+        {
+            return null;
+        }
+        try
+        {
+            Object name = child.getClass().getMethod("getName").invoke(child); //$NON-NLS-1$
+            return name == null ? null : name.toString();
+        }
+        catch (Exception noName)
+        {
+            return null;
+        }
     }
 
     /** {@code true} when the kind segment names the StandardAttribute collection. */

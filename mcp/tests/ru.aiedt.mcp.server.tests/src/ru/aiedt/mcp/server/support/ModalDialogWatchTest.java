@@ -6,10 +6,16 @@
 
 package ru.aiedt.mcp.server.support;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.Test;
 
@@ -71,5 +77,94 @@ public class ModalDialogWatchTest
 
         assertTrue("the probe took " + elapsedMs + "ms - it is bounded, and must stay so", //$NON-NLS-1$ //$NON-NLS-2$
             elapsedMs < 3000);
+    }
+
+    @Test
+    public void aPressWhoseBudgetRanOutIsNotPerformedWhenTheUiThreadWakesUpLate()
+    {
+        // The wedged UI thread keeps the posted task in its queue. Once the caller has been told
+        // "nothing was pressed", that task running later would make the answer a lie: a button
+        // would fire with nobody having asked for it anymore.
+        AtomicReference<Runnable> queued = new AtomicReference<>();
+        AtomicBoolean pressed = new AtomicBoolean();
+
+        ModalDialogWatch.Press result = ModalDialogWatch.pressWithBudget(queued::set,
+            () -> {
+                pressed.set(true);
+                return new ModalDialogWatch.Press(true, "OK", null); //$NON-NLS-1$
+            }, 50);
+
+        assertFalse(result.isPressed());
+        assertNotNull(result.getRefusal());
+        Runnable late = queued.get();
+        assertNotNull("the task was posted to the UI thread", late); //$NON-NLS-1$
+        late.run();
+        assertFalse("a press answered as not pressed must not happen late", pressed.get()); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aPressWithinTheBudgetHappensAsBefore()
+    {
+        AtomicBoolean pressed = new AtomicBoolean();
+
+        ModalDialogWatch.Press result = ModalDialogWatch.pressWithBudget(Runnable::run,
+            () -> {
+                pressed.set(true);
+                return new ModalDialogWatch.Press(true, "OK", null); //$NON-NLS-1$
+            }, 5000);
+
+        assertTrue(result.isPressed());
+        assertTrue(pressed.get());
+        assertEquals("OK", result.getLabel()); //$NON-NLS-1$
+        assertNull(result.getRefusal());
+    }
+
+    /**
+     * A press the UI thread claimed before the budget ran out cannot be called off anymore: the
+     * answer denies nothing and carries what the press did. Refusing there - which a check of a
+     * plain flag allowed, read before the action and acted on after - would tell the caller
+     * "nothing was pressed" while the button was firing.
+     */
+    @Test
+    public void aPressThatBeginsBeforeTheBudgetRunsOutIsAnsweredByItsOutcome()
+        throws Exception
+    {
+        CountDownLatch pressUnderWay = new CountDownLatch(1);
+        CountDownLatch letThePressFinish = new CountDownLatch(1);
+        AtomicReference<ModalDialogWatch.Press> answer = new AtomicReference<>();
+
+        Thread caller = new Thread(() -> answer.set(ModalDialogWatch.pressWithBudget(
+            task -> {
+                Thread standIn = new Thread(task, "ui-thread-of-the-test"); //$NON-NLS-1$
+                // Daemon, so an assertion that fails before the latch opens cannot hold the JVM.
+                standIn.setDaemon(true);
+                standIn.start();
+            },
+            () -> {
+                pressUnderWay.countDown();
+                try
+                {
+                    letThePressFinish.await();
+                }
+                catch (InterruptedException stop)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return new ModalDialogWatch.Press(true, "OK", null); //$NON-NLS-1$
+            }, 1000)));
+        caller.start();
+
+        // The press is under way, so the UI task has claimed it; the caller's budget expires
+        // while the action is still held.
+        assertTrue("the posted task reached the action", pressUnderWay.await(5, TimeUnit.SECONDS)); //$NON-NLS-1$
+        Thread.sleep(2500);
+        letThePressFinish.countDown();
+        caller.join(10000);
+
+        assertNotNull(answer.get());
+        assertTrue("a claimed press answers with its outcome, not a refusal", //$NON-NLS-1$
+            answer.get().isPressed());
+        assertEquals("OK", answer.get().getLabel()); //$NON-NLS-1$
+        assertNull(answer.get().getRefusal());
     }
 }

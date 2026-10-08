@@ -68,9 +68,9 @@ public class AiContextTool implements IMcpTool
     }
 
     /**
-     * Information about a discovered BSL module.
+     * Information about a discovered BSL module. Package-private for the module tests.
      */
-    private static class ModuleInfo
+    static class ModuleInfo
     {
         String relativePath; // from src/
         String moduleType;   // ObjectModule, ManagerModule, FormModule, etc.
@@ -284,9 +284,10 @@ public class AiContextTool implements IMcpTool
         }
 
         // ---- MODULES section ----
+        List<String> missingModulePaths = new ArrayList<>();
         List<ModuleInfo> modules = discoverModules(project, targetType, target,
-            directoryName, mdObjectName);
-        appendModulesList(md, modules, fm);
+            directoryName, mdObjectName, missingModulePaths);
+        appendModulesList(md, modules, fm, missingModulePaths);
 
         // ---- STRUCTURE section (standard+) ----
         if (!"minimal".equals(depth)) //$NON-NLS-1$
@@ -464,16 +465,24 @@ public class AiContextTool implements IMcpTool
 
     /**
      * Discovers BSL modules for the target.
+     *
+     * @param project the project the modules live in
+     * @param targetType the target's kind
+     * @param target the target as the caller wrote it
+     * @param directoryName the metadata directory of the target's type, or <code>null</code>
+     * @param objectName the object's name, or <code>null</code>
+     * @param missingModulePaths collects a requested module path that resolved to no file
+     * @return the modules found
      */
     private List<ModuleInfo> discoverModules(IProject project, TargetType targetType,
-        String target, String directoryName, String objectName)
+        String target, String directoryName, String objectName, List<String> missingModulePaths)
     {
         List<ModuleInfo> modules = new ArrayList<>();
 
         switch (targetType)
         {
             case MODULE_PATH:
-                discoverSingleModule(project, modules, target);
+                discoverSingleModule(project, modules, target, missingModulePaths);
                 break;
 
             case COMMON_MODULE:
@@ -493,8 +502,19 @@ public class AiContextTool implements IMcpTool
 
     /**
      * Discovers a single module by path.
+     * <p>
+     * Package-private for the missing-path test. A path no file sits under is recorded in
+     * {@code missingModulePaths} rather than skipped: an empty module list alone cannot tell a
+     * caller holding a mistyped path from one looking at an object that truly has no modules.
+     * </p>
+     *
+     * @param project the project the path resolves against
+     * @param modules the modules found, appended to
+     * @param modulePath the requested path under {@code src/}
+     * @param missingModulePaths collects the path when no file sits under it
      */
-    private void discoverSingleModule(IProject project, List<ModuleInfo> modules, String modulePath)
+    void discoverSingleModule(IProject project, List<ModuleInfo> modules, String modulePath,
+        List<String> missingModulePaths)
     {
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
         if (file.exists())
@@ -505,7 +525,9 @@ public class AiContextTool implements IMcpTool
             info.file = file;
             info.lineCount = countLines(file);
             modules.add(info);
+            return;
         }
+        missingModulePaths.add(modulePath);
     }
 
     /**
@@ -668,16 +690,39 @@ public class AiContextTool implements IMcpTool
 
     /**
      * Appends the modules list section.
+     * <p>
+     * Package-private for the missing-path test. A requested path that resolved to no file is
+     * named here; the bare "No BSL modules found." stays for an object that truly has none, so
+     * the two answers cannot be mistaken for each other.
+     * </p>
+     *
+     * @param md the markdown under construction
+     * @param modules the modules found
+     * @param fm the front matter of the answer
+     * @param missingModulePaths requested module paths that resolved to no file
      */
-    private void appendModulesList(StringBuilder md, List<ModuleInfo> modules, YamlFrontMatter fm)
+    void appendModulesList(StringBuilder md, List<ModuleInfo> modules, YamlFrontMatter fm,
+        List<String> missingModulePaths)
     {
         fm.put("moduleCount", modules.size()); //$NON-NLS-1$
 
         md.append("## Modules (").append(modules.size()).append(")\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
 
+        if (!missingModulePaths.isEmpty())
+        {
+            for (String path : missingModulePaths)
+            {
+                md.append("Requested module path not found: ") //$NON-NLS-1$
+                    .append(MarkdownTableHelper.escapeForTable(path)).append("\n\n"); //$NON-NLS-1$
+            }
+        }
+
         if (modules.isEmpty())
         {
-            md.append("No BSL modules found.\n\n"); //$NON-NLS-1$
+            if (missingModulePaths.isEmpty())
+            {
+                md.append("No BSL modules found.\n\n"); //$NON-NLS-1$
+            }
             return;
         }
 

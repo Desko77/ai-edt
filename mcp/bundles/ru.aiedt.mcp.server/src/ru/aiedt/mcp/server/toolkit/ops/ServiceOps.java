@@ -1342,16 +1342,42 @@ final class ServiceOps
     private static String appendHandlerStubIfMissing(IProject project, String serviceName,
         String handler) throws Exception
     {
+        return appendServiceHandlerStubIfMissing(project, "HTTPServices", serviceName, handler, //$NON-NLS-1$
+            buildHttpServiceModuleStub(handler));
+    }
+
+    /**
+     * Appends the stub of a service handler to the service module, unless the module already
+     * declares that handler.
+     * <p>
+     * The handler is looked for among the methods the module declares rather than in its text, so a
+     * name that only opens a longer one, a mention in a comment and a mention in a string literal
+     * are not taken for a declaration. A module that cannot be read as module text refuses the
+     * stub with its file untouched, because over such a module the handlers it already declares
+     * cannot be told apart.
+     * </p>
+     *
+     * @param project the project that holds the service
+     * @param kindFolder the folder service modules of this kind live in
+     * @param serviceName the service name
+     * @param handler the handler name the request named
+     * @param stub the stub to write when the module does not declare the handler
+     * @return the workspace path of the module
+     * @throws Exception when the directory cannot be created or the module cannot be written
+     */
+    private static String appendServiceHandlerStubIfMissing(IProject project, String kindFolder,
+        String serviceName, String handler, String stub) throws Exception
+    {
         org.eclipse.core.resources.IFolder srcFolder = project.getFolder("src"); //$NON-NLS-1$
         org.eclipse.core.resources.IContainer base = srcFolder.exists()
             ? srcFolder : (org.eclipse.core.resources.IContainer) project;
-        org.eclipse.core.resources.IFolder httpServices = base.getFolder(
-            new org.eclipse.core.runtime.Path("HTTPServices")); //$NON-NLS-1$
-        if (!httpServices.exists())
+        org.eclipse.core.resources.IFolder services = base.getFolder(
+            new org.eclipse.core.runtime.Path(kindFolder));
+        if (!services.exists())
         {
-            httpServices.create(true, true, null);
+            services.create(true, true, null);
         }
-        org.eclipse.core.resources.IFolder serviceDir = httpServices.getFolder(serviceName);
+        org.eclipse.core.resources.IFolder serviceDir = services.getFolder(serviceName);
         if (!serviceDir.exists())
         {
             serviceDir.create(true, true, null);
@@ -1369,12 +1395,10 @@ final class ServiceOps
         {
             existing = ""; //$NON-NLS-1$
         }
-        if (existing.contains("Функция " + handler) //$NON-NLS-1$
-            || existing.contains("Function " + handler)) //$NON-NLS-1$
+        if (declaresHandlerFunction(existing, handler, moduleFile.getFullPath().toString()))
         {
             return moduleFile.getFullPath().toString();
         }
-        String stub = buildHttpServiceModuleStub(handler);
         String newContent;
         if (existing.isEmpty())
         {
@@ -1403,68 +1427,45 @@ final class ServiceOps
         return moduleFile.getFullPath().toString();
     }
 
+    /**
+     * Whether the service module already declares the handler, answered by the methods the module
+     * declares rather than by a search in its text.
+     *
+     * @param moduleText the module as it stands, or an empty string when it has no file
+     * @param handler the handler name the request named
+     * @param modulePath the module's workspace path, for the refusal text
+     * @return true when a function of that name is declared
+     */
+    private static boolean declaresHandlerFunction(String moduleText, String handler,
+        String modulePath)
+    {
+        try
+        {
+            return BslMethodDeclarations.declaresFunction(moduleText, handler);
+        }
+        catch (BslMethodDeclarations.ParseFailure unparsable)
+        {
+            throw new RuntimeException("the handler stub was not written: " + modulePath //$NON-NLS-1$
+                + " " + unparsable.getMessage() //$NON-NLS-1$
+                + ", so the handlers it already declares cannot be told apart"); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Appends the stub of a web service handler to the service module, unless the module already
+     * declares that handler.
+     *
+     * @param project the project that holds the service
+     * @param serviceName the service name
+     * @param handler the handler name the request named
+     * @return the workspace path of the module
+     * @throws Exception when the directory cannot be created or the module cannot be written
+     */
     private static String appendWebServiceHandlerStubIfMissing(IProject project, String serviceName,
         String handler) throws Exception
     {
-        org.eclipse.core.resources.IFolder srcFolder = project.getFolder("src"); //$NON-NLS-1$
-        org.eclipse.core.resources.IContainer base = srcFolder.exists()
-            ? srcFolder : (org.eclipse.core.resources.IContainer) project;
-        org.eclipse.core.resources.IFolder webServices = base.getFolder(
-            new org.eclipse.core.runtime.Path("WebServices")); //$NON-NLS-1$
-        if (!webServices.exists())
-        {
-            webServices.create(true, true, null);
-        }
-        org.eclipse.core.resources.IFolder serviceDir = webServices.getFolder(serviceName);
-        if (!serviceDir.exists())
-        {
-            serviceDir.create(true, true, null);
-        }
-        org.eclipse.core.resources.IFile moduleFile = serviceDir.getFile("Module.bsl"); //$NON-NLS-1$
-        String existing;
-        if (moduleFile.exists())
-        {
-            try (java.io.InputStream is = moduleFile.getContents())
-            {
-                existing = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            }
-        }
-        else
-        {
-            existing = ""; //$NON-NLS-1$
-        }
-        if (existing.contains("Функция " + handler) //$NON-NLS-1$
-            || existing.contains("Function " + handler)) //$NON-NLS-1$
-        {
-            return moduleFile.getFullPath().toString();
-        }
-        String stub = buildWebServiceModuleStub(handler);
-        String newContent;
-        if (existing.isEmpty())
-        {
-            newContent = stub;
-        }
-        else
-        {
-            String sep = existing.endsWith("\n") ? "\n" : "\n\n"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            String stubAppend = stub.startsWith("﻿") ? stub.substring(1) : stub; //$NON-NLS-1$
-            newContent = existing + sep + stubAppend;
-        }
-        // The stub is built with \n and the module it is appended to may be CRLF, so the join above
-        // can leave a mixture. Settle the whole text on one delimiter before it reaches disk.
-        newContent = ru.aiedt.mcp.server.support.LineDelimiters.rewrite(newContent,
-            ru.aiedt.mcp.server.support.LineDelimiters.of(moduleFile));
-        byte[] bytes = newContent.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        java.io.ByteArrayInputStream stream = new java.io.ByteArrayInputStream(bytes);
-        if (moduleFile.exists())
-        {
-            moduleFile.setContents(stream, true, true, null);
-        }
-        else
-        {
-            moduleFile.create(stream, true, null);
-        }
-        return moduleFile.getFullPath().toString();
+        return appendServiceHandlerStubIfMissing(project, "WebServices", serviceName, handler, //$NON-NLS-1$
+            buildWebServiceModuleStub(handler));
     }
 
     private static String buildWebServiceModuleStub(String handler)

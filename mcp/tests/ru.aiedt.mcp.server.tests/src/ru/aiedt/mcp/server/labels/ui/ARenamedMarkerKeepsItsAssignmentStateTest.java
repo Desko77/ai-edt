@@ -37,6 +37,7 @@ public class ARenamedMarkerKeepsItsAssignmentStateTest
         Set<String> after = MarkerRenamePlan.apply(marker, "bug2", initiallyAssigned, (nameBefore, newName) -> { //$NON-NLS-1$
             assertEquals("bug", nameBefore); //$NON-NLS-1$
             marker.setName(newName);
+            return true;
         });
 
         assertEquals(Set.of("bug2"), after); //$NON-NLS-1$
@@ -48,5 +49,21 @@ public class ARenamedMarkerKeepsItsAssignmentStateTest
     public void aSetLeftOnTheOldNameDoesNotUnassignTheRenamedMarker()
     {
         assertFalse(MarkerRenamePlan.unassignOnApply(Set.of("bug"), "bug2", false)); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    @Test
+    public void aRefusedRenameLeavesTheAssignedNamesOnTheOldName()
+    {
+        Marker marker = new Marker("bug"); //$NON-NLS-1$
+        Set<String> initiallyAssigned = new HashSet<>();
+        initiallyAssigned.add("bug"); //$NON-NLS-1$
+        // A refused rename does not touch the instance, the way the service leaves it when the
+        // new name is taken or the file would not write.
+        Set<String> after = MarkerRenamePlan.apply(marker, "bug2", initiallyAssigned,
+            (nameBefore, newName) -> false);
+        assertEquals(Set.of("bug"), after); //$NON-NLS-1$
+        assertEquals("bug", marker.getName()); //$NON-NLS-1$
+        // The checkbox the user cleared still takes the marker off the object.
+        assertTrue(MarkerRenamePlan.unassignOnApply(after, "bug", false)); //$NON-NLS-1$
     }
 }

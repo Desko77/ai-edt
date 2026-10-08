@@ -56,7 +56,8 @@ public final class YaxunitDebugRunner implements IMcpTool
         + "evaluate_expression / step / resume. " //$NON-NLS-1$
         + "Narrow the tests filter to a single test method to keep the cycle predictable. " //$NON-NLS-1$
         + "The infobase is updated before the launch unless updateBeforeLaunch=false; an update " //$NON-NLS-1$
-        + "that does not finish refuses the launch and nothing is started. " //$NON-NLS-1$
+        + "that does not finish refuses the launch and nothing is started. Under a preset that " //$NON-NLS-1$
+        + "disabled update_database an omitted updateBeforeLaunch launches without updating. " //$NON-NLS-1$
         + "Requires an existing 1C launch configuration with YAXUnit installed in the target infobase."; //$NON-NLS-1$
 
     private static final AtomicLong LAUNCH_COUNTER = new AtomicLong(0);
@@ -91,7 +92,10 @@ public final class YaxunitDebugRunner implements IMcpTool
                 "Comma-separated test names, each given as Module.Method (best practice: target exactly one test)") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
-                    + "finish refuses the launch. Set false to launch against the infobase as it stands.") //$NON-NLS-1$
+                    + "finish refuses the launch. Set false to launch against the infobase as it " //$NON-NLS-1$
+                    + "stands. Under a preset that disabled update_database an omitted argument " //$NON-NLS-1$
+                    + "launches without updating (the answer carries " //$NON-NLS-1$
+                    + "databaseUpdate=SKIPPED_BY_PRESET); an explicit true is refused.") //$NON-NLS-1$
             .build();
     }
 
@@ -215,8 +219,9 @@ public final class YaxunitDebugRunner implements IMcpTool
             // The same pre-launch step the other modes run, decided by the same code: a debug
             // session started against an infobase EDT still has to bring up to date hangs at the
             // "Update configuration?" modal the debugger cannot answer.
-            boolean updateBeforeLaunch = JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
-            String updateRefusal = YaxunitTestRunner.preLaunchUpdateRefusal(updateBeforeLaunch,
+            DebugSessionStarter.LaunchUpdate update = DebugSessionStarter.launchUpdate(
+                JsonUtils.extractBooleanArgumentNullable(params, "updateBeforeLaunch"), true); //$NON-NLS-1$
+            String updateRefusal = YaxunitTestRunner.preLaunchUpdateRefusal(update,
                 projectName, applicationId, DebugSessionStarter::updateDatabaseIfNeeded);
             if (updateRefusal != null)
             {
@@ -251,13 +256,14 @@ public final class YaxunitDebugRunner implements IMcpTool
                 return ToolResult.error("The launch failed: " + ex.getMessage()).toJson(); //$NON-NLS-1$
             }
 
-            return ToolResult.success().put("launched", true) //$NON-NLS-1$
+            ToolResult started = ToolResult.success().put("launched", true) //$NON-NLS-1$
                 .put("projectName", projectName) //$NON-NLS-1$
                 .put("applicationId", applicationId) //$NON-NLS-1$
                 .put("reportDir", reportDir.toString()) //$NON-NLS-1$
                 .put("junitXml", junitFile.toString()) //$NON-NLS-1$
-                .put("nextStep", "call wait_for_break using the same applicationId") //$NON-NLS-1$ //$NON-NLS-2$
-                .toJson();
+                .put("nextStep", "call wait_for_break using the same applicationId"); //$NON-NLS-1$ //$NON-NLS-2$
+            DebugSessionStarter.putDatabaseUpdate(started, null, update.skippedByPreset);
+            return started.toJson();
         }
         catch (Exception e)
         {

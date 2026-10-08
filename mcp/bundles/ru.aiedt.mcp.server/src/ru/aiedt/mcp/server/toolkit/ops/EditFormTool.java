@@ -23,6 +23,7 @@ import ru.aiedt.mcp.server.support.BmFormHelper;
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FormExtensionDataPathGuard;
 import ru.aiedt.mcp.server.support.TextSuggest;
+import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.UiSync;
 import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -40,6 +41,14 @@ import ru.aiedt.mcp.server.support.StandardCommandRegistry;
 public class EditFormTool implements IMcpTool
 {
     public static final String NAME = "edit_form"; //$NON-NLS-1$
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it, and a preset that blocks writing disables it, which the gate below asks about
+     * before the first action of a writing call.
+     */
+    static final String WRITE_DOOR = "edit_form_writes"; //$NON-NLS-1$
 
     private static final String OP_ADD_FIELD = "add_field"; //$NON-NLS-1$
     private static final String OP_ADD_GROUP = "add_group"; //$NON-NLS-1$
@@ -192,6 +201,16 @@ public class EditFormTool implements IMcpTool
             return buildError(unknownOperation(operation));
         }
 
+        // Every operation this far is a write (help answered above). A preset that blocks writing
+        // is asked before the workspace is read or a BM transaction opened; a dryRun preview
+        // rolls its transaction back and persists nothing, so it goes through.
+        String presetGate = presetWriteGate(
+            JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
+        if (presetGate != null)
+        {
+            return buildError(presetGate);
+        }
+
         // Execute on UI thread (BM API requires it in some EDT versions). UiSync.call
         // runs the work inline on the UI thread, waits a bounded time and raises
         // UiBusyException when the thread is wedged - a raw syncExec would block
@@ -219,6 +238,22 @@ public class EditFormTool implements IMcpTool
             Activator.logError("Error in edit_form", e); //$NON-NLS-1$
             return buildError(TextSuggest.safeMessage(e));
         }
+    }
+
+    /**
+     * Says whether the active preset blocks this facade's writes.
+     * <p>
+     * Every edit operation of this facade writes the form; a {@code dryRun} preview rolls its
+     * transaction back and persists nothing, so it is not a write the preset has an opinion
+     * about. Package visibility: the tests hold the decision to the same presets the flow asks.
+     * </p>
+     *
+     * @param dryRun whether the call previews only
+     * @return the gate's rejection text, or {@code null} when the operation may run
+     */
+    static String presetWriteGate(boolean dryRun)
+    {
+        return dryRun ? null : ToolGate.gateWriteDoor(WRITE_DOOR);
     }
 
     /**

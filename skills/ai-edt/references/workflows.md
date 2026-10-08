@@ -89,7 +89,10 @@ hand-edit does not.
 
 1. `validate_for_export` - the runner updates the infobase before launching by default, and that
    update is what a broken configuration breaks.
-2. `yaxunit_tests mode=run` with filters narrow enough to be quick.
+2. `yaxunit_tests mode=run` with filters narrow enough to be quick. Add
+   `installYaxunit=true` when the engine may be absent: it also lowers and confirms the engine's safe
+   mode and unsafe-action protection before running. Use `yaxunitUnsafeMode=false` only when those
+   flags are deliberately managed by hand.
 3. `mode=debug` when a test fails and you need breakpoints inside it.
 
 ## Run a check in the client without a person at it

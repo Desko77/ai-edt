@@ -101,6 +101,27 @@ EXEMPT: dict[str, str] = {}
 # Fewer than this many facades means the detection stopped matching, not that the code got simpler.
 MIN_FACADES = 8
 
+# The constructor facades hand no work to another tool, so facades() never looks at them: their
+# writes are the operations themselves. Each one gates its writes on a capability name
+# (`<facade>_writes`, carried by ToolProfile, registered nowhere) before the operation runs, so
+# Code Review can keep the group on for the reads and the dryRun previews and still refuse every
+# write. The gate has to stand before the hand-off that runs the operation - after it, the write
+# is already going.
+CONSTRUCTOR_FACADES = [
+    "EditFormTool.java",
+    "EditMetadataTool.java",
+    "DcsWorkshopTool.java",
+    "MxlWorkshopTool.java",
+    "XdtoWorkshopTool.java",
+    "ExternalObjectWorkshopTool.java",
+    "ExternalDataSourceWorkshopTool.java",
+]
+
+# Where a constructor facade hands the call to the operation that does the work: the dispatch
+# switch, the registry handler, or the UI-thread hop the write runs inside.
+HANDOFF = re.compile(
+    r"switch\s*\((operation|action|op|mode)\)|\.handler\.apply\(|UiSync\.call\(|syncExec\(")
+
 
 def gate_comes_first(source: str) -> str | None:
     """Returns why a facade's gate is too late, or None when it is early enough.
@@ -224,6 +245,26 @@ def catalog_keepers() -> list[pathlib.Path]:
     return found
 
 
+def constructor_verdict(path: pathlib.Path) -> tuple[str | None, str | None]:
+    """Why a constructor facade's write gate is missing or too late, or (None, None) when it holds.
+
+    The gate names a capability nothing registers, so its presence is read from the code with the
+    comments blanked - a javadoc that mentions the gate is not a gate. edit_metadata routes its
+    gate through a helper (`presetWriteGate`), so the helper's name counts as the gate too. It has
+    to stand before the first hand-off that runs an operation, the same "too late" rule the
+    delegation facades are held to.
+    """
+    code = without_comments(path.read_text(encoding="utf-8"))
+    gate = min((code.find(token) for token in ("gateIfPresetDisabled", "gateWriteDoor", "presetWriteGate")
+                if code.find(token) != -1), default=-1)
+    if gate == -1:
+        return "no gateIfPresetDisabled or gateWriteDoor in the source", None
+    handoff = HANDOFF.search(code)
+    if handoff and handoff.start() < gate:
+        return None, f"operation hand-off at offset {handoff.start()} before the gate at {gate}"
+    return None, None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print every facade and its verdict")
@@ -237,6 +278,8 @@ def main() -> int:
     ungated = []
     late = []
     unreachable = []
+    constructor_ungated = []
+    constructor_late = []
     # Reachability is asked of every tool that keeps a catalog; delegation gating only of those
     # that delegate. Asking one question of the other's population accuses a workshop of not
     # gating work it never hands to anybody.
@@ -258,6 +301,22 @@ def main() -> int:
             if too_late:
                 verdict = "GATE TOO LATE"
             print(f"{name:<32} {delegations:>2} delegations  {verdict}")
+    constructors = [OPS / name for name in CONSTRUCTOR_FACADES]
+    present = [path for path in constructors if path.exists()]
+    for path in present:
+        missing, too_late = constructor_verdict(path)
+        if missing:
+            constructor_ungated.append((path.name, missing))
+        if too_late:
+            constructor_late.append((path.name, too_late))
+        if args.list:
+            verdict = "gated" if not missing and not too_late else (missing or "GATE TOO LATE")
+            print(f"{path.name:<32} constructor  {verdict}")
+    if len(present) != len(CONSTRUCTOR_FACADES):
+        print(f"only {len(present)} of {len(CONSTRUCTOR_FACADES)} constructor facades are on disk - "
+              "a rename took one out of this list and the check no longer sees it",
+              file=sys.stderr)
+        return 1
 
     if len(found) < MIN_FACADES:
         print(f"only {len(found)} facades recognised, expected at least {MIN_FACADES} - the "
@@ -288,8 +347,23 @@ def main() -> int:
             print(f"  {name}: {why}", file=sys.stderr)
         return 1
 
+    if constructor_ungated:
+        print("these constructor facades do not gate their writes on the preset, so Code Review "
+              "keeps their group on and every write runs:", file=sys.stderr)
+        for name, why in constructor_ungated:
+            print(f"  {name}: {why}", file=sys.stderr)
+        return 1
+
+    if constructor_late:
+        print("these constructor facades ask about the preset only after the operation has "
+              "already been handed the call, so a switched-off write is already running:",
+              file=sys.stderr)
+        for name, why in constructor_late:
+            print(f"  {name}: {why}", file=sys.stderr)
+        return 1
+
     print(f"every facade gates what it delegates to, and every operation it dispatches can be "
-          f"reached ({len(found)} facades)")
+          f"reached ({len(found)} facades, {len(present)} constructors)")
     return 0
 
 

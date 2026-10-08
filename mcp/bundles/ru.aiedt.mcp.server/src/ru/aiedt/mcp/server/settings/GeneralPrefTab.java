@@ -72,6 +72,9 @@ public class GeneralPrefTab
 
     private final IPreferenceStore store;
 
+    /** Told when a button of this tab starts (true) or stops (false) the server. */
+    private java.util.function.Consumer<Boolean> serverActedOnByHand = started -> { };
+
     /** Server, tools, network and control sections. */
     private final Composite controlServer;
 
@@ -281,12 +284,25 @@ public class GeneralPrefTab
      * trimmed. The marker style is written only when the combo has a selection. The token is the
      * one field that has to reach the disk before it counts, which is why this can fail.
      * </p>
+     * <p>
+     * An update address the policy refuses stops the save before its first write, so a caller that
+     * is told what to fix finds the tab exactly as it was and not half written.
+     * </p>
      *
      * @return <code>null</code> when everything was saved, otherwise what was not and why
      */
     public String performOk()
     {
-        // The token first: it is the one field that has to reach the disk before it counts, and
+        // The update address is refused before a single value is written, and not after. A refusal
+        // that arrived later would already have changed the tab: the token below starts answering on
+        // the socket the moment it is published, so a save told afterwards not to keep the address
+        // would have put a new token in force and left every field above it rewritten.
+        String upkeepRefused = validateUpkeepSite();
+        if (upkeepRefused != null)
+        {
+            return upkeepRefused;
+        }
+        // The token next: it is the one field that has to reach the disk before it counts, and
         // a save that fails must leave the other fields as they were, not half applied.
         String notSaved = publishToken();
         if (notSaved != null)
@@ -332,26 +348,22 @@ public class GeneralPrefTab
     }
 
     /**
-     * Writes the update settings, but only as a whole and only when the address is usable.
+     * Writes the five update keys.
      * <p>
-     * The page refuses OK while the address is rejected, but the Start and Restart buttons on this
-     * tab call {@link #performOk()} directly - they have to commit the port before opening the
-     * socket - and so reach this code without passing that refusal. Writing anyway would store an
-     * address the page has just told the user it will not accept.
+     * All five move together because they are only meaningful together: writing the local-source
+     * flag on its own would combine a new flag with a previously stored address and produce a
+     * pairing the user never chose.
      * </p>
      * <p>
-     * All five keys move together because they are only meaningful together: writing the
-     * local-source flag on its own would combine a new flag with a previously stored address and
-     * produce a pairing the user never chose. The rejected text stays in the field, and the reason
-     * is already on screen from the validation that runs as it is typed.
+     * The address is not checked here. {@link #performOk()} refuses it at the top, before anything
+     * is written, because the Start and Restart buttons on this tab call that method directly - they
+     * have to commit the port before opening the socket - and reach it without passing the page's
+     * own refusal. Checking in this method instead would have left everything written before it in
+     * the store, which is the half-applied save the refusal exists to prevent.
      * </p>
      */
     private void writeUpkeep()
     {
-        if (validateUpkeepSite() != null)
-        {
-            return;
-        }
         store.setValue(PrefKeys.PREF_UPKEEP_ENABLED, upkeepEnabledCheck.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_SITE_URL, upkeepSiteText.getText().trim());
         store.setValue(PrefKeys.PREF_UPKEEP_INTERVAL_HOURS, upkeepIntervalSpinner.getSelection());
@@ -362,8 +374,10 @@ public class GeneralPrefTab
     /**
      * Puts the widgets back to the shipped values. Nothing is saved until OK.
      * <p>
-     * The two Vanessa fields are left as they are - a known gap from when they were added after this
-     * method, kept here so the fix can be its own reviewed change.
+     * The token field is left holding what it held. It is not a setting with a shipped value: it is
+     * the credential in force, and the shipped value is the empty string, which a save reads as
+     * "make me a new one". Restoring it would rotate the token of every client on the next OK, with
+     * nothing on the page saying so.
      * </p>
      */
     public void performDefaults()
@@ -374,6 +388,8 @@ public class GeneralPrefTab
         checksFolderText.setText(store.getDefaultString(PrefKeys.PREF_CHECKS_FOLDER));
         bslLsJarText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAR));
         bslLsJavaText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAVA));
+        vanessaEpfText.setText(store.getDefaultString(PrefKeys.PREF_VANESSA_EPF));
+        vanessa1cExeText.setText(store.getDefaultString(PrefKeys.PREF_VANESSA_1C_EXE));
         naparnikBridgeCheck.setSelection(
             store.getDefaultBoolean(PrefKeys.PREF_NAPARNIK_BRIDGE_ENABLED));
         naparnikAllToolsCheck.setSelection(
@@ -382,7 +398,6 @@ public class GeneralPrefTab
         bindAllCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES));
         allowNullOriginCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
         requireTokenCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_AUTH_ENABLED));
-        authTokenText.setText(store.getDefaultString(PrefKeys.PREF_AUTH_TOKEN));
         upkeepEnabledCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_UPKEEP_ENABLED));
         upkeepSiteText.setText(store.getDefaultString(PrefKeys.PREF_UPKEEP_SITE_URL));
         upkeepIntervalSpinner.setSelection(
@@ -439,6 +454,10 @@ public class GeneralPrefTab
         portSpinner.setMinimum(MIN_PORT);
         portSpinner.setMaximum(MAX_PORT);
         portSpinner.setSelection(store.getInt(PrefKeys.PREF_PORT));
+        portSpinner.setToolTipText("The port the server listens on. A change here applies when the " //$NON-NLS-1$
+            + "server next starts: it does not move a server that is already running, and it does " //$NON-NLS-1$
+            + "not restart one either. A change on the Tools tab restarts a running server, and so " //$NON-NLS-1$
+            + "does the Restart button below."); //$NON-NLS-1$
         spacer(section);
 
         Label spanLabel = new Label(section, SWT.NONE);
@@ -829,6 +848,7 @@ public class GeneralPrefTab
         try
         {
             server.start(portSpinner.getSelection());
+            serverActedOnByHand.accept(Boolean.TRUE);
         }
         catch (IOException e)
         {
@@ -839,6 +859,17 @@ public class GeneralPrefTab
         refreshServerStatus();
     }
 
+    /**
+     * Names who is told when a button of this tab starts or stops the server.
+     *
+     * @param listener receives <code>true</code> after a start or restart that succeeded and
+     *     <code>false</code> after a stop
+     */
+    void whenServerIsActedOnByHand(java.util.function.Consumer<Boolean> listener)
+    {
+        serverActedOnByHand = listener == null ? started -> { } : listener;
+    }
+
     private void stopServer()
     {
         McpHttpEndpoint server = Activator.getDefault().getMcpServer();
@@ -847,6 +878,7 @@ public class GeneralPrefTab
             return;
         }
         server.stop();
+        serverActedOnByHand.accept(Boolean.FALSE);
         refreshServerStatus();
     }
 
@@ -866,6 +898,7 @@ public class GeneralPrefTab
         try
         {
             server.restart(portSpinner.getSelection());
+            serverActedOnByHand.accept(Boolean.TRUE);
         }
         catch (IOException e)
         {

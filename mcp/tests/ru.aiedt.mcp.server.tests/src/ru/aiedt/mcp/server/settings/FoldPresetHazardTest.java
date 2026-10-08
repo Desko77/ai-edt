@@ -37,35 +37,53 @@ import org.junit.Test;
 public class FoldPresetHazardTest
 {
     /** Which facade folds in which standalone tools (F2). Read live for categories, declared here for the wiring. */
-    private static final Map<String, List<String>> FOLDS = Map.of(
-        "edit_metadata", //$NON-NLS-1$
-        List.of("delete_metadata_object", "rename_metadata_object", "add_metadata_attribute"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "extension_workshop", //$NON-NLS-1$
-        List.of("install_extension", "uninstall_extension", "list_extension", "export_extension", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            "extension_lifecycle", "extension_diff", "list_interceptors"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "code_search", //$NON-NLS-1$
-        List.of("search_in_code", "find_references", "go_to_definition", "get_method_call_hierarchy", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            "get_symbol_info", "get_content_assist", "get_outgoing_structures"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "yaxunit_tests", //$NON-NLS-1$
-        List.of("run_yaxunit_tests", "debug_yaxunit_tests"), //$NON-NLS-1$ //$NON-NLS-2$
-        "config_io", //$NON-NLS-1$
-        List.of("unpack_external_binary", "import_configuration_from_binary"), //$NON-NLS-1$
-        "git", //$NON-NLS-1$
-        List.of("git_commit", "git_checkout", "git_revert_file"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "launch_debugger", //$NON-NLS-1$
-        List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-            "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
-            "terminate_launch", "run_to_line", "set_exception_breakpoint", "start_profiling", "get_profiling_results"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-        "cluster_admin", //$NON-NLS-1$
-        List.of("create_cluster", "update_cluster", "delete_cluster", "add_to_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            "remove_from_cluster")); //$NON-NLS-1$
+    private static final Map<String, List<String>> FOLDS = Map.ofEntries(
+        Map.entry("edit_metadata", //$NON-NLS-1$
+            List.of("delete_metadata_object", "rename_metadata_object", "add_metadata_attribute", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                "edit_metadata_writes")), //$NON-NLS-1$
+        Map.entry("extension_workshop", //$NON-NLS-1$
+            List.of("install_extension", "uninstall_extension", "list_extension", "export_extension", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "extension_lifecycle", "extension_diff", "list_interceptors")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Map.entry("code_search", //$NON-NLS-1$
+            List.of("search_in_code", "find_references", "go_to_definition", "get_method_call_hierarchy", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "get_symbol_info", "get_content_assist", "get_outgoing_structures")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Map.entry("yaxunit_tests", //$NON-NLS-1$
+            List.of("run_yaxunit_tests", "debug_yaxunit_tests", "install_extension")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Map.entry("config_io", //$NON-NLS-1$
+            List.of("unpack_external_binary", "import_configuration_from_binary")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("git", //$NON-NLS-1$
+            List.of("git_commit", "git_checkout", "git_revert_file", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                "git_create_merge_restore_point", "git_delete_merge_restore_point")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("launch_debugger", //$NON-NLS-1$
+            List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+                "terminate_launch", "run_to_line", "set_exception_breakpoint", "start_profiling", "get_profiling_results")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        Map.entry("cluster_admin", //$NON-NLS-1$
+            List.of("create_cluster", "update_cluster", "delete_cluster", "add_to_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "remove_from_cluster")), //$NON-NLS-1$
+        Map.entry("tag_admin", //$NON-NLS-1$
+            List.of("create_tag", "update_tag", "delete_tag", "assign_tag", "unassign_tag")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        // The constructor doors: not standalones the facades fold in, but the capability each
+        // facade's writes are gated by. Recorded here so the hazard recomputation below holds the
+        // gates to the same rule as a folded standalone - a preset that disables the door while
+        // leaving the facade's group on must find the pair in GATED.
+        Map.entry("edit_form", List.of("edit_form_writes")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("dcs_workshop", List.of("dcs_workshop_writes")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("mxl_workshop", List.of("mxl_workshop_writes")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("xdto_workshop", List.of("xdto_workshop_writes")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("external_object_workshop", List.of("external_object_workshop_writes")), //$NON-NLS-1$ //$NON-NLS-2$
+        Map.entry("external_data_source_workshop", //$NON-NLS-1$
+            List.of("external_data_source_workshop_writes"))); //$NON-NLS-1$
 
     /**
      * The (facade, standalone) fold pairs whose delegated handler is gate-checked. edit_metadata and
      * extension_workshop route registered standalones through {@code ToolGate.gateOrNull}; yaxunit_tests
      * gates its debug MODE (debug_yaxunit_tests is the DEBUG-group name a preset disables, reached as a
      * mode and backed today by a deprecated alias) through {@code ToolGate.gateIfPresetDisabled}, so the
-     * gate keeps holding once that alias is retired.
+     * gate keeps holding once that alias is retired. Its install pre-step is gated the same way:
+     * installYaxunit=true writes the infobase through the call install_extension performs, a name
+     * Debug &amp; Test disables while keeping the whole facade and both runner names on - the pre-step
+     * asks the door before its first write.
      * <p>
      * {@code extension_workshop/extension_lifecycle} joined them once the presets that block writing
      * started disabling that composite: it borrows an object and appends a handler stub, so leaving it
@@ -73,15 +91,17 @@ public class FoldPresetHazardTest
      * taken away. The composite also gates its own two internal calls, which no facade fold can see.
      * </p>
      * <p>
-     * {@code git/git_commit}, {@code git/git_checkout} and {@code git/git_revert_file}: the facade
-     * reads under every preset, and its writes are the names a read-only preset disables, so each
-     * is gate-checked by that name before a file is staged, the work tree is switched, or a file
-     * is overwritten.
+     * {@code git/git_commit}, {@code git/git_checkout}, {@code git/git_revert_file},
+     * {@code git/git_create_merge_restore_point} and {@code git/git_delete_merge_restore_point}:
+     * the facade reads under every preset, and its writes are the names a read-only preset
+     * disables, so each is gate-checked by that name before a file is staged, the work tree is
+     * switched, a file is overwritten, or a merge restore point is taken or dropped.
      * </p>
      * <p>
      * The five {@code cluster_admin/<door>} pairs are the same arrangement: the facade reads under
      * every preset, its writes edit {@code .settings/aiedt-clusters.yaml}, and the doors sit in the
-     * tags-and-marks group that no write-blocking preset takes off wholesale.
+     * tags-and-marks group that no write-blocking preset takes off wholesale. So are the five
+     * {@code tag_admin/<door>} pairs, whose writes edit {@code .settings/aiedt-markers.yaml}.
      * </p>
      */
     private static final Set<String> GATED = Set.of(
@@ -91,11 +111,25 @@ public class FoldPresetHazardTest
         "extension_workshop/list_extension", "extension_workshop/export_extension", //$NON-NLS-1$ //$NON-NLS-2$
         "extension_workshop/extension_lifecycle", //$NON-NLS-1$
         "yaxunit_tests/debug_yaxunit_tests", //$NON-NLS-1$
+        // The install pre-step of the facade: it writes the infobase through the call
+        // install_extension performs, and the runner-name gate above does not cover it.
+        "yaxunit_tests/install_extension", //$NON-NLS-1$
         "config_io/unpack_external_binary", //$NON-NLS-1$
         "config_io/import_configuration_from_binary", //$NON-NLS-1$
         "git/git_commit", "git/git_checkout", "git/git_revert_file", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "git/git_create_merge_restore_point", "git/git_delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
         "cluster_admin/create_cluster", "cluster_admin/update_cluster", "cluster_admin/delete_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        "cluster_admin/add_to_cluster", "cluster_admin/remove_from_cluster"); //$NON-NLS-1$ //$NON-NLS-2$
+        "cluster_admin/add_to_cluster", "cluster_admin/remove_from_cluster", //$NON-NLS-1$ //$NON-NLS-2$
+        "tag_admin/create_tag", "tag_admin/update_tag", "tag_admin/delete_tag", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "tag_admin/assign_tag", "tag_admin/unassign_tag", //$NON-NLS-1$ //$NON-NLS-2$
+        // The constructor doors: each facade asks ToolGate.gateIfPresetDisabled about its
+        // door before its first write, so the pair is gate-checked exactly where the
+        // hazard below demands it.
+        "edit_form/edit_form_writes", "edit_metadata/edit_metadata_writes", //$NON-NLS-1$ //$NON-NLS-2$
+        "dcs_workshop/dcs_workshop_writes", "mxl_workshop/mxl_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$
+        "xdto_workshop/xdto_workshop_writes", //$NON-NLS-1$
+        "external_object_workshop/external_object_workshop_writes", //$NON-NLS-1$
+        "external_data_source_workshop/external_data_source_workshop_writes"); //$NON-NLS-1$
 
     @Test
     public void everyCrossPresetFoldHazardIsGateChecked()

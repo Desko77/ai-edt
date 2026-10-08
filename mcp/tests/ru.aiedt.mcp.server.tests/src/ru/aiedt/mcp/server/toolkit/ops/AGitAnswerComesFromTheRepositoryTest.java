@@ -114,6 +114,8 @@ public class AGitAnswerComesFromTheRepositoryTest
         catalog.register(new GitCommitTool());
         catalog.register(new GitCheckoutTool());
         catalog.register(new GitFileRestore());
+        catalog.register(new GitMergePointCreateTool());
+        catalog.register(new GitMergePointDeleteTool());
     }
 
     @After
@@ -144,7 +146,7 @@ public class AGitAnswerComesFromTheRepositoryTest
         assertTrue(answer, answer.contains("operation is required")); //$NON-NLS-1$
         for (String known : new String[] { "status", "branches", "log", "commit", "checkout", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
             "show_file_changes", "revert_file", "create_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "restore_merge_point" }) //$NON-NLS-1$
+            "delete_merge_restore_point", "restore_merge_point" }) //$NON-NLS-1$ //$NON-NLS-2$
         {
             assertTrue(answer, answer.contains(known));
         }
@@ -470,7 +472,7 @@ public class AGitAnswerComesFromTheRepositoryTest
     }
 
     /**
-     * The two write doors are their own registered names, so a preset can switch them; each
+     * The write doors are their own registered names, so a preset can switch them; each
      * forwards to the facade's operation of the same name.
      */
     @Test
@@ -482,6 +484,15 @@ public class AGitAnswerComesFromTheRepositoryTest
         assertTrue(answer, answer.contains("no add-all")); //$NON-NLS-1$
         String checkout = new GitCheckoutTool().execute(Map.of("projectName", PROJECT)); //$NON-NLS-1$
         assertTrue(checkout, checkout.contains("checkout requires branch")); //$NON-NLS-1$
+        assertEquals("git_create_merge_restore_point", new GitMergePointCreateTool().getName()); //$NON-NLS-1$
+        assertEquals("git_delete_merge_restore_point", new GitMergePointDeleteTool().getName()); //$NON-NLS-1$
+        String point = new GitMergePointCreateTool().execute(Map.of("projectName", PROJECT)); //$NON-NLS-1$
+        assertTrue(point, point.contains("\"pointId\"")); //$NON-NLS-1$
+        JsonObject taken = JsonParser.parseString(point).getAsJsonObject();
+        String drop = new GitMergePointDeleteTool().execute(Map.of("projectName", PROJECT, //$NON-NLS-1$
+            "pointId", taken.get("pointId").getAsString())); //$NON-NLS-1$ //$NON-NLS-2$
+        JsonObject dropped = JsonParser.parseString(drop).getAsJsonObject();
+        assertTrue(dropped.toString(), dropped.get("success").getAsBoolean()); //$NON-NLS-1$
     }
 
     /**

@@ -38,6 +38,8 @@ import java.util.HashMap;
 
 import java.util.HashSet;
 
+import java.util.LinkedHashMap;
+
 import java.util.List;
 
 import java.util.Map;
@@ -90,6 +92,9 @@ import org.eclipse.core.runtime.IPath;
 
 import ru.aiedt.mcp.server.Activator;
 
+import ru.aiedt.mcp.server.support.AtomicFileReplace;
+
+
 import ru.aiedt.mcp.server.support.LegacyStorageMigration;
 
 import ru.aiedt.mcp.server.labels.model.Marker;
@@ -124,7 +129,13 @@ import ru.aiedt.mcp.server.labels.model.MarkerStore;
 
  * and publishes it only after the file is stored; a failed write puts the previous contents back
 
- * and tells the caller. A marker file that does not parse is not cached and is not overwritten.
+ * and tells the caller. A marker file that does not parse is not cached and is not overwritten,
+
+ * and neither is one that could not be read. The cache is served only while the file still
+
+ * holds the bytes it was read from, and a save replaces the file under its lock only when
+
+ * it still holds them.
 
  * </p>
 
@@ -185,6 +196,12 @@ public class MarkerManager
     private final Map<IProject, MarkerStore> cache = new HashMap<>();
 
     /**
+     * The digest of the bytes each project's storage was read from. A cache entry is served
+     * only while the file still holds them.
+     */
+    private final Map<IProject, String> fingerprints = new HashMap<>();
+
+    /**
 
      * Why a caller is told a mutation did not run: the marker file is on disk and does not parse.
 
@@ -206,7 +223,28 @@ public class MarkerManager
 
 
 
+    /**
+
+     * Projects whose marker file could not be read at all on the last load attempt - a sharing
+
+     * violation, a network drive that went away. Not a state, only the answer to the last
+
+     * attempt: the next load reads the file again and a read that succeeds clears it.
+
+     */
+
+    private final Set<IProject> readFailed = new HashSet<>();
+
+
+
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+
+    /**
+     * Called before every attempt to read a project's marker file, so a test can make one attempt
+     * fail the way a share or a drive that went away does. Production leaves it {@code null}, and
+     * a reader that asks once cannot be made to judge one state and answer from another.
+     */
+    public static volatile java.util.function.Consumer<IProject> markerReadProbeForTests;
 
 
 
@@ -348,6 +386,8 @@ public class MarkerManager
 
                 current.cache.clear();
 
+                current.fingerprints.clear();
+
             }
 
             finally
@@ -415,6 +455,116 @@ public class MarkerManager
 
 
     /**
+     * A project's markers together with why they cannot be answered from, both from one read.
+     * <p>
+     * A caller that asked twice - once for the refusal and once for the markers - read the file
+     * twice: a read that failed is not remembered as a state, so the second call reads again, and
+     * the answer it gives need not be the state the first call judged. A failure in that window
+     * was either refused with nothing behind it or answered as a project that defines no markers.
+     * </p>
+     */
+    public static final class MarkerRead
+    {
+        private final MarkerStore storage;
+
+        private final String refusal;
+
+        /**
+         * Holds what one read of a project's marker file answered.
+         *
+         * @param storage the markers the read found
+         * @param refusal why they cannot be answered from, or {@code null} when the file is
+         *            readable or absent
+         */
+        MarkerRead(MarkerStore storage, String refusal)
+        {
+            this.storage = storage;
+            this.refusal = refusal;
+        }
+
+        /**
+         * The markers the read found, detached from the live storage.
+         *
+         * @return the markers; empty when the file is absent or unreadable
+         */
+        public MarkerStore storage()
+        {
+            return storage;
+        }
+
+        /**
+         * Why the read cannot be answered from, in a sentence for the person waiting.
+         *
+         * @return the refusal, or {@code null} when the marker file is readable or absent
+         */
+        public String refusal()
+        {
+            return refusal;
+        }
+    }
+
+    /**
+     * Reads a project's markers and judges that same read, so the markers and the refusal describe
+     * one attempt at the file.
+     * <p>
+     * The load happens once, inside {@link #getMarkerStorage(IProject)}; the signs it left are read
+     * straight after it under the same hold of the lock, so no other read comes in between.
+     * </p>
+     *
+     * @param project the project; may be {@code null}
+     * @return the markers and the refusal of one read
+     */
+    public MarkerRead readMarkers(IProject project)
+    {
+        if (project == null)
+        {
+            return new MarkerRead(new MarkerStore(), null);
+        }
+        // One hold of the lock over both: another request reading the same project in between
+        // would leave its own signs, and the markers of this read would carry that one's refusal.
+        lock.writeLock().lock();
+        try
+        {
+            return new MarkerRead(getMarkerStorage(project), refusalOfTheLastRead(project));
+        }
+        finally
+        {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Why a reading operation cannot answer from a project's marker file, in a sentence for the
+     * person waiting, from the signs the read just made left behind.
+     *
+     * @param project the project
+     * @return the refusal, or {@code null} when the marker file is readable or absent
+     */
+    private String refusalOfTheLastRead(IProject project)
+    {
+        lock.readLock().lock();
+        try
+        {
+            if (unreadable.contains(project))
+            {
+                return UNREADABLE_MARKER_FILE + ". Nothing was read, so the markers of project " //$NON-NLS-1$
+                    + safeName(project) + " cannot be listed."; //$NON-NLS-1$
+            }
+            if (readFailed.contains(project))
+            {
+                return "The marker file of project " + safeName(project) //$NON-NLS-1$
+                    + " could not be read, so its markers cannot be listed."; //$NON-NLS-1$
+            }
+            return null;
+        }
+        finally
+        {
+            lock.readLock().unlock();
+        }
+    }
+
+
+    /**
 
      * Returns a detached copy of a project's marker storage.
 
@@ -448,7 +598,7 @@ public class MarkerManager
 
             MarkerStore cached = cache.get(project);
 
-            if (cached != null)
+            if (cached != null && cacheIsCurrent(project))
 
             {
 
@@ -531,7 +681,7 @@ public class MarkerManager
 
             MarkerStore cached = cache.get(project);
 
-            if (cached != null)
+            if (cached != null && cacheIsCurrent(project))
 
             {
 
@@ -612,66 +762,71 @@ public class MarkerManager
 
     {
 
+        MarkerWriteOutcome outcome = createMarkerWithOutcome(project, name, color, description);
+
+        return outcome.isRefused() ? null : outcome.getMarker();
+
+    }
+
+
+
+    /**
+     * Defines a new marker and answers what became of the edit.
+     *
+     * @param project the project
+     * @param name the marker name
+     * @param color the marker color, or <code>null</code> for the default
+     * @param description the marker description, or <code>null</code> for none
+     * @return the stored edit with the created marker, or the refusal
+     */
+    public MarkerWriteOutcome createMarkerWithOutcome(IProject project, String name, String color,
+        String description)
+    {
         lock.writeLock().lock();
-
-        Marker created = null;
-
+        MarkerWriteOutcome outcome;
         try
-
         {
-
             MarkerStore storage = loadIntoCache(project);
-
             if (storage == null)
-
             {
-
-                return null;
-
+                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
+                    "the marker file of project " + safeName(project) //$NON-NLS-1$
+                        + " could not be read, so no marker was created"); //$NON-NLS-1$
             }
-
-            MarkerStore before = storage.copy();
-
-            Marker marker = new Marker(name, color, description);
-
-            if (!storage.addMarker(marker))
-
+            else if (storage.getMarkerByName(name) != null)
             {
-
-                return null;
-
+                outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_EXISTS,
+                    "a marker named \"" + name + "\" is already defined in this project"); //$NON-NLS-1$ //$NON-NLS-2$
             }
-
-            if (!stored(project, storage, before))
-
+            else
             {
-
-                return null;
-
+                MarkerStore before = storage.copy();
+                Marker marker = new Marker(name, color, description);
+                if (!storage.addMarker(marker))
+                {
+                    outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_EXISTS,
+                        "a marker named \"" + name + "\" is already defined in this project"); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                else
+                {
+                    String refusal = storedRefusal(project, storage, before);
+                    outcome = refusal != null
+                        ? MarkerWriteOutcome.refused(refusal,
+                            "the marker \"" + name + "\" was not created: " //$NON-NLS-1$ //$NON-NLS-2$
+                                + refusalText(refusal))
+                        : MarkerWriteOutcome.stored(marker, 0);
+                }
             }
-
-            created = marker;
-
         }
-
         finally
-
         {
-
             lock.writeLock().unlock();
-
         }
-
-        if (created != null)
-
+        if (!outcome.isRefused())
         {
-
             fireMarkersChanged(project);
-
         }
-
-        return created;
-
+        return outcome;
     }
 
 
@@ -717,120 +872,97 @@ public class MarkerManager
 
     {
 
+        return !updateMarkerWithOutcome(project, oldName, newName, color, description).isRefused();
+
+    }
+
+
+
+    /**
+     * Updates a marker in place and answers what became of the edit, including how many objects a
+     * rename moved to the new name.
+     *
+     * @param project the project
+     * @param oldName the current name of the marker to update
+     * @param newName the new name, or <code>null</code> to keep it
+     * @param color the new color, or <code>null</code> to keep it
+     * @param description the new description, or <code>null</code> to keep it
+     * @return the stored edit, or the refusal
+     */
+    public MarkerWriteOutcome updateMarkerWithOutcome(IProject project, String oldName,
+        String newName, String color, String description)
+    {
         lock.writeLock().lock();
-
-        boolean changed = false;
-
+        MarkerWriteOutcome outcome;
         try
-
         {
-
             MarkerStore storage = loadIntoCache(project);
-
             if (storage == null)
-
             {
-
-                return false;
-
+                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
+                    "the marker file of project " + safeName(project) //$NON-NLS-1$
+                        + " could not be read, so the marker was not updated"); //$NON-NLS-1$
             }
-
-            Marker marker = storage.getMarkerByName(oldName);
-
-            if (marker == null)
-
+            else
             {
-
-                return false;
-
-            }
-
-            MarkerStore before = storage.copy();
-
-            boolean renaming = newName != null && !newName.equals(oldName);
-
-            if (renaming)
-
-            {
-
-                if (storage.getMarkerByName(newName) != null)
-
+                Marker marker = storage.getMarkerByName(oldName);
+                if (marker == null)
                 {
-
-                    return false;
-
+                    outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_NOT_FOUND,
+                        "no marker named \"" + oldName + "\" is defined in this project"); //$NON-NLS-1$ //$NON-NLS-2$
                 }
-
-                for (List<String> names : storage.getAssignments().values())
-
+                else if (newName != null && !newName.equals(oldName)
+                    && storage.getMarkerByName(newName) != null)
                 {
-
-                    for (int i = 0; i < names.size(); i++)
-
+                    outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.NAME_TAKEN,
+                        "another marker is already named \"" + newName //$NON-NLS-1$
+                            + "\"; the color and description were left as they were"); //$NON-NLS-1$
+                }
+                else
+                {
+                    MarkerStore before = storage.copy();
+                    boolean renaming = newName != null && !newName.equals(oldName);
+                    int moved = renaming ? storage.getObjectsByMarker(oldName).size() : 0;
+                    if (renaming)
                     {
-
-                        if (oldName.equals(names.get(i)))
-
+                        for (List<String> names : storage.getAssignments().values())
                         {
-
-                            names.set(i, newName);
-
+                            for (int i = 0; i < names.size(); i++)
+                            {
+                                if (oldName.equals(names.get(i)))
+                                {
+                                    names.set(i, newName);
+                                }
+                            }
                         }
-
+                        marker.setName(newName);
                     }
-
+                    if (color != null)
+                    {
+                        marker.setColor(color);
+                    }
+                    if (description != null)
+                    {
+                        marker.setDescription(description);
+                    }
+                    String refusal = storedRefusal(project, storage, before);
+                    outcome = refusal != null
+                        ? MarkerWriteOutcome.refused(refusal,
+                            "the marker \"" + oldName + "\" was not updated: " //$NON-NLS-1$ //$NON-NLS-2$
+                                + refusalText(refusal))
+                        : MarkerWriteOutcome.stored(marker, moved);
                 }
-
-                marker.setName(newName);
-
             }
-
-            if (color != null)
-
-            {
-
-                marker.setColor(color);
-
-            }
-
-            if (description != null)
-
-            {
-
-                marker.setDescription(description);
-
-            }
-
-            if (!stored(project, storage, before))
-
-            {
-
-                return false;
-
-            }
-
-            changed = true;
-
         }
-
         finally
-
         {
-
             lock.writeLock().unlock();
-
         }
-
-        if (changed)
-
+        if (!outcome.isRefused())
         {
-
             fireMarkersChanged(project);
-
         }
-
-        return changed;
-
+        return outcome;
     }
 
 
@@ -854,64 +986,60 @@ public class MarkerManager
 
     {
 
+        return !deleteMarkerWithOutcome(project, markerName).isRefused();
+
+    }
+
+
+
+    /**
+     * Deletes a marker and answers what became of the edit, including how many assignments it took
+     * off the objects that carried the marker.
+     *
+     * @param project the project
+     * @param markerName the name of the marker to delete
+     * @return the stored edit, or the refusal
+     */
+    public MarkerWriteOutcome deleteMarkerWithOutcome(IProject project, String markerName)
+    {
         lock.writeLock().lock();
-
-        boolean changed = false;
-
+        MarkerWriteOutcome outcome;
         try
-
         {
-
             MarkerStore storage = loadIntoCache(project);
-
             if (storage == null)
-
             {
-
-                return false;
-
+                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
+                    "the marker file of project " + safeName(project) //$NON-NLS-1$
+                        + " could not be read, so the marker was not deleted"); //$NON-NLS-1$
             }
-
-            MarkerStore before = storage.copy();
-
-            if (!storage.removeMarker(markerName))
-
+            else if (storage.getMarkerByName(markerName) == null)
             {
-
-                return false;
-
+                outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_NOT_FOUND,
+                    "no marker named \"" + markerName + "\" is defined in this project"); //$NON-NLS-1$ //$NON-NLS-2$
             }
-
-            if (!stored(project, storage, before))
-
+            else
             {
-
-                return false;
-
+                int removed = storage.getObjectsByMarker(markerName).size();
+                MarkerStore before = storage.copy();
+                storage.removeMarker(markerName);
+                String refusal = storedRefusal(project, storage, before);
+                outcome = refusal != null
+                    ? MarkerWriteOutcome.refused(refusal,
+                        "the marker \"" + markerName + "\" was not deleted: " //$NON-NLS-1$ //$NON-NLS-2$
+                            + refusalText(refusal))
+                    : MarkerWriteOutcome.stored(null, removed);
             }
-
-            changed = true;
-
         }
-
         finally
-
         {
-
             lock.writeLock().unlock();
-
         }
-
-        if (changed)
-
+        if (!outcome.isRefused())
         {
-
             fireMarkersChanged(project);
-
         }
-
-        return changed;
-
+        return outcome;
     }
 
 
@@ -935,7 +1063,59 @@ public class MarkerManager
 
     {
 
-        return getMarkerStorage(project).getObjectMarkers(objectFqn);
+        // The decorator asks this once per Navigator node, so the answer is built from the live
+
+        // storage under the lock rather than through a full detached copy of every marker and
+
+        // assignment the project holds. The set is fresh and the Marker instances are the live
+
+        // ones, the same exposure getMarkers already answers with.
+
+        lock.readLock().lock();
+
+        try
+
+        {
+
+            MarkerStore cached = cache.get(project);
+
+            if (cached != null && cacheIsCurrent(project))
+
+            {
+
+                return cached.getObjectMarkers(objectFqn);
+
+            }
+
+        }
+
+        finally
+
+        {
+
+            lock.readLock().unlock();
+
+        }
+
+        lock.writeLock().lock();
+
+        try
+
+        {
+
+            MarkerStore live = loadIntoCache(project);
+
+            return live == null ? Set.of() : live.getObjectMarkers(objectFqn);
+
+        }
+
+        finally
+
+        {
+
+            lock.writeLock().unlock();
+
+        }
 
     }
 
@@ -971,64 +1151,94 @@ public class MarkerManager
 
     {
 
+        MarkerWriteOutcome outcome = assignMarkersWithOutcome(project, objectFqn,
+            List.of(markerName));
+
+        return !outcome.isRefused() && outcome.getChangedAssignments() > 0;
+
+    }
+
+
+
+    /**
+     * Assigns several markers to one object in a single write.
+     * <p>
+     * Every name must be defined before the first assignment is made: one unknown name refuses the
+     * whole call and nothing is assigned. A name that is already on the object is skipped rather
+     * than refused, and when every name is skipped the file is not written at all.
+     * </p>
+     *
+     * @param project the project
+     * @param objectFqn the object FQN
+     * @param markerNames the marker names; must already be defined
+     * @return the stored edit with the number of assignments it added, or the refusal
+     */
+    public MarkerWriteOutcome assignMarkersWithOutcome(IProject project, String objectFqn,
+        List<String> markerNames)
+    {
         lock.writeLock().lock();
-
-        boolean changed = false;
-
+        MarkerWriteOutcome outcome;
         try
-
         {
-
             MarkerStore storage = loadIntoCache(project);
-
             if (storage == null)
-
             {
-
-                return false;
-
+                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
+                    "the marker file of project " + safeName(project) //$NON-NLS-1$
+                        + " could not be read, so nothing was assigned"); //$NON-NLS-1$
             }
-
-            MarkerStore before = storage.copy();
-
-            if (!storage.assignMarker(objectFqn, markerName))
-
+            else
             {
-
-                return false;
-
+                String unknown = firstUndefined(storage, markerNames);
+                if (unknown != null)
+                {
+                    outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_NOT_FOUND,
+                        "no marker named \"" + unknown + "\" is defined in this project; " //$NON-NLS-1$ //$NON-NLS-2$
+                            + "nothing was assigned"); //$NON-NLS-1$
+                }
+                else
+                {
+                    MarkerStore before = storage.copy();
+                    List<String> applied = new ArrayList<>();
+                    Map<String, String> skipped = new LinkedHashMap<>();
+                    for (String markerName : markerNames)
+                    {
+                        if (storage.assignMarker(objectFqn, markerName))
+                        {
+                            applied.add(markerName);
+                        }
+                        else
+                        {
+                            // An undefined name was already refused above, so this names a marker
+                            // the object carried when the edit itself looked.
+                            skipped.put(markerName, "alreadyAssigned"); //$NON-NLS-1$
+                        }
+                    }
+                    if (applied.isEmpty())
+                    {
+                        outcome = MarkerWriteOutcome.storedPerName(applied, skipped, 0);
+                    }
+                    else
+                    {
+                        String refusal = storedRefusal(project, storage, before);
+                        outcome = refusal != null
+                            ? MarkerWriteOutcome.refused(refusal,
+                                "no marker was assigned to \"" + objectFqn + "\": " //$NON-NLS-1$ //$NON-NLS-2$
+                                    + refusalText(refusal))
+                            : MarkerWriteOutcome.storedPerName(applied, skipped, applied.size());
+                    }
+                }
             }
-
-            if (!stored(project, storage, before))
-
-            {
-
-                return false;
-
-            }
-
-            changed = true;
-
         }
-
         finally
-
         {
-
             lock.writeLock().unlock();
-
         }
-
-        if (changed)
-
+        if (!outcome.isRefused() && outcome.getChangedAssignments() > 0)
         {
-
             fireAssignmentsChanged(project, objectFqn);
-
         }
-
-        return changed;
-
+        return outcome;
     }
 
 
@@ -1054,64 +1264,94 @@ public class MarkerManager
 
     {
 
+        MarkerWriteOutcome outcome = unassignMarkersWithOutcome(project, objectFqn,
+            List.of(markerName));
+
+        return !outcome.isRefused() && outcome.getChangedAssignments() > 0;
+
+    }
+
+
+
+    /**
+     * Removes several markers from one object in a single write.
+     * <p>
+     * Every name must be defined before the first removal is made: one unknown name refuses the
+     * whole call and nothing is removed. A name the object does not carry is skipped rather than
+     * refused, and when every name is skipped the file is not written at all.
+     * </p>
+     *
+     * @param project the project
+     * @param objectFqn the object FQN
+     * @param markerNames the marker names to take off the object
+     * @return the stored edit with the number of assignments it removed, or the refusal
+     */
+    public MarkerWriteOutcome unassignMarkersWithOutcome(IProject project, String objectFqn,
+        List<String> markerNames)
+    {
         lock.writeLock().lock();
-
-        boolean changed = false;
-
+        MarkerWriteOutcome outcome;
         try
-
         {
-
             MarkerStore storage = loadIntoCache(project);
-
             if (storage == null)
-
             {
-
-                return false;
-
+                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
+                    "the marker file of project " + safeName(project) //$NON-NLS-1$
+                        + " could not be read, so nothing was removed"); //$NON-NLS-1$
             }
-
-            MarkerStore before = storage.copy();
-
-            if (!storage.unassignMarker(objectFqn, markerName))
-
+            else
             {
-
-                return false;
-
+                String unknown = firstUndefined(storage, markerNames);
+                if (unknown != null)
+                {
+                    outcome = MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_NOT_FOUND,
+                        "no marker named \"" + unknown + "\" is defined in this project; " //$NON-NLS-1$ //$NON-NLS-2$
+                            + "nothing was removed"); //$NON-NLS-1$
+                }
+                else
+                {
+                    MarkerStore before = storage.copy();
+                    List<String> applied = new ArrayList<>();
+                    Map<String, String> skipped = new LinkedHashMap<>();
+                    for (String markerName : markerNames)
+                    {
+                        if (storage.unassignMarker(objectFqn, markerName))
+                        {
+                            applied.add(markerName);
+                        }
+                        else
+                        {
+                            // An undefined name was already refused above, so this names a marker
+                            // the object did not carry when the edit itself looked.
+                            skipped.put(markerName, "notAssigned"); //$NON-NLS-1$
+                        }
+                    }
+                    if (applied.isEmpty())
+                    {
+                        outcome = MarkerWriteOutcome.storedPerName(applied, skipped, 0);
+                    }
+                    else
+                    {
+                        String refusal = storedRefusal(project, storage, before);
+                        outcome = refusal != null
+                            ? MarkerWriteOutcome.refused(refusal,
+                                "no marker was removed from \"" + objectFqn + "\": " //$NON-NLS-1$ //$NON-NLS-2$
+                                    + refusalText(refusal))
+                            : MarkerWriteOutcome.storedPerName(applied, skipped, applied.size());
+                    }
+                }
             }
-
-            if (!stored(project, storage, before))
-
-            {
-
-                return false;
-
-            }
-
-            changed = true;
-
         }
-
         finally
-
         {
-
             lock.writeLock().unlock();
-
         }
-
-        if (changed)
-
+        if (!outcome.isRefused() && outcome.getChangedAssignments() > 0)
         {
-
             fireAssignmentsChanged(project, objectFqn);
-
         }
-
-        return changed;
-
+        return outcome;
     }
 
 
@@ -1286,6 +1526,62 @@ public class MarkerManager
     }
 
     /**
+     * Tells whether the last load attempt of the project's marker file could not read its bytes at
+     * all - as opposed to reading them and finding they do not parse, which
+     * {@link #markerFileRefusal(IProject)} answers.
+     * <p>
+     * The answer describes the last attempt, so the question is meaningful after a call that
+     * loads: {@code getMarkerStorage}, {@code markerFileRefusal}. A read that failed is not a
+     * state - the next load reads the file again, and one that succeeds clears this.
+     * </p>
+     *
+     * @param project the project
+     * @return <code>true</code> when the last load attempt of its marker file failed to read
+     */
+    public boolean markerFileReadFailed(IProject project)
+    {
+        if (project == null)
+        {
+            return false;
+        }
+        lock.readLock().lock();
+        try
+        {
+            return readFailed.contains(project);
+        }
+        finally
+        {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
+     * Why a reading operation cannot answer from a project's marker file, in a sentence for the
+     * person waiting for the answer.
+     * <p>
+     * A file that does not parse and a file whose bytes could not be read are two states, and they
+     * are named apart. Both leave a reader with nothing: {@link #getMarkerStorage(IProject)}
+     * answers an empty storage in either case, and reporting that as "this project has no markers"
+     * answers a question about the project with a failure of the tool.
+     * </p>
+     * <p>
+     * The answer is established by the same two signs the writing operations refuse on, and it is
+     * established by loading the file, so this call is the one that tells {@link
+     * #markerFileReadFailed(IProject)} what the last attempt did. A reader that needs the markers as
+     * well as this refusal asks {@link #readMarkers(IProject)} once: two calls read the file twice,
+     * and a read that failed is not a state, so the second answer need not describe the state the
+     * first one judged.
+     * </p>
+     *
+     * @param project the project; may be <code>null</code>
+     * @return the refusal, or <code>null</code> when the marker file is readable or absent
+     */
+    public String markerReadRefusal(IProject project)
+    {
+        return readMarkers(project).refusal();
+    }
+
+    /**
 
      * Moves an object's assignments, and the assignments of every object nested under it, to a new FQN.
 
@@ -1333,7 +1629,7 @@ public class MarkerManager
 
             }
 
-            if (!stored(project, storage, before))
+            if (storedRefusal(project, storage, before) != null)
 
             {
 
@@ -1414,7 +1710,7 @@ public class MarkerManager
 
             }
 
-            if (!stored(project, storage, before))
+            if (storedRefusal(project, storage, before) != null)
 
             {
 
@@ -1495,7 +1791,7 @@ public class MarkerManager
 
             }
 
-            if (!stored(project, storage, before))
+            if (storedRefusal(project, storage, before) != null)
 
             {
 
@@ -1576,7 +1872,7 @@ public class MarkerManager
 
             }
 
-            if (!stored(project, storage, before))
+            if (storedRefusal(project, storage, before) != null)
 
             {
 
@@ -1742,33 +2038,48 @@ public class MarkerManager
      */
 
     private void evict(IProject project)
-
     {
-
-        lock.writeLock().lock();
-
-        try
-
+        // Called from the resource-change notification, which runs under the workspace lock. A
+        // writer holds this manager's lock while it asks the workspace to refresh the file it has
+        // just replaced, so waiting for the lock here would be the other half of a deadlock. When
+        // the lock is busy the eviction runs on another thread, which holds no workspace lock.
+        if (lock.writeLock().tryLock())
         {
-
-            cache.remove(project);
-
-            unreadable.remove(project);
-
+            try
+            {
+                dropCached(project);
+            }
+            finally
+            {
+                lock.writeLock().unlock();
+            }
+            return;
         }
-
-        finally
-
-        {
-
-            lock.writeLock().unlock();
-
-        }
-
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            lock.writeLock().lock();
+            try
+            {
+                dropCached(project);
+            }
+            finally
+            {
+                lock.writeLock().unlock();
+            }
+        });
     }
 
-
-
+    /**
+     * Forgets everything cached for a project. The caller holds the write lock.
+     *
+     * @param project the project to forget
+     */
+    private void dropCached(IProject project)
+    {
+        cache.remove(project);
+        unreadable.remove(project);
+        readFailed.remove(project);
+        fingerprints.remove(project);
+    }
 
     /**
 
@@ -1853,62 +2164,44 @@ public class MarkerManager
 
 
     /**
-
      * Returns the cached storage, loading it when absent. The caller holds the write lock.
-
      * <p>
-
-     * An unreadable file is not cached. The caller must not write an empty storage over it.
-
+     * An unreadable file is not cached, and neither is a read that failed: the caller must
+     * not write an empty storage over either. A failed read is not remembered as a state
+     * either: the next call reads the file again, so a transient failure disables the
+     * markers only while it lasts. A cache entry is served only while the file still holds
+     * the bytes it was read from; once the file changes, the entry is dropped and the
+     * storage is reloaded from what the file holds now.
      * </p>
-
      *
-
      * @param project the project
-
-     * @return the live storage, or <code>null</code> when the file does not parse
-
+     * @return the live storage, or <code>null</code> when the file does not parse or cannot be
+     *         read
      */
-
     private MarkerStore loadIntoCache(IProject project)
-
     {
-
         if (project == null || unreadable.contains(project))
-
         {
-
             return null;
-
         }
-
         MarkerStore cached = cache.get(project);
-
         if (cached != null)
-
         {
-
-            return cached;
-
+            if (cacheIsCurrent(project))
+            {
+                return cached;
+            }
+            cache.remove(project);
+            fingerprints.remove(project);
         }
-
         MarkerStore loaded = loadMarkerStorage(project);
-
         if (loaded == null)
-
         {
-
             return null;
-
         }
-
         cache.put(project, loaded);
-
         return loaded;
-
     }
-
-
 
     /**
 
@@ -1924,28 +2217,104 @@ public class MarkerManager
 
      * @param before a snapshot taken before the change
 
-     * @return <code>true</code> when the file was written
+     * @return the refusal code, or <code>null</code> when the file was written
 
      */
 
-    private boolean stored(IProject project, MarkerStore storage, MarkerStore before)
+    private String storedRefusal(IProject project, MarkerStore storage, MarkerStore before)
 
     {
 
-        if (!saveMarkerStorage(project, storage))
+        String refusal = saveMarkerStorage(project, storage);
+
+        if (refusal != null)
 
         {
 
             storage.restoreFrom(before);
 
-            return false;
+            return refusal;
 
         }
 
         cache.put(project, storage);
 
-        return true;
+        return null;
 
+    }
+
+
+
+    /**
+     * The refusal code of a storage the manager could not load: the file does not parse, or it
+     * could not be read at all. The caller holds the write lock, so the unreadable set is safe to
+     * read here.
+     *
+     * @param project the project whose storage was asked for
+     * @return {@link MarkerWriteOutcome#UNREADABLE_FILE} or {@link MarkerWriteOutcome#SAVE_FAILED}
+     */
+    private String storageRefusalCode(IProject project)
+    {
+        return unreadable.contains(project) ? MarkerWriteOutcome.UNREADABLE_FILE
+            : MarkerWriteOutcome.SAVE_FAILED;
+    }
+
+    /**
+     * The project's name for a refusal sentence, or a placeholder for the null no caller should
+     * hand in but one still can.
+     *
+     * @param project the project
+     * @return its name
+     */
+    private static String safeName(IProject project)
+    {
+        return project != null ? project.getName() : "(none)"; //$NON-NLS-1$
+    }
+
+    /**
+     * A short human sentence for a file refusal code, to close the refusal text of an edit with.
+     *
+     * @param refusal the refusal code
+     * @return the sentence
+     */
+    private static String refusalText(String refusal)
+    {
+        if (MarkerWriteOutcome.UNREADABLE_FILE.equals(refusal))
+        {
+            return "the marker file does not parse; resolve it first"; //$NON-NLS-1$
+        }
+        if (MarkerWriteOutcome.READ_ONLY_FILE.equals(refusal))
+        {
+            return "the marker file is read-only"; //$NON-NLS-1$
+        }
+        if (MarkerWriteOutcome.CHANGED_ON_DISK.equals(refusal))
+        {
+            return "the marker file changed after it was read and was left as the changing party wrote it"; //$NON-NLS-1$
+        }
+        return "the marker file could not be written"; //$NON-NLS-1$
+    }
+
+    /**
+     * The first name of a list no defined marker answers to, if there is one.
+     *
+     * @param storage the project's markers
+     * @param markerNames the names a call wants to work with
+     * @return the unknown name, or <code>null</code> when every name is defined
+     */
+    private static String firstUndefined(MarkerStore storage, List<String> markerNames)
+    {
+        if (markerNames == null)
+        {
+            return null;
+        }
+        for (String markerName : markerNames)
+        {
+            if (storage.getMarkerByName(markerName) == null)
+            {
+                return markerName;
+            }
+        }
+        return null;
     }
 
 
@@ -2001,196 +2370,301 @@ public class MarkerManager
     }
 
     /**
-
-     * Reads a project's marker file into a storage.
-
+     * Announces one attempt to read a project's marker file to a test probe, if one is set.
      * <p>
-
-     * A missing or empty file resolves to an empty storage. Malformed YAML does not: it is recorded
-
-     * as unreadable and answered with <code>null</code>, so nobody caches that emptiness or writes it
-
-     * back over the file. The load ignores properties it does not know, so a file written by a newer
-
-     * version still reads.
-
+     * Every attempt goes through here - the load that parses the file and the fingerprint that
+     * decides whether a cached storage still describes it - so a test can make the attempt count
+     * the file's reads.
      * </p>
-
      *
-
-     * @param project the project
-
-     * @return the loaded storage, an empty one when there is nothing to read, or <code>null</code> when
-
-     *         the file does not parse
-
+     * @param project the project the file belongs to
      */
-
-    private MarkerStore loadMarkerStorage(IProject project)
-
+    private static void beforeReadingTheMarkerFile(IProject project)
     {
-
-        if (project == null || !project.isAccessible())
-
+        java.util.function.Consumer<IProject> probe = markerReadProbeForTests;
+        if (probe != null && project != null)
         {
-
-            return new MarkerStore();
-
+            probe.accept(project);
         }
-
-        IFile file = getMarkersFile(project);
-
-        if (file == null || !file.exists())
-
-        {
-
-            unreadable.remove(project);
-
-            return new MarkerStore();
-
-        }
-
-        try (InputStream input = file.getContents();
-
-            Reader reader = new InputStreamReader(input, StandardCharsets.UTF_8))
-
-        {
-
-            MarkerStore storage = createLoadYaml().load(reader);
-
-            unreadable.remove(project);
-
-            return storage != null ? storage : new MarkerStore();
-
-        }
-
-        catch (CoreException | IOException e)
-
-        {
-
-            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
-
-            return new MarkerStore();
-
-        }
-
-        catch (YAMLException e)
-
-        {
-
-            // Corrupt YAML or a git merge-conflict marker. Remember it and refuse to cache an empty
-
-            // storage: the next mutation would otherwise overwrite both sides of the conflict.
-
-            unreadable.add(project);
-
-            Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
-
-            return null;
-
-        }
-
     }
-
-
-
 
     /**
-
-     * Writes a storage back to a project's marker file, creating the settings folder if needed.
-
+     * Reads a project's marker file into a storage and remembers the bytes it was read from.
+     * <p>
+     * A missing file resolves to an empty storage. A file the workspace does not know about is
+     * read from the disk it lies on: the bytes are the project's own whichever party put them
+     * there. Malformed YAML is recorded as unreadable and answered with <code>null</code>, and a
+     * read that failed is answered the same way and tried again on the next call: neither is
+     * cached, so no mutation writes an empty storage over a file it never read. The load
+     * ignores properties it does not know, so a file written by a newer version still reads.
+     * </p>
      *
-
      * @param project the project
-
-     * @param storage the storage to write
-
-     * @return <code>true</code> when the file was written; <code>false</code> when it was not
-
+     * @return the loaded storage, an empty one when there is nothing to read, or
+     *         <code>null</code> when the file does not parse or cannot be read
      */
-
-    private boolean saveMarkerStorage(IProject project, MarkerStore storage)
-
+    private MarkerStore loadMarkerStorage(IProject project)
     {
-
-        if (project == null)
-
+        beforeReadingTheMarkerFile(project);
+        if (project == null || !project.isAccessible())
         {
-
-            return false;
-
+            return new MarkerStore();
         }
-
+        IFile file = getMarkersFile(project);
+        if (file == null)
+        {
+            return new MarkerStore();
+        }
+        byte[] bytes;
         try
-
         {
-
-            IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
-
-            if (!settingsFolder.exists())
-
-            {
-
-                settingsFolder.create(true, true, null);
-
-            }
-
-            IFile file = settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
-
-            if (file.exists() && !canOverwrite(file))
-
-            {
-
-                Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
-
-                    + ": the file is read-only", null); //$NON-NLS-1$
-
-                return false;
-
-            }
-
-            byte[] bytes = dumpToString(storage).getBytes(StandardCharsets.UTF_8);
-
-            try (InputStream input = new ByteArrayInputStream(bytes))
-
-            {
-
-                if (file.exists())
-
-                {
-
-                    file.setContents(input, true, true, null);
-
-                }
-
-                else
-
-                {
-
-                    file.create(input, true, null);
-
-                }
-
-            }
-
-            return true;
-
+            bytes = readMarkersBytes(file);
         }
-
         catch (CoreException | IOException e)
-
         {
-
-            Activator.logError("Could not save the marker file for project " + project.getName(), e); //$NON-NLS-1$
-
-            return false;
-
+            fingerprints.remove(project);
+            readFailed.add(project);
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
         }
-
+        unreadable.remove(project);
+        readFailed.remove(project);
+        if (bytes == null)
+        {
+            fingerprints.put(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
+            return new MarkerStore();
+        }
+        try (Reader reader = new InputStreamReader(new ByteArrayInputStream(bytes),
+            StandardCharsets.UTF_8))
+        {
+            MarkerStore storage = createLoadYaml().load(reader);
+            fingerprints.put(project, AtomicFileReplace.fingerprint(bytes));
+            return storage != null ? storage : new MarkerStore();
+        }
+        catch (IOException e)
+        {
+            fingerprints.remove(project);
+            readFailed.add(project);
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
+        }
+        catch (YAMLException e)
+        {
+            // Corrupt YAML or a git merge-conflict marker. Remember it and refuse to cache an
+            // empty storage: the next mutation would otherwise overwrite both sides of the
+            // conflict.
+            unreadable.add(project);
+            fingerprints.remove(project);
+            Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
+        }
     }
 
+    /**
+     * Reads the marker file's bytes, following the file onto the local disk when the resource
+     * tree does not have it yet.
+     * <p>
+     * Another process writes the file - git checks a branch out, an editor outside the
+     * workspace saves it - while the tree still answers that there is no such resource. The
+     * bytes on disk are the ones the project has, so they are read directly when the tree has
+     * no file. The disk decides the other way around too: a file the tree remembers that the
+     * disk no longer has counts as no file, not as a read error.
+     * </p>
+     *
+     * @param file the marker file handle
+     * @return the bytes, or {@code null} when there is no file at all
+     * @throws CoreException when the file cannot be read through the workspace
+     * @throws IOException when the file cannot be read from disk
+     */
+    private static byte[] readMarkersBytes(IFile file) throws CoreException, IOException
+    {
+        IPath location = file.getLocation();
+        Path onDisk = location == null ? null : location.toFile().toPath();
+        if (onDisk != null && Files.notExists(onDisk))
+        {
+            // The tree may still remember a file the disk no longer has - a delete the
+            // workspace was never told about. The disk decides whether there is a file.
+            // notExists, not !exists: a path whose existence cannot be determined - a drive
+            // that is away, a directory that may not be listed - is not a missing file, and
+            // falls through to the read below, which fails with the reason.
+            return null;
+        }
+        if (file.exists())
+        {
+            try (InputStream input = file.getContents())
+            {
+                return input.readAllBytes();
+            }
+        }
+        return onDisk == null ? null : Files.readAllBytes(onDisk);
+    }
 
+    /**
+     * Tells whether the cached storage still describes the marker file.
+     * <p>
+     * The cache is served only while the file holds the bytes it was read from. The comparison
+     * reads the file the same way the load does, so an edit made outside the workspace is seen
+     * even before the workspace has been told about it.
+     * </p>
+     * <p>
+     * The caller may hold the read lock, so the file handle is built without the legacy
+     * carry-over, which writes to disk and belongs under the write lock.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the remembered fingerprint still matches the file
+     */
+    private boolean cacheIsCurrent(IProject project)
+    {
+        String remembered = fingerprints.get(project);
+        if (remembered == null || !project.isAccessible())
+        {
+            return false;
+        }
+        IFile file = project.getFolder(MarkerKeys.SETTINGS_FOLDER)
+            .getFile(MarkerKeys.MARKERS_FILE);
+        return remembered.equals(diskFingerprint(project, file));
+    }
 
+    /**
+     * The fingerprint of the marker file as it stands now.
+     *
+     * @param project the project, for the log line
+     * @param file the marker file handle
+     * @return the fingerprint, {@link AtomicFileReplace#NO_FILE_FINGERPRINT} when there is no
+     *         file, or {@code null} when it cannot be read
+     */
+    private static String diskFingerprint(IProject project, IFile file)
+    {
+        beforeReadingTheMarkerFile(project);
+        try
+        {
+            byte[] bytes = readMarkersBytes(file);
+            return bytes == null ? AtomicFileReplace.NO_FILE_FINGERPRINT
+                : AtomicFileReplace.fingerprint(bytes);
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return null;
+        }
+    }
+
+    /**
+     * Writes a storage back to a project's marker file.
+     * <p>
+     * The write runs under the file's lock, against the fingerprint of the bytes the storage
+     * was read from, and replaces the file atomically: a file that changed after it was read is
+     * left as the changing party wrote it. The settings folder is created when missing, and the
+     * workspace holds the written file as a resource without an outside refresh. A project whose
+     * file has no location on disk, or whose file was never read, is written through the
+     * workspace as before.
+     * </p>
+     *
+     * @param project the project
+     * @param storage the storage to write
+     * @return <code>true</code> when the file was written; <code>false</code> when it was not
+     */
+    private String saveMarkerStorage(IProject project, MarkerStore storage)
+    {
+        if (project == null)
+        {
+            return MarkerWriteOutcome.SAVE_FAILED;
+        }
+        IFile file = getMarkersFile(project);
+        byte[] bytes = dumpToString(storage).getBytes(StandardCharsets.UTF_8);
+        if (file.exists() && !canOverwrite(file))
+        {
+            Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                + ": the file is read-only", null); //$NON-NLS-1$
+            return MarkerWriteOutcome.READ_ONLY_FILE;
+        }
+        String expected = fingerprints.get(project);
+        IPath location = file.getLocation();
+        if (expected == null || location == null)
+        {
+            return saveThroughWorkspace(project, file, bytes) ? null
+                : MarkerWriteOutcome.SAVE_FAILED;
+        }
+        AtomicFileReplace.Outcome written = AtomicFileReplace.replace(
+            location.toFile().toPath(), expected, bytes, file);
+        if (!written.isOk())
+        {
+            Activator.logWarning("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                + ": " + written); //$NON-NLS-1$
+            return replaceRefusal(written);
+        }
+        fingerprints.put(project, AtomicFileReplace.fingerprint(bytes));
+        return null;
+    }
+
+    /**
+     * The marker-side refusal code of a refused atomic replacement: a file that changed after it
+     * was read keeps its own code, a file the system will not open for writing reads as read-only,
+     * and everything else is a write that did not happen.
+     *
+     * @param written the refused replacement
+     * @return {@link MarkerWriteOutcome#CHANGED_ON_DISK}, {@link MarkerWriteOutcome#READ_ONLY_FILE}
+     *         or {@link MarkerWriteOutcome#SAVE_FAILED}
+     */
+    private static String replaceRefusal(AtomicFileReplace.Outcome written)
+    {
+        if (AtomicFileReplace.CHANGED_ON_DISK.equals(written.getCode()))
+        {
+            return MarkerWriteOutcome.CHANGED_ON_DISK;
+        }
+        if (AtomicFileReplace.ACCESS_DENIED.equals(written.getCode()))
+        {
+            return MarkerWriteOutcome.READ_ONLY_FILE;
+        }
+        return MarkerWriteOutcome.SAVE_FAILED;
+    }
+
+    /**
+     * Writes the bytes through the workspace, the route used when the file has no location on
+     * disk or was never read by this manager. An existing read-only file is refused here as it
+     * is on the locked route: a forced workspace write clears the read-only flag and overwrites
+     * the file while telling the caller it was saved.
+     *
+     * @param project the project
+     * @param file the marker file handle
+     * @param bytes the bytes to write
+     * @return <code>true</code> when the file was written
+     */
+    static boolean saveThroughWorkspace(IProject project, IFile file, byte[] bytes)
+    {
+        try
+        {
+            IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
+            if (!settingsFolder.exists())
+            {
+                settingsFolder.create(true, true, null);
+            }
+            if (file.exists() && !canOverwrite(file))
+            {
+                Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
+                    + ": the file is read-only", null); //$NON-NLS-1$
+                return false;
+            }
+            try (InputStream input = new ByteArrayInputStream(bytes))
+            {
+                if (file.exists())
+                {
+                    file.setContents(input, true, true, null);
+                }
+                else
+                {
+                    file.create(input, true, null);
+                }
+            }
+            return true;
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Could not save the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return false;
+        }
+    }
 
     /**
 

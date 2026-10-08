@@ -14,10 +14,14 @@ import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabItem;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.program.Program;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Link;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
+import org.osgi.framework.FrameworkUtil;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.McpHttpEndpoint;
@@ -38,6 +42,9 @@ public class McpSettingsPage
     private GeneralPrefTab generalTab;
 
     private ToolsPrefTab toolsTab;
+
+    /** A tool selection this page has saved and the running server has not been given yet. */
+    private final PendingRestart pendingRestart = new PendingRestart();
 
     /**
      * Binds the page to the plugin store and gives it its heading.
@@ -70,6 +77,18 @@ public class McpSettingsPage
         tabFolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
         generalTab = new GeneralPrefTab(tabFolder);
+        // A start or a stop made with the tab's own buttons settles what a failed restart left
+        // owed: the next OK must not start a server the user has since stopped by hand.
+        generalTab.whenServerIsActedOnByHand(started -> {
+            if (started.booleanValue())
+            {
+                pendingRestart.startedByHand();
+            }
+            else
+            {
+                pendingRestart.stoppedByHand();
+            }
+        });
         generalTab.setValidationListener(this::revalidate);
         // The general tab had grown past the dialog - the user reads a name and goes straight to
         // it rather than scrolls a page. The workbench section goes last, where its side of the
@@ -92,8 +111,50 @@ public class McpSettingsPage
         toolsItem.setControl(toolsTab.getControl());
 
         tabFolder.setSelection(0);
+        createFooter(composite);
         revalidate();
         return composite;
+    }
+
+    /**
+     * Adds the page footer below the tab folder.
+     *
+     * @param parent the page composite
+     */
+    private static void createFooter(Composite parent)
+    {
+        Label separator = new Label(parent, SWT.SEPARATOR | SWT.HORIZONTAL);
+        separator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        Composite footer = new Composite(parent, SWT.NONE);
+        GridLayout layout = new GridLayout(4, false);
+        layout.marginWidth = 0;
+        layout.marginHeight = 0;
+        layout.horizontalSpacing = 12;
+        footer.setLayout(layout);
+        footer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        Label text = new Label(footer, SWT.NONE);
+        text.setText(SettingsFooter.text(FrameworkUtil.getBundle(McpSettingsPage.class)));
+        text.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        addFooterLink(footer, "Repository", SettingsFooter.REPOSITORY_URL); //$NON-NLS-1$
+        addFooterLink(footer, "Telegram", SettingsFooter.TELEGRAM_URL); //$NON-NLS-1$
+        addFooterLink(footer, "Update site", SettingsFooter.UPDATE_SITE_URL); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds one browser link to the footer.
+     *
+     * @param parent the footer row
+     * @param label visible link text
+     * @param url destination opened by the system browser
+     */
+    private static void addFooterLink(Composite parent, String label, String url)
+    {
+        Link link = new Link(parent, SWT.NONE);
+        link.setText("<a href=\"" + url + "\">" + label + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        link.addListener(SWT.Selection, event -> Program.launch(url));
     }
 
     /**
@@ -135,12 +196,20 @@ public class McpSettingsPage
         }
         toolsTab.performOk();
 
-        if (toolsChanged)
+        McpHttpEndpoint server = Activator.getDefault().getMcpServer();
+        if (server == null)
         {
-            McpHttpEndpoint server = Activator.getDefault().getMcpServer();
-            if (server != null && server.isRunning())
+            // No endpoint has ever been created, so there is nothing this save could be owed to: one
+            // created later reads the store for itself.
+            return super.performOk();
+        }
+
+        PendingRestart.Action action = pendingRestart.actionFor(toolsChanged, server.isRunning());
+        if (action != PendingRestart.Action.NOTHING)
+        {
+            try
             {
-                try
+                if (action == PendingRestart.Action.RESTART)
                 {
                     // Strictly the registry re-reads the disabled set per request, so this is not
                     // needed to apply the change - but it drops the open connections, which is
@@ -148,10 +217,34 @@ public class McpSettingsPage
                     server.restart(generalTab.getPort());
                     Activator.logInfo("MCP Server restarted following a tool configuration change"); //$NON-NLS-1$
                 }
-                catch (IOException e)
+                else
                 {
-                    Activator.logError("MCP Server restart failed after a tool change", e); //$NON-NLS-1$
+                    // A restart that failed left the server stopped. Nothing else brings it back:
+                    // the tools tab has already written the store, so this OK is the last one that
+                    // knows a server was running a moment ago.
+                    server.start(generalTab.getPort());
+                    Activator.logInfo("MCP Server started after a failed restart"); //$NON-NLS-1$
                 }
+                pendingRestart.applied();
+            }
+            catch (IOException e)
+            {
+                // The settings are saved by this point; the server is not running on them. Closing
+                // the page would leave the user to find that out from a client that no longer
+                // connects, so the page stays open and says so. The tools tab has already written
+                // the store, so the next OK would see no change at all - the debt is what keeps the
+                // server owed until one of the two returns.
+                pendingRestart.refused();
+                boolean restarted = action == PendingRestart.Action.RESTART;
+                Activator.logError(restarted
+                    ? "MCP Server restart failed after a tool change" //$NON-NLS-1$
+                    : "MCP Server start failed after a failed restart", e); //$NON-NLS-1$
+                setErrorMessage(restarted
+                    ? "The tool settings were saved, but the MCP server could not be restarted " //$NON-NLS-1$
+                        + "and is stopped: " + e.getMessage() //$NON-NLS-1$
+                    : "The tool settings were saved, but the MCP server is stopped and could not be " //$NON-NLS-1$
+                        + "started: " + e.getMessage()); //$NON-NLS-1$
+                return false;
             }
         }
 

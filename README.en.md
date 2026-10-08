@@ -80,6 +80,9 @@ AI-EDT exposes those operations as purpose-built MCP tools - the same services t
 | 🗂️ **See EDT's infobase list** | Get the infobases from EDT's list with their groups, the connection string with passwords masked, the platform version and the bound projects: `infobase_admin operation=list_registered_infobases`. |
 | 🎨 **Set a form's conditional appearance** | Add, read and remove the conditional appearance rules of a managed form: `edit_metadata` `add_form_appearance_rule`, `list_form_appearance_rules`, `remove_form_appearance_rule`. |
 | ⏸️ **Pause a debug thread** | Suspend one thread or the whole session (`launch_debugger action=pause_thread`), disable a breakpoint without removing it (`set_breakpoint_state`) and replace a module's breakpoint set in one call (`add_breakpoint` with `replaceModuleSet`). |
+| 🏷️ **Put tags on objects** | Create, change and delete a tag, assign it to an object and take it off: `tag_admin` with the operations `create_tag`, `update_tag`, `delete_tag`, `assign_tag`, `unassign_tag`. |
+| 🚫 **Take commands out of a form interface** | Exclude named commands from a form's command interface and read the excluded list: `edit_metadata operation=set_excluded_commands`, `get_form_structure` with the `excludedCommands` field. |
+| ↕️ **Edit template rows and columns** | Insert, delete and copy rows and columns of a spreadsheet template, with merges, named areas, drawings and their data sources recalculated: `mxl_workshop` with `insert_rows`, `delete_rows`, `copy_rows`, `insert_columns`, `delete_columns`, `copy_columns`. |
 
 The server exposes more than one hundred operations. Related actions are grouped behind facades such as `code_search`, `edit_metadata`, `launch_debugger`, `diagnostics`, `insights` and `security_audit`, so an MCP client sees a compact tool surface instead of a long list of near-duplicates.
 
@@ -289,7 +292,7 @@ The Equinox P2 director installs the same feature with no UI. Close the EDT sess
 
 The feature is a p2 singleton, so installing a new version over an existing one fails unless the old unit is removed in the same request. On a first installation drop the `-uninstallIU` line - there is nothing to remove yet.
 
-For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check.
+For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check. When the machine holds several EDT installations, `-AllInstallations` prints, with EDT closed, the table of installations it found - directory, EDT version, the plugin record each of them loads and the Java it would use - and stops there; `-Every` or `-InstallationMatch <substring of the path>` name the installations to update and print the version before and after. `-WhatIf` prints the plan and changes nothing.
 
 #### 🎓 Install the skill while you are at it
 
@@ -458,7 +461,8 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 | `config_io` | Configuration and single-artifact import and export. |
 | `docs_lookup` | Platform documentation and built-in 1C object help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks and tasks. |
-| `git` | The project's repository inside EDT: status, branches, history, a commit of named files, a switch of branch, a file's changes and its restore from a commit, a point before a merge - through the JGit the IDE ships. The writes `commit`, `checkout`, `revert_file` and `restore_merge_point` are switched off by presets under the names `git_commit`, `git_checkout` and `git_revert_file`; `create_merge_restore_point` writes nothing into the work tree and no preset switches it off. |
+| `tag_admin` | Tags: create, change, delete, assign to an object and unassign. |
+| `git` | The project's repository inside EDT: status, branches, history, a commit of named files, a switch of branch, a file's changes and its restore from a commit, a point before a merge and its deletion - through the JGit the IDE ships. The writes `commit`, `checkout`, `revert_file` and `restore_merge_point` are switched off by presets under the names `git_commit`, `git_checkout` and `git_revert_file`; `create_merge_restore_point` writes nothing into the work tree and no preset switches it off. |
 | `dcs_workshop` / `mxl_workshop` / `xdto_workshop` / `external_data_source_workshop` | Programmatic builders for complex 1C artifacts. |
 | `extension_workshop` / `external_object_workshop` | Extension and external report/data-processor lifecycle operations; `import_external_object` converts an `.epf` / `.erf` through the Designer of the named infobase (`applicationId`) and hands the infobase back to EDT. |
 | `yaxunit_tests` | Run or debug selected YAxUnit tests and read their reports. |

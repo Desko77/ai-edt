@@ -481,7 +481,8 @@ public final class InfobaseObjectsExporter
 
         /**
          * @param outputPath the destination
-         * @return whether the destination is absent or holds nothing
+         * @return whether the destination is absent or an empty directory - a regular file
+         *         sitting there is not vacant
          */
         boolean destinationVacant(Path outputPath);
 
@@ -1351,7 +1352,11 @@ public final class InfobaseObjectsExporter
         @Override
         public boolean destinationVacant(Path destination)
         {
-            return isEmptyDirectory(destination);
+            // Not isEmptyDirectory: that one answers true for anything that is not a directory,
+            // a regular file included, and the export would release and reconnect the infobase
+            // before Files.move bounced off that file.
+            return !Files.exists(destination)
+                || (Files.isDirectory(destination) && isEmptyDirectory(destination));
         }
 
         @Override

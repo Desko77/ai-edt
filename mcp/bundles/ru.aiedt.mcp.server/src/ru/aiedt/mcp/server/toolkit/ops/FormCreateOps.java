@@ -348,7 +348,7 @@ final class FormCreateOps
                 // and no formType got no setter at all and an answer of success).
                 if (setAsDefault)
                 {
-                    String setterName = defaultFormSetterFor(purposeConstant);
+                    String setterName = defaultFormPropertyFor(purposeConstant, owner);
                     if (setterName == null)
                     {
                         // Nothing to point at: the purpose names no default-form property. Say so
@@ -564,6 +564,10 @@ final class FormCreateOps
                     ensureObjectFormContent(innerFormForContent, owner, ownerFqn,
                         purposeConstant, formGenProject, formGenConfig,
                         mainAttrAddedRef, autoCmdBarAddedRef, contentWarnings);
+                    if (carriesAutoCommandBar(innerFormForContent))
+                    {
+                        autoCmdBarAddedRef.set(Boolean.TRUE);
+                    }
                 }
                 return formName;
             });
@@ -1014,6 +1018,88 @@ final class FormCreateOps
             case "RECORD": return "defaultRecordForm"; //$NON-NLS-1$ //$NON-NLS-2$
             default: return null;
         }
+    }
+
+    /**
+     * Whether the created form holds an auto command bar, which is what the
+     * {@code autoCommandBarAdded} tag of the response reports.
+     * <p>
+     * The bar reaches the form from either half of the deterministic content: the form generator
+     * builds one into the layout it produces, and a form that came out without one receives the
+     * container from its base properties. Reading the finished form answers what the caller gets;
+     * asking the content step alone missed the empty layout, because a form created for it is built
+     * with those base properties already applied and so holds its bar before that step looks.
+     * </p>
+     *
+     * @param innerForm the form the operation built, or <code>null</code>
+     * @return true when the form holds an auto command bar
+     */
+    static boolean carriesAutoCommandBar(Object innerForm)
+    {
+        return innerForm != null && invokeNoArg(innerForm, "getAutoCommandBar") != null; //$NON-NLS-1$
+    }
+
+    /**
+     * The property {@code setAsDefault} writes for a form of this purpose on this owner.
+     * <p>
+     * A data processor and a report keep one default form for every purpose of the forms they
+     * declare, so a form made the default is named by {@code defaultForm} whatever its purpose is.
+     * The purpose-derived names - {@code defaultObjectForm}, {@code defaultListForm} and the rest -
+     * belong to the types that keep a slot per purpose, and asking one of those owners for a name it
+     * does not have is how {@code setAsDefault} came to report a failed write over a slot that had
+     * just been filled.
+     * </p>
+     *
+     * @param purposeConstant the form's purpose, as {@link #deriveFormPurpose} returns
+     * @param owner the metadata object the form belongs to
+     * @return the property name to write, or null when there is none to write
+     */
+    static String defaultFormPropertyFor(String purposeConstant, Object owner)
+    {
+        if (hasSingleDefaultFormSlot(owner))
+        {
+            return "defaultForm"; //$NON-NLS-1$
+        }
+        return defaultFormSetterFor(purposeConstant);
+    }
+
+    /**
+     * Tells whether an owner keeps one default form for all purposes.
+     * <p>
+     * DataProcessor and Report expose a single {@code getDefaultForm} / {@code setDefaultForm} pair;
+     * Catalog, Document and the register types instead keep one slot per purpose
+     * ({@code defaultObjectForm}, {@code defaultListForm}, ...). Both accessors have to be there: a
+     * getter alone names a slot that cannot be written, and the write below would report the same
+     * failure it is meant to avoid.
+     * </p>
+     *
+     * @param owner the metadata object the form was created on
+     * @return true when the owner has the single-slot accessors
+     */
+    static boolean hasSingleDefaultFormSlot(Object owner)
+    {
+        if (owner == null)
+        {
+            return false;
+        }
+        try
+        {
+            owner.getClass().getMethod("getDefaultForm"); //$NON-NLS-1$
+        }
+        catch (NoSuchMethodException noGetter)
+        {
+            // The owner type does not declare the slot at all - absence is the answer here, not a
+            // failure to read: this owner keeps its default forms one per purpose.
+            return false;
+        }
+        for (java.lang.reflect.Method m : owner.getClass().getMethods())
+        {
+            if ("setDefaultForm".equals(m.getName()) && m.getParameterCount() == 1) //$NON-NLS-1$
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

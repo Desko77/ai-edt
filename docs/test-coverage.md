@@ -5,22 +5,19 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 142 | a test class named after it |
-| exercised | 237 | reached by some other test |
-| tool-sweep | 38 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 37 | needs a display or an extension point |
-| workspace-bound | 19 | drives a live EDT project or debug session |
+| direct | 149 | a test class named after it |
+| exercised | 265 | reached by some other test |
+| tool-sweep | 27 | declaration checked by the registry-wide contract sweep |
+| ui-bound | 32 | needs a display or an extension point |
+| workspace-bound | 17 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **473** | across 624 test classes |
+| **total** | **490** | across 756 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (19)
-
-**folders/refactoring**
-- ClusterDeleteRefactorHook
+## workspace-bound (17)
 
 **labels**
 - MarkerHelpers
@@ -36,7 +33,6 @@ _none_
 - BmExtensionProjectHelper
 - BmObjectCopyHelper
 - BmRegisterHelper
-- BslCallGraphHelper
 - BslSignatureReader
 - BuildTaskHelper
 - ExternalProjectResolver
@@ -50,7 +46,7 @@ _none_
 - CommandInterfaceOps
 - FormEventOps
 
-## ui-bound (37)
+## ui-bound (32)
 
 **(root)**
 - McpAutoStart
@@ -65,7 +61,6 @@ _none_
 **folders/ui**
 - ClusterEditDialog
 - ClusterTreeLabels
-- ClusterViewFilter
 - CollectionAdapters
 
 **labels/handlers**
@@ -93,10 +88,6 @@ _none_
 
 **settings**
 - DefaultPreferences
-- GeneralPrefTab
-- MarkerSettingsMigration
-- McpSettingsPage
-- ToolsPrefTab
 
 **support**
 - BslHoverAccess
@@ -109,27 +100,21 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (38)
+## tool-sweep (27)
 
 **toolkit/ops**
 - AttributeAdder
-- BookmarksReader
-- BreakpointRemover
 - BreakpointsLister
 - CodeTemplateTool
 - ConfigurationInfoReader
 - ConfigurationXmlExporter
-- DebugResumer
 - DebugStateReader
-- DebugStepper
 - DefinitionNavigator
 - DialogAnswerer
 - DiskResynchronizer
 - EdtVersionReader
-- EventLogTool
 - ExportExtensionTool
 - ExportObjectTool
-- ExternalDataSourceWorkshopTool
 - FormScreenshotGrabber
 - GenerateHealthSnapshotTool
 - GetObjectHelpTool
@@ -140,18 +125,13 @@ _none_
 - ListExtensionsTool
 - OutgoingStructuresReader
 - ProfilingStarter
-- ProjectCleaner
 - ProjectCreator
 - ProjectRemover
 - ProjectsLister
-- RunToLineTool
 - SelfStatusTool
-- SemanticMetadataSearchTool
-- TaggedObjectsReader
-- TagsReader
 - UninstallExtensionTool
 
-## exercised (237)
+## exercised (265)
 
 **(root)**
 - Activator
@@ -183,7 +163,9 @@ _none_
 **folders/ui**
 - ClusterNavigatorBridge
 - ClusterTreeContent
+- ClusterViewFilter
 - NavigatorClusterSelection
+- RenderedClusterPaths
 
 **labels**
 - MarkerDecorationHelpers
@@ -205,8 +187,14 @@ _none_
 - MarkerRenamePlan
 
 **settings**
+- GeneralPrefTab
+- MarkerSettingsMigration
 - McpAuth
+- McpSettingsPage
+- PendingRestart
 - PrefKeys
+- SettingsFooter
+- ToolsPrefTab
 
 **support**
 - AllureResultReader
@@ -236,6 +224,7 @@ _none_
 - BorrowedSyncReader
 - BorrowedSyncWriter
 - BreakpointAccess
+- BslCallGraphHelper
 - ChildBorrow
 - ClientLaunchMode
 - ConfigurationListProperties
@@ -315,6 +304,8 @@ _none_
 **toolkit/ops**
 - ApplicationsReader
 - AuditRoleRightsTool
+- BookmarksReader
+- BreakpointRemover
 - BreakpointSetter
 - BreakpointStateSetter
 - BslCodeReviewTool
@@ -340,7 +331,9 @@ _none_
 - DcsWorkshopTool
 - DebugFrameResolution
 - DebugPauser
+- DebugResumer
 - DebugSessionStarter
+- DebugStepper
 - DebugThreadOwnership
 - DebugVariableWriter
 - DebugVariablesReader
@@ -348,9 +341,11 @@ _none_
 - DetectQueryAntiPatternsTool
 - DiagnosticsFacadeTool
 - DocsLookupFacadeTool
+- EventLogTool
 - ExpressionEvaluator
 - ExtensionDiffTool
 - ExtensionLifecycleTool
+- ExternalDataSourceWorkshopTool
 - ExternalObjectWorkshopTool
 - FindDeadCodeTool
 - FindRlsViolationsTool
@@ -364,6 +359,8 @@ _none_
 - GitCheckoutTool
 - GitCommitTool
 - GitFileRestore
+- GitMergePointCreateTool
+- GitMergePointDeleteTool
 - GitTool
 - ImpactAnalysisTool
 - InfobaseAdminFacadeTool
@@ -394,13 +391,16 @@ _none_
 - ProblemSummaryReader
 - ProfilingResultsReader
 - ProjectAdminFacadeTool
+- ProjectCleaner
 - ProjectMetricsTool
 - ProjectProblemsReader
 - ReferenceLocator
 - RestartEdtTool
 - RoleOps
 - RouteMapOps
+- RunToLineTool
 - SecurityAuditFacadeTool
+- SemanticMetadataSearchTool
 - SensitiveDataScanTool
 - ServiceOps
 - SetExceptionBreakpointTool
@@ -408,6 +408,14 @@ _none_
 - SuspendWaiter
 - SymbolInfoReader
 - SyncControlTool
+- TagAdminFacadeTool
+- TagAssignTool
+- TagCreateTool
+- TagDeleteTool
+- TagUnassignTool
+- TagUpdateTool
+- TaggedObjectsReader
+- TagsReader
 - TasksReader
 - TemplateOps
 - ValidateForExportTool
@@ -430,7 +438,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (142)
+## direct (149)
 
 **(root)**
 - BrowserOrigin
@@ -440,7 +448,11 @@ _none_
 - ClusterCommandHandler
 
 **folders/refactoring**
+- ClusterDeleteRefactorHook
 - ClusterRenameRefactorHook
+
+**labels**
+- MarkerWriteOutcome
 
 **labels/ui**
 - Messages
@@ -457,6 +469,7 @@ _none_
 
 **support**
 - ApplicableRightsResolver
+- AtomicFileReplace
 - AttributionRule
 - BmBinaryImportHelper
 - BmDefinedTypeHelper
@@ -467,6 +480,7 @@ _none_
 - BorrowedSyncClassification
 - BranchInfobaseBook
 - BslCommentParseHelper
+- BslScriptLanguage
 - ClientDialogReader
 - CollectionMemberPath
 - ComparisonSessions
@@ -491,6 +505,7 @@ _none_
 - GitBranch
 - GitDiffUtils
 - GitHubReleaseResolver
+- HandlerStubPlacement
 - HeapHeadroom
 - HeavyTools
 - HistoryJournal
@@ -553,6 +568,7 @@ _none_
 **toolkit/ops**
 - AiContextTool
 - BranchInfobaseTool
+- BslMethodDeclarations
 - BslSyntaxValidator
 - ClientSessionStarter
 - ConfigurationBinaryImporter
@@ -563,6 +579,7 @@ _none_
 - EditMetadataTool
 - ExtensionWorkshopTool
 - ExternalBinaryUnpacker
+- FormExcludedCommandsOps
 - FormModuleStubs
 - InfobaseRegistrar
 - MarkerCorrectionTool
@@ -613,14 +630,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 2 |
-| 3-4 | 14 |
-| 5-8 | 43 |
-| 9-16 | 59 |
-| 17+ | 24 |
+| 3-4 | 16 |
+| 5-8 | 44 |
+| 9-16 | 60 |
+| 17+ | 27 |
 
-4896 test methods across 624 test classes; 142 classes have a test of their own, median 10 methods each.
+5581 test methods across 756 test classes; 149 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 142 of 473 classes have one: 38 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 149 of 490 classes have one: 27 are covered by the registry-wide contract sweep and 17 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

@@ -113,6 +113,21 @@ public class ABreakpointIsSwitchedOffWithoutBeingRemovedTest
     }
 
     @Test
+    public void theSchemaInsistsOnTheStateToo()
+    {
+        JsonObject schema = JsonParser.parseString(new BreakpointStateSetter().getInputSchema())
+            .getAsJsonObject();
+
+        boolean insisted = false;
+        for (com.google.gson.JsonElement name : schema.getAsJsonArray("required")) //$NON-NLS-1$
+        {
+            insisted |= "breakpointEnabled".equals(name.getAsString()); //$NON-NLS-1$
+        }
+        assertTrue("the schema must carry the state in required, or a client learns it is " //$NON-NLS-1$
+            + "optional and sends no state: " + schema, insisted); //$NON-NLS-1$
+    }
+
+    @Test
     public void anIdThatIsNotAnIdIsRefused()
     {
         JsonObject answer = json(new BreakpointStateSetter().execute(

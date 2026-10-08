@@ -304,6 +304,34 @@ public final class DebugSessionBook
     }
 
     /**
+     * Drops the application's suspend snapshot when it is still the one the caller read before it
+     * resumed the session, and keeps any newer one.
+     * <p>
+     * The platform reports a resume as an event of its own thread, and a thread that reaches its
+     * next stop while the resume is still being made records that stop here first - a run-to-line
+     * that lands at once is the everyday case. A drop that emptied the place unconditionally would
+     * take the stop that followed the resume with it, and the wait the caller makes next would run
+     * out on a session that is in fact stopped. The snapshot observed before the resume is the
+     * only one this drops; whatever stands there instead is newer than the resume and stays.
+     * </p>
+     *
+     * @param appId the application; ignored when <code>null</code>
+     * @param observed the snapshot the caller read before it resumed, or <code>null</code> when
+     *            there was none - in which case there is nothing of the caller's to drop
+     */
+    public synchronized void clearSnapshotIfCurrent(String appId, SuspendSnapshot observed)
+    {
+        if (appId == null || observed == null)
+        {
+            return;
+        }
+        if (snapshots.get(appId) == observed)
+        {
+            snapshots.remove(appId);
+        }
+    }
+
+    /**
      * @param threadId a thread id handed out earlier
      * @return the thread, or <code>null</code> when the id is stale - the session resumed and this
      *         thread's state is gone
@@ -311,6 +339,28 @@ public final class DebugSessionBook
     public IThread getThread(long threadId)
     {
         return threadsById.get(Long.valueOf(threadId));
+    }
+
+    /**
+     * The id this registry issued for a live thread, so an answer can name the threads it acted on.
+     *
+     * @param thread a thread handed out earlier; may be <code>null</code>
+     * @return the id, or -1 when this registry never issued one for that thread
+     */
+    public synchronized long threadIdOf(IThread thread)
+    {
+        if (thread == null)
+        {
+            return -1L;
+        }
+        for (Map.Entry<Long, IThread> entry : threadsById.entrySet())
+        {
+            if (entry.getValue() == thread)
+            {
+                return entry.getKey().longValue();
+            }
+        }
+        return -1L;
     }
 
     /**

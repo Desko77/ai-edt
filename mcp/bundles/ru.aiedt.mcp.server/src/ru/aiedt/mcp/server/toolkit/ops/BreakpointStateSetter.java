@@ -68,7 +68,8 @@ public final class BreakpointStateSetter implements IMcpTool
             .stringProperty(KEY_BREAKPOINT_ID,
                 "Breakpoint to switch, as list_breakpoints or the arming call reported it.")
             .booleanProperty(KEY_BREAKPOINT_ENABLED,
-                "Required. true enables the breakpoint, false switches it off without removing it.")
+                "Required. true enables the breakpoint, false switches it off without removing it.",
+                true)
             .build();
     }
 

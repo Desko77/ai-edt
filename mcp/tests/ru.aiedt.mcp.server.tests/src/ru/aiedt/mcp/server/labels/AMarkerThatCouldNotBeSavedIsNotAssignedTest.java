@@ -18,10 +18,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.DosFileAttributeView;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
+import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
 import org.eclipse.core.resources.IResource;
@@ -147,6 +150,38 @@ public class AMarkerThatCouldNotBeSavedIsNotAssignedTest
         {
             readOnly(yaml, false);
         }
+    }
+
+    /**
+     * A read-only file is refused on the workspace route as well, not only on the locked route.
+     * The resource is a stand-in that reports itself read-only and accepts a forced write, so the
+     * refusal can only come from the check itself and not from the file system, which this
+     * runtime would have refuse the write on its own.
+     */
+    @Test
+    public void aReadOnlyFileIsNotOverwrittenThroughTheWorkspaceRoute()
+    {
+        List<String> attempted = new ArrayList<>();
+        IFile readOnly = (IFile)java.lang.reflect.Proxy.newProxyInstance(IFile.class.getClassLoader(),
+            new Class<?>[]{IFile.class}, (proxy, method, arguments) -> {
+                if ("exists".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return Boolean.TRUE;
+                }
+                if ("isReadOnly".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return Boolean.TRUE;
+                }
+                if ("setContents".equals(method.getName()) || "create".equals(method.getName())) //$NON-NLS-1$ //$NON-NLS-2$
+                {
+                    attempted.add(method.getName());
+                }
+                return null;
+            });
+
+        assertFalse(MarkerManager.saveThroughWorkspace(project, readOnly,
+            "markers: []\n".getBytes(StandardCharsets.UTF_8))); //$NON-NLS-1$
+        assertTrue("the forced write must not be attempted on a read-only file", attempted.isEmpty()); //$NON-NLS-1$
     }
 
     @Test

@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -38,10 +39,11 @@ import ru.aiedt.mcp.server.support.ToolCallScope;
  * matches and their surroundings, a bare count, or a per-file tally.
  * <p>
  * No model is loaded: the file bytes are read and scanned, so the search works on a project the index
- * has not caught up with. A per-file pre-filter skips a file whose whole text cannot match before the
- * line-by-line scan begins, which is what makes an unfiltered search over a large configuration
- * bearable. A soft wall-clock budget bounds that search - when it runs out the partial results come
- * back under a banner rather than nothing at all.
+ * has not caught up with. A per-file pre-filter skips a file whose whole text cannot match before it
+ * is split into lines, which is what makes an unfiltered search over a large configuration
+ * bearable. A match may span lines - a pattern whose whitespace runs across a line break - and is
+ * filed under the line it starts on. A soft wall-clock budget bounds that search - when it runs out
+ * the partial results come back under a banner rather than nothing at all.
  * </p>
  */
 public class CodeTextSearcher
@@ -216,7 +218,10 @@ public class CodeTextSearcher
         Pattern pattern;
         try
         {
-            int flags = Pattern.UNICODE_CHARACTER_CLASS;
+            // The text is scanned as a whole, so a match may span lines; MULTILINE keeps ^ and $
+            // meaning the start and the end of each line, as they did when lines were scanned
+            // one at a time.
+            int flags = Pattern.UNICODE_CHARACTER_CLASS | Pattern.MULTILINE;
             if (!caseSensitive)
             {
                 flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
@@ -417,7 +422,7 @@ public class CodeTextSearcher
             }
             sb.append(Pattern.quote(parts[i]));
         }
-        int flags = Pattern.UNICODE_CHARACTER_CLASS;
+        int flags = Pattern.UNICODE_CHARACTER_CLASS | Pattern.MULTILINE;
         if (!caseSensitive)
         {
             flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
@@ -708,6 +713,77 @@ public class CodeTextSearcher
         return lines;
     }
 
+    /**
+     * Records where each line of the text begins, in the separator terms of
+     * {@code splitIntoLines}: an offset belongs to the line started by the largest recorded start
+     * not above it.
+     *
+     * @param content the file text with separators preserved
+     * @param lineCount how many lines {@code splitIntoLines} gave
+     * @return the start offset of every line, ascending; the first entry is 0
+     */
+    private static int[] lineStartOffsets(String content, int lineCount)
+    {
+        int[] starts = new int[lineCount];
+        int length = content.length();
+        int line = 0;
+        int i = 0;
+        while (i < length && line < lineCount - 1)
+        {
+            char symbol = content.charAt(i);
+            if (symbol == '\n')
+            {
+                i++;
+                starts[++line] = i;
+            }
+            else if (symbol == '\r')
+            {
+                i++;
+                if (i < length && content.charAt(i) == '\n')
+                {
+                    i++;
+                }
+                starts[++line] = i;
+            }
+            else
+            {
+                i++;
+            }
+        }
+        return starts;
+    }
+
+    /**
+     * Where a match starts for the line it is reported on.
+     * <p>
+     * A match that opens with whitespace running across a line break - {@code \s+ВЫБРАТЬ} matched
+     * from the end of the line above - starts after the last of those breaks. A match made only of
+     * whitespace and ending on a line break keeps its start, the line that break ends.
+     * </p>
+     *
+     * @param content the file text with separators preserved
+     * @param start where the match starts
+     * @param end where the match ends
+     * @return the offset the match's line is read from
+     */
+    private static int startOfContent(String content, int start, int end)
+    {
+        int from = start;
+        for (int i = start; i < end && Character.isWhitespace(content.charAt(i)); i++)
+        {
+            char symbol = content.charAt(i);
+            // A line ends at a line feed, or at a carriage return that no line feed follows;
+            // the carriage return of a CRLF pair is left to its line feed, so the pair counts once.
+            boolean loneReturn = symbol == '\r'
+                && (i + 1 >= content.length() || content.charAt(i + 1) != '\n');
+            if ((symbol == '\n' || loneReturn) && i + 1 < end)
+            {
+                from = i + 1;
+            }
+        }
+        return from;
+    }
+
     /** One match: the line it is on, and the window of lines around it. */
     private static final class MatchInfo
     {
@@ -885,7 +961,8 @@ public class CodeTextSearcher
         }
 
         /**
-         * Scans one file, first skipping it whole when nothing can match, then line by line.
+         * Scans one file, first skipping it whole when nothing can match, then scanning its text as
+         * a whole.
          *
          * @param file the file
          * @param displayPath its src-relative path
@@ -897,41 +974,60 @@ public class CodeTextSearcher
         }
 
         /**
-         * Scans module text, first skipping it whole when nothing can match, then line by line.
+         * Scans module text as a whole, so a match may span lines.
+         * <p>
+         * A hit is counted once per line it starts on, as the search counted lines before a match
+         * could span them; whitespace that opens a match across a line break is not where it
+         * starts (see {@link #startOfContent}). An empty text has no lines and no hits.
+         * </p>
          *
          * @param content the module text
          * @param displayPath the address the hits are reported under
          */
         private void searchInText(String content, String displayPath)
         {
-            if (!pattern.matcher(content).find())
+            Matcher matcher = pattern.matcher(content);
+            if (!matcher.find())
             {
                 return;
             }
             List<String> lines = splitIntoLines(content);
-            int fileMatches = 0;
-            for (int i = 0; i < lines.size(); i++)
+            if (lines.isEmpty())
             {
-                if (!pattern.matcher(lines.get(i)).find())
+                return;
+            }
+            int[] lineStarts = lineStartOffsets(content, lines.size());
+            int lineCursor = 0;
+            int lastLine = -1;
+            int fileMatches = 0;
+            do
+            {
+                int start = startOfContent(content, matcher.start(), matcher.end());
+                while (lineCursor + 1 < lineStarts.length && lineStarts[lineCursor + 1] <= start)
+                {
+                    lineCursor++;
+                }
+                if (lineCursor == lastLine)
                 {
                     continue;
                 }
+                lastLine = lineCursor;
                 totalMatches++;
                 fileMatches++;
                 if (collectDetails && collectedMatches < maxResults)
                 {
-                    int from = Math.max(0, i - linesBefore);
-                    int to = Math.min(lines.size() - 1, i + linesAfter);
+                    int from = Math.max(0, lineCursor - linesBefore);
+                    int to = Math.min(lines.size() - 1, lineCursor + linesAfter);
                     List<String> window = new ArrayList<>();
                     for (int j = from; j <= to; j++)
                     {
                         window.add((j + 1) + ": " + lines.get(j)); //$NON-NLS-1$
                     }
                     matchesByFile.computeIfAbsent(displayPath, key -> new ArrayList<>())
-                        .add(new MatchInfo(i + 1, window));
+                        .add(new MatchInfo(lineCursor + 1, window));
                     collectedMatches++;
                 }
-            }
+            } while (matcher.find());
             if (fileMatches > 0)
             {
                 totalMatchedFiles++;

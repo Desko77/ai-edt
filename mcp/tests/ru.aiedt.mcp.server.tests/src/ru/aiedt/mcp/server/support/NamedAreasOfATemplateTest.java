@@ -17,6 +17,9 @@ import java.util.Map;
 import org.junit.Test;
 
 import com._1c.g5.v8.dt.moxel.MoxelFactory;
+import com._1c.g5.v8.dt.moxel.NamedItemCells;
+import com._1c.g5.v8.dt.moxel.Rect;
+import com._1c.g5.v8.dt.moxel.RectArea;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
 
 /**
@@ -197,5 +200,83 @@ public class NamedAreasOfATemplateTest
         Object areas = read.get("namedAreas"); //$NON-NLS-1$
         assertTrue("a template read back without its areas cannot be repeated", //$NON-NLS-1$
             areas instanceof List && ((List<?>)areas).size() == 1);
+    }
+
+    /**
+     * The template file carries an area as beginRow, endRow, beginColumn and endColumn, and the
+     * model as a position whose height is endRow - beginRow and whose width is endColumn -
+     * beginColumn. The area of one cell at row 6, column 15 is therefore y 5, x 14, height 0,
+     * width 0, and the area over row 2, columns 2 to 13 is y 1, x 1, height 0, width 11.
+     */
+    @Test
+    public void aRectangleReadFromATemplateFileComesBackAsItsOwnCells()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        doc.getNamedItems().put("ДокументЗаписан", asTheFileCarries(5, 5, 14, 14)); //$NON-NLS-1$
+        doc.getNamedItems().put("Объект", asTheFileCarries(1, 1, 1, 12)); //$NON-NLS-1$
+
+        Map<String, Object> cell = named(BmTemplateHelper.listNamedAreas(doc), "ДокументЗаписан"); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(6), cell.get("fromRow")); //$NON-NLS-1$
+        assertEquals("one row, not a row before its own start", Integer.valueOf(6), cell.get("toRow")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(Integer.valueOf(15), cell.get("fromCol")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(15), cell.get("toCol")); //$NON-NLS-1$
+
+        Map<String, Object> row = named(BmTemplateHelper.listNamedAreas(doc), "Объект"); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(2), row.get("fromRow")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(2), row.get("toRow")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(2), row.get("fromCol")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(13), row.get("toCol")); //$NON-NLS-1$
+    }
+
+    /** What addNamedArea stores is what the file writer adds to the start to get the end. */
+    @Test
+    public void aRectangleIsStoredAsTheCellsAfterTheFirst()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+
+        BmTemplateHelper.addNamedArea(doc, "Ячейка", "rect", 6, 15, 6, 15); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.addNamedArea(doc, "Блок", "rect", 2, 2, 4, 13); //$NON-NLS-1$ //$NON-NLS-2$
+
+        Rect cell = positionOf(doc, "Ячейка"); //$NON-NLS-1$
+        assertEquals(5, cell.getY());
+        assertEquals(14, cell.getX());
+        assertEquals("endRow = y + height has to give the same row", 0, cell.getHeight()); //$NON-NLS-1$
+        assertEquals("endColumn = x + width has to give the same column", 0, cell.getWidth()); //$NON-NLS-1$
+        Rect block = positionOf(doc, "Блок"); //$NON-NLS-1$
+        assertEquals(2, block.getHeight());
+        assertEquals(11, block.getWidth());
+    }
+
+    private static NamedItemCells asTheFileCarries(int beginRow, int endRow, int beginColumn,
+        int endColumn)
+    {
+        Rect position = MoxelFactory.eINSTANCE.createRect();
+        position.setX(beginColumn);
+        position.setY(beginRow);
+        position.setWidth(endColumn - beginColumn);
+        position.setHeight(endRow - beginRow);
+        RectArea area = MoxelFactory.eINSTANCE.createRectArea();
+        area.setPosition(position);
+        NamedItemCells item = MoxelFactory.eINSTANCE.createNamedItemCells();
+        item.setArea(area);
+        return item;
+    }
+
+    private static Map<String, Object> named(List<Map<String, Object>> areas, String name)
+    {
+        for (Map<String, Object> area : areas)
+        {
+            if (name.equals(area.get("name"))) //$NON-NLS-1$
+            {
+                return area;
+            }
+        }
+        throw new AssertionError("no area named " + name); //$NON-NLS-1$
+    }
+
+    private static Rect positionOf(SpreadsheetDocument doc, String name)
+    {
+        NamedItemCells item = (NamedItemCells)doc.getNamedItems().get(name);
+        return ((RectArea)item.getArea()).getPosition();
     }
 }

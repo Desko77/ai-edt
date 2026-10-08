@@ -11,14 +11,8 @@ import org.eclipse.emf.ecore.EObject;
 import org.eclipse.jface.viewers.ISelectionChangedListener;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.viewers.SelectionChangedEvent;
-import org.eclipse.jface.viewers.TreePath;
-import org.eclipse.jface.viewers.TreeSelection;
+import org.eclipse.jface.viewers.StructuredSelection;
 import org.eclipse.jface.viewers.TreeViewer;
-
-import ru.aiedt.mcp.server.Activator;
-import ru.aiedt.mcp.server.folders.IClusterManager;
-import ru.aiedt.mcp.server.folders.model.Cluster;
-import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
 /**
  * Keeps a clustered object selected across a search being cleared.
@@ -120,34 +114,23 @@ public class NavigatorClusterSelection
     }
 
     /**
-     * Re-selects an object along a path through the cluster that holds it.
+     * Re-selects an object through the cluster that holds it.
+     * <p>
+     * The viewer is handed the object itself, with revealing on: it walks the parent chain the
+     * content provider answers - for a clustered object the cluster node that holds it, and from
+     * there up to the root - and selects the item that chain names. A hand-built two-segment path
+     * named no item at all, because its first segment was not a root element, and the selection
+     * came back empty.
+     * </p>
      *
      * @param eObject the object to re-select
      */
     void restoreSelection(EObject eObject)
     {
-        IProject project = MarkerHelpers.extractProject(eObject);
-        String fqn = MarkerHelpers.extractFqn(eObject);
-        if (project == null || fqn == null)
-        {
-            return;
-        }
-        IClusterManager service = Activator.getClusterServiceStatic();
-        if (service == null)
-        {
-            return;
-        }
-        Cluster cluster = service.findClusterForObject(project, fqn);
-        if (cluster == null)
-        {
-            return;
-        }
-        ClusterNavigatorBridge clusterNode = new ClusterNavigatorBridge(cluster, project, null);
-        TreePath path = new TreePath(new Object[] {clusterNode, eObject});
         restoring = true;
         try
         {
-            viewer.setSelection(new TreeSelection(path), true);
+            viewer.setSelection(new StructuredSelection(eObject), true);
         }
         finally
         {

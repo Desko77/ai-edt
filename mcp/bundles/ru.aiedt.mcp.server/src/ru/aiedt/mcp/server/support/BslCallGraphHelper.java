@@ -25,8 +25,12 @@ import org.eclipse.xtext.ui.editor.findrefs.IReferenceFinder;
 
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.integration.IBmModel;
+import com._1c.g5.v8.dt.bsl.model.DynamicFeatureAccess;
+import com._1c.g5.v8.dt.bsl.model.Invocation;
 import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
+import com._1c.g5.v8.dt.bsl.model.StaticFeatureAccess;
+import com._1c.g5.v8.dt.bsl.model.Variable;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess;
@@ -71,8 +75,19 @@ public final class BslCallGraphHelper
 
     /**
      * Returns the set of modules that call exported methods of {@code targetModule}.
-     * Best-effort: when the Xtext reference index is not reachable, returns an
-     * empty list (caller decides whether to fall back).
+     * <p>
+     * Returns {@code null} (NOT an empty list) when the lookup could not run - the Xtext resource
+     * provider or {@link IReferenceFinder} is unavailable, or {@code findAllReferences} throws.
+     * An empty list is reserved for a lookup that ran and found no calling module: a broken or
+     * unbuilt index must not read as "nothing calls this module", the same distinction
+     * {@link #countCallers(Method)} draws with {@code -1}.
+     * </p>
+     *
+     * @param project the project the module belongs to
+     * @param bmModel the BM model the module lives in
+     * @param targetModule the module whose callers to list
+     * @return the calling modules' FQNs, an empty list when none, or {@code null} when the lookup
+     *         could not run
      */
     public static List<String> callersOfModule(IProject project, IBmModel bmModel,
         Module targetModule)
@@ -85,13 +100,33 @@ public final class BslCallGraphHelper
             .getResourceServiceProvider(BslModuleAccess.BSL_LOOKUP_URI);
         if (rsp == null)
         {
-            return Collections.emptyList();
+            return null;
         }
         IReferenceFinder finder = rsp.get(IReferenceFinder.class);
         if (finder == null)
         {
-            return Collections.emptyList();
+            return null;
         }
+        return callersOfModule(finder, targetModule);
+    }
+
+    /**
+     * The walk behind {@link #callersOfModule(IProject, IBmModel, Module)} over a finder the
+     * caller resolved: the modules whose code references an exported method of the target, with
+     * the target's own module filtered out.
+     * <p>
+     * Returns {@code null} when {@code findAllReferences} throws, so a failed lookup stays
+     * distinguishable from a module nothing calls. A target with no exported method cannot be
+     * called from outside, which answers as an empty list.
+     * </p>
+     *
+     * @param finder the reference finder to walk with
+     * @param targetModule the module whose callers to list
+     * @return the calling modules' FQNs, an empty list when none, or {@code null} when the lookup
+     *         could not run
+     */
+    static List<String> callersOfModule(IReferenceFinder finder, Module targetModule)
+    {
         // Collect URIs of all exported methods inside the target module.
         List<URI> targets = new ArrayList<>();
         for (Method method : targetModule.allMethods())
@@ -124,9 +159,12 @@ public final class BslCallGraphHelper
         catch (Exception e)
         {
             Activator.logWarning("BslCallGraphHelper.callersOfModule failed: " + e.getMessage()); //$NON-NLS-1$
+            return null;
         }
-        // Filter self-references.
-        String selfFqn = moduleFqnOf(targetModule);
+        // Filter self-references. The filter reads the module's own address, not the object model:
+        // a module the object model does not name leaves the filter empty and its own calls are
+        // then reported as coming from a caller module.
+        String selfFqn = moduleFqn(targetModule);
         if (selfFqn != null)
         {
             callerModules.remove(selfFqn);
@@ -182,12 +220,15 @@ public final class BslCallGraphHelper
 
     /**
      * Returns the set of modules called by {@code sourceModule}. Walks the
-     * BSL AST of {@code sourceModule} and collects external method invocation
-     * targets.
+     * BSL AST of {@code sourceModule} and collects the module of every method the module calls.
      * <p>
-     * Implementation: for each {@code Invocation} / {@code FeatureAccess} in
-     * the module AST, resolve the referred EObject; if it resides in a different
-     * Module, record the edge. Best-effort.
+     * Two links carry that relation in the BSL model and both are read: {@code Method.getCallees},
+     * which already holds the called methods, and the invocation sites, whose
+     * {@code FeatureEntry.getFeature} resolves to the same methods. A module whose links are not
+     * resolved answers an empty list, which is not the same as a module that calls nothing - the
+     * incoming lookup draws that distinction with {@code null}, and this direction has no
+     * equivalent failure to report, since the links are read off the module itself.
+     * </p>
      */
     public static List<String> calleesOfModule(Module sourceModule)
     {
@@ -196,7 +237,7 @@ public final class BslCallGraphHelper
             return Collections.emptyList();
         }
         Set<String> calleeModules = new LinkedHashSet<>();
-        String selfFqn = moduleFqnOf(sourceModule);
+        String selfFqn = moduleFqn(sourceModule);
         try
         {
             EObject root = sourceModule;
@@ -212,7 +253,7 @@ public final class BslCallGraphHelper
                     {
                         continue;
                     }
-                    String fqn = moduleFqnOf(containing);
+                    String fqn = moduleFqn(containing);
                     if (fqn != null && !fqn.equals(selfFqn))
                     {
                         calleeModules.add(fqn);
@@ -229,12 +270,31 @@ public final class BslCallGraphHelper
 
     /**
      * Walks one BSL AST node's outgoing references. Filters containment + self-loops.
+     * <p>
+     * A method is read through {@code getCallees} alone. Its other call link, {@code getCallers},
+     * points the other way - it holds the blocks that call the method, and those blocks live in the
+     * calling modules - so following it here recorded a call in the wrong direction, from the
+     * module being walked to the module that calls it.
+     * </p>
      */
     private static Collection<EObject> referencedExternalEObjects(EObject node)
     {
         if (node == null)
         {
             return Collections.emptyList();
+        }
+        if (node instanceof Method)
+        {
+            List<EObject> called = new ArrayList<>();
+            try
+            {
+                called.addAll(((Method)node).getCallees());
+            }
+            catch (Exception notLinked)
+            {
+                return Collections.emptyList();
+            }
+            return called;
         }
         List<EObject> out = new ArrayList<>(2);
         for (var eref : node.eClass().getEAllReferences())
@@ -284,8 +344,58 @@ public final class BslCallGraphHelper
     }
 
     /**
+     * The FQN of a module, read off the address it was loaded from: the {@code src/} path of its
+     * resource, converted the same way the module level converts the address of a node.
+     * <p>
+     * This is the route every module of the level answers to, because the level loads its modules
+     * by path - {@code BslModuleAccess.loadModule} opens
+     * {@code platform:/resource/<project>/src/<modulePath>} - so a module the walk holds always
+     * carries the address the level named it by.
+     * </p>
+     * <p>
+     * The BM top-object route ({@link #moduleFqnOf(Module)}) is the fallback, for a module whose
+     * resource is addressed some other way.
+     * </p>
+     *
+     * @param module the module
+     * @return its FQN, or {@code null} when neither the address nor the object model names it
+     */
+    public static String moduleFqn(Module module)
+    {
+        if (module == null)
+        {
+            return null;
+        }
+        String byAddress = moduleFqnFromAddress(module);
+        return byAddress != null ? byAddress : moduleFqnOf(module);
+    }
+
+    /**
+     * The FQN a module's own resource address names, or {@code null} when that address names none.
+     *
+     * @param module the module
+     * @return its FQN as the {@code src/} path spells it
+     */
+    static String moduleFqnFromAddress(Module module)
+    {
+        try
+        {
+            org.eclipse.emf.ecore.resource.Resource resource = module.eResource();
+            return resource == null ? null : extractModuleFqnFromUri(resource.getURI());
+        }
+        catch (Exception noResource)
+        {
+            return null;
+        }
+    }
+
+    /**
      * Returns the BM FQN of the BM top-object enclosing the given module.
      * Example: {@code CommonModule.SalesUtils.Module} for an exported method.
+     * <p>
+     * Answers {@code null} for a module the object model does not hold as a top object, which is
+     * every module loaded by path - see {@link #moduleFqn(Module)}.
+     * </p>
      */
     public static String moduleFqnOf(Module module)
     {
@@ -309,9 +419,13 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * Heuristic: take a URI like
-     * {@code platform:/resource/Project/src/CommonModules/Foo/Module.bsl} and
-     * map it to a BM-canonical FQN like {@code CommonModule.Foo.Module}.
+     * Takes a URI like {@code platform:/resource/Project/src/CommonModules/Foo/Module.bsl} and maps
+     * it to a canonical FQN like {@code CommonModule.Foo.Module}.
+     * <p>
+     * The name is the inverse of the route the level looks a module up by
+     * ({@code BslModuleAccess.resolveModulePath}), so a module found under a name is named by the
+     * address it was found at.
+     * </p>
      */
     static String extractModuleFqnFromUri(URI uri)
     {
@@ -340,49 +454,47 @@ public final class BslCallGraphHelper
         {
             return tail.replace("/", "."); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        // Singularize the type prefix the same way EDT does:
-        // CommonModules/Foo/Module.bsl -> CommonModule.Foo.Module
-        String typePart = singularizeTypePrefix(parts[0]);
-        StringBuilder sb = new StringBuilder(typePart);
-        for (int i = 1; i < parts.length; i++)
+        // Every segment is named the way the level spells it when it looks a module up by FQN.
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++)
         {
-            sb.append(".").append(parts[i]); //$NON-NLS-1$
+            if (i > 0)
+            {
+                sb.append('.');
+            }
+            sb.append(moduleFqnSegment(parts[i], i));
         }
         return sb.toString();
     }
 
-    private static String singularizeTypePrefix(String typePart)
+    /**
+     * One segment of a module's address, spelled as it is spelled in a module FQN.
+     * <p>
+     * The first segment is the collection a type keeps its objects in, and goes through the metadata
+     * registry ({@code Catalogs} to {@code Catalog}). A path that names the form of an object carries
+     * the form directory after the owner, and that segment is spelled the way the form layout is
+     * looked up by. Every other segment is an object, a form or a file name, and keeps the spelling it
+     * has on disk: cutting a trailing {@code s} off it renamed objects rather than collections, which
+     * turned {@code FilterCriteria} into {@code FilterCriteri} and would have turned an object called
+     * {@code Documents} into {@code Document}.
+     * </p>
+     *
+     * @param segment the path segment
+     * @param index the position of the segment in the path
+     * @return the segment as a name spells it
+     */
+    private static String moduleFqnSegment(String segment, int index)
     {
-        if (typePart == null || typePart.isEmpty())
+        if (index == 0)
         {
-            return typePart;
+            String type = MetadataTypeCatalog.getTypeByDirectoryName(segment);
+            return type == null ? segment : type;
         }
-        // Common EDT directory plurals -> singular metadata type names.
-        switch (typePart)
+        if (index == 2 && MetadataPathMapper.FORMS_SEGMENT.equals(segment))
         {
-            case "CommonModules": return "CommonModule"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Catalogs": return "Catalog"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Documents": return "Document"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Reports": return "Report"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "DataProcessors": return "DataProcessor"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "InformationRegisters": return "InformationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "AccumulationRegisters": return "AccumulationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "AccountingRegisters": return "AccountingRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "CalculationRegisters": return "CalculationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ChartsOfAccounts": return "ChartOfAccounts"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ChartsOfCalculationTypes": return "ChartOfCalculationTypes"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ChartsOfCharacteristicTypes": return "ChartOfCharacteristicTypes"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ExchangePlans": return "ExchangePlan"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "BusinessProcesses": return "BusinessProcess"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Tasks": return "Task"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Subsystems": return "Subsystem"; //$NON-NLS-1$ //$NON-NLS-2$
-            default:
-                if (typePart.endsWith("s")) //$NON-NLS-1$
-                {
-                    return typePart.substring(0, typePart.length() - 1);
-                }
-                return typePart;
+            return "Form"; //$NON-NLS-1$
         }
+        return segment;
     }
 
     /**
@@ -396,32 +508,278 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * Convenience: emit edges for a single module in both directions.
+     * Where the two halves of the module call graph come from.
+     * <p>
+     * The single source the module level walks: incoming edges from the reference index the
+     * {@code call_hierarchy} tool reads, outgoing edges from the module's own resolved call links.
+     * A level reading them anywhere else answers about calls differently from that tool.
+     * </p>
      */
-    public static void emitEdgesForModule(IProject project, IBmModel bmModel, Module module,
+    public interface ModuleCallSource
+    {
+        /**
+         * @param module the module whose callers to list
+         * @return the calling modules' FQNs, an empty list when none, or {@code null} when the
+         *         lookup could not run
+         */
+        List<String> callersOf(Module module);
+
+        /**
+         * @param module the module whose callees to list
+         * @return the called modules' FQNs, empty when the module calls nothing outside itself
+         */
+        List<String> calleesOf(Module module);
+
+        /**
+         * The source of a live project: the BSL reference index and the modules' resolved links.
+         *
+         * @param project the project the modules belong to
+         * @param bmModel the project's object model
+         * @return the source
+         */
+        static ModuleCallSource bslModel(IProject project, IBmModel bmModel)
+        {
+            return new BslModelCallSource(project, bmModel);
+        }
+    }
+
+    /** The production source, over the project's BSL reference index and resolved call links. */
+    private static final class BslModelCallSource implements ModuleCallSource
+    {
+        private final IProject project;
+        private final IBmModel bmModel;
+
+        BslModelCallSource(IProject project, IBmModel bmModel)
+        {
+            this.project = project;
+            this.bmModel = bmModel;
+        }
+
+        @Override
+        public List<String> callersOf(Module module)
+        {
+            return callersOfModule(project, bmModel, module);
+        }
+
+        @Override
+        public List<String> calleesOf(Module module)
+        {
+            return calleesByCommonModuleName(module, commonModuleNames());
+        }
+
+        /** The project's common modules by lower-cased name, read from the source folder once. */
+        private java.util.Map<String, String> commonModuleNames()
+        {
+            if (commonModules == null)
+            {
+                java.util.Map<String, String> names = new java.util.HashMap<>();
+                try
+                {
+                    org.eclipse.core.resources.IFolder folder =
+                        project.getFolder("src/CommonModules"); //$NON-NLS-1$
+                    if (folder.exists())
+                    {
+                        for (org.eclipse.core.resources.IResource member : folder.members())
+                        {
+                            if (member instanceof org.eclipse.core.resources.IFolder)
+                            {
+                                names.put(member.getName().toLowerCase(java.util.Locale.ROOT),
+                                    member.getName());
+                            }
+                        }
+                    }
+                }
+                catch (org.eclipse.core.runtime.CoreException | RuntimeException unreadable)
+                {
+                    Activator.logWarning("BslCallGraphHelper: the common modules of project " //$NON-NLS-1$
+                        + project.getName() + " could not be listed, so outgoing call edges are " //$NON-NLS-1$
+                        + "left out: " + unreadable.getMessage()); //$NON-NLS-1$
+                    return null;
+                }
+                commonModules = names;
+            }
+            return commonModules;
+        }
+
+        private java.util.Map<String, String> commonModules;
+    }
+
+    /**
+     * The common modules a module calls, read off the text of its call sites.
+     * <p>
+     * A call into a common module is written {@code ModuleName.Method(...)}: a member access whose
+     * source is a plain name. The name is matched against the project's common modules without
+     * resolving the link behind it - resolving runs the linker of the environment, which is slow
+     * over a whole project and fails outright on modules whose state was never computed. What this
+     * reads is therefore calls into common modules; a call through a manager, an object or a
+     * variable is not an edge here. The incoming direction reads the reference index and is not
+     * limited this way.
+     * </p>
+     *
+     * @param module the module whose call sites to read
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        when they could not be listed
+     * @return the called modules' FQNs, or {@code null} when the common modules are not known
+     */
+    static List<String> calleesByCommonModuleName(Module module,
+        java.util.Map<String, String> commonModules)
+    {
+        if (module == null)
+        {
+            return Collections.emptyList();
+        }
+        if (commonModules == null)
+        {
+            return null;
+        }
+        String selfFqn = moduleFqn(module);
+        Set<String> called = new LinkedHashSet<>();
+        // A parameter or a variable may carry the name of a common module, and a call through it
+        // is a call through a variable. A name declared in a method hides the module in that method
+        // only; a name declared outside every method hides it in the whole module (key null).
+        java.util.Map<Method, Set<String>> shadowed = new java.util.HashMap<>();
+        java.util.Iterator<EObject> declared = module.eAllContents();
+        while (declared.hasNext())
+        {
+            EObject node = declared.next();
+            if (node instanceof Variable && ((Variable)node).getName() != null)
+            {
+                shadowed.computeIfAbsent(enclosingMethod(node), scope -> new HashSet<>())
+                    .add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        java.util.Iterator<EObject> contents = module.eAllContents();
+        while (contents.hasNext())
+        {
+            EObject node = contents.next();
+            if (!(node instanceof DynamicFeatureAccess))
+            {
+                continue;
+            }
+            // Only a call counts: the access has to be what an invocation invokes, so reading an
+            // exported variable of a module is not an edge.
+            EObject holder = node.eContainer();
+            if (!(holder instanceof Invocation) || ((Invocation)holder).getMethodAccess() != node)
+            {
+                continue;
+            }
+            EObject source = ((DynamicFeatureAccess)node).getSource();
+            if (!(source instanceof StaticFeatureAccess))
+            {
+                continue;
+            }
+            String name = ((StaticFeatureAccess)source).getName();
+            if (name == null)
+            {
+                continue;
+            }
+            String lowered = name.toLowerCase(java.util.Locale.ROOT);
+            if (shadowed.getOrDefault(null, Collections.emptySet()).contains(lowered)
+                || shadowed.getOrDefault(enclosingMethod(node), Collections.emptySet()).contains(lowered))
+            {
+                continue;
+            }
+            String fqn = commonModuleFqn(name, commonModules);
+            if (fqn != null && !fqn.equals(selfFqn))
+            {
+                called.add(fqn);
+            }
+        }
+        return new ArrayList<>(called);
+    }
+
+    /**
+     * The method a node of a module sits in.
+     *
+     * @param node a node of the module
+     * @return the method, or {@code null} for a node outside every method
+     */
+    private static Method enclosingMethod(EObject node)
+    {
+        for (EObject current = node; current != null; current = current.eContainer())
+        {
+            if (current instanceof Method)
+            {
+                return (Method)current;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The FQN of the common module a name stands for.
+     *
+     * @param name the name a call site starts with; may be {@code null}
+     * @param commonModules the project's common modules, lower-cased name to name
+     * @return the module FQN, or {@code null} when the name is not a common module
+     */
+    static String commonModuleFqn(String name, java.util.Map<String, String> commonModules)
+    {
+        if (name == null)
+        {
+            return null;
+        }
+        String known = commonModules.get(name.toLowerCase(java.util.Locale.ROOT));
+        return known == null ? null : "CommonModule." + known + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Emits the call edges of one module in the directions asked for.
+     * <p>
+     * The module is named by {@code selfFqn} - the address the caller already records it under -
+     * rather than asked for its own FQN: the walk holds the address the node was named by, and the
+     * two must agree for an edge to land on that node. A module the caller cannot name is logged
+     * and left out, so an unaddressed module shows in the log instead of passing for a module that
+     * calls nothing.
+     * </p>
+     * <p>
+     * Incoming edges are skipped when the caller lookup could not run: a failed lookup carries no
+     * statement about who calls this module, so it emits nothing rather than an empty answer
+     * dressed as a graph.
+     * </p>
+     *
+     * @param module the module to walk
+     * @param selfFqn the FQN the module is recorded under, or {@code null} when it has none
+     * @param source where the two halves of the call graph come from
+     * @param includeIncoming whether to emit the calls into the module
+     * @param includeOutgoing whether to emit the calls out of the module
+     * @param visitor the visitor of every emitted edge
+     */
+    public static void emitEdgesForModule(Module module, String selfFqn, ModuleCallSource source,
         boolean includeIncoming, boolean includeOutgoing, ModuleEdgeVisitor visitor)
     {
-        if (visitor == null || module == null)
+        if (visitor == null || module == null || source == null)
         {
             return;
         }
-        String selfFqn = moduleFqnOf(module);
         if (selfFqn == null)
         {
+            Activator.logWarning("BslCallGraphHelper.emitEdgesForModule: the module has no address " //$NON-NLS-1$
+                + "to be recorded under, its call edges are left out"); //$NON-NLS-1$
             return;
         }
         if (includeIncoming)
         {
-            for (String caller : callersOfModule(project, bmModel, module))
+            List<String> callers = source.callersOf(module);
+            if (callers != null)
             {
-                visitor.visit(new ModuleEdge(caller, selfFqn, 1));
+                for (String caller : callers)
+                {
+                    visitor.visit(new ModuleEdge(caller, selfFqn, 1));
+                }
             }
         }
         if (includeOutgoing)
         {
-            for (String callee : calleesOfModule(module))
+            // null: the called modules could not be read, so this direction is left out rather
+            // than answered as a module that calls nobody.
+            List<String> callees = source.calleesOf(module);
+            if (callees != null)
             {
-                visitor.visit(new ModuleEdge(selfFqn, callee, 1));
+                for (String callee : callees)
+                {
+                    visitor.visit(new ModuleEdge(selfFqn, callee, 1));
+                }
             }
         }
     }

@@ -99,7 +99,14 @@ of the PROJECT FILES before the merge begins and answers `mergeRestorePoint` and
 (`mergeStarted: false`) - read that as nothing having happened, not as a partial merge.
 `git operation=create_merge_restore_point` takes such a point on demand, and
 `git operation=restore_merge_point` puts those files back: the answer lists `restoredFiles`,
-`restoredCount` and `removedFiles` - project files the point does not hold are removed.
+`restoredCount`, `unchangedFiles` and `removedFiles` - project files the point does not hold are
+removed, and a file whose bytes already match the point is not rewritten. A restore that stops
+halfway still removes the extras and refreshes the workspace, and names what it did not put back in
+`unrestoredFiles`; an extra that could not be deleted is named with its reason in `cleanupFailures`
+and a failed workspace refresh in `refreshFailure`, and either makes the answer an error.
+`git operation=delete_merge_restore_point` drops a recorded point by its `pointId` - required, and
+only a point of this project - without touching any project file; a ref or a copy directory that
+could not be deleted is an error, and the index entry is kept so the point can be deleted again.
 
 **The point and the restore cover project files only. The infobase is not copied and is not rolled
 back.** A merge that reached the base has to be undone in the base by other means; a restore that
@@ -176,6 +183,20 @@ work asked for again inside that window answers `stillStopping: true` instead of
 run - that is the cancel being allowed to finish, not a failure to act on. `get_tasks` names the
 closed projects it did not read.
 
+## A dependency graph walks from the root its selector named
+
+`insights operation=dependency_graph` takes its root from `scope` or, with no scope asked, from
+the selector: `objectFqn` an object, `moduleFqn` a module, `subsystemName` a subsystem, and
+nothing the whole project. A selector under `scope=project`, a selector the scope does not
+take, and two selectors together are refused by name - never dropped in silence, which used to
+walk the whole project and read as thousands of nodes with no edges. A root that does not exist
+answers with the `rootNotFound` tag. The seed of the walk fits
+`maxNodes` like the walk itself: more roots than the cap are cut, the answer says
+`truncated=true`, and the edges of the roots it took are in it. The module level resolves its
+modules through the project files; a module whose file is there and whose model did not load is
+named in `modulesUnloaded` and `modulesUnloadedNames`, and a module level with not one loaded
+module is a refusal, not an empty graph.
+
 ## A metadata dependency graph names metadata
 
 `insights operation=dependency_graph` keeps what its level is about: `metadata` carries metadata
@@ -188,6 +209,8 @@ and `count` is the number of references between that pair - one reference met fr
 one - and is written when it is greater than 1. `edgeKinds` keeps only the named `via` values; a kind
 the walk never saw is `unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied
 (`edgeKinds: notApplied`) and `calls` edges merge the same way.
+
+On `level=modules` an incoming edge (`direction=in`) is any call the reference index holds, and an outgoing edge (`direction=out`) is a call written `CommonModuleName.Method(...)`: calls through a manager, an object or a variable are not outgoing edges. With `direction=both` the incoming edges are collected first and may fill `maxNodes` before the outgoing ones.
 
 ## Cancelling an update that never gave you a runKey
 

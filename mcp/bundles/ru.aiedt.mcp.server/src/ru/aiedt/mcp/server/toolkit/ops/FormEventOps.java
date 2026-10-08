@@ -8,10 +8,14 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 
+import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
+import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.BmFormHelper;
+import ru.aiedt.mcp.server.support.BslScriptLanguage;
 import ru.aiedt.mcp.server.support.FormEventContainers;
 import ru.aiedt.mcp.server.support.FormEventRegistry;
 import ru.aiedt.mcp.server.support.BmFormGeneratorHelper;
@@ -150,7 +154,11 @@ final class FormEventOps
             return ToolResult.error(execResult.substring("Error:".length()).trim()).toJson(); //$NON-NLS-1$
         }
 
-        String stub = FormEventRegistry.generateBslStub(handlerName, spec);
+        IConfigurationProvider configProvider = Activator.getDefault().getConfigurationProvider();
+        Configuration formConfig =
+            configProvider != null ? configProvider.getConfiguration(project) : null;
+        String stub = FormEventRegistry.generateBslStub(handlerName, spec,
+            BslScriptLanguage.of(formConfig));
         ToolResult answer = ToolResult.success()
             .put("operation", "add_form_event_handler") //$NON-NLS-1$ //$NON-NLS-2$
             .put("formFqn", formFqn) //$NON-NLS-1$

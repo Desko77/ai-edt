@@ -61,6 +61,12 @@ import ru.aiedt.mcp.server.toolkit.ops.ClusterAdminFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterCreateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterDeleteTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterRemoveTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagAdminFacadeTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagAssignTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagCreateTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagDeleteTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagUnassignTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagUpdateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterUpdateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCleaner;
 import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
@@ -150,6 +156,8 @@ import ru.aiedt.mcp.server.toolkit.ops.GitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitCommitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitFileRestore;
 import ru.aiedt.mcp.server.toolkit.ops.GitCheckoutTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitMergePointCreateTool;
+import ru.aiedt.mcp.server.toolkit.ops.GitMergePointDeleteTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectsLister;
 import ru.aiedt.mcp.server.toolkit.ops.MxlWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.NaparnikTool;
@@ -432,6 +440,13 @@ public class McpHttpEndpoint
 
     private volatile int port;
 
+    /**
+     * A window held open while the fallback start of {@link #restart(int)} runs, so a test can put a
+     * stop beside it and see whether the fallback holds the monitor an ordinary start and stop take.
+     * Left <code>null</code> outside tests.
+     */
+    Runnable fallbackWindowForTest;
+
     private final AtomicLong requestCount = new AtomicLong();
 
     /** Raised by the user when no call was in flight to answer; the next tool result carries it. */
@@ -491,6 +506,25 @@ public class McpHttpEndpoint
      */
     public synchronized void start(int serverPort) throws IOException
     {
+        startWithin(serverPort, portSpan());
+    }
+
+    /**
+     * Opens the endpoint, trying a run of consecutive ports from the one asked for.
+     * <p>
+     * Everything above the loop is done here rather than left to the caller, so that a start which
+     * binds nothing still leaves the catalogue full and the token adopted - which is why the
+     * fallback in {@link #restart(int)} comes through this method rather than straight to
+     * {@link #open(int)}.
+     * </p>
+     *
+     * @param serverPort the first TCP port to try
+     * @param span how many consecutive ports from it may be tried; one asks for that port alone,
+     *        with no neighbour to move to
+     * @throws IOException when every port in the span is taken, or no socket can be opened
+     */
+    private void startWithin(int serverPort, int span) throws IOException
+    {
         if (running)
         {
             stop();
@@ -515,7 +549,6 @@ public class McpHttpEndpoint
         // happened here, and each needed its port set by hand in preferences before it would start
         // - a step nobody remembers until a server silently is not there. A span of one restores
         // the old behaviour exactly, for anybody who has written the port into a client config.
-        int span = portSpan();
         // Computed wide and clamped, because 65535 + 10 is not a port: InetSocketAddress rejects it
         // with an unchecked exception, which would come out of a start() that had already opened
         // listeners on the way there.
@@ -891,14 +924,67 @@ public class McpHttpEndpoint
 
     /**
      * Closes the endpoint and opens it again, possibly on a different port.
+     * <p>
+     * A restart is a stop and a start, and the port asked for can be held by another program, so the
+     * failure would land on a server that is no longer listening at all. When the new port cannot be
+     * taken, one attempt is made on the port the server was already on: the caller asked for a move,
+     * not for the endpoint to go away, and it has no other port to offer. That attempt names that
+     * port alone - the port span belongs to the first start, where a neighbour is a better answer
+     * than no server, and not here, where taking a neighbour would leave a server that quietly is
+     * not where everything reads it to be. That attempt failing too leaves the endpoint stopped, and
+     * the answer names both ports.
+     * </p>
      *
      * @param serverPort the TCP port to listen on
-     * @throws IOException when the port is taken, or the socket cannot be opened
+     * @throws IOException when neither the port asked for nor the one the server was on can be
+     *         opened
      */
-    public void restart(int serverPort) throws IOException
+    public synchronized void restart(int serverPort) throws IOException
     {
+        // Read before stopping: start() writes the field with every port it tries, so after a failure
+        // it no longer names the port the server was serving on.
+        int previousPort = port;
         stop();
-        start(serverPort);
+        try
+        {
+            start(serverPort);
+        }
+        catch (IOException refused)
+        {
+            // Nothing to fall back to when the server was never on a port of its own, or was already
+            // on the one being asked for: the attempt just refused would be made a second time.
+            if (previousPort <= 0 || previousPort == serverPort)
+            {
+                throw refused;
+            }
+            try
+            {
+                // Exactly the port it was on, with no neighbour to fall back to: a walk from there
+                // would take the next free port and come back reporting success, leaving the server
+                // one port away from where the caller, its own label and every configured client
+                // read it, with nothing on screen saying it had moved.
+                // The whole restart holds the monitor an ordinary start and stop take (it is
+                // reentrant, so the calls above take it again without waiting). A stop that arrives
+                // during a restart therefore runs after it, against the listener the restart left,
+                // and not in the gap between the refused start and this one.
+                synchronized (this)
+                {
+                    if (fallbackWindowForTest != null)
+                    {
+                        fallbackWindowForTest.run();
+                    }
+                    startWithin(previousPort, 1);
+                }
+            }
+            catch (IOException alsoRefused)
+            {
+                throw new IOException("MCP server could not take port " + serverPort //$NON-NLS-1$
+                    + " and could not go back to " + previousPort + ": " //$NON-NLS-1$
+                    + alsoRefused.getMessage(), refused);
+            }
+            Activator.logWarning("MCP server could not take port " + serverPort //$NON-NLS-1$
+                + " and stayed on " + previousPort + ": " + refused.getMessage()); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -1494,6 +1580,8 @@ public class McpHttpEndpoint
             new GitCommitTool(),
             new GitCheckoutTool(),
             new GitFileRestore(),
+            new GitMergePointCreateTool(),
+            new GitMergePointDeleteTool(),
             new CodeTextSearcher(),
             new DcsSearchTool(),
             new MethodSourceReader(),
@@ -1569,7 +1657,13 @@ public class McpHttpEndpoint
             new ClusterUpdateTool(),
             new ClusterDeleteTool(),
             new ClusterAddTool(),
-            new ClusterRemoveTool());
+            new ClusterRemoveTool(),
+            new TagAdminFacadeTool(),
+            new TagCreateTool(),
+            new TagUpdateTool(),
+            new TagDeleteTool(),
+            new TagAssignTool(),
+            new TagUnassignTool());
     }
 
     /**

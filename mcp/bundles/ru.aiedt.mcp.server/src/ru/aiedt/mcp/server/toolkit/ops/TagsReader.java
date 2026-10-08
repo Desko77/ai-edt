@@ -93,10 +93,30 @@ public final class TagsReader implements IMcpTool
         }
     }
 
-    private String getMarkers(IProject project)
+    /**
+     * Lists the project's markers, or refuses when its marker file cannot be read.
+     * <p>
+     * A file that does not parse and one that could not be read both load as an empty storage, so
+     * without the check this answered "no markers" for a project whose markers merely could not be
+     * read - indistinguishable from a project that defines none.
+     * </p>
+     * <p>
+     * Package-private so a test can drive it with a project of its own: the tool path checks the
+     * project state before it gets here, which a scratch workspace project does not pass.
+     * </p>
+     *
+     * @param project the project
+     * @return the markdown table, or the refusal
+     */
+    String getMarkers(IProject project)
     {
-        MarkerManager markerService = MarkerManager.getInstance();
-        MarkerStore storage = markerService.getMarkerStorage(project);
+        MarkerManager.MarkerRead read = MarkerManager.getInstance().readMarkers(project);
+        String refusal = read.refusal();
+        if (refusal != null)
+        {
+            return ToolResult.error(refusal).toJson();
+        }
+        MarkerStore storage = read.storage();
         List<Marker> markers = storage.getTags();
         if (markers.isEmpty())
         {

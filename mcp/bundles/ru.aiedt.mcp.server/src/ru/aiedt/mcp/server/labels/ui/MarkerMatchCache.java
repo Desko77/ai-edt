@@ -6,12 +6,17 @@
 
 package ru.aiedt.mcp.server.labels.ui;
 
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Remembers, per project, which object names the marker filter last decided to show.
+ * <p>
+ * Safe for the UI thread and the change-notification threads at once: reads and writes arrive
+ * from either side, so the map underneath is concurrent and neither side sees a half-written
+ * entry.
+ * </p>
  * <p>
  * The filter recomputes that set only when the cache has no entry. Applying the filter again clears
  * it. A change to the markers themselves has to clear it too, or the Navigator keeps the previous
@@ -22,7 +27,10 @@ import java.util.Set;
  */
 public final class MarkerMatchCache<K>
 {
-    private final Map<K, Set<String>> matches = new HashMap<>();
+    // Concurrent on purpose: the Navigator reads it on the UI thread while marker changes
+    // invalidate it from the thread the change arrived on - an HTTP call, a resource event, a
+    // refactoring - and a plain HashMap between those two corrupts or loses entries.
+    private final Map<K, Set<String>> matches = new ConcurrentHashMap<>();
 
     /**
      * Returns the cached object names for a project.

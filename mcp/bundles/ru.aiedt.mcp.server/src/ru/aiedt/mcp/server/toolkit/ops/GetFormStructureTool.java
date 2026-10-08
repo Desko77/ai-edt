@@ -957,6 +957,15 @@ public class GetFormStructureTool implements IMcpTool
             props.addProperty("commandSource", commandSource); //$NON-NLS-1$
         }
 
+        // The standard commands the object keeps out of its command interface. Read through the
+        // same names the operation takes, so what is reported here is what it accepts back.
+        List<String> excluded = FormExcludedCommandsOps.standardCommandNames(
+            readNoArg(item, "getExcludedCommands")); //$NON-NLS-1$
+        if (!excluded.isEmpty())
+        {
+            props.add("excludedCommands", namesOf(excluded)); //$NON-NLS-1$
+        }
+
         // The height of a group, a button or a table sits on the item itself; the height of a
         // field sits on the field's extended information. Zero means "by content" and is written
         // by nothing, so only a set height is reported.

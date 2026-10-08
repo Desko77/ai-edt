@@ -40,6 +40,7 @@ import ru.aiedt.mcp.server.support.BmExtensionHelper;
 import ru.aiedt.mcp.server.support.BmFormCleanupHelper;
 import ru.aiedt.mcp.server.support.BmFormResourceHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
+import ru.aiedt.mcp.server.support.BmTemplateHelper;
 import ru.aiedt.mcp.server.support.ConfigurationListProperties;
 import ru.aiedt.mcp.server.support.BmSubsystemHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
@@ -145,6 +146,87 @@ final class ObjectOps
         Collections.unmodifiableSet(new java.util.HashSet<>(Arrays.asList(
             "server", "externalConnection", "clientOrdinaryApplication", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "global", "privileged", "serverCall"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /**
+     * The template type a new common template is given. A {@code templateType} already present in
+     * the properties is kept, spelled the way the model spells it. With none, the type is
+     * {@code SpreadsheetDocument}.
+     *
+     * @param properties the properties object; may be <code>null</code> or empty
+     * @return the canonical template type
+     */
+    static String commonTemplateContentType(Map<String, String> properties)
+    {
+        return BmTemplateHelper.canonicalTemplateType(declaredTemplateType(properties));
+    }
+
+    /**
+     * The value a property is written with. A common template's {@code templateType} is written in
+     * the model's spelling, so an alias the type lookup accepts ({@code spreadsheet}) reaches the
+     * model as {@code SpreadsheetDocument}. Every other property is written as given.
+     *
+     * @param englishType the metadata type of the object being created
+     * @param key the property name
+     * @param value the value the caller passed
+     * @return the value to write
+     */
+    static String valueToApply(String englishType, String key, String value)
+    {
+        if ("CommonTemplate".equals(englishType) && key != null //$NON-NLS-1$
+            && "templatetype".equals(key.toLowerCase(java.util.Locale.ROOT))) //$NON-NLS-1$
+        {
+            return BmTemplateHelper.canonicalTemplateType(value);
+        }
+        return value;
+    }
+
+    /**
+     * The answer key that says what happened to the spreadsheet file of a new common template.
+     *
+     * @param stoodBefore whether {@code Template.mxlx} was already in the template's folder
+     * @return {@code templateContentKept} for a file left as it was, {@code templateContentCreated}
+     *         for one written by this call
+     */
+    static String contentOutcomeKey(boolean stoodBefore)
+    {
+        return stoodBefore ? "templateContentKept" : "templateContentCreated"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Whether creating a common template of this type also writes an empty {@code Template.mxlx}.
+     * Only a spreadsheet has that file. A text, binary or schema template does not.
+     *
+     * @param canonicalType the type {@link #commonTemplateContentType} returned
+     * @return <code>true</code> for {@code SpreadsheetDocument}
+     */
+    static boolean writesSpreadsheetFile(String canonicalType)
+    {
+        return "SpreadsheetDocument".equals(canonicalType); //$NON-NLS-1$
+    }
+
+    /**
+     * The {@code templateType} value in {@code properties}, matching the key without case, or
+     * <code>null</code> when the caller did not set one.
+     *
+     * @param properties the properties object; may be <code>null</code>
+     * @return the declared value, or <code>null</code>
+     */
+    private static String declaredTemplateType(Map<String, String> properties)
+    {
+        if (properties == null)
+        {
+            return null;
+        }
+        String declared = null;
+        for (Map.Entry<String, String> entry : properties.entrySet())
+        {
+            if ("templatetype".equals(entry.getKey().toLowerCase(java.util.Locale.ROOT))) //$NON-NLS-1$
+            {
+                declared = entry.getValue();
+            }
+        }
+        return declared;
+    }
 
     /**
      * What the properties object still has to write itself.
@@ -427,6 +509,7 @@ final class ObjectOps
         // 3.8.4: track inner-form creation for CommonForm
         AtomicReference<String> innerFormFqn = new AtomicReference<>(null);
         AtomicReference<String> innerFormCreateError = new AtomicReference<>(null);
+        AtomicReference<String> commonTemplateType = new AtomicReference<>(null);
         // Set when the object had to come from the raw factory because the initialized route
         // could not run: the answer says so rather than presenting the object as a full one.
         AtomicReference<String> defaultsWarning = new AtomicReference<>(null);
@@ -492,8 +575,8 @@ final class ObjectOps
                     // this exists for: it fails EDT's own check the moment it appears.
                     for (Map.Entry<String, String> property : remaining.entrySet())
                     {
-                        String refused =
-                            BmObjectHelper.setProperty(created, property.getKey(), property.getValue());
+                        String refused = BmObjectHelper.setProperty(created, property.getKey(),
+                            valueToApply(englishType, property.getKey(), property.getValue()));
                         if (refused != null)
                         {
                             throw new RuntimeException(refused + " Nothing was created."); //$NON-NLS-1$
@@ -506,6 +589,21 @@ final class ObjectOps
                         if (BmObjectHelper.equalsModelDefault(created, property.getKey()))
                         {
                             atModelDefault.add(property.getKey());
+                        }
+                    }
+                    if ("CommonTemplate".equals(englishType)) //$NON-NLS-1$
+                    {
+                        String chosen = commonTemplateContentType(remaining);
+                        commonTemplateType.set(chosen);
+                        if (declaredTemplateType(remaining) == null)
+                        {
+                            String refused = BmObjectHelper.setProperty(created, "templateType", //$NON-NLS-1$
+                                chosen);
+                            if (refused != null)
+                            {
+                                throw new RuntimeException(refused + " Nothing was created."); //$NON-NLS-1$
+                            }
+                            applied.add("templateType"); //$NON-NLS-1$
                         }
                     }
                     if (!BmObjectHelper.addToConfiguration(config, created))
@@ -723,6 +821,44 @@ final class ObjectOps
                 ok.put("commandInterfaceCreated", true); //$NON-NLS-1$
             }
         }
+        // A common template's .mdo without a spreadsheet file cannot be written into later:
+        // the serializer dereferences a column set the missing file never created. Spreadsheet
+        // content is written here, the same way a subsystem gets its command interface. A type
+        // the caller already set is left as it is, and only SpreadsheetDocument gets the file.
+        if ("CommonTemplate".equals(englishType)) //$NON-NLS-1$
+        {
+            String type = commonTemplateType.get();
+            if (type == null)
+            {
+                type = commonTemplateContentType(remaining);
+            }
+            ok.put("templateType", type); //$NON-NLS-1$
+            if (!dryRun && writesSpreadsheetFile(type))
+            {
+                boolean stoodBefore = BmTemplateHelper.spreadsheetFileExists(project,
+                    "CommonTemplate." + name, name); //$NON-NLS-1$
+                String mxlxErr = BmTemplateHelper.writeEmptyMxlxFile(project,
+                    "CommonTemplate." + name, name, type); //$NON-NLS-1$
+                if (mxlxErr != null)
+                {
+                    Activator.logWarning("create_object CommonTemplate Template.mxlx for " //$NON-NLS-1$
+                        + name + ": " + mxlxErr); //$NON-NLS-1$
+                    ok.put("templateContentInitWarning", mxlxErr //$NON-NLS-1$
+                        + " Create the spreadsheet with mxl_workshop create_template" //$NON-NLS-1$
+                        + " ownerFqn=CommonTemplate." + name + " templateName=" + name + "."); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                }
+                else
+                {
+                    ok.put(contentOutcomeKey(stoodBefore), true);
+                    if (stoodBefore)
+                    {
+                        ok.put("templateContentNote", "Template.mxlx already stood in the folder of " //$NON-NLS-1$ //$NON-NLS-2$
+                            + "CommonTemplate." + name + " and was left as it is: the new template " //$NON-NLS-1$ //$NON-NLS-2$
+                            + "carries that content. Read it with mxl_workshop read_template."); //$NON-NLS-1$
+                    }
+                }
+            }
+        }
         return ok.toJson();
     }
     String opSetObjectProperty(Map<String, String> params)
@@ -890,7 +1026,7 @@ final class ObjectOps
                     listShape[0] = outcome.value;
                     return outcome.message;
                 }
-                String setErr = BmObjectHelper.setProperty(target, propertyName, propertyValue);
+                String setErr = BmObjectHelper.setProperty(target, propertyName, propertyValue, project);
                 if (setErr != null)
                 {
                     throw new RuntimeException(setErr);

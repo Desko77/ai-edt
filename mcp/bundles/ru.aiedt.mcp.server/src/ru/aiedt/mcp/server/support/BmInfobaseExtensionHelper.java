@@ -8,11 +8,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.locks.Lock;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
+import com._1c.g5.designer.ssh.client.IDesignerSession;
+import com._1c.g5.designer.ssh.client.operation.IExtensionProperties;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessType;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
@@ -139,13 +142,14 @@ public final class BmInfobaseExtensionHelper
             {
                 // Same disconnect/reconnect as install/uninstall: the list
                 // thick-client also needs EDT's designer agent off the file
-                // infobase, or it blocks on the monopoly (row 55).
-                underThickClientHandshake(ctx, () -> {
+                // infobase, or it blocks on the monopoly (row 55). The success is claimed
+                // after the reconnection, so a base left disconnected is answered as the
+                // failure it is rather than as a listing that went through.
+                underThickClientHandshakeThenClaimSuccess(ctx, () -> {
                     List<String> exts = ctx.launcher.listConfigurationExtensions(ctx.component,
                         ctx.infobase, ctx.args);
-                    r.ok = true;
                     r.extensions = exts != null ? exts : Collections.emptyList();
-                });
+                }, () -> r.ok = true);
             }
             finally
             {
@@ -194,10 +198,13 @@ public final class BmInfobaseExtensionHelper
             }
             try
             {
-                underThickClientHandshake(ctx, () -> {
-                    ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase, ctx.args, name);
-                    r.ok = true;
-                });
+                // The removal is claimed only once the base is back: an uninstall that ran but
+                // left the infobase disconnected is answered as a failure naming the
+                // reconnection, not as a removal that went through.
+                underThickClientHandshakeThenClaimSuccess(ctx,
+                    () -> ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase,
+                        ctx.args, name),
+                    () -> r.ok = true);
             }
             finally
             {
@@ -361,11 +368,37 @@ public final class BmInfobaseExtensionHelper
      *
      * @param ctx the resolved launcher context
      * @param work the launcher call
-     * @throws Exception whatever the call throws
+     * @throws Exception whatever the call throws, or the reconnection failed after it - the
+     *             infobase then stays disconnected, which the answer has to say rather than
+     *             report the run as an unconditional success
      */
     static void underThickClientHandshake(ThickClientLaunch.LauncherContext ctx, Work work) throws Exception
     {
         handshakeOrder(ctx.lock, () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
+    }
+
+    /**
+     * The handshake of {@link #underThickClientHandshake(ThickClientLaunch.LauncherContext, Work)}
+     * for a call whose success claim is a step of its own.
+     * <p>
+     * The launcher call returning is not the end of the exchange: the infobase still has to be taken
+     * back, and a reconnection that fails leaves it disconnected in EDT. A run that claims success
+     * from inside itself therefore reports the operation as done while the workspace is left in a
+     * state the caller is never told about. The claim is made here instead, after the reconnection,
+     * so a run whose reconnection failed reaches its caller as a failure that names it.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param work the launcher call, which fills in everything but the success
+     * @param claimSuccess marks the operation as done; run only when nothing threw
+     * @throws Exception whatever the call throws, or the reconnection failed after it - the claim
+     *             does not run then
+     */
+    static void underThickClientHandshakeThenClaimSuccess(ThickClientLaunch.LauncherContext ctx,
+        Work work, Runnable claimSuccess) throws Exception
+    {
+        handshakeThenClaimSuccess(ctx.lock, () -> disconnectForThickClient(ctx), work,
+            () -> reconnectInfobase(ctx), claimSuccess);
     }
 
     /**
@@ -375,12 +408,15 @@ public final class BmInfobaseExtensionHelper
      * @param release releases the infobase and says whether it had been connected
      * @param work the launcher call, run under the lock and nothing else
      * @param reconnect takes the infobase back, run only when the release reported a connection
-     * @throws Exception whatever the work throws, after the infobase has been taken back
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception
      */
     static void handshakeOrder(java.util.concurrent.locks.Lock lock,
-        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
+        Exception workFailure = null;
         try
         {
             if (lock != null)
@@ -390,6 +426,11 @@ public final class BmInfobaseExtensionHelper
             try
             {
                 work.run();
+            }
+            catch (Exception failed)
+            {
+                workFailure = failed;
+                throw failed;
             }
             finally
             {
@@ -403,9 +444,41 @@ public final class BmInfobaseExtensionHelper
         {
             if (disconnected)
             {
-                reconnect.run();
+                try
+                {
+                    reconnect.reconnect();
+                }
+                catch (Exception reconnectFailed)
+                {
+                    if (workFailure != null)
+                    {
+                        reconnectFailed.addSuppressed(workFailure);
+                    }
+                    throw reconnectFailed;
+                }
             }
         }
+    }
+
+    /**
+     * The order of {@link #handshakeOrder} with the claim of success made after it, with every step
+     * handed in so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and nothing else
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @param claimSuccess marks the operation as done; run only when nothing threw
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception. The claim does not run in either case
+     */
+    static void handshakeThenClaimSuccess(java.util.concurrent.locks.Lock lock,
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect,
+        Runnable claimSuccess) throws Exception
+    {
+        handshakeOrder(lock, release, work, reconnect);
+        claimSuccess.run();
     }
 
     /**
@@ -429,7 +502,9 @@ public final class BmInfobaseExtensionHelper
      * @param work the launcher call, run under the lock and only once the boundary is this run's
      * @throws InterruptedException when the boundary was claimed before this worker reached it; the
      *             launcher is not called then
-     * @throws Exception whatever the call throws, after the infobase has been taken back
+     * @throws Exception whatever the call throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the call's own failure
+     *             attached to it as a suppressed exception
      */
     static void underThickClientHandshakeWithLaunchClaim(ThickClientLaunch.LauncherContext ctx,
         Work work) throws Exception
@@ -450,13 +525,16 @@ public final class BmInfobaseExtensionHelper
      * @param reconnect takes the infobase back, run only when the release reported a connection
      * @throws InterruptedException when the boundary was already claimed; the lock, when it was
      *             taken, is given back and the work does not run
-     * @throws Exception whatever the work throws, after the infobase has been taken back
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception
      */
     static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
         LaunchBoundary launchClaim,
-        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
+        Exception workFailure = null;
         try
         {
             if (lock != null)
@@ -476,6 +554,11 @@ public final class BmInfobaseExtensionHelper
             {
                 work.run();
             }
+            catch (Exception failed)
+            {
+                workFailure = failed;
+                throw failed;
+            }
             finally
             {
                 if (lock != null)
@@ -488,7 +571,18 @@ public final class BmInfobaseExtensionHelper
         {
             if (disconnected)
             {
-                reconnect.run();
+                try
+                {
+                    reconnect.reconnect();
+                }
+                catch (Exception reconnectFailed)
+                {
+                    if (workFailure != null)
+                    {
+                        reconnectFailed.addSuppressed(workFailure);
+                    }
+                    throw reconnectFailed;
+                }
             }
         }
     }
@@ -586,6 +680,18 @@ public final class BmInfobaseExtensionHelper
         {
             r.error = "sourcePath or targetPath is not a valid file path: " //$NON-NLS-1$
                 + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
+            return r;
+        }
+        // A relative path resolves against whatever directory the EDT process happens to be
+        // running in, which no caller can rely on and no answer names - so it is refused
+        // rather than silently read from or written to an unpredictable place.
+        if (!source.isAbsolute() || !target.isAbsolute())
+        {
+            r.error = "sourcePath and targetPath must be absolute paths: source=" + source //$NON-NLS-1$
+                + ", target=" + target //$NON-NLS-1$
+                + ". A relative path would resolve against the EDT process's working " //$NON-NLS-1$
+                + "directory, which is not where the caller meant."; //$NON-NLS-1$
             r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
             return r;
         }
@@ -695,18 +801,7 @@ public final class BmInfobaseExtensionHelper
                 }
                 else
                 {
-                    boolean disconnected = disconnectForThickClient(ctx);
-                    try
-                    {
-                        convertUnderInfobaseLock(ctx, target, source);
-                    }
-                    finally
-                    {
-                        if (disconnected)
-                        {
-                            reconnectInfobase(ctx);
-                        }
-                    }
+                    underThickClientHandshake(ctx, () -> convertUnderInfobaseLock(ctx, target, source));
                 }
             }
             finally
@@ -898,19 +993,10 @@ public final class BmInfobaseExtensionHelper
         ExportResult r = new ExportResult();
         r.extensionName = extensionName;
         r.outputPath = outputPath;
-        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
-        if (ctx.error != null)
-        {
-            r.error = ctx.error;
-            r.failureKind = ctx.failureKind;
-            r.infobaseName = ctx.infobaseName;
-            return r;
-        }
-        r.infobaseName = ctx.infobaseName;
 
-        // Resolve and prepare the output path client-side, before the thick-client call,
-        // so a bad path or missing directory is reported as such instead of being
-        // misclassified as an infobase/runtime failure by classifyThickClientFailure.
+        // Resolve the output path client-side, before the launcher and everything behind it
+        // is touched, so a bad path is reported as such instead of being misclassified as an
+        // infobase/runtime failure by classifyThickClientFailure.
         java.nio.file.Path dest;
         try
         {
@@ -922,7 +1008,28 @@ public final class BmInfobaseExtensionHelper
             r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
             return r;
         }
-        java.nio.file.Path parent = dest.toAbsolutePath().getParent();
+        // A relative path resolves against whatever directory the EDT process happens to be
+        // running in, which no caller can rely on and no answer names - so it is refused
+        // rather than written to an unpredictable place.
+        if (!dest.isAbsolute())
+        {
+            r.error = "outputPath must be an absolute path: " + dest //$NON-NLS-1$
+                + ". A relative path would resolve against the EDT process's working " //$NON-NLS-1$
+                + "directory, which is not where the caller meant."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
+            return r;
+        }
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
+        if (ctx.error != null)
+        {
+            r.error = ctx.error;
+            r.failureKind = ctx.failureKind;
+            r.infobaseName = ctx.infobaseName;
+            return r;
+        }
+        r.infobaseName = ctx.infobaseName;
+
+        java.nio.file.Path parent = dest.getParent();
         if (parent != null)
         {
             try
@@ -1585,6 +1692,400 @@ public final class BmInfobaseExtensionHelper
         return confirmed ? DatabaseUpdateOutcome.CONFIRMED : DatabaseUpdateOutcome.UNVERIFIED;
     }
 
+    /** What one read of an extension's properties says about the two safety flags. */
+    public static final class ExtensionFlags
+    {
+        /** Whether the named extension was in the list the read returned at all. */
+        public boolean found;
+
+        /**
+         * The extension's name as the infobase spells it; {@code null} while the extension was not
+         * found. The list is matched without regard to case, the write is not: the designer answers
+         * a name in another case with "extension '' not found", so a write names the extension by
+         * this spelling.
+         */
+        public String name;
+
+        /** The safe-mode flag as last read; {@code null} while the extension was not found. */
+        public Boolean safeMode;
+
+        /**
+         * The unsafe-action-protection flag as last read; {@code null} while the extension was
+         * not found.
+         */
+        public Boolean unsafeActionProtection;
+    }
+
+    /** Result of lowering an extension's safety flags through the designer agent session. */
+    public static final class ExtensionFlagsResult
+    {
+        public boolean ok;
+        public String error;
+        public String failureKind;
+        public String infobaseName;
+        public String extensionName;
+        /** True when a write ran - the first read found at least one flag still on. */
+        public boolean wrote;
+        /**
+         * The flags as the last successful read saw them: before the write when the write or the
+         * control read failed, after it otherwise. {@code null} when no read ever answered.
+         */
+        public ExtensionFlags flags;
+    }
+
+    /**
+     * Reads the two safety flags of one extension out of the list the designer agent returns.
+     * <p>
+     * Pure on purpose: the name matching (trimmed, case-insensitive - the same reading the
+     * install probe gives an extension name) is exactly the part a test can hold to without an
+     * infobase, so it lives here rather than inline in the session-bound code.
+     * </p>
+     *
+     * @param properties the list of all extensions' properties; may be {@code null}
+     * @param extensionName the extension to pick from the list
+     * @return the flags, {@link ExtensionFlags#found} false when the list has no such extension
+     */
+    public static ExtensionFlags flagsOf(List<IExtensionProperties> properties, String extensionName)
+    {
+        ExtensionFlags flags = new ExtensionFlags();
+        if (properties == null || extensionName == null)
+        {
+            return flags;
+        }
+        String sought = extensionName.trim();
+        for (IExtensionProperties property : properties)
+        {
+            if (property == null || property.getName() == null)
+            {
+                continue;
+            }
+            if (sought.equalsIgnoreCase(property.getName().trim()))
+            {
+                flags.found = true;
+                flags.name = property.getName().trim();
+                flags.safeMode = Boolean.valueOf(property.isSafeMode());
+                flags.unsafeActionProtection = Boolean.valueOf(property.isUnsafeActionProtected());
+                return flags;
+            }
+        }
+        return flags;
+    }
+
+    /**
+     * One safety flag as the answer words it.
+     *
+     * @param flag the flag as last read; may be {@code null}
+     * @return {@code on}, {@code off} or {@code unknown}
+     */
+    public static String flagWord(Boolean flag)
+    {
+        return flag == null ? "unknown" //$NON-NLS-1$
+            : flag.booleanValue() ? "on" : "off"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Reads both safety flags of one extension through a live designer session and, when at least
+     * one is on, lowers both in a single property-write call, then reads them back.
+     * <p>
+     * Package-visible and bound to the session interface only, so a stub session can prove the
+     * order - read, one write carrying both flags, control read - and every refusal wording
+     * without an infobase. The YAxUnit documentation requires both flags off for the engine to
+     * run its tests, which is why a read-back that still finds one on is answered as an error
+     * naming the actual value of each flag, with no second write attempted: whether the first
+     * one landed is exactly what the control read just said, and retrying it blind writes again
+     * over a state nobody has looked at.
+     * </p>
+     *
+     * @param session the designer session to read and write through
+     * @param extensionName the extension whose flags are lowered
+     * @return the outcome; {@link ExtensionFlagsResult#error} is set unless both flags ended up off
+     */
+    static ExtensionFlagsResult ensureUnsafeFlags(IDesignerSession session, String extensionName)
+    {
+        ExtensionFlagsResult r = new ExtensionFlagsResult();
+        r.extensionName = extensionName;
+        ExtensionFlags first = readFlagsThrough(session, extensionName, r);
+        if (first == null)
+        {
+            return r; // the read itself failed; r.error is set
+        }
+        r.flags = first;
+        if (!first.found)
+        {
+            r.error = "The extension '" + extensionName + "' is not among the infobase's " //$NON-NLS-1$ //$NON-NLS-2$
+                + "extensions, so its safe mode and unsafe action protection could not be read."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.NOT_FOUND.wire();
+            return r;
+        }
+        if (!first.safeMode.booleanValue() && !first.unsafeActionProtection.booleanValue())
+        {
+            r.ok = true; // both already off - nothing to write
+            return r;
+        }
+        try
+        {
+            // One property-write call carrying both flags: two calls would leave the extension
+            // half-configured between them, and the designer applies the pair atomically.
+            session.extensions().properties().set().extension(first.name)
+                .safeMode(false).unsafeActionProtection(false).exec();
+            r.wrote = true;
+        }
+        catch (RuntimeException e)
+        {
+            // DesignerClientException - what exec() declares - is a RuntimeException, so the one
+            // catch reads both the protocol's refusal and anything the plumbing throws.
+            r.error = "Lowering the safe mode and the unsafe action protection of '" //$NON-NLS-1$
+                + extensionName + "' failed: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.WRITE_FAILED.wire();
+            return r;
+        }
+        ExtensionFlags back = readFlagsThrough(session, extensionName, r);
+        if (back == null)
+        {
+            // The write answered success but nothing confirms it; say that rather than claim it.
+            r.error = "The flags of '" + extensionName + "' were written but the control read " //$NON-NLS-1$ //$NON-NLS-2$
+                + "failed, so whether they landed is unknown. Lower them in the Configurator " //$NON-NLS-1$
+                + "by hand and retry."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.READBACK_FAILED.wire();
+            return r;
+        }
+        r.flags = back;
+        if (back.found && !back.safeMode.booleanValue() && !back.unsafeActionProtection.booleanValue())
+        {
+            r.ok = true;
+            return r;
+        }
+        r.error = "The flags of '" + extensionName + "' are not confirmed: safe mode " //$NON-NLS-1$ //$NON-NLS-2$
+            + flagWord(back.safeMode) + ", unsafe action protection " //$NON-NLS-1$
+            + flagWord(back.unsafeActionProtection) + ". A run with them on executes no tests, " //$NON-NLS-1$
+            + "so nothing was launched; lower both in the Configurator by hand and retry."; //$NON-NLS-1$
+        r.failureKind = ErrorTags.READBACK_FAILED.wire();
+        return r;
+    }
+
+    /**
+     * Reads every extension's properties through the session and picks the named one out.
+     *
+     * @param session the designer session to read through
+     * @param extensionName the extension to pick
+     * @param r the result the failure text is written into
+     * @return the flags, or {@code null} when the read itself failed ({@code r.error} set)
+     */
+    private static ExtensionFlags readFlagsThrough(IDesignerSession session, String extensionName,
+        ExtensionFlagsResult r)
+    {
+        List<IExtensionProperties> listed;
+        try
+        {
+            listed = session.extensions().properties().get().allExtensions().exec();
+        }
+        catch (RuntimeException e)
+        {
+            // DesignerClientException - what exec() declares - is a RuntimeException, so the one
+            // catch reads the protocol's refusal and anything the plumbing throws alike.
+            r.error = "Reading the extension properties of the infobase failed: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
+            return null;
+        }
+        return flagsOf(listed, extensionName);
+    }
+
+    /**
+     * Lowers the safe mode and the unsafe action protection of an installed extension through
+     * EDT's own designer agent session - the persistent {@code /AgentMode} designer EDT keeps for
+     * a connected infobase.
+     * <p>
+     * This is the step the batch install cannot do: the DESIGNER command set has no switch for
+     * either flag, so an installed extension carries the platform defaults (both on) until
+     * someone turns them off by hand. The agent session speaks the other protocol, the one EDT's
+     * own extension viewer reads through, and its {@code config extensions properties set}
+     * command writes both flags in one call. The step is NOT run under the thick-client
+     * handshake - the handshake tears the agent session down to let a batch designer take the
+     * platform lock, while this step needs the agent alive. Call it after the batch install has
+     * finished and the infobase is reconnected.
+     * </p>
+     * <p>
+     * Idempotent: the flags are read first and written only when at least one differs, so an
+     * extension that already has both off is answered without a write. After a write the flags
+     * are read again, and a read-back that disagrees is an error carrying the actual values
+     * rather than a success.
+     * </p>
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param extensionName the extension whose flags are lowered
+     * @return the outcome (check {@link ExtensionFlagsResult#ok})
+     */
+    public static ExtensionFlagsResult ensureExtensionUnsafeFlags(String projectName,
+        String applicationId, String extensionName)
+    {
+        ExtensionFlagsResult r = new ExtensionFlagsResult();
+        r.extensionName = extensionName;
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
+        if (ctx.error != null)
+        {
+            r.error = ctx.error;
+            r.failureKind = ctx.failureKind;
+            r.infobaseName = ctx.infobaseName;
+            return r;
+        }
+        r.infobaseName = ctx.infobaseName;
+
+        // Same in-process lock as the batch calls: it keeps this EDT's own callers apart, so a
+        // flags write cannot land in the middle of an install or an update of the same infobase.
+        MonopolyLock.Claim claim =
+            MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "set_extension_flags"); //$NON-NLS-1$
+        if (!claim.granted())
+        {
+            r.error = claim.refusal();
+            r.failureKind = ErrorTags.BUSY.wire();
+            return r;
+        }
+        try
+        {
+            IDesignerSession session = designerSessionOf(ctx, r);
+            if (session == null)
+            {
+                return r; // r.error says why the agent is unavailable
+            }
+            ExtensionFlagsResult done = ensureUnsafeFlags(session, extensionName);
+            done.infobaseName = ctx.infobaseName;
+            return done;
+        }
+        finally
+        {
+            claim.close();
+        }
+    }
+
+    /**
+     * The designer agent session EDT keeps for the infobase, or an explanation of why there is
+     * none to have.
+     * <p>
+     * The session pool is an internal class of the platform-services bundle, reached the same way
+     * the batch install reaches {@code executeRuntimeProcessCommand}: by name, up the launcher's
+     * class hierarchy, so this bundle needs no compile dependency on the internal package. The
+     * pool answers with the live connection when EDT has one and raises the agent when it does
+     * not; the flag operations themselves go through the exported {@link IDesignerSession}, so
+     * only the plumbing is reflective.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param r the result the failure text is written into
+     * @return the session, or {@code null} with {@code r.error} set
+     */
+    private static IDesignerSession designerSessionOf(ThickClientLaunch.LauncherContext ctx,
+        ExtensionFlagsResult r)
+    {
+        Object pool = findFieldUp(ctx.launcher, "designerSessionPool"); //$NON-NLS-1$
+        if (pool == null)
+        {
+            r.error = "This EDT runtime exposes no designer session pool on its thick-client " //$NON-NLS-1$
+                + "launcher, so the extension flags cannot be read or written through the " //$NON-NLS-1$
+                + "designer agent. Lower them in the Configurator by hand."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+            return null;
+        }
+        java.lang.reflect.Method get = findMethodUp(pool.getClass(), "get", //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        java.lang.reflect.Method acquire = findMethodUp(pool.getClass(), "acquire", //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        if (get == null || acquire == null)
+        {
+            r.error = "This EDT runtime does not expose the designer session internals required " //$NON-NLS-1$
+                + "to change extension flags."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+            return null;
+        }
+        Object connection = null;
+        try
+        {
+            Object maybe = get.invoke(pool, ctx.component.getInstallation(), ctx.infobase, ctx.args);
+            if (maybe instanceof Optional<?> present && present.isPresent())
+            {
+                connection = present.get();
+            }
+            if (connection == null)
+            {
+                // No live session yet: acquire raises the agent, which the platform below 8.3.14
+                // cannot offer - that refusal names itself and reaches the caller as-is.
+                connection = acquire.invoke(pool, ctx.component.getInstallation(), ctx.infobase, ctx.args);
+            }
+            java.lang.reflect.Method getSession = findMethodUp(connection.getClass(), "getSession"); //$NON-NLS-1$
+            if (getSession == null)
+            {
+                r.error = "This EDT runtime's designer connection carries no session."; //$NON-NLS-1$
+                r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+                return null;
+            }
+            Object session = getSession.invoke(connection);
+            if (!(session instanceof IDesignerSession typed))
+            {
+                r.error = "The designer session this EDT runtime hands out is not the session " //$NON-NLS-1$
+                    + "interface the flag operations are written against."; //$NON-NLS-1$
+                r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+                return null;
+            }
+            return typed;
+        }
+        catch (java.lang.reflect.InvocationTargetException e)
+        {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            r.error = "The designer agent session could not be established: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(cause))
+                + ". Lower the extension flags in the Configurator by hand."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
+            return null;
+        }
+        catch (RuntimeException | IllegalAccessException e)
+        {
+            r.error = "The designer session pool refused the call: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+            return null;
+        }
+    }
+
+    /**
+     * Finds a (possibly private / inherited) field by walking up the class hierarchy of the
+     * object that holds it.
+     *
+     * @param holder the object whose class hierarchy is walked
+     * @param name the field name
+     * @return the field's value, or {@code null} when no class of the hierarchy declares it
+     */
+    private static Object findFieldUp(Object holder, String name)
+    {
+        if (holder == null)
+        {
+            return null;
+        }
+        for (Class<?> k = holder.getClass(); k != null; k = k.getSuperclass())
+        {
+            try
+            {
+                java.lang.reflect.Field field = k.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(holder);
+            }
+            catch (NoSuchFieldException ignore)
+            {
+                // not declared here; walk up to the superclass
+            }
+            catch (IllegalAccessException | RuntimeException e)
+            {
+                // Present but unreachable - reported, not swallowed: the caller must not read
+                // "this EDT offers no pool" over a pool it merely refused to hand out.
+                Activator.logWarning("reading the field '" + name + "' failed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)));
+                return null;
+            }
+        }
+        return null;
+    }
+
     /**
      * Downloads {@code url} into {@code dest} via the JDK HTTP client (no external deps), following
      * redirects. Throws on transport failure or an HTTP 4xx/5xx status.
@@ -2048,7 +2549,15 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx)
+    /**
+     * Takes the infobase back after a thick-client run. Package-visible: the handshake tests
+     * watch a reconnection that cannot run.
+     *
+     * @param ctx the resolved launcher context
+     * @throws Exception when the reconnection failed; the infobase then shows as disconnected
+     *             in EDT until somebody reconnects it by hand
+     */
+    static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         if (ctx.project == null)
         {
@@ -2063,8 +2572,13 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
+            rethrowIfFatal(e);
             Activator.logWarning("connectInfobase failed; the infobase may show as " //$NON-NLS-1$
                 + "disconnected in EDT - reconnect it manually: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e))); //$NON-NLS-1$
+            throw new IllegalStateException("EDT could not reconnect the infobase " //$NON-NLS-1$
+                + ctx.infobaseName + " after the Designer run; it shows as disconnected in EDT " //$NON-NLS-1$
+                + "- reconnect it by hand: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)), e);
         }
     }
 

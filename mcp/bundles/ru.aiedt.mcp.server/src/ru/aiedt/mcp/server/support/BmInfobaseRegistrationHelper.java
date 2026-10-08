@@ -123,6 +123,12 @@ public final class BmInfobaseRegistrationHelper
          * EDT made the application the default while associating it.
          */
         public String defaultWarning;
+        /**
+         * Why the project's association context could not be read, so the binding went to the
+         * default context and a branch project may not find its application; {@code null} when
+         * the context was read.
+         */
+        public String associationContextWarning;
         /** Projects a reused entry was already bound to; {@code null} when it was bound nowhere else. */
         public List<String> alsoAssociatedWith;
         /** Other projects whose applications could not be read, so the binding check did not run there. */
@@ -180,10 +186,13 @@ public final class BmInfobaseRegistrationHelper
         List<IProject> allProjects();
 
         /**
+         * The association context a project's applications are read from, with the read's own
+         * outcome beside it.
+         *
          * @param project the project
-         * @return the association context its applications are read from
+         * @return the context it names, and why the context could not be read when it could not
          */
-        InfobaseAssociationContext associationContext(IProject project);
+        BmInfobaseLifecycleHelper.ContextRead associationContextRead(IProject project);
 
         /**
          * @param project the project
@@ -279,9 +288,9 @@ public final class BmInfobaseRegistrationHelper
         }
 
         @Override
-        public InfobaseAssociationContext associationContext(IProject project)
+        public BmInfobaseLifecycleHelper.ContextRead associationContextRead(IProject project)
         {
-            return BmInfobaseLifecycleHelper.associationContextOf(project);
+            return BmInfobaseLifecycleHelper.readAssociationContextOf(project);
         }
 
         @Override
@@ -533,10 +542,15 @@ public final class BmInfobaseRegistrationHelper
             // application as the one that stood before. A failed read is kept: the omit rule
             // must not treat it as "there is none".
             previousReadBox[0] = defaultApplicationOf(appMgr, project);
+            // The binding goes to the context the project's applications are read from. A read
+            // that failed binds into the default one - refusing would take the operation away
+            // from projects whose provider is merely absent - and the answer then says so
+            // instead of leaving a branch project bound where it is never read.
+            BmInfobaseLifecycleHelper.ContextRead contextRead = env.associationContextRead(project);
             try
             {
                 am.associate(project, found,
-                    InfobaseAssociationSettings.notSynchronized(env.associationContext(project)));
+                    InfobaseAssociationSettings.notSynchronized(contextRead.context));
             }
             catch (Throwable e)
             {
@@ -553,6 +567,12 @@ public final class BmInfobaseRegistrationHelper
                 r.accessSettings = redactPasswords(r.accessSettings, password, previousAccess[0]);
                 r.failureKind = ErrorTags.ASSOCIATE_FAILED.wire();
                 return r;
+            }
+            if (contextRead.readFailure != null)
+            {
+                r.associationContextWarning = "the project's association context could not be read (" //$NON-NLS-1$
+                    + contextRead.readFailure + "), so the binding went to the " //$NON-NLS-1$
+                    + BmInfobaseLifecycleHelper.describe(contextRead.context) + " context"; //$NON-NLS-1$
             }
             r.launchApplicationIds = restore(launchIds);
             return r;

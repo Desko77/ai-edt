@@ -254,6 +254,8 @@ public enum ToolProfile
             "git_commit", //$NON-NLS-1$
             "git_checkout", //$NON-NLS-1$
             "git_revert_file", //$NON-NLS-1$
+            "git_create_merge_restore_point", //$NON-NLS-1$
+            "git_delete_merge_restore_point", //$NON-NLS-1$
 
             // launch_debugger covers these
             "debug_launch", //$NON-NLS-1$
@@ -358,6 +360,13 @@ public enum ToolProfile
             "add_to_cluster", //$NON-NLS-1$
             "remove_from_cluster", //$NON-NLS-1$
 
+            // tag_admin covers these
+            "create_tag", //$NON-NLS-1$
+            "update_tag", //$NON-NLS-1$
+            "delete_tag", //$NON-NLS-1$
+            "assign_tag", //$NON-NLS-1$
+            "unassign_tag", //$NON-NLS-1$
+
             // docs_lookup covers these
             "get_platform_documentation", //$NON-NLS-1$
             "get_object_help", //$NON-NLS-1$
@@ -386,11 +395,15 @@ public enum ToolProfile
             "create_infobase", //$NON-NLS-1$
             "delete_infobase", //$NON-NLS-1$
             "delete_project", //$NON-NLS-1$
+            "create_project", //$NON-NLS-1$
             "import_configuration_from_xml", //$NON-NLS-1$
+            "import_configuration_from_binary", //$NON-NLS-1$
             "install_extension", //$NON-NLS-1$
             "uninstall_extension", //$NON-NLS-1$
             "set_infobase_credentials", //$NON-NLS-1$
             "register_infobase", //$NON-NLS-1$
+            "branch_infobase", //$NON-NLS-1$
+            "create_launch_config", //$NON-NLS-1$
             "sync_control", //$NON-NLS-1$
             "resync_to_disk", //$NON-NLS-1$
             "restart_edt", //$NON-NLS-1$
@@ -426,17 +439,28 @@ public enum ToolProfile
      * disables each writer of its own list, written out there by hand rather than read from here.
      * </p>
      * <p>
-     * The repository is as much a write target as the sources, and the three git doors live in the
-     * VCS group, which no write-blocking preset disables wholesale: a commit writes the index and the
-     * history, a checkout rewrites the work tree, and putting a file back overwrites that file. The
-     * reads of the same facade - status, branches, log, show_file_changes - stay on under all three,
-     * because only the doors are named here.
+     * The repository is as much a write target as the sources, and the git doors live in the VCS
+     * group, which no write-blocking preset disables wholesale: a commit writes the index and the
+     * history, a checkout rewrites the work tree, putting a file back overwrites that file, and
+     * taking or dropping a merge restore point writes the repository or a copy beside the workspace
+     * even though the work tree is not touched. The reads of the same facade - status, branches,
+     * log, show_file_changes - stay on under all three, because only the doors are named here.
      * </p>
      * <p>
      * {@code extension_workshop} is named as a whole: its borrow operations and
      * {@code update_borrowed} with {@code apply=true} write the extension, and its group is one Code
      * Review keeps on. Read-only and Debug &amp; Test switch its group off already, so under all three
      * the facade, its reads included, is off.
+     * </p>
+     * <p>
+     * The seven {@code *_writes} names are capability names, not tools: nothing registers them and
+     * no group lists them, so they have no checkbox and no wire name. Each is the write half of a
+     * constructor facade - the reads of that facade and its {@code dryRun} previews stay on under
+     * every preset, and the facade asks {@code ToolGate.gateIfPresetDisabled} about the name before
+     * its first write, which is what keeps Code Review's promise while it leaves the constructors
+     * group on to read what they would produce. They are deliberately not separate door tools: a
+     * door tool is a callable name a client can be told about, and these carry no operation of
+     * their own.
      * </p>
      *
      * @return the names no write-blocking preset may leave enabled
@@ -451,9 +475,21 @@ public enum ToolProfile
         // preset that promises no writes has to name the facade itself or borrow_object and
         // update_borrowed apply=true keep writing through the group it left open.
         names.add("extension_workshop"); //$NON-NLS-1$
+        // The write halves of the constructor facades (capability names, not tools - see the
+        // class javadoc above). Code Review keeps their group on; the facades gate their writes
+        // on these names and leave their reads and dryRun previews alone.
+        names.add("edit_form_writes"); //$NON-NLS-1$
+        names.add("edit_metadata_writes"); //$NON-NLS-1$
+        names.add("dcs_workshop_writes"); //$NON-NLS-1$
+        names.add("mxl_workshop_writes"); //$NON-NLS-1$
+        names.add("xdto_workshop_writes"); //$NON-NLS-1$
+        names.add("external_object_workshop_writes"); //$NON-NLS-1$
+        names.add("external_data_source_workshop_writes"); //$NON-NLS-1$
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$
+        names.add("git_create_merge_restore_point"); //$NON-NLS-1$
+        names.add("git_delete_merge_restore_point"); //$NON-NLS-1$
         // The five write doors of the cluster facade sit in the tags-and-marks group, which every
         // write-blocking preset keeps enabled because its reads belong there: each door is named
         // here, or the preset writes through the one group it left open.
@@ -462,6 +498,13 @@ public enum ToolProfile
         names.add("delete_cluster"); //$NON-NLS-1$
         names.add("add_to_cluster"); //$NON-NLS-1$
         names.add("remove_from_cluster"); //$NON-NLS-1$
+        // The five write doors of the tag facade sit in the same reading group for the same
+        // reason: named one by one, or a preset writes through the one group it left open.
+        names.add("create_tag"); //$NON-NLS-1$
+        names.add("update_tag"); //$NON-NLS-1$
+        names.add("delete_tag"); //$NON-NLS-1$
+        names.add("assign_tag"); //$NON-NLS-1$
+        names.add("unassign_tag"); //$NON-NLS-1$
         // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
         // send a question and whatever Naparnik's tools read to that service. A preset that blocks
         // writing switches the whole name off.
@@ -496,8 +539,9 @@ public enum ToolProfile
     }
 
     /**
-     * @return everything that writes, launches or debugs - the constructors excepted, since reading
-     *         what they would produce is part of a review
+     * @return everything that writes, launches or debugs - the constructors' reads and previews
+     *         excepted, since reading what they would produce is part of a review; their writes are
+     *         the {@code *_writes} capability names {@link #writersOutsideWriteGroups()} adds
      */
     private static Set<String> codeReviewDisabled()
     {

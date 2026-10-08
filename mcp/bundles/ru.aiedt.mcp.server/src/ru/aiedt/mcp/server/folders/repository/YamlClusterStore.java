@@ -24,39 +24,16 @@ import java.io.InputStreamReader;
 
 import java.io.Reader;
 
-import java.nio.ByteBuffer;
-
-import java.nio.channels.FileChannel;
-
-import java.nio.channels.FileLock;
-
-import java.nio.channels.OverlappingFileLockException;
-
 import java.nio.charset.CodingErrorAction;
 
 import java.nio.charset.StandardCharsets;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
-
-import java.nio.file.DirectoryStream;
-
 import java.nio.file.FileAlreadyExistsException;
 
 import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
 
 import java.nio.file.Path;
-
-import java.nio.file.StandardOpenOption;
-import java.nio.file.AccessDeniedException;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.FileAttribute;
-
-import java.nio.file.attribute.PosixFileAttributeView;
-
-import java.nio.file.attribute.PosixFilePermission;
-
-import java.nio.file.attribute.PosixFilePermissions;
 
 import java.util.ArrayList;
 
@@ -106,6 +83,8 @@ import org.yaml.snakeyaml.representer.Representer;
 import ru.aiedt.mcp.server.Activator;
 
 import ru.aiedt.mcp.server.folders.ClusterKeys;
+
+import ru.aiedt.mcp.server.support.AtomicFileReplace;
 
 import ru.aiedt.mcp.server.support.LegacyStorageMigration;
 
@@ -191,61 +170,22 @@ public class YamlClusterStore
 
                 String.CASE_INSENSITIVE_ORDER);
 
-    private static final int ATOMIC_MOVE_ATTEMPTS = 4;
-
-    private static final long ATOMIC_MOVE_RETRY_MILLIS = 75L;
-    private static final long STALE_TEMPORARY_MILLIS = 24L * 60L * 60L * 1000L;
-
-    private static final Set<PosixFilePermission> DEFAULT_POSIX_FILE_PERMISSIONS = Set.of(
-        PosixFilePermission.OWNER_READ,
-        PosixFilePermission.OWNER_WRITE,
-        PosixFilePermission.GROUP_READ,
-        PosixFilePermission.OTHERS_READ);
-
-    /** What stands for a project whose clusters file was not there when its set was read. */
-    private static final String NO_FILE_FINGERPRINT = "-"; //$NON-NLS-1$
-
     /**
      * The digest of the bytes each project's set was read from, by project name.
      * <p>
      * The state is kept here rather than in {@link ClusterStore}, which is what the YAML is written
      * from: a field on the store would be dumped into the file, and a reader of another build would
      * meet a key it does not know. The map is per instance, and the manager that owns this store is
-     * the only writer for a project's file. A name that is absent means this store never read that
-     * project - which is not the same as having read no file, and is stored as
-     * {@link #NO_FILE_FINGERPRINT} instead.
+     * the only writer for a project's file. A name that is absent means this store does not
+     * know what it last read from that project - it never read it, or a read failed and was
+     * forgotten - which is not the same as having read no file, and is stored as
+     * {@link AtomicFileReplace#NO_FILE_FINGERPRINT} instead. A write sets the fingerprint of
+     * the bytes it is about to land before it runs, so the change notification the refresh
+     * inside the write fires reads as this store's own write; a refused write puts the
+     * previous fingerprint back.
      * </p>
      */
     private final Map<String, String> loadedFingerprints = new ConcurrentHashMap<>();
-
-
-    /** Performs one atomic replacement attempt. */
-    @FunctionalInterface
-    interface AtomicMover
-    {
-        /**
-         * Moves the staged file over the destination atomically.
-         *
-         * @param source the staged file
-         * @param target the destination
-         * @throws IOException when the atomic replacement is refused
-         */
-        void move(Path source, Path target) throws IOException;
-    }
-
-    /** Waits between atomic replacement attempts. */
-    @FunctionalInterface
-    interface RetrySleeper
-    {
-        /**
-         * Waits for the requested retry delay.
-         *
-         * @param milliseconds the delay in milliseconds
-         * @throws InterruptedException when the waiting thread is interrupted
-         */
-        void sleep(long milliseconds) throws InterruptedException;
-    }
-
 
 
     @Override
@@ -282,7 +222,7 @@ public class YamlClusterStore
 
         {
 
-            rememberFingerprint(project, NO_FILE_FINGERPRINT);
+            rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
 
             return new ClusterStore();
 
@@ -414,7 +354,7 @@ public class YamlClusterStore
 
             ClusterStore storage = yaml.load(reader);
 
-            rememberFingerprint(project, fingerprint(bytes));
+            rememberFingerprint(project, AtomicFileReplace.fingerprint(bytes));
 
             if (storage == null)
 
@@ -423,6 +363,8 @@ public class YamlClusterStore
                 return new ClusterStore();
 
             }
+
+            dropBlankClusters(storage);
 
             cleanupOrphanedFqns(storage);
 
@@ -456,6 +398,26 @@ public class YamlClusterStore
 
         }
 
+        catch (RuntimeException e)
+
+        {
+
+            // A document that parses and still does not fit the shape - a null list element, an
+
+            // entry of the wrong kind - must refuse as unreadable rather than throw into the
+
+            // caller: every read of a project's clusters runs through here.
+
+            forgetFingerprint(project);
+
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+
+                + " could not be read and was left unchanged: " + e); //$NON-NLS-1$
+
+            return null;
+
+        }
+
     }
 
     /**
@@ -465,7 +427,7 @@ public class YamlClusterStore
 
      * @param project the project
 
-     * @param fingerprint the digest of the bytes, or {@link #NO_FILE_FINGERPRINT}
+     * @param fingerprint the digest of the bytes, or {@link AtomicFileReplace#NO_FILE_FINGERPRINT}
 
      */
 
@@ -491,56 +453,6 @@ public class YamlClusterStore
     {
 
         loadedFingerprints.remove(project.getName());
-
-    }
-
-    /**
-     * The digest of a file's bytes, the identity of the content a set was read from.
-
-     *
-
-     * @param bytes the file contents
-
-     * @return the hexadecimal SHA-256 of the bytes
-
-     */
-
-    private static String fingerprint(byte[] bytes)
-
-    {
-
-        try
-
-        {
-
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes); //$NON-NLS-1$
-
-            StringBuilder hex = new StringBuilder(digest.length * 2);
-
-            for (byte value : digest)
-
-            {
-
-                hex.append(Character.forDigit((value >> 4) & 0xf, 16));
-
-                hex.append(Character.forDigit(value & 0xf, 16));
-
-            }
-
-            return hex.toString();
-
-        }
-
-        catch (NoSuchAlgorithmException e)
-
-        {
-
-            // Every runtime that runs this bundle ships SHA-256. One that does not still has to tell
-            // the file it read from another one, and a shortened digest would not, so the content
-            // itself stands in for it.
-            return new String(bytes, StandardCharsets.ISO_8859_1);
-
-        }
 
     }
 
@@ -633,7 +545,7 @@ public class YamlClusterStore
             return ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED);
         }
         String read = loadedFingerprints.get(project.getName());
-        if (read == null ? NO_FILE_FINGERPRINT.equals(onDisk) : read.equals(onDisk))
+        if (read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT.equals(onDisk) : read.equals(onDisk))
         {
             return null;
         }
@@ -663,7 +575,7 @@ public class YamlClusterStore
      */
     private void rememberWritten(IProject project, byte[] written)
     {
-        rememberFingerprint(project, written == null ? NO_FILE_FINGERPRINT : fingerprint(written));
+        rememberFingerprint(project, written == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : AtomicFileReplace.fingerprint(written));
     }
 
     /**
@@ -676,7 +588,7 @@ public class YamlClusterStore
     private boolean writesTheBytesAlreadyRead(IProject project, byte[] bytes)
     {
         String read = loadedFingerprints.get(project.getName());
-        return read != null && read.equals(fingerprint(bytes));
+        return read != null && read.equals(AtomicFileReplace.fingerprint(bytes));
     }
 
     /**
@@ -703,7 +615,7 @@ public class YamlClusterStore
      * </p>
      *
      * @param file the clusters file handle
-     * @return the fingerprint, {@link #NO_FILE_FINGERPRINT} when there is no file, or {@code null}
+     * @return the fingerprint, {@link AtomicFileReplace#NO_FILE_FINGERPRINT} when there is no file, or {@code null}
      *         when the file cannot be read
      */
     private static String diskFingerprint(IFile file)
@@ -711,7 +623,7 @@ public class YamlClusterStore
         try
         {
             byte[] bytes = readClustersBytes(file);
-            return bytes == null ? NO_FILE_FINGERPRINT : fingerprint(bytes);
+            return bytes == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : AtomicFileReplace.fingerprint(bytes);
         }
         catch (CoreException | IOException e)
         {
@@ -744,6 +656,32 @@ public class YamlClusterStore
     public boolean delete(IProject project)
     {
         return deleteIfExists(project).succeeded();
+    }
+
+    /**
+     * Tells whether the file on disk holds the bytes this store last read or wrote.
+     * <p>
+     * Not knowing what was last read and having read no file are different states. A project this
+     * store never read, or whose read failed and was forgotten, has no bytes to compare: nothing
+     * the disk holds is that project's own state, not even the absence of the file. Only a store
+     * that read the absence - or wrote the removal - counts no file as its own.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the disk carries exactly those bytes; {@code false} when it holds
+     *         something else, when this store holds no fingerprint to compare, or when the file
+     *         cannot be read
+     */
+    @Override
+    public boolean holdsWhatWasLastReadOrWritten(IProject project)
+    {
+        String known = loadedFingerprints.get(project.getName());
+        if (known == null)
+        {
+            return false;
+        }
+        String onDisk = diskFingerprint(clustersFile(project));
+        return onDisk != null && known.equals(onDisk);
     }
 
 
@@ -966,6 +904,62 @@ public class YamlClusterStore
 
     /**
 
+     * Drops null cluster entries after a load.
+
+     * <p>
+
+     * An empty list element in the YAML - a dash with nothing after it, which a hand edit or a
+
+     * merge leaves behind - reads as null, and a null entry reached by every later reader as a
+
+     * cluster is a NullPointerException on each of the project's cluster reads. The load drops
+
+     * such entries; what remains is the file's clusters.
+
+     * </p>
+
+     *
+
+     * @param storage the freshly loaded storage
+
+     */
+
+    private static void dropBlankClusters(ClusterStore storage)
+
+    {
+
+        List<Cluster> clusters = storage.getGroups();
+
+        List<Cluster> kept = new ArrayList<>(clusters.size());
+
+        for (Cluster cluster : clusters)
+
+        {
+
+            if (cluster != null)
+
+            {
+
+                kept.add(cluster);
+
+            }
+
+        }
+
+        if (kept.size() != clusters.size())
+
+        {
+
+            storage.setGroups(kept);
+
+        }
+
+    }
+
+
+
+    /**
+
      * Strips blank object references from every cluster after a load.
 
      *
@@ -1059,11 +1053,18 @@ public class YamlClusterStore
 
 
     /**
-     * Writes the content by replacing the file under an exclusive lock. When the file has no location
-     * on disk, writes through the workspace instead. A lock that cannot be taken refuses the write.
+     * Writes the content through the shared atomic replace helper. When the file has no
+     * location on disk, writes through the workspace instead.
      * <p>
-     * A write that succeeds is remembered from the bytes handed to the channel, not from a later
-     * read of the file.
+     * The write runs under the file's lock, against the fingerprint of the bytes this store
+     * read. A write that succeeds is remembered from the bytes handed to the helper, not from
+     * a later read of the file, and the workspace is refreshed after the write; a refresh the
+     * workspace refuses is a warning on a completed write rather than a failure of it. The
+     * fingerprint of the new bytes is published from inside the replacement, once the file holds
+     * them and before the helper refreshes the workspace: a fingerprint standing before the file
+     * does names bytes the file does not hold yet, and the refresh then arrives as a change this
+     * store does not recognize as its own. A refused write, which publishes nothing, puts the
+     * fingerprint back to what the file still holds.
      * </p>
      *
      * @param project the project
@@ -1075,308 +1076,86 @@ public class YamlClusterStore
         IFile clustersFile = clustersFile(project);
         IPath location = clustersFile.getLocation();
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        String read = loadedFingerprints.get(project.getName());
         if (location == null)
         {
+            // The workspace writes the file and tells about it in one call, so there is no moment
+            // between the two for the caller to publish in: the bytes go in before the write runs.
+            rememberFingerprint(project, AtomicFileReplace.fingerprint(bytes));
             ClusterSaveOutcome direct = saveDirectly(project, clustersFile, content);
             if (direct.isOk())
             {
                 rememberWritten(project, bytes);
             }
+            else
+            {
+                restoreFingerprint(project, read);
+            }
             return direct;
         }
         Path osPath = location.toFile().toPath();
-        try
+        String expected = read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : read;
+        AtomicFileReplace.Outcome written = AtomicFileReplace.replace(osPath, expected, bytes,
+            clustersFile, () -> rememberWritten(project, bytes));
+        if (!written.isOk())
         {
-            if (osPath.getParent() != null)
-            {
-                Files.createDirectories(osPath.getParent());
-            }
-            ClusterSaveOutcome written = writeChannelLocked(osPath, content);
-            if (written.isRefused())
-            {
-                Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
-                    + " could not be locked or opened for writing (" + written.getCode() //$NON-NLS-1$
-                    + "); the write was refused"); //$NON-NLS-1$
-                return written;
-            }
-            rememberWritten(project, bytes);
-            clustersFile.refreshLocal(IResource.DEPTH_ZERO, null);
-            return ClusterSaveOutcome.ok();
+            restoreFingerprint(project, read);
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+                + " could not be written (" + written + "); the write was refused"); //$NON-NLS-1$ //$NON-NLS-2$
+            return refusal(written);
         }
-        catch (IOException | CoreException e)
-        {
-            Activator.logError("Failed to write aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
-            return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, exceptionText(e));
-        }
+        return ClusterSaveOutcome.ok();
     }
 
-
-
     /**
-     * Stages the content in a temporary file, probes the destination with an exclusive lock, and
-     * replaces the destination atomically after that probe succeeds.
-     * <p>
-     * The lock is taken on the destination as it stands. A lock another process holds, or one this
-     * process already holds, refuses the write and leaves the destination byte for byte. The lock
-     * is released before the move, so it is an availability probe rather than synchronization around
-     * replacement. The bytes are forced to the temporary file first, and only an atomic replacement
-     * makes them visible; an unavailable destination is retried and never falls back to a delete-first
-     * move.
-     * </p>
+     * Puts a project's fingerprint back after a write that did not land.
      *
-     * @param osPath the file's location on disk
-     * @param content the YAML to write
-     * @return {@link ClusterSaveOutcome#ok()} when the destination was replaced, or a
-     *         {@link ClusterSaveOutcome#LOCK_REFUSED} or {@link ClusterSaveOutcome#ACCESS_DENIED} refusal
-     * @throws IOException if staging or replacing fails; the destination is left as it was when the
-     *             failure happens before the replace
+     * @param project the project
+     * @param read the fingerprint the store held before the refused write, or {@code null} when
+     *            it held none
      */
-    static ClusterSaveOutcome writeChannelLocked(Path osPath, String content) throws IOException
+    private void restoreFingerprint(IProject project, String read)
     {
-        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
-        Path directory = osPath.getParent();
-        if (directory != null)
+        if (read == null)
         {
-            Files.createDirectories(directory);
+            forgetFingerprint(project);
         }
-        Path stagingDirectory = directory == null ? Path.of(".") : directory; //$NON-NLS-1$
-        cleanupStaleTemporaryFiles(osPath, stagingDirectory);
-        Path temporary = createTemporaryFile(osPath, stagingDirectory);
-        IOException failure = null;
-        try
+        else
         {
-            writeForced(temporary, bytes);
-            ClusterSaveOutcome lock = tryLockWithoutTruncating(osPath);
-            if (lock.isRefused())
-            {
-                return lock;
-            }
-            moveReplacing(temporary, osPath);
-            return ClusterSaveOutcome.ok();
-        }
-        catch (IOException e)
-        {
-            failure = e;
-            throw e;
-        }
-        finally
-        {
-            try
-            {
-                Files.deleteIfExists(temporary);
-            }
-            catch (IOException cleanupFailure)
-            {
-                if (failure == null)
-                {
-                    throw cleanupFailure;
-                }
-                failure.addSuppressed(cleanupFailure);
-            }
+            rememberFingerprint(project, read);
         }
     }
 
     /**
-     * Creates a sibling staging file with the destination's POSIX permissions when available.
-     * <p>
-     * A new destination starts with ordinary 0644 permissions subject to the process umask. Other
-     * file-system providers receive no unsupported attributes.
-     * </p>
+     * Translates a refusal of the shared write helper into this store's outcome.
      *
-     * @param target the destination whose permissions should be retained
-     * @param directory the directory in which to create the staging file
-     * @return the new staging file
-     * @throws IOException when the file or its permissions cannot be created
+     * @param refused the helper's refusal
+     * @return the matching cluster save refusal
      */
-    private static Path createTemporaryFile(Path target, Path directory) throws IOException
+    private static ClusterSaveOutcome refusal(AtomicFileReplace.Outcome refused)
     {
-        Set<PosixFilePermission> permissions = DEFAULT_POSIX_FILE_PERMISSIONS;
-        if (Files.getFileAttributeView(directory, PosixFileAttributeView.class) != null)
+        if (AtomicFileReplace.CHANGED_ON_DISK.equals(refused.getCode()))
         {
-            if (Files.exists(target))
-            {
-                permissions = Files.getPosixFilePermissions(target);
-            }
-            FileAttribute<Set<PosixFilePermission>> attribute =
-                PosixFilePermissions.asFileAttribute(permissions);
-            return Files.createTempFile(directory, target.getFileName().toString() + ".", ".tmp", //$NON-NLS-1$ //$NON-NLS-2$
-                attribute);
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.CHANGED_ON_DISK,
+                refused.getDetail());
         }
-        return Files.createTempFile(directory, target.getFileName().toString() + ".", ".tmp"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (AtomicFileReplace.READ_FAILED.equals(refused.getCode()))
+        {
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED,
+                refused.getDetail());
+        }
+        if (AtomicFileReplace.LOCK_REFUSED.equals(refused.getCode()))
+        {
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.LOCK_REFUSED,
+                refused.getDetail());
+        }
+        if (AtomicFileReplace.ACCESS_DENIED.equals(refused.getCode()))
+        {
+            return ClusterSaveOutcome.refused(ClusterSaveOutcome.ACCESS_DENIED,
+                refused.getDetail());
+        }
+        return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, refused.getDetail());
     }
-
-    /**
-     * Removes staging files left by an earlier process once they are old enough not to be active.
-     *
-     * @param target the destination whose staging-file prefix identifies owned files
-     * @param directory the directory containing the destination
-     */
-    private static void cleanupStaleTemporaryFiles(Path target, Path directory)
-    {
-        long cutoff = System.currentTimeMillis() - STALE_TEMPORARY_MILLIS;
-        String pattern = target.getFileName().toString() + ".*.tmp"; //$NON-NLS-1$
-        try (DirectoryStream<Path> stagedFiles = Files.newDirectoryStream(directory, pattern))
-        {
-            for (Path stagedFile : stagedFiles)
-            {
-                try
-                {
-                    if (Files.getLastModifiedTime(stagedFile).toMillis() < cutoff)
-                    {
-                        Files.deleteIfExists(stagedFile);
-                    }
-                }
-                catch (IOException e)
-                {
-                    Activator.logError("Failed to remove stale cluster staging file " //$NON-NLS-1$
-                        + stagedFile.getFileName(), e);
-                }
-            }
-        }
-        catch (IOException e)
-        {
-            Activator.logError("Failed to inspect cluster staging files beside " //$NON-NLS-1$
-                + target.getFileName(), e);
-        }
-    }
-
-    /**
-     * Writes every byte of {@code bytes} to {@code path} and forces them to disk.
-     *
-     * @param path the file to write; it is truncated because it is a temporary file, not the destination
-     * @param bytes the bytes to write
-     * @throws IOException if the write stops short or the channel cannot be forced
-     */
-    private static void writeForced(Path path, byte[] bytes) throws IOException
-    {
-        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE,
-            StandardOpenOption.TRUNCATE_EXISTING))
-        {
-            ByteBuffer buffer = ByteBuffer.wrap(bytes);
-            int written = 0;
-            while (buffer.hasRemaining())
-            {
-                int count = channel.write(buffer);
-                if (count <= 0)
-                {
-                    throw new IOException("writing " + path.getFileName() + " made no progress"); //$NON-NLS-1$ //$NON-NLS-2$
-                }
-                written += count;
-            }
-            if (written != bytes.length)
-            {
-                throw new IOException("short write to " + path.getFileName()); //$NON-NLS-1$
-            }
-            channel.force(true);
-        }
-    }
-
-    /**
-     * Takes an exclusive lock on {@code osPath} without truncating it.
-     * <p>
-     * A missing destination needs no lock and is left absent until the atomic move. An existing file
-     * is opened for write without {@code TRUNCATE_EXISTING}. A read-only file refuses with
-     * {@link ClusterSaveOutcome#ACCESS_DENIED}. A lock that is already held refuses with
-     * {@link ClusterSaveOutcome#LOCK_REFUSED}.
-     * </p>
-     *
-     * @param osPath the destination
-     * @return {@link ClusterSaveOutcome#ok()} when the lock was taken and released or was not needed,
-     *         otherwise the refusal
-     * @throws IOException when the file cannot be opened for a reason other than access
-     */
-    private static ClusterSaveOutcome tryLockWithoutTruncating(Path osPath) throws IOException
-    {
-        if (Files.notExists(osPath))
-        {
-            return ClusterSaveOutcome.ok();
-        }
-        try
-        {
-            try (FileChannel channel = FileChannel.open(osPath, StandardOpenOption.WRITE))
-            {
-                try
-                {
-                    FileLock lock = channel.tryLock();
-                    if (lock == null)
-                    {
-                        return ClusterSaveOutcome.refused(ClusterSaveOutcome.LOCK_REFUSED);
-                    }
-                    lock.release();
-                    return ClusterSaveOutcome.ok();
-                }
-                catch (OverlappingFileLockException overlapping)
-                {
-                    return ClusterSaveOutcome.refused(ClusterSaveOutcome.LOCK_REFUSED);
-                }
-            }
-        }
-        catch (AccessDeniedException denied)
-        {
-            return ClusterSaveOutcome.refused(ClusterSaveOutcome.ACCESS_DENIED);
-        }
-    }
-
-    /**
-     * Replaces {@code target} with {@code temporary}, retrying a refused atomic move.
-     * <p>
-     * There is deliberately no non-atomic fallback: if every atomic attempt fails, the destination
-     * remains intact and the failure is returned to the caller.
-     * </p>
-     *
-     * @param temporary the staged file
-     * @param target the destination
-     * @throws IOException if the move fails
-     */
-    private static void moveReplacing(Path temporary, Path target) throws IOException
-    {
-        moveReplacing(temporary, target, (source, destination) -> Files.move(source, destination,
-            StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING), Thread::sleep);
-    }
-
-    /**
-     * Repeats an atomic replacement through injectable move and sleep operations.
-     *
-     * @param temporary the staged file
-     * @param target the destination
-     * @param mover the atomic move operation
-     * @param sleeper the delay operation between attempts
-     * @throws IOException when every attempt fails or the retry wait is interrupted
-     */
-    static void moveReplacing(Path temporary, Path target, AtomicMover mover, RetrySleeper sleeper)
-        throws IOException
-    {
-        IOException lastFailure = null;
-        for (int attempt = 1; attempt <= ATOMIC_MOVE_ATTEMPTS; attempt++)
-        {
-            try
-            {
-                mover.move(temporary, target);
-                return;
-            }
-            catch (IOException e)
-            {
-                lastFailure = e;
-            }
-            if (attempt < ATOMIC_MOVE_ATTEMPTS)
-            {
-                try
-                {
-                    sleeper.sleep(ATOMIC_MOVE_RETRY_MILLIS);
-                }
-                catch (InterruptedException e)
-                {
-                    Thread.currentThread().interrupt();
-                    IOException interrupted = new IOException("Interrupted while retrying atomic replacement", e); //$NON-NLS-1$
-                    interrupted.addSuppressed(lastFailure);
-                    throw interrupted;
-                }
-            }
-        }
-        throw lastFailure;
-    }
-
-
 
     /**
      * Writes the content through the workspace, creating the settings folder and file as needed.
@@ -1413,16 +1192,70 @@ public class YamlClusterStore
 
 
     /**
-     * Deletes the clusters file if it is there.
+     * Deletes the clusters file when it is on disk, regardless of whether the resource tree
+     * knows it.
+     * <p>
+     * The file's existence is decided by the disk, not by the tree: a file another process
+     * wrote is still the project's clusters file while the tree reports no such resource, and
+     * a delete that trusted the tree would leave it behind and answer that nothing changed.
+     * The removal runs under the file's lock against the fingerprint of the bytes this store
+     * read. A project whose file has no location on disk is deleted through the workspace.
+     * The no-file fingerprint is published from inside the removal, once the file is gone and
+     * before the helper refreshes the workspace: standing before the file is gone, it would name
+     * an absence the disk does not have yet, and the refresh would arrive as a change this store
+     * does not recognize as its own. A refused removal, which publishes nothing, puts the
+     * fingerprint back to what the file still holds.
+     * </p>
      *
      * @param project the project
      * @return {@link ClusterSaveOutcome#ok()} when the file was deleted,
-     *         {@link ClusterSaveOutcome#noChange()} when it was already absent, or a
-     *         {@link ClusterSaveOutcome#WRITE_FAILED} refusal
+     *         {@link ClusterSaveOutcome#noChange()} when there was no file to delete, or a
+     *         refusal
      */
     private ClusterSaveOutcome deleteIfExists(IProject project)
     {
         IFile file = clustersFile(project);
+        IPath location = file.getLocation();
+        if (location == null)
+        {
+            String read = loadedFingerprints.get(project.getName());
+            rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
+            ClusterSaveOutcome deleted = deleteThroughWorkspace(project, file);
+            if (deleted.isRefused())
+            {
+                restoreFingerprint(project, read);
+            }
+            return deleted;
+        }
+        Path osPath = location.toFile().toPath();
+        if (Files.notExists(osPath))
+        {
+            return ClusterSaveOutcome.noChange();
+        }
+        String read = loadedFingerprints.get(project.getName());
+        String expected = read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : read;
+        AtomicFileReplace.Outcome removed = AtomicFileReplace.remove(osPath, expected, file,
+            () -> rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT));
+        if (!removed.isOk())
+        {
+            restoreFingerprint(project, read);
+            return refusal(removed);
+        }
+        return ClusterSaveOutcome.ok();
+    }
+
+    /**
+     * Deletes the clusters file through the workspace, the only route available when the file
+     * has no location on disk.
+     *
+     * @param project the project
+     * @param file the workspace file
+     * @return {@link ClusterSaveOutcome#ok()} when the file was deleted,
+     *         {@link ClusterSaveOutcome#noChange()} when it was already absent, or a
+     *         {@link ClusterSaveOutcome#WRITE_FAILED} refusal
+     */
+    private static ClusterSaveOutcome deleteThroughWorkspace(IProject project, IFile file)
+    {
         if (!file.exists())
         {
             return ClusterSaveOutcome.noChange();
@@ -1438,8 +1271,6 @@ public class YamlClusterStore
             return ClusterSaveOutcome.refused(ClusterSaveOutcome.WRITE_FAILED, exceptionText(e));
         }
     }
-
-
 
     /**
 

@@ -6,10 +6,17 @@
 
 package ru.aiedt.mcp.server.folders.ui;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.ecore.EObject;
 import org.eclipse.jface.viewers.StructuredViewer;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.Viewer;
@@ -92,7 +99,79 @@ public class ClusterTreeContent
         {
             return ((ClusterNavigatorBridge)element).getParent(element);
         }
+        if (element instanceof EObject)
+        {
+            EObject eObject = (EObject)element;
+            IClusterManager clusters = service != null ? service : Activator.getClusterServiceStatic();
+            return parentOfClusteredObject(clusters, MarkerHelpers.extractProject(eObject),
+                MarkerHelpers.extractFqn(eObject));
+        }
         return null;
+    }
+
+    /**
+     * The tree parent of a clustered object: the cluster node that holds it.
+     * <p>
+     * A viewer that is asked to select or reveal an element walks the parent chain this answers,
+     * from the element up to a root, and only such a chain names an item in the tree. The cluster
+     * node this builds equals the rendered one for the same cluster, and for a cluster nested
+     * under another it carries a chain of nodes for the clusters above it, so the walk reaches
+     * the top of the tree instead of stopping on a node the tree shows under other nodes.
+     * </p>
+     *
+     * @param service the cluster service; <code>null</code> answers no parent
+     * @param project the object's project; <code>null</code> answers no parent
+     * @param fqn the object's fully qualified name; <code>null</code> answers no parent
+     * @return a cluster node for the cluster holding the object, or <code>null</code> when the
+     *         object is in no cluster and its parent is EDT's own to name
+     */
+    static Object parentOfClusteredObject(IClusterManager service, IProject project, String fqn)
+    {
+        if (service == null || project == null || fqn == null)
+        {
+            return null;
+        }
+        Cluster cluster = service.findClusterForObject(project, fqn);
+        return cluster == null ? null : nodeForClusterWithAncestors(service, project, cluster);
+    }
+
+    /**
+     * Builds the node for a cluster with a chain of parent nodes for the clusters above it.
+     * <p>
+     * A nested cluster is drawn under the node of the cluster its path names, so the chain a
+     * viewer walks has to name those nodes as well. The chain stops at the topmost cluster that
+     * exists - above it the parent is the collection, which the tree names through its own
+     * elements. A cycle a hand-edited file could carry, one cluster's path naming another that
+     * names the first, stops at the cluster already on the chain.
+     * </p>
+     *
+     * @param service the cluster service
+     * @param project the project
+     * @param cluster the cluster the node stands for
+     * @return the node, with the ancestor nodes linked as its parents
+     */
+    private static ClusterNavigatorBridge nodeForClusterWithAncestors(IClusterManager service,
+        IProject project, Cluster cluster)
+    {
+        Map<String, Cluster> byFullPath = new HashMap<>();
+        for (Cluster candidate : service.getAllClusters(project))
+        {
+            byFullPath.put(candidate.getFullPath(), candidate);
+        }
+        Deque<Cluster> ancestors = new ArrayDeque<>();
+        Set<String> onTheChain = new HashSet<>();
+        Cluster current = cluster;
+        while (current != null && onTheChain.add(current.getFullPath()))
+        {
+            ancestors.addFirst(current);
+            current = byFullPath.get(current.getPath());
+        }
+        ClusterNavigatorBridge node = null;
+        for (Cluster ancestor : ancestors)
+        {
+            node = new ClusterNavigatorBridge(ancestor, project, node);
+        }
+        return node;
     }
 
     @Override
@@ -123,6 +202,8 @@ public class ClusterTreeContent
             {
                 return false;
             }
+            // The expand affordance is asked about an item that exists, the same as its children.
+            RenderedClusterPaths.noteCollectionDrawn(project, path);
             return service.hasClustersAtPath(project, path);
         }
         return false;
@@ -145,6 +226,10 @@ public class ClusterTreeContent
     @Override
     public void onClustersChanged(IProject project)
     {
+        // The paths the tree drew name clusters that may be gone or renamed now; the redraw
+        // re-notes everything it draws. Before the viewer check: the drawn state is stale with or
+        // without a viewer to refresh.
+        RenderedClusterPaths.forget(project);
         StructuredViewer current = viewer;
         if (current == null)
         {
@@ -216,6 +301,10 @@ public class ClusterTreeContent
             Activator.logDebug("ClusterTreeContent: unresolved collection " + adapter); //$NON-NLS-1$
             return NO_ELEMENTS;
         }
+        // Being asked about a collection is what a tree item for it existing means: the cluster
+        // nodes returned here are drawn, and the hiding filter hides a member only under a drawn
+        // cluster - see RenderedClusterPaths.
+        RenderedClusterPaths.noteCollectionDrawn(project, path);
         if (!service.hasClustersAtPath(project, path))
         {
             return NO_ELEMENTS;
@@ -225,6 +314,7 @@ public class ClusterTreeContent
         for (Cluster cluster : clusters)
         {
             nodes.add(new ClusterNavigatorBridge(cluster, project, adapter));
+            RenderedClusterPaths.noteClusterNodeDrawn(project, cluster.getFullPath());
         }
         return nodes.toArray();
     }

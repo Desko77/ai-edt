@@ -109,7 +109,10 @@ public class EventLogTool implements IMcpTool
         {
             return ProjectResolver.notFound(projectName).toJson();
         }
-        IApplicationManager appManager = Activator.getDefault().getApplicationManager();
+        // getDefault() is null while the bundle is stopping, which a call arriving in that
+        // window has to hear as a refusal rather than as an NPE.
+        Activator activator = Activator.getDefault();
+        IApplicationManager appManager = activator != null ? activator.getApplicationManager() : null;
         if (appManager == null)
         {
             return ToolResult.error("The IApplicationManager service is currently unavailable").toJson(); //$NON-NLS-1$

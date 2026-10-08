@@ -23,7 +23,8 @@ import ru.aiedt.mcp.server.support.BmSupportRegistryHelper;
 
 /**
  * {@code get_metadata_details} names the support mode of the object and of each of its forms where the
- * support service holds one, and writes nothing about support where it holds none.
+ * support service holds one, names the state of a project that is on nobody's support, and writes
+ * nothing about support where the service itself is out of reach.
  */
 public class ASupportModeIsShownWhereTheObjectHasOneTest
 {
@@ -98,6 +99,16 @@ public class ASupportModeIsShownWhereTheObjectHasOneTest
         String markdown = details(catalog(), null);
 
         assertFalse(markdown, markdown.contains(SUPPORT_MODE));
+    }
+
+    /** A project on nobody's support names that state instead of failing the read. */
+    @Test
+    public void aProjectOnNobodysSupportNamesTheState()
+    {
+        String markdown = details(catalog(), object -> BmSupportRegistryHelper.NOT_ON_SUPPORT);
+
+        assertTrue(markdown, markdown.contains("| Support Mode | not on support |")); //$NON-NLS-1$
+        assertFalse(markdown, markdown.contains("unreadable")); //$NON-NLS-1$
     }
 
     /** No project, no modes. */

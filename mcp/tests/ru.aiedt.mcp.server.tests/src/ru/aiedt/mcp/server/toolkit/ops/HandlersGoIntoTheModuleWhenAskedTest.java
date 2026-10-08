@@ -41,9 +41,22 @@ public class HandlersGoIntoTheModuleWhenAskedTest
         assertTrue("as the module writes it", declares(module, "ПередЗаписью")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue("and with the keyword in lower case", //$NON-NLS-1$
             declares("процедура ПередЗаписью(Отказ)\nКонецПроцедуры\n", "ПередЗаписью")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue("a function counts too", //$NON-NLS-1$
+        assertTrue("and with the keyword in English", //$NON-NLS-1$
+            declares("Procedure BeforeWrite(Cancel)\nEndProcedure\n", "BeforeWrite")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A function of the handler's name is a different method, not the handler: an object-module
+     * event handler is a procedure, so a same-named function does not make it present.
+     */
+    @Test
+    public void aFunctionOfTheNameIsNotTheHandler() throws Exception
+    {
+        assertFalse("a function is not a handler procedure", //$NON-NLS-1$
             declares("Функция ОбработкаПолученияФормы(Источник)\nКонецФункции\n", //$NON-NLS-1$
                 "ОбработкаПолученияФормы")); //$NON-NLS-1$
+        assertFalse("in English either", //$NON-NLS-1$
+            declares("Function OnWrite(Source)\nEndFunction\n", "OnWrite")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /** A name that only appears inside a call is not a declaration. */

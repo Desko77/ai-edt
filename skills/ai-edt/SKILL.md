@@ -32,7 +32,8 @@ than all of them.
 
 - **What actually happened in the infobase.** `infobase_admin operation=read_event_log` reads the
   event log of a FILE infobase - logins, postings, configuration updates, errors the platform
-  raised - filtered by `from` / `to` / `event` / `user` / `severity`. This is the only route here to
+  raised - filtered by `from` / `to` / `event` / `user` / `severity`. `severity` matches exactly and
+  takes the letters `I`, `W`, `E`, `N` as well as the full names. This is the only route here to
   runtime facts rather than configuration; a server infobase and the single-file SQLite form of the
   log are both refused by name rather than answered with an empty list.
 
@@ -139,8 +140,9 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
 | `cluster_admin` | The Navigator's custom folders: read the cluster tree of a collection, create, rename, describe and delete clusters, move objects in and out. Five writes, each gated by its own door. |
+| `tag_admin` | The project's metadata tags, written: create, rename or recolor, delete (dryRun counts the assignments), assign to and unassign from an object. Reads stay in `workspace_marks`. Five writes, each gated by its own door. |
 | `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch, what changed in a file, putting one file back, and a restore point taken before a merge. |
-| `yaxunit_tests` | YAxUnit unit tests. |
+| `yaxunit_tests` | YAxUnit unit tests; `installYaxunit=true` installs the engine and confirms both safety flags off unless `yaxunitUnsafeMode=false`. |
 
 Constructors are called directly, not through a facade: `dcs_workshop` (data composition schemas),
 `mxl_workshop` (spreadsheet templates), `xdto_workshop` (XDTO packages), `extension_workshop`

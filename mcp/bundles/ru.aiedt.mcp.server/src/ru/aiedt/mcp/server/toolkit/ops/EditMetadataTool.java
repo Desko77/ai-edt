@@ -123,6 +123,7 @@ public class EditMetadataTool implements IMcpTool
     private final FormAppearanceOps formAppearanceOps = new FormAppearanceOps();
     private final FormCommandInterfaceOps formCommandInterfaceOps = new FormCommandInterfaceOps();
     private final FormCreateOps formCreateOps = new FormCreateOps();
+    private final FormExcludedCommandsOps formExcludedCommandsOps = new FormExcludedCommandsOps();
     private final FormItemsOps formItemsOps = new FormItemsOps();
     private final MiscOps miscOps = new MiscOps();
 
@@ -421,7 +422,9 @@ public class EditMetadataTool implements IMcpTool
                 "set_command_placement / set_command_order: the command-interface group - a friendly name, a " //$NON-NLS-1$
                 + "platform token, or CommandGroup.<name>. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
             .stringProperty("commands", //$NON-NLS-1$
-                "set_command_order: JSON array of command FQNs in the wanted leading order.") //$NON-NLS-1$
+                "set_command_order: JSON array of command FQNs in the wanted leading order. " //$NON-NLS-1$
+                + "set_excluded_commands: JSON array of standard command names, " //$NON-NLS-1$
+                + "case-insensitive; empty clears the exclusions under mode=replace.") //$NON-NLS-1$
             .stringProperty("visible", //$NON-NLS-1$
                 "true shows, false hides, for the visibility operations.") //$NON-NLS-1$
             .stringProperty("role", //$NON-NLS-1$
@@ -488,6 +491,12 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("formFqn", //$NON-NLS-1$
                 "FQN of the form for form operations (e.g. Catalog.Users.Form.ItemForm, " //$NON-NLS-1$
                     + "CommonForm.X.Form).") //$NON-NLS-1$
+            .stringProperty("itemPath", //$NON-NLS-1$
+                "set_excluded_commands: whose exclusions to change - the form (empty or Form), " //$NON-NLS-1$
+                    + "FormCommandPanelGlobalCommands, or a form item as Item.<name> or <name>.") //$NON-NLS-1$
+            .stringProperty("mode", //$NON-NLS-1$
+                "set_excluded_commands: replace (default), add or remove. add and remove need " //$NON-NLS-1$
+                    + "at least one name in commands.") //$NON-NLS-1$
             .stringProperty("itemNames", //$NON-NLS-1$
                 "add_form_appearance_rule: form items to style, comma-separated; omitted = whole form.") //$NON-NLS-1$
             .stringProperty("field", //$NON-NLS-1$
@@ -883,6 +892,18 @@ public class EditMetadataTool implements IMcpTool
                 .toJson();
         }
 
+        // Asked before the pending machinery and the mutation lock: a preset-blocked write is
+        // refused having done nothing at all, and the refusal needs no workspace read.
+        // A call that carries a runKey starts nothing: it collects the answer of an operation that
+        // is already running, and an unknown key is answered "not found". It is not asked, so an
+        // operation started before the preset changed still hands its result back.
+        String presetGate = isResultPoll(params) ? null : presetWriteGate(op,
+            JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
+        if (presetGate != null)
+        {
+            return gatedRejectJson(op, presetGate);
+        }
+
         // On the UI thread already - run it here. Handing the work to a pool thread that then needs
         // this same thread would deadlock, and a caller that is on the UI thread is not an MCP
         // client with a patience to run out.
@@ -1229,6 +1250,40 @@ public class EditMetadataTool implements IMcpTool
                 .put("notStarted", Integer.valueOf(ops.size())) //$NON-NLS-1$
                 .put("refusedBeforeRunning", unrunnable) //$NON-NLS-1$
                 .toJson();
+        }
+        // A preset-blocked write is told before the batch starts, on the same terms as a batch that
+        // cannot run as written: reading and previewing entries stay possible, so only the blocked
+        // ones are named. dryRun inherits from the outer call exactly as the dispatch below
+        // inherits it, and the door is asked once so an allowed batch reads no preset per entry.
+        String batchPresetGate = ToolGate.gateWriteDoor(WRITE_DOOR);
+        if (batchPresetGate != null)
+        {
+            boolean outerDryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+            java.util.List<String> presetBlocked = new java.util.ArrayList<>();
+            for (int i = 0; i < ops.size(); i++)
+            {
+                Map<String, String> opParams = ops.get(i);
+                String subOp = JsonUtils.normalizeOperationToken(
+                    JsonUtils.extractStringArgument(opParams, "operation")); //$NON-NLS-1$
+                boolean entryDryRun = opParams.containsKey("dryRun") //$NON-NLS-1$
+                    ? JsonUtils.extractBooleanArgument(opParams, "dryRun", false) //$NON-NLS-1$
+                    : outerDryRun;
+                if (presetWriteGate(subOp, entryDryRun) != null)
+                {
+                    presetBlocked.add("[" + i + "] " + subOp); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            if (!presetBlocked.isEmpty())
+            {
+                return ToolResult
+                    .error(batchPresetGate + " This batch was not started: " + presetBlocked.size() //$NON-NLS-1$
+                        + " of its " + ops.size() + " operations are writes the active preset has " //$NON-NLS-1$ //$NON-NLS-2$
+                        + "switched off. Nothing was changed in the project. " //$NON-NLS-1$
+                        + String.join("; ", presetBlocked)) //$NON-NLS-1$
+                    .put("notStarted", Integer.valueOf(ops.size())) //$NON-NLS-1$
+                    .put("presetBlocked", presetBlocked) //$NON-NLS-1$
+                    .toJson();
+            }
         }
         boolean stopOnError = JsonUtils.extractBooleanArgument(params, "stopOnError", false); //$NON-NLS-1$
         java.util.List<Map<String, Object>> results = new java.util.ArrayList<>();
@@ -2938,7 +2993,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_web_service_operation", "Services HTTP/SOAP", "", p -> serviceOps.opRemoveWebServiceOperation(p));
         reg(m, "add_operation_parameter", "Services HTTP/SOAP", "typed Web operation parameter", p -> serviceOps.opAddOperationParameter(p));
 
-        // ---- Forms (30) ----
+        // ---- Forms (33) ----
         reg(m, "create_form", "Forms", "", p -> formCreateOps.opCreateForm(p));
         reg(m, "add_form_attribute", "Forms", "", p -> formItemsOps.opAddFormAttribute(p));
         reg(m, "add_form_attribute_column", "Forms", "", p -> formItemsOps.opAddFormAttributeColumn(p));
@@ -2971,6 +3026,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "add_form_appearance_rule", "Forms", "conditional appearance rule: itemNames, condition, appearance", p -> formAppearanceOps.opAddFormAppearanceRule(p));
         reg(m, "list_form_appearance_rules", "Forms", "the form's conditional appearance rules", p -> formAppearanceOps.opListFormAppearanceRules(p));
         reg(m, "remove_form_appearance_rule", "Forms", "remove a rule by index or by the field of its condition", p -> formAppearanceOps.opRemoveFormAppearanceRule(p));
+        reg(m, "set_excluded_commands", "Forms", "keep standard commands out of a form object's command interface: itemPath, commands, mode", p -> formExcludedCommandsOps.opSetExcludedCommands(p));
 
         // ---- Templates (6) ----
         reg(m, "add_template", "Templates", "", p -> templateOps.opAddTemplate(p));
@@ -3162,7 +3218,7 @@ public class EditMetadataTool implements IMcpTool
         sb.append("### property\n\n"); //$NON-NLS-1$
         sb.append("Reference property name. For add_object_reference / remove_object_reference it is a LIST-valued reference (registerRecords on a Document = its movements, owners on a Catalog, basedOn, baseCalculationTypes on a ChartOfCalculationTypes; also registeredDocuments on a DocumentJournal, and documents / registerRecords on a Sequence - each takes a top-level object FQN in valueFqn). For set_object_reference / clear_object_reference it is a SCALAR reference (e.g. extDimensionTypes on a ChartOfAccounts = a ChartOfCharacteristicTypes; addressing / currentPerformer on a Task; mainAddressingAttribute on a Task = a child AddressingAttribute).\n\n"); //$NON-NLS-1$
         sb.append("### propertyName\n\n"); //$NON-NLS-1$
-        sb.append("Property name for setObjectProperty (coerced from propertyValue: enum literals, booleans, localized synonym / toolTip). Special: propertyName=fillValue builds a type-aware default value - propertyValue is Boolean (true/false) / Number / String per the attribute's type, empty or 'Undefined' clears it (Date / reference defaults not supported). Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y). Special: a list-shaped property takes listMode - replace (default), add, remove, clear - and a JSON propertyValue. On the configuration root (ownerFqn=Configuration) those are usePurposes and requiredMobileApplicationPermissions (arrays of literals), requiredMobileApplicationPermissions8315 (array of {permission,use,description}) and usedMobileApplicationFunctionalities (an object naming its inner lists functionality and permissionMessage). A description is a string or an object of language to text. Every element is checked before anything is written, and dryRun answers with wouldWrite in the property's own shape.\n\n"); //$NON-NLS-1$
+        sb.append("Property name for setObjectProperty (coerced from propertyValue: enum literals, booleans, localized synonym / toolTip). Special: propertyName=fillValue builds a type-aware default value from the attribute's own single type: Boolean (true/false), Number, String (refused when longer than the attribute's declared length), Date as YYYY-MM-DD for the Date qualifier / YYYY-MM-DDTHH:MM:SS for DateTime / HH:MM:SS for Time, an enum value by its name (or Enum.X.EnumValue.Y) for an EnumRef type, a predefined item by its name for a reference type that has them, the literal EmptyRef (or ПустаяСсылка) for the type's empty reference, the literal StandardBeginningDate (or НачалоДаты) for the beginning of date; empty or 'Undefined' clears it. A composite type is refused. Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y). Special: a list-shaped property takes listMode - replace (default), add, remove, clear - and a JSON propertyValue. On the configuration root (ownerFqn=Configuration) those are usePurposes and requiredMobileApplicationPermissions (arrays of literals), requiredMobileApplicationPermissions8315 (array of {permission,use,description}) and usedMobileApplicationFunctionalities (an object naming its inner lists functionality and permissionMessage). A description is a string or an object of language to text. Every element is checked before anything is written, and dryRun answers with wouldWrite in the property's own shape.\n\n"); //$NON-NLS-1$
         sb.append("### propertyValue\n\n"); //$NON-NLS-1$
         sb.append("Property value for setObjectProperty (string; coerced to setter type). " //$NON-NLS-1$
             + "For a list-shaped property it is JSON: an array of literals, an array of " //$NON-NLS-1$
@@ -3309,6 +3365,74 @@ public class EditMetadataTool implements IMcpTool
         return ToolResult.error(message)
             .put("operation", op) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * The capability name the write operations of this facade are preset-gated by. Not a tool:
+     * nothing registers it and no group lists it - {@code ToolProfile.writersOutsideWriteGroups()}
+     * carries it. Code Review keeps the constructors group on so a review can read what a
+     * constructor would produce; this name is how its promise still holds for the writes.
+     */
+    static final String WRITE_DOOR = "edit_metadata_writes"; //$NON-NLS-1$
+
+    /**
+     * The operations of this facade that read and write nothing, so a write-blocking preset lets
+     * them run. {@code help} is answered before the registry is consulted; it is listed here so a
+     * future routing of it through the same gate stays a read.
+     */
+    private static final Set<String> READ_OPERATIONS = Set.of(
+        "help", //$NON-NLS-1$
+        "get_template_content", //$NON-NLS-1$
+        "get_route_map", //$NON-NLS-1$
+        "list_pictures", //$NON-NLS-1$
+        "list_form_appearance_rules"); //$NON-NLS-1$
+
+    /**
+     * Whether the call collects the result of an operation started earlier rather than starting
+     * one: it names a {@code runKey}.
+     *
+     * @param params the call arguments
+     * @return <code>true</code> when a non-empty {@code runKey} is present
+     */
+    static boolean isResultPoll(Map<String, String> params)
+    {
+        String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        return runKey != null && !runKey.isEmpty();
+    }
+
+    /**
+     * The writing operations of this facade that have no preview: their handlers do not read
+     * {@code dryRun}, so a call that passes it writes all the same. {@code sync_export} flushes the
+     * model to disk, and the three others remove or rename an object.
+     */
+    static final Set<String> WRITES_WITHOUT_PREVIEW = Set.of(
+        "sync_export", //$NON-NLS-1$
+        "remove_object", //$NON-NLS-1$
+        "delete_metadata_object", //$NON-NLS-1$
+        "rename_metadata_object"); //$NON-NLS-1$
+
+    /**
+     * Says whether the active preset blocks this operation as a write, before anything runs.
+     * <p>
+     * A preview ({@code dryRun}) rolls its transaction back and persists nothing, and the four
+     * reading operations change nothing at all, so neither reaches the preset question. An operation
+     * in {@link #WRITES_WITHOUT_PREVIEW} writes whatever {@code dryRun} says and is asked always. Everything
+     * else this facade does writes the project, and a preset that promises no writes refuses it by
+     * the capability name above - the same decision for the single-operation path and for every
+     * entry of a batch.
+     * </p>
+     *
+     * @param op the normalized operation name, never {@code null}
+     * @param dryRun whether this call (or batch entry, after inheritance) previews only
+     * @return the gate's rejection text, or {@code null} when the operation may run
+     */
+    static String presetWriteGate(String op, boolean dryRun)
+    {
+        if (READ_OPERATIONS.contains(op) || dryRun && !WRITES_WITHOUT_PREVIEW.contains(op))
+        {
+            return null;
+        }
+        return ToolGate.gateWriteDoor(WRITE_DOOR);
     }
 
     /** Editorial one-line note per help group (the op list itself is generated). */

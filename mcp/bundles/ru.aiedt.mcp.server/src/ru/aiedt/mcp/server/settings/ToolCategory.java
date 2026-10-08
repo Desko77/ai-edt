@@ -75,13 +75,19 @@ public enum ToolCategory
         "get_tasks", //$NON-NLS-1$
         "workspace_marks", //$NON-NLS-1$
         "cluster_admin", //$NON-NLS-1$
-        // The write doors of the cluster facade, named one by one: this group is a reading
-        // group, which no write-blocking preset switches off wholesale.
+        "tag_admin", //$NON-NLS-1$
+        // The write doors of the cluster and tag facades, named one by one: this group is a
+        // reading group, which no write-blocking preset switches off wholesale.
         "create_cluster", //$NON-NLS-1$
         "update_cluster", //$NON-NLS-1$
         "delete_cluster", //$NON-NLS-1$
         "add_to_cluster", //$NON-NLS-1$
-        "remove_from_cluster"), //$NON-NLS-1$
+        "remove_from_cluster", //$NON-NLS-1$
+        "create_tag", //$NON-NLS-1$
+        "update_tag", //$NON-NLS-1$
+        "delete_tag", //$NON-NLS-1$
+        "assign_tag", //$NON-NLS-1$
+        "unassign_tag"), //$NON-NLS-1$
 
     /**
      * Everything that touches a live infobase or the shape of the workspace: launching, updating,
@@ -127,11 +133,14 @@ public enum ToolCategory
 
     /** The repository the project lives in: reading it now, writing it in later stages. */
     VCS("vcs", "Version Control", //$NON-NLS-1$ //$NON-NLS-2$
-        "Git status, branches, history, file diff and restoring one file, inside the IDE", //$NON-NLS-1$
+        "Git status, branches, history, file diff, restoring one file and merge restore points, " //$NON-NLS-1$
+            + "inside the IDE", //$NON-NLS-1$
         "git", //$NON-NLS-1$
         "git_commit", //$NON-NLS-1$
         "git_checkout", //$NON-NLS-1$
-        "git_revert_file"), //$NON-NLS-1$
+        "git_revert_file", //$NON-NLS-1$
+        "git_create_merge_restore_point", //$NON-NLS-1$
+        "git_delete_merge_restore_point"), //$NON-NLS-1$
 
     /** Everything that drives a debug session, including the two ways of ending one. */
     DEBUG("debug", "Debug & Profiling", //$NON-NLS-1$ //$NON-NLS-2$

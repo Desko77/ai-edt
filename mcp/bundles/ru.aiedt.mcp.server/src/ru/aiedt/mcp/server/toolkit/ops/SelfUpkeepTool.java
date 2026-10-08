@@ -180,15 +180,25 @@ public class SelfUpkeepTool
 
     /**
      * Renders a snapshot.
+     * <p>
+     * A snapshot in {@link ReleaseOffer.State#CHECK_FAILED} is answered as an error, not as a
+     * success that carries the word "failed" in a field: the last attempt produced nothing to act
+     * on, and a caller reading only the outcome flag must see that. This holds for every action
+     * that lands here - a failed install and a failed check are both attempts that did not produce
+     * an answer. Package-private so a test can hand a snapshot in without driving the sweep.
+     * </p>
      *
      * @param action the action that produced it
      * @param offer the snapshot, never <code>null</code>
      * @return the JSON response
      */
-    private static String report(String action, ReleaseOffer offer)
+    static String report(String action, ReleaseOffer offer)
     {
-        ToolResult result = ToolResult.success()
-            .put("action", action) //$NON-NLS-1$
+        ToolResult result = offer.state() == ReleaseOffer.State.CHECK_FAILED
+            ? ToolResult.error(offer.note() != null ? offer.note()
+                : "The last attempt did not produce an answer.") //$NON-NLS-1$
+            : ToolResult.success();
+        result.put("action", action) //$NON-NLS-1$
             .put("state", offer.state().name().toLowerCase(Locale.ROOT)) //$NON-NLS-1$
             .put("updateAvailable", offer.hasUpdate()) //$NON-NLS-1$
             .put("managed", offer.managed()) //$NON-NLS-1$

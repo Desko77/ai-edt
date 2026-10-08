@@ -91,6 +91,19 @@ public final class YaxunitTestRunner
     private static final ConcurrentHashMap<String, Boolean> UNDELIVERED_RUNS = new ConcurrentHashMap<>();
 
     /**
+     * The update decision each run started here was launched under, by runKey. An answer of a run
+     * states what ITS launch did, and the call that comes back for the answer is not the call that
+     * launched: it may name {@code updateBeforeLaunch=false} explicitly or arrive after the preset
+     * changed, and neither rewrites what the launch did. Recorded where the launch and the
+     * undelivered mark are recorded, and kept past delivery because {@code reuseRecent=true} can
+     * ask for a report that was already handed over. A run this server did not launch has no entry
+     * and its answers state nothing about the update: there is no launch decision to read, and the
+     * picking call's own would be a claim about a launch it did not make.
+     */
+    private static final ConcurrentHashMap<String, Boolean> LAUNCH_SKIP_DECISIONS =
+        new ConcurrentHashMap<>();
+
+    /**
      * Parked by a test so two deliveries reach the claim together. Production leaves it idle, and
      * the claim that follows it is what decides which delivery files the receipt.
      */
@@ -120,6 +133,14 @@ public final class YaxunitTestRunner
      */
     static final String CACHED_MARK = "cached: true"; //$NON-NLS-1$
 
+    /**
+     * The literal a run-mode answer marks itself with when the preset dropped the update the call
+     * never named. The facade reads it back to state the same {@code databaseUpdate} field a
+     * finished answer carries, so a client reading fields rather than prose is told either way.
+     */
+    static final String UPDATE_SKIPPED_MARK = "databaseUpdate=" //$NON-NLS-1$
+        + DebugSessionStarter.DATABASE_UPDATE_SKIPPED_BY_PRESET;
+
     private static final Map<String, ILaunch> ACTIVE_LAUNCHES = new ConcurrentHashMap<>();
 
     private static final AtomicBoolean LISTENER_REGISTERED = new AtomicBoolean(false);
@@ -128,9 +149,13 @@ public final class YaxunitTestRunner
     private static final String RECEIPT_TOOL = YaxunitTestsTool.NAME;
 
     /**
-     * What a finished run is receipted under: the project the launch resolved to and the filters
-     * that chose what ran. Carried rather than kept in a field - the instance registered as the
-     * back-compat alias serves concurrent calls.
+     * What a finished run is receipted under: the project the launch resolved to, the filters that
+     * chose what ran, and whether the preset dropped the unnamed update - the one place the skip
+     * marker is set down, from which every answer of the run takes it: the report handed over
+     * immediately, the report picked up later, and the pending text waiting for both. The decision
+     * is the launch's own: for an answer of a run the answering call did not start it comes from
+     * {@link #runContextOf}, which reads where the launch recorded it. Carried rather than kept in
+     * a field - the instance registered as the back-compat alias serves concurrent calls.
      */
     static final class RunContext
     {
@@ -142,21 +167,62 @@ public final class YaxunitTestRunner
 
         final String tests;
 
+        /** Whether the preset dropped the unnamed update of the launch this run answers. */
+        final boolean skippedByPreset;
+
         /**
-         * Records the project and the filters a receipt names the run by.
+         * Records the project, the filters a receipt names the run by, and the update decision
+         * its answers carry.
          *
          * @param projectName the project the launch resolved to
          * @param extensions the extensions filter, or <code>null</code> when the call named none
          * @param modules the modules filter, or <code>null</code> when the call named none
          * @param tests the tests filter, or <code>null</code> when the call named none
+         * @param skippedByPreset whether the preset dropped the unnamed update of the call the run
+         *            answers
          */
-        RunContext(String projectName, String extensions, String modules, String tests)
+        RunContext(String projectName, String extensions, String modules, String tests,
+            boolean skippedByPreset)
         {
             this.projectName = projectName;
             this.extensions = extensions;
             this.modules = modules;
             this.tests = tests;
+            this.skippedByPreset = skippedByPreset;
         }
+    }
+
+    /**
+     * The run context every answer of a run is built from: its update decision is the one the
+     * launch recorded, not the answering call's own. A call that picks up an active launch or an
+     * undelivered report, one that asks for a recent report again, and a call answering the launch
+     * it just started (the decision of which the store holds by then) all read the same place, so
+     * the answer cannot drift from the run it answers.
+     *
+     * @param runKey the run being answered
+     * @param projectName the project the launch resolved to
+     * @param extensions the extensions filter, or <code>null</code> when the call named none
+     * @param modules the modules filter, or <code>null</code> when the call named none
+     * @param tests the tests filter, or <code>null</code> when the call named none
+     * @return the run context the answer carries
+     */
+    static RunContext runContextOf(String runKey, String projectName, String extensions,
+        String modules, String tests)
+    {
+        return new RunContext(projectName, extensions, modules, tests,
+            Boolean.TRUE.equals(LAUNCH_SKIP_DECISIONS.get(runKey)));
+    }
+
+    /**
+     * Records the update decision a run was launched under, beside the launch and the undelivered
+     * mark written at the same moment.
+     *
+     * @param runKey the run
+     * @param skippedByPreset whether the preset dropped the unnamed update of the launching call
+     */
+    static void noteLaunchSkipDecision(String runKey, boolean skippedByPreset)
+    {
+        LAUNCH_SKIP_DECISIONS.put(runKey, Boolean.valueOf(skippedByPreset));
     }
 
     /**
@@ -203,7 +269,9 @@ public final class YaxunitTestRunner
             + "JSON whose output opens with **Pending** - invoke this tool again with the same arguments to keep waiting and " //$NON-NLS-1$
             + "pick up the result once the launch finishes. The launch itself is not aborted on timeout. " //$NON-NLS-1$
             + "The infobase is updated before the launch unless updateBeforeLaunch=false; an update "
-            + "that does not finish refuses the launch and nothing is started. "
+            + "that does not finish refuses the launch and nothing is started. Under a preset that "
+            + "disabled update_database an omitted updateBeforeLaunch launches without updating "
+            + "(every answer of the run carries databaseUpdate=SKIPPED_BY_PRESET). "
             + "A report handed over for a run already collected is not reused: the tests run again. "
             + "Pass reuseRecent=true to take a report written within the last 5 minutes instead. "
             + "A complete Markdown report is also saved to report.md alongside junit.xml. " //$NON-NLS-1$
@@ -231,7 +299,10 @@ public final class YaxunitTestRunner
                     + "timeoutMs). If it expires, the result is Pending - call again to keep waiting.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
-                    + "finish refuses the launch. Set false to launch against the infobase as it stands.") //$NON-NLS-1$
+                    + "finish refuses the launch. Set false to launch against the infobase as it " //$NON-NLS-1$
+                    + "stands. Under a preset that disabled update_database an omitted argument " //$NON-NLS-1$
+                    + "launches without updating (every answer of the run carries " //$NON-NLS-1$
+                    + "databaseUpdate=SKIPPED_BY_PRESET); an explicit true is refused.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
                 "Default false. Set true to take the report of a run that finished within the last " //$NON-NLS-1$
                     + "5 minutes instead of running the tests again.") //$NON-NLS-1$
@@ -318,14 +389,16 @@ public final class YaxunitTestRunner
     }
 
     /**
-     * Whether the call asked for the infobase to be updated before the launch.
+     * The decision about the infobase update the call's {@code updateBeforeLaunch} argument names,
+     * read the way every launching path reads it.
      *
      * @param params the call arguments.
-     * @return the flag, {@code true} when the call does not name it
+     * @return the decision
      */
-    static boolean updateBeforeLaunch(Map<String, String> params)
+    static DebugSessionStarter.LaunchUpdate updateBeforeLaunch(Map<String, String> params)
     {
-        return JsonUtils.extractBooleanArgument(params, "updateBeforeLaunch", true); //$NON-NLS-1$
+        return DebugSessionStarter.launchUpdate(
+            JsonUtils.extractBooleanArgumentNullable(params, "updateBeforeLaunch"), true); //$NON-NLS-1$
     }
 
     /**
@@ -407,17 +480,21 @@ public final class YaxunitTestRunner
      * that the decision, the default and the refusal can be exercised without an infobase.
      * </p>
      *
-     * @param updateBeforeLaunch whether the caller asked for the update; the callers read it with
-     *            the default {@code true}.
+     * @param update the decision the call's {@code updateBeforeLaunch} argument resolved to; the
+     *            callers read it with the default {@code true}.
      * @param projectName the project the launch belongs to.
      * @param applicationId the application the launch starts.
      * @param updateStep the update itself.
      * @return the sentence refusing the launch, or <code>null</code> when it may go on
      */
-    static String preLaunchUpdateRefusal(boolean updateBeforeLaunch, String projectName,
+    static String preLaunchUpdateRefusal(DebugSessionStarter.LaunchUpdate update, String projectName,
         String applicationId, BiFunction<String, String, ApplicationUpdater.Result> updateStep)
     {
-        if (!updateBeforeLaunch)
+        if (update.refusal != null)
+        {
+            return update.refusal;
+        }
+        if (!update.update)
         {
             return null;
         }
@@ -425,7 +502,8 @@ public final class YaxunitTestRunner
     }
 
     private String runTests(String configName, String projectName, String applicationId, String extensions,
-        String modules, String tests, int timeout, boolean updateBeforeLaunch, boolean reuseRecent)
+        String modules, String tests, int timeout, DebugSessionStarter.LaunchUpdate update,
+        boolean reuseRecent)
     {
         try
         {
@@ -524,11 +602,14 @@ public final class YaxunitTestRunner
             String runKey = matchingConfig.getName() + ":" //$NON-NLS-1$
                 + sha1(safe(extensions) + "|" + safe(modules) + "|" + safe(tests)); //$NON-NLS-1$ //$NON-NLS-2$
             Path reportDir = stableReportDir(runKey);
-            RunContext runContext = new RunContext(projectName, extensions, modules, tests);
 
             ILaunch existing = ACTIVE_LAUNCHES.get(runKey);
             if (existing != null)
             {
+                // The answers of a run this call did not start carry the run's own launch-time
+                // decision, not this call's: a pickup may name updateBeforeLaunch=false explicitly
+                // or arrive after the preset changed, and neither rewrites what the launch did.
+                RunContext runContext = runContextOf(runKey, projectName, extensions, modules, tests);
                 if (existing.isTerminated())
                 {
                     ACTIVE_LAUNCHES.remove(runKey);
@@ -545,7 +626,7 @@ public final class YaxunitTestRunner
                 {
                     return pollResult;
                 }
-                return buildPendingMessage(reportDir);
+                return buildPendingMessage(reportDir, runContext.skippedByPreset);
             }
 
             File cached = findJunitXml(reportDir);
@@ -563,13 +644,17 @@ public final class YaxunitTestRunner
                 Activator.logInfo("Serving the report of the finished YAXUnit run for " + runKey //$NON-NLS-1$
                     + (reuseRecent ? " (reuseRecent=true)" : " (uncollected)") //$NON-NLS-1$ //$NON-NLS-2$
                     + " from " + cached); //$NON-NLS-1$
+                // Whether this is the pickup of a run still waiting for its report or a recent one
+                // asked for again, the report belongs to the run that wrote it, and so does the
+                // update decision its answer carries.
+                RunContext runContext = runContextOf(runKey, projectName, extensions, modules, tests);
                 return handOverCached(runKey, cached, reuseRecent, runContext, RunReceipts::write);
             }
 
             // Only a launch needs an infobase that is up to date: a call answered from a report
             // that is already there starts nothing. Run outside the launch lock, which is held for
             // the launch itself and would otherwise be held for the length of an update.
-            String updateRefusal = preLaunchUpdateRefusal(updateBeforeLaunch, projectName,
+            String updateRefusal = preLaunchUpdateRefusal(update, projectName,
                 applicationId, DebugSessionStarter::updateDatabaseIfNeeded);
             if (updateRefusal != null)
             {
@@ -605,6 +690,11 @@ public final class YaxunitTestRunner
                     Activator.logInfo("Starting YAXUnit test launch: config=" + matchingConfig.getName() //$NON-NLS-1$
                         + ", startup=" + startupOption); //$NON-NLS-1$
                     launch = workingCopy.launch(ILaunchManager.RUN_MODE, new NullProgressMonitor());
+                    // The decision every answer of this run carries, put where the pickups read
+                    // it: a later call's own arguments and preset must not speak for the launch.
+                    // Recorded before the launch becomes visible, because a concurrent call finds
+                    // the launch without taking this lock and reads the decision straight away.
+                    noteLaunchSkipDecision(runKey, update.skippedByPreset);
                     ACTIVE_LAUNCHES.put(runKey, launch);
                     // A run started here whose report nobody has read yet. This is what makes the
                     // next call a pickup rather than a request for a new run, and it is cleared
@@ -613,12 +703,16 @@ public final class YaxunitTestRunner
                 }
             }
 
+            // The launch this call started wrote its decision to the store above; one it joined
+            // holds the decision its starting call recorded. Either way the answer carries the
+            // run's own.
+            RunContext runContext = runContextOf(runKey, projectName, extensions, modules, tests);
             String pollResult = pollLaunch(launch, reportDir, timeout, runKey, runContext);
             if (pollResult != null)
             {
                 return pollResult;
             }
-            return buildPendingMessage(reportDir);
+            return buildPendingMessage(reportDir, runContext.skippedByPreset);
         }
         catch (CoreException e)
         {
@@ -765,14 +859,16 @@ public final class YaxunitTestRunner
      * <p>
      * The answer is the JSON object the facade's envelope passes through untouched: the markdown
      * report in {@code output}, the run's counters beside it, {@code cached} for the report of an
-     * earlier run, and {@code receiptPath} naming the receipt on disk - or {@code receiptError}
+     * earlier run, {@code databaseUpdate} for the update the preset dropped off the call the run
+     * answers, and {@code receiptPath} naming the receipt on disk - or {@code receiptError}
      * saying why there is none, with the result fields still in place. A report that cannot be
      * parsed at all is no result, stays markdown and files no receipt.
      * </p>
      *
      * @param junitXml the report the run left behind
      * @param cacheMark the line saying the report is a previous run's, or <code>null</code>
-     * @param runContext the project and the filters the run was chosen by
+     * @param runContext the project, the filters the run was chosen by, and whether the preset
+     *            dropped its unnamed update
      * @param fileReceipt whether to file the run's receipt - the call that claimed the run
      * @param receipts where the receipt is written
      * @return the answer
@@ -820,6 +916,10 @@ public final class YaxunitTestRunner
                 .put("errors", results.getErrors()) //$NON-NLS-1$
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
                 .put("reportPath", reportPath); //$NON-NLS-1$
+            // The one place a report-carrying answer gets the skip marker: both the run that
+            // finishes inside the call and the report picked up by runKey pass through here, and
+            // the field pair is the same putDatabaseUpdate the debug-mode answer goes through.
+            DebugSessionStarter.putDatabaseUpdate(answer, null, runContext.skippedByPreset);
             if (cacheMark != null)
             {
                 answer.put("cached", true); //$NON-NLS-1$
@@ -940,16 +1040,47 @@ public final class YaxunitTestRunner
     }
 
     /**
-     * The text a run still in progress answers with, before the alias wraps it as JSON.
+     * The text a run still in progress answers with, before the alias wraps it as JSON. A run
+     * launched without the update the preset dropped says so, in the same words every answer of
+     * the run carries.
      *
      * @param reportDir the directory the report will be written to
+     * @param skippedByPreset whether the preset dropped the update the call never named
      * @return the pending text
      */
-    static String pendingText(Path reportDir)
+    static String pendingText(Path reportDir, boolean skippedByPreset)
     {
-        return "**Pending:** YAXUnit tests are still in progress.\n\nReport directory: `" + reportDir //$NON-NLS-1$
-            + "`\n\nCall `run_yaxunit_tests` again with the same arguments to keep waiting and retrieve" //$NON-NLS-1$
+        String text = "**Pending:** YAXUnit tests are still in progress.\n\nReport directory: `" //$NON-NLS-1$
+            + reportDir + "`\n\n"; //$NON-NLS-1$
+        if (skippedByPreset)
+        {
+            text += updateSkipNote() + "\n\n"; //$NON-NLS-1$
+        }
+        return text + "Call `run_yaxunit_tests` again with the same arguments to keep waiting and retrieve" //$NON-NLS-1$
             + " the JUnit XML once the launch is done.\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * The line a run-mode answer carries in its text when the preset dropped the update the call
+     * never named: the marker the answers name in {@code databaseUpdate}, and the note that goes
+     * with it - both from the place the debug-mode answer takes them.
+     *
+     * @return the skip line
+     */
+    static String updateSkipNote()
+    {
+        return UPDATE_SKIPPED_MARK + " - " + DebugSessionStarter.databaseUpdateNoteText(); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether an answer's text carries the preset-dropped update marker.
+     *
+     * @param result the answer.
+     * @return whether it carries the mark
+     */
+    static boolean isUpdateSkippedAnswer(String result)
+    {
+        return result != null && result.contains(UPDATE_SKIPPED_MARK);
     }
 
     /**
@@ -957,11 +1088,12 @@ public final class YaxunitTestRunner
      * when it calls {@link #dispatch}.
      *
      * @param reportDir the directory the report will be written to
+     * @param skippedByPreset whether the preset dropped the update the call never named
      * @return the pending text
      */
-    private String buildPendingMessage(Path reportDir)
+    private String buildPendingMessage(Path reportDir, boolean skippedByPreset)
     {
-        return pendingText(reportDir);
+        return pendingText(reportDir, skippedByPreset);
     }
 
     private Path stableReportDir(String runKey)

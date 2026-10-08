@@ -6,8 +6,11 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
+import org.eclipse.debug.core.DebugException;
 import org.eclipse.debug.core.model.IDebugTarget;
 import org.eclipse.debug.core.model.IThread;
 
@@ -65,6 +68,7 @@ public final class DebugResumer implements IMcpTool
         long threadId = JsonUtils.extractLongArgument(params, "threadId", -1L); //$NON-NLS-1$
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
 
+
         DebugSessionBook registry = DebugSessionBook.get();
         registry.ensureListenerRegistered();
 
@@ -77,13 +81,25 @@ public final class DebugResumer implements IMcpTool
                 {
                     return ToolResult.error("stale threadId - call wait_for_break again").toJson(); //$NON-NLS-1$
                 }
+                ToolResult foreignThread = DebugThreadOwnership.refusal(thread,
+                    DebugThreadOwnership.namedApplication(params), threadId);
+                if (foreignThread != null)
+                {
+                    return foreignThread.toJson();
+                }
                 if (!thread.canResume())
                 {
                     return ToolResult.error("thread is not resumable (state: " //$NON-NLS-1$
                         + (thread.isSuspended() ? "suspended" : "running") //$NON-NLS-1$ //$NON-NLS-2$
                         + ")").toJson(); //$NON-NLS-1$
                 }
+                String owner = DebugSessionBook.findApplicationIdFor(thread);
+                DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(owner);
                 thread.resume();
+                // Drop the stop this call leaves behind, and only that one: a thread that stops
+                // again while the resume is being made has already recorded a newer stop, which is
+                // what the wait that follows this answer reads.
+                registry.clearSnapshotIfCurrent(owner, leftBehind);
                 return ToolResult.success().put("resumed", true) //$NON-NLS-1$
                     .put("scope", "thread").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
             }
@@ -98,42 +114,17 @@ public final class DebugResumer implements IMcpTool
                         + "resolve automatically. Use debug_status to list active launches.").toJson();
             }
 
-            // Resume the suspended thread, not the target (EDT targets don't support canResume)
-            DebugSessionBook.SuspendSnapshot snapshot = registry.getSnapshot(effectiveAppId);
-            if (snapshot != null && snapshot.thread.canResume())
-            {
-                snapshot.thread.resume();
-                ToolResult res = ToolResult.success().put("resumed", true) //$NON-NLS-1$
-                    .put("scope", "thread") //$NON-NLS-1$ //$NON-NLS-2$
-                    .put("applicationId", effectiveAppId); //$NON-NLS-1$
-                if (applicationId == null || applicationId.isEmpty())
-                {
-                    res.put("autoResolved", true); //$NON-NLS-1$
-                }
-                return res.toJson();
-            }
-
-            // Fallback: scan the target's threads for a suspended, resumable one
             IDebugTarget target = DebugSessionBook.findActiveTarget(effectiveAppId);
+            ToolResult resumed = resumeApplication(registry, effectiveAppId, target,
+                applicationId == null || applicationId.isEmpty());
+            if (resumed != null)
+            {
+                return resumed.toJson();
+            }
             if (target == null)
             {
                 return ToolResult.error(
                     "no active debug target found for applicationId: " + effectiveAppId).toJson(); //$NON-NLS-1$
-            }
-            for (IThread thread : target.getThreads())
-            {
-                if (thread.isSuspended() && thread.canResume())
-                {
-                    thread.resume();
-                    ToolResult res = ToolResult.success().put("resumed", true) //$NON-NLS-1$
-                        .put("scope", "thread") //$NON-NLS-1$ //$NON-NLS-2$
-                        .put("applicationId", effectiveAppId); //$NON-NLS-1$
-                    if (applicationId == null || applicationId.isEmpty())
-                    {
-                        res.put("autoResolved", true); //$NON-NLS-1$
-                    }
-                    return res.toJson();
-                }
             }
             return ToolResult.error(
                 "no suspended thread found to resume for applicationId: " + effectiveAppId).toJson(); //$NON-NLS-1$
@@ -143,5 +134,104 @@ public final class DebugResumer implements IMcpTool
             Activator.logError("resume failed", e); //$NON-NLS-1$
             return ToolResult.error("Error: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Resumes every suspended thread of an application.
+     * <p>
+     * A thread of this platform is what resumes; the target itself is not resumable, so it is only
+     * where the threads are found. The application's suspend snapshot names one of them, and the
+     * target's own threads the rest - both are collected before any of them is resumed, so an answer
+     * names every thread it acted on whatever route found it.
+     * </p>
+     * <p>
+     * The snapshot this call found is dropped as each thread resumes, and only while it is still the
+     * one that was found: a resume that fails partway through the list has already taken the earlier
+     * threads away, while a thread that stops again while the resumes are being made leaves its
+     * newer stop standing for the caller's wait.
+     * </p>
+     *
+     * @param registry the session registry
+     * @param applicationId the application to resume; must not be <code>null</code>
+     * @param target the application's debug target, or <code>null</code> when it has none
+     * @param autoResolved whether the application was picked rather than named by the caller
+     * @return the result, or <code>null</code> when the application has no suspended thread
+     * @throws DebugException when the debug model refuses to report the state of the target or a
+     *             thread, or to resume one of them
+     */
+    static ToolResult resumeApplication(DebugSessionBook registry, String applicationId,
+        IDebugTarget target, boolean autoResolved) throws DebugException
+    {
+        List<IThread> toResume = new ArrayList<>();
+
+        DebugSessionBook.SuspendSnapshot snapshot = registry.getSnapshot(applicationId);
+        if (snapshot != null && snapshot.thread != null && snapshot.thread.canResume())
+        {
+            toResume.add(snapshot.thread);
+        }
+        if (target != null && !target.isTerminated())
+        {
+            for (IThread thread : target.getThreads())
+            {
+                if (thread.isSuspended() && thread.canResume() && !contains(toResume, thread))
+                {
+                    toResume.add(thread);
+                }
+            }
+        }
+        if (toResume.isEmpty())
+        {
+            return null;
+        }
+
+        DebugSessionBook.SuspendSnapshot leftBehind = registry.getSnapshot(applicationId);
+
+        // Read before the first resume goes out: the platform's RESUME event for one thread
+        // forgets every id the application issued, and ids read after the resumes would name -1
+        // for threads this call did resume.
+        // Read before the first resume goes out: the platform's RESUME event for one thread
+        // forgets every id the application issued, and ids read after the resumes would name -1
+        // for threads this call did resume.
+        List<Long> resumedIds = new ArrayList<>();
+        for (IThread thread : toResume)
+        {
+            resumedIds.add(Long.valueOf(registry.threadIdOf(thread)));
+        }
+        for (IThread thread : toResume)
+        {
+            thread.resume();
+            // Dropped per thread, and only while the snapshot is still the one this call found: a
+            // resume that fails partway through the list has already taken the earlier threads
+            // away, while a thread that stops again leaves its newer stop for the caller's wait.
+            registry.clearSnapshotIfCurrent(applicationId, leftBehind);
+        }
+
+        ToolResult res = ToolResult.success().put("resumed", true) //$NON-NLS-1$
+            .put("scope", "target") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("resumedCount", toResume.size())
+            .put("resumedThreadIds", resumedIds);
+        if (autoResolved)
+        {
+            res.put("autoResolved", true); //$NON-NLS-1$
+        }
+        return res;
+    }
+
+    /**
+     * @param threads the threads collected so far
+     * @param thread the thread to look for
+     * @return whether the thread is already among them
+     */
+    private static boolean contains(List<IThread> threads, IThread thread)
+    {
+        for (IThread collected : threads)
+        {
+            if (collected == thread)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 }

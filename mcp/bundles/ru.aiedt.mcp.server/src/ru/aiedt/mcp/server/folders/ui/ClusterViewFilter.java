@@ -32,6 +32,8 @@ import ru.aiedt.mcp.server.Activator;
 
 import ru.aiedt.mcp.server.folders.IClusterManager;
 
+import ru.aiedt.mcp.server.folders.model.Cluster;
+
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 
 
@@ -51,6 +53,18 @@ import ru.aiedt.mcp.server.labels.MarkerHelpers;
  * node are kept. And when there is no service - the plugin is stopping or headless - nothing is
 
  * hidden, so the tree simply falls back to EDT's own view.
+
+ * </p>
+
+ * <p>
+
+ * A cluster nobody draws hides nothing. A cluster whose path names no collection of the tree is
+
+ * never drawn anywhere, and hiding its members would leave them invisible in the whole tree, so
+
+ * an object is hidden only while a drawn cluster node shows it - see
+
+ * {@link RenderedClusterPaths}.
 
  * </p>
 
@@ -134,7 +148,61 @@ public class ClusterViewFilter
 
         }
 
-        return service.findClusterForObject(project, fqn) == null;
+        return !shownUnderADrawnCluster(service.getAllClusters(project), project, fqn);
+
+    }
+
+
+
+    /**
+
+     * Tells whether the object is shown under a cluster node the tree draws.
+
+     * <p>
+
+     * Hiding an object from its normal place is safe only while a drawn cluster node shows it: a
+
+     * cluster whose path names no collection of the tree is never drawn, and its members would
+
+     * then be invisible in the whole tree. Drawn means the collection the cluster sits at was
+
+     * drawn, or a node for the cluster it nests under was - the same facts
+
+     * {@link RenderedClusterPaths} is told as the tree draws.
+
+     * </p>
+
+     *
+
+     * @param clusters the project's clusters
+
+     * @param project the project
+
+     * @param fqn the fully qualified name of the object
+
+     * @return {@code true} when a drawn cluster holds the object
+
+     */
+
+    static boolean shownUnderADrawnCluster(Iterable<Cluster> clusters, IProject project, String fqn)
+
+    {
+
+        for (Cluster cluster : clusters)
+
+        {
+
+            if (cluster.containsChild(fqn) && RenderedClusterPaths.isDrawn(project, cluster))
+
+            {
+
+                return true;
+
+            }
+
+        }
+
+        return false;
 
     }
 
