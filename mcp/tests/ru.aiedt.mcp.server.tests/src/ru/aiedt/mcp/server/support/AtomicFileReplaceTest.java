@@ -167,7 +167,7 @@ public class AtomicFileReplaceTest
                 {
                     throw new UncheckedIOException(e);
                 }
-            });
+            }, null);
         assertEquals(AtomicFileReplace.CHANGED_ON_DISK, refused.getCode());
         assertEquals("the external edit survives whole", FOREIGN, Files.readString(file)); //$NON-NLS-1$
         assertEquals("no staging file remains", 1, entries()); //$NON-NLS-1$
@@ -212,11 +212,11 @@ public class AtomicFileReplaceTest
                 file, fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 8000L, () -> {
                     staged.countDown();
                     await(release);
-                }));
+                }, null));
             assertTrue("the first writer must reach the staging seam", staged.await(5, TimeUnit.SECONDS)); //$NON-NLS-1$
 
             Future<AtomicFileReplace.Outcome> second = pool.submit(() -> AtomicFileReplace.replace(
-                file, fingerprint(ORIGINAL), bytes("groups: []\n"), null, 8000L, null)); //$NON-NLS-1$
+                file, fingerprint(ORIGINAL), bytes("groups: []\n"), null, 8000L, null, null)); //$NON-NLS-1$
 
             release.countDown();
             assertEquals(AtomicFileReplace.OK, first.get(10, TimeUnit.SECONDS).getCode());
@@ -244,7 +244,7 @@ public class AtomicFileReplaceTest
         try
         {
             AtomicFileReplace.Outcome refused = AtomicFileReplace.replace(file,
-                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 400L, null);
+                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 400L, null, null);
             assertEquals(AtomicFileReplace.LOCK_REFUSED, refused.getCode());
             assertNotNull(refused.getDetail());
             assertTrue("the refusal names the wait limit: " + refused.getDetail(), //$NON-NLS-1$
@@ -271,7 +271,7 @@ public class AtomicFileReplaceTest
         try
         {
             AtomicFileReplace.Outcome waited = AtomicFileReplace.replace(file,
-                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 5000L, null);
+                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 5000L, null, null);
             assertEquals(AtomicFileReplace.OK, waited.getCode());
             assertEquals(REPLACEMENT, Files.readString(file));
         }

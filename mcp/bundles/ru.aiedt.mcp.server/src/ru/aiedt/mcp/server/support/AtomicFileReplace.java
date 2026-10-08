@@ -234,11 +234,38 @@ public final class AtomicFileReplace
      */
     public static Outcome replace(Path target, String expectedFingerprint, byte[] content, IFile workspaceFile)
     {
-        return replace(target, expectedFingerprint, content, workspaceFile, LOCK_WAIT_MILLIS, null);
+        return replace(target, expectedFingerprint, content, workspaceFile, null);
     }
 
     /**
-     * Replaces the target's content with a wait limit and a seam of the caller's choosing.
+     * Replaces the target's content and reports the committed replacement to the caller before the
+     * workspace is told about it.
+     * <p>
+     * {@code afterCommit} runs once the target holds the new bytes and before {@code workspaceFile}
+     * is refreshed, so a caller whose own state names those bytes publishes that state in time for
+     * the refresh to arrive as this write's own change. It does not run when the replacement is
+     * refused: a refusal leaves the target as it was, and therefore whatever the caller held about
+     * it still stands.
+     * </p>
+     *
+     * @param target the file to replace
+     * @param expectedFingerprint {@link #fingerprint(byte[])} of the bytes the caller's state was
+     *            read from, or {@link #NO_FILE_FINGERPRINT} when it was read from no file
+     * @param content the bytes to write
+     * @param workspaceFile the workspace handle of the target, refreshed after the write; may be
+     *            {@code null} when the file does not belong to a workspace
+     * @param afterCommit run once the target holds the new bytes and before the workspace handle is
+     *            refreshed; may be {@code null}
+     * @return what the replacement did
+     */
+    public static Outcome replace(Path target, String expectedFingerprint, byte[] content, IFile workspaceFile,
+        Runnable afterCommit)
+    {
+        return replace(target, expectedFingerprint, content, workspaceFile, LOCK_WAIT_MILLIS, null, afterCommit);
+    }
+
+    /**
+     * Replaces the target's content with a wait limit and the seams of the caller's choosing.
      *
      * @param target the file to replace
      * @param expectedFingerprint the fingerprint of the bytes the caller read, or
@@ -248,12 +275,15 @@ public final class AtomicFileReplace
      * @param waitMillis how long to wait for the lock file
      * @param afterStaging run after the content is staged and before the second fingerprint check;
      *            may be {@code null}
+     * @param afterCommit run once the target holds the new bytes and before the workspace handle is
+     *            refreshed; may be {@code null}
      * @return what the replacement did
      */
     static Outcome replace(Path target, String expectedFingerprint, byte[] content, IFile workspaceFile,
-        long waitMillis, Runnable afterStaging)
+        long waitMillis, Runnable afterStaging, Runnable afterCommit)
     {
-        return runUnderLocks(target, expectedFingerprint, content, workspaceFile, waitMillis, afterStaging);
+        return runUnderLocks(target, expectedFingerprint, content, workspaceFile, waitMillis, afterStaging,
+            afterCommit);
     }
 
     /**
@@ -268,7 +298,32 @@ public final class AtomicFileReplace
      */
     public static Outcome remove(Path target, String expectedFingerprint, IFile workspaceFile)
     {
-        return runUnderLocks(target, expectedFingerprint, null, workspaceFile, LOCK_WAIT_MILLIS, null);
+        return remove(target, expectedFingerprint, workspaceFile, null);
+    }
+
+    /**
+     * Removes the target and reports the committed removal to the caller before the workspace is
+     * told about it.
+     * <p>
+     * A target that is already gone counts as the requested content: the removal is reported, since
+     * the caller's state names the absence it asked for. {@code afterCommit} does not run when the
+     * removal is refused.
+     * </p>
+     *
+     * @param target the file to remove
+     * @param expectedFingerprint the fingerprint of the bytes the caller read, or
+     *            {@link #NO_FILE_FINGERPRINT}; {@code null} removes without comparing content
+     * @param workspaceFile the workspace handle of the target, refreshed after the removal; may be
+     *            {@code null}
+     * @param afterCommit run once the target holds no file and before the workspace handle is
+     *            refreshed; may be {@code null}
+     * @return what the removal did
+     */
+    public static Outcome remove(Path target, String expectedFingerprint, IFile workspaceFile,
+        Runnable afterCommit)
+    {
+        return runUnderLocks(target, expectedFingerprint, null, workspaceFile, LOCK_WAIT_MILLIS, null,
+            afterCommit);
     }
 
     /**
@@ -308,10 +363,11 @@ public final class AtomicFileReplace
      * @param workspaceFile the workspace handle to refresh; may be {@code null}
      * @param waitMillis how long to wait for the locks
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
+     * @param afterCommit run between the committed target and the refresh; may be {@code null}
      * @return what the write did
      */
     private static Outcome runUnderLocks(Path target, String expectedFingerprint, byte[] content,
-        IFile workspaceFile, long waitMillis, Runnable afterStaging)
+        IFile workspaceFile, long waitMillis, Runnable afterStaging, Runnable afterCommit)
     {
         Path physical;
         try
@@ -346,6 +402,14 @@ public final class AtomicFileReplace
                 afterStaging);
             if (done.isOk())
             {
+                // The target now holds what was asked for. The caller hears about it here, before
+                // the refresh below tells the workspace, because a caller that keeps its own name
+                // for the file's bytes has to publish them in time for that telling to arrive as
+                // this write's own change rather than a foreign one.
+                if (afterCommit != null)
+                {
+                    afterCommit.run();
+                }
                 refreshQuietly(workspaceFile, physical);
             }
             return done;
