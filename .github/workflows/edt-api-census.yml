@@ -61,6 +61,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-tycho-p2-
 
+      # Tycho 4.0.5 does not start under the Maven the runner image carries (3.9.16):
+      # 'No implementation for MavenTargetLocationFactory was bound'. The build runs on 3.9.9.
+      - name: Maven 3.9.9
+        run: |
+          curl -fsSL https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.9/bin" >> "$GITHUB_PATH"
+
       # The census reads the compiled classes, so they have to exist. Compiling alone is enough -
       # the test suite has its own workflow and needs a display, which this does not.
       - name: Compile

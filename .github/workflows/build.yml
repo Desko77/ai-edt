@@ -47,6 +47,13 @@ jobs:
           sudo apt-get install -y xvfb
           sudo apt-get install -y libgtk-3-0t64 || sudo apt-get install -y libgtk-3-0 || true
 
+      # Tycho 4.0.5 does not start under the Maven the runner image carries (3.9.16):
+      # 'No implementation for MavenTargetLocationFactory was bound'. The build runs on 3.9.9.
+      - name: Maven 3.9.9
+        run: |
+          curl -fsSL https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.9/bin" >> "$GITHUB_PATH"
+
       - name: Maven build
         working-directory: mcp
         env:
