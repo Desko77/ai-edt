@@ -1,10 +1,13 @@
 <#
 .SYNOPSIS
   Self-update the EDT MCP plugin into ONE running 1C:EDT session (the dev/test
-  workspace), without touching any other EDT session on the same installation.
+  workspace), without touching any other EDT session on the same installation. With
+  -AllInstallations, install into EVERY installation that carries the plugin while no
+  EDT of those installations is running - the release-checklist step that makes all
+  installations on the machine hold the same build.
 
 .DESCRIPTION
-  Steps:
+  One running session (default mode). Steps:
     1. Find the single running 1cedt.exe whose -data workspace matches -WorkspaceMatch.
        With no -WorkspaceMatch every running session qualifies, which resolves cleanly
        when exactly one is open; pass a substring of the workspace path to pick one out
@@ -25,6 +28,24 @@
     5. Poll the MCP /health endpoint, on the port discovered from the dev workspace's
        prefs (mcpServerPort), until the server is back (or -HealthTimeoutSec).
 
+  -AllInstallations (closed-EDT mode). Steps:
+    1. Ask scripts/report-plugin-jars.py --json which installations record the plugin and
+       where each of them reads it from - its own configuration area or a shared profile
+       in the user's home. One place decides what an installation is, so the installer
+       and the jar report never disagree.
+    2. Read the version each installation holds now, the highest among its records: a
+       bundle recorded in a shared profile is the one that wins over the install's file.
+    3. Refuse the whole run while any 1cedt.exe or javaw.exe of a target installation is
+       alive, naming the PIDs. No process is closed or killed in this mode, and no
+       session is started: close them yourself and re-run.
+    4. Run the p2 director of EACH target installation, with the -vm from that
+       installation's 1cedt.ini.
+    5. Read the versions back and print installation / before / after, exiting non-zero
+       unless every installation carries the installed version.
+
+  -WhatIf prints that plan without downloading, installing or otherwise changing
+  anything.
+
 .NOTES
   Other EDT sessions are never closed, killed or launched. The director updates the
   on-disk profile only; another running session keeps its in-memory plugin until it is
@@ -32,6 +53,11 @@
   same install is open (that session does not hold an exclusive profile lock unless it
   is mid p2-operation); if it does fail on a lock, this script reports it and relaunches
   the dev session with the existing (un-updated) plugin so you are never left without an IDE.
+
+  Exit codes: 0 done; 2 repository or argument problem; 3 refused (an EDT of a target
+  installation is running, or a downgrade without -AllowDowngrade); 4 the session did not
+  close; 5 the director failed; 6 the version could not be confirmed afterwards; 7 the
+  session could not be relaunched.
 
   PowerShell 5.1+ compatible (no PS7-only syntax) so it runs from either shell.
 
@@ -46,6 +72,10 @@
 .EXAMPLE
   pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -Source local
   The build in this working copy, and an error rather than a download if there is none.
+
+.EXAMPLE
+  pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -WhatIf -RepoPath .\mcp\repositories\ru.aiedt.mcp.server.repository\target\repository
+  Which installations would take this build, and which are held back by a running EDT.
 #>
 [CmdletBinding()]
 param(
@@ -81,7 +111,23 @@ param(
     [switch]$NoRestart,
     # First install of a NEW feature id (not yet in the p2 profile): omit -uninstallIU so
     # the director does not hard-fail trying to remove an IU that is not installed.
-    [switch]$SkipUninstall
+    [switch]$SkipUninstall,
+    # Closed-EDT mode: install into EVERY installation that carries the plugin, one
+    # director run each, instead of into one running session. Refuses while an EDT of a
+    # target installation is running - no session is closed, killed or started.
+    [switch]$AllInstallations,
+    # Print the plan of -AllInstallations and change nothing.
+    [Alias('DryRun')]
+    [switch]$WhatIf,
+    # Python interpreter that reads the installation report (scripts/report-plugin-jars.py).
+    # Empty searches python and python3 on PATH.
+    [string]$PythonExe = '',
+    # java.exe for the directors of installations whose 1cedt.ini names no -vm (the ones the 1C
+    # launcher starts). Empty takes JAVA_HOME, and with that empty too the director uses the java
+    # on PATH.
+    [string]$JavaExe = '',
+    # Bundle whose installations and versions are read. The feature installed is -FeatureIU.
+    [string]$BundleSymbolicName = 'ru.aiedt.mcp.server'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,6 +136,11 @@ function Write-Step($m) { Write-Host "[selfupdate] $m" -ForegroundColor Cyan }
 function Write-Note($m) { Write-Host "[selfupdate] $m" }
 function Write-Warn2($m) { Write-Host "[selfupdate] WARN: $m" -ForegroundColor Yellow }
 function Write-Err2($m) { Write-Host "[selfupdate] ERROR: $m" -ForegroundColor Red }
+
+if ($WhatIf -and -not $AllInstallations) {
+    Write-Err2 "-WhatIf belongs to -AllInstallations: the single-session mode changes a running session and has no dry run."
+    exit 2
+}
 
 # ---------------------------------------------------------------------------
 # 0. Resolve and validate the P2 repository (local build or published release)
@@ -247,6 +298,11 @@ if ($RepoPath) {
     # An explicit path wins over -Source: the caller already said where to look.
     $sourceLabel = 'explicit path'
 } elseif ($Source -eq 'release') {
+    # A dry run promises to change nothing, and a download writes to the temp directory.
+    if ($WhatIf) {
+        Write-Err2 "-WhatIf does not download: pass -RepoPath <directory of a built repository>."
+        exit 2
+    }
     $RepoPath = Get-ReleaseRepo $Repo $ReleaseTag
     $sourceLabel = "release $ReleaseTag"
 } elseif ($Source -eq 'local') {
@@ -263,6 +319,9 @@ if ($RepoPath) {
     if ($hasLocal) {
         $RepoPath = $localRepo
         $sourceLabel = 'local build (auto)'
+    } elseif ($WhatIf) {
+        Write-Err2 "-WhatIf does not download: pass -RepoPath <directory of a built repository>."
+        exit 2
     } else {
         $RepoPath = Get-ReleaseRepo $Repo $ReleaseTag
         $sourceLabel = "release $ReleaseTag (auto, no local build)"
@@ -282,6 +341,304 @@ Write-Step "Repo: $RepoPath"
 Write-Note "  source: $sourceLabel"
 $repoVersion = $repoInfo.Version
 if ($builtJar) { Write-Note "  bundle: $($builtJar.Name)" }
+
+# ---------------------------------------------------------------------------
+# 0b. -AllInstallations: install into every installation that records the plugin
+#     while no EDT of those installations is running (closed-EDT mode)
+# ---------------------------------------------------------------------------
+if ($AllInstallations) {
+
+    # Where an installation is and where it reads its bundles.info from is decided by
+    # scripts/report-plugin-jars.py, which answers that question for the jar report too. Reading
+    # the layout a second time here is how the installer and the report come to disagree about
+    # which version an installation actually loads.
+    function Resolve-PythonExe([string]$explicit) {
+        $names = if ($explicit) { @($explicit) } else { @('python', 'python3') }
+        foreach ($name in $names) {
+            $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $command) { continue }
+            $path = $command.Source
+            # An interpreter that answers nothing is the Microsoft Store stub, which opens a
+            # window instead of running a script.
+            $probe = & $path -c "print('ok')" 2>&1
+            if ($LASTEXITCODE -eq 0 -and ($probe | Out-String).Trim() -eq 'ok') { return $path }
+        }
+        return $null
+    }
+
+    # The installation report as objects, or $null when the interpreter or the report failed.
+    function Get-InstallationReport([string]$interpreter, [string]$reportPath, [string]$bundle) {
+        $output = & $interpreter -X utf8 $reportPath --json --bundle $bundle 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Err2 "The installation report failed (exit $LASTEXITCODE):"
+            $output | ForEach-Object { Write-Note "  | $_" }
+            return $null
+        }
+        try { return ($output | Out-String | ConvertFrom-Json) }
+        catch {
+            Write-Err2 "The installation report did not print JSON: $($_.Exception.Message)"
+            return $null
+        }
+    }
+
+    # True when a path is a directory itself or lies under it.
+    function Test-UnderPath([string]$path, [string]$directory) {
+        if (-not $path -or -not $directory) { return $false }
+        $p = $path.TrimEnd('\', '/')
+        $d = $directory.TrimEnd('\', '/')
+        return $p.StartsWith($d + '\', [StringComparison]::OrdinalIgnoreCase) -or
+               $p.StartsWith($d + '/', [StringComparison]::OrdinalIgnoreCase)
+    }
+
+    # The processes of an installation: its own launcher, and the JVM that launcher started. The
+    # JVM runs from a shared JDK, so its own path says nothing about the installation - the
+    # installation directory appears in its command line, in the launcher jar it was started with.
+    function Get-InstallationProcess([string]$installDir) {
+        $found = @()
+        $filter = "Name='1cedt.exe' or Name='1cedtc.exe' or Name='javaw.exe' or Name='java.exe'"
+        foreach ($p in @(Get-CimInstance Win32_Process -Filter $filter -ErrorAction SilentlyContinue)) {
+            $command = $p.CommandLine
+            $inCommand = $command -and $command.IndexOf($installDir, [StringComparison]::OrdinalIgnoreCase) -ge 0
+            if ((Test-UnderPath $p.ExecutablePath $installDir) -or $inCommand) { $found += $p }
+        }
+        return $found
+    }
+
+    # The java.exe an installation's own launcher would use. The director runs without a session,
+    # so there is no command line to take one from: the ini of the installation names it, and an
+    # installation the 1C launcher starts has none written down - for those the caller's -JavaExe
+    # or JAVA_HOME answers, and with neither the director falls back to the java on PATH.
+    function Get-InstallJavaExe([string]$installDir) {
+        $ini = Join-Path $installDir '1cedt.ini'
+        if (Test-Path -LiteralPath $ini) {
+            $lines = @(Get-Content -LiteralPath $ini)
+            for ($i = 0; $i -lt $lines.Count - 1; $i++) {
+                if ($lines[$i].Trim() -ne '-vm') { continue }
+                $value = $lines[$i + 1].Trim()
+                $console = $value -replace 'javaw\.exe$', 'java.exe'
+                if (Test-Path -LiteralPath $console) { return $console }
+                if (Test-Path -LiteralPath $value) { return $value }
+                break
+            }
+        }
+        if ($JavaExe) { return $JavaExe }
+        if ($env:JAVA_HOME) {
+            $fromHome = Join-Path $env:JAVA_HOME 'bin\java.exe'
+            if (Test-Path -LiteralPath $fromHome) { return $fromHome }
+        }
+        return $null
+    }
+
+    # The version of EDT an installation carries, for the table.
+    function Get-InstallProductVersion([string]$installDir) {
+        $ini = Join-Path $installDir 'configuration\config.ini'
+        if (-not (Test-Path -LiteralPath $ini)) { return $null }
+        foreach ($line in (Get-Content -LiteralPath $ini)) {
+            $m = [regex]::Match($line, '^(?:product\.version|eclipse\.buildId)=(.+)$')
+            if ($m.Success) { return $m.Groups[1].Value.Trim() }
+        }
+        return $null
+    }
+
+    # What an installation loads now: the highest version among its records. A bundle recorded in a
+    # shared profile is the one that wins over the same bundle in the installation's own file, so
+    # the highest of them is what a session started from this installation would run.
+    function Get-RecordedVersion($records) {
+        $best = $null
+        foreach ($record in @($records)) {
+            foreach ($version in @($record.versions)) {
+                if (-not $best -or (Compare-BundleVersion $version $best) -gt 0) { $best = $version }
+            }
+        }
+        return $best
+    }
+
+    # What the report records for one installation directory.
+    function Get-ReportedVersion($report, [string]$installDir) {
+        foreach ($entry in @($report.installations)) {
+            if ([string]$entry.install -eq $installDir) { return (Get-RecordedVersion $entry.records) }
+        }
+        return $null
+    }
+
+    # One line per installation, the same shape before and after the run.
+    function Write-PlanLine($p) {
+        Write-Note ("  {0}  {1} -> {2}  {3}  [{4}]" -f $p.Install, $p.Before, $p.After, $p.Edt, $p.Status)
+    }
+
+    $reportPath = Join-Path $PSScriptRoot 'report-plugin-jars.py'
+    if (-not (Test-Path -LiteralPath $reportPath)) {
+        Write-Err2 "Installation report not found: $reportPath"
+        exit 2
+    }
+    $python = Resolve-PythonExe $PythonExe
+    if (-not $python) {
+        Write-Err2 "No Python interpreter found (tried python and python3). Pass -PythonExe <path>."
+        exit 2
+    }
+    if (-not $repoVersion) {
+        Write-Err2 "No $BundleSymbolicName jar in $RepoPath - nothing to install."
+        exit 2
+    }
+    if ($JavaExe -and -not (Test-Path -LiteralPath $JavaExe)) {
+        Write-Err2 "-JavaExe not found: $JavaExe"
+        exit 2
+    }
+
+    Write-Step "Repository: $repoVersion ($sourceLabel)"
+    $report = Get-InstallationReport $python $reportPath $BundleSymbolicName
+    if (-not $report) { exit 2 }
+
+    $entries = @($report.installations)
+    if ($entries.Count -eq 0) {
+        Write-Err2 "No installation records $BundleSymbolicName. Nothing to install into."
+        foreach ($orphan in @($report.unclaimed)) {
+            Write-Note "  recorded but attributed to no installation: $($orphan.bundlesInfo)"
+        }
+        exit 3
+    }
+
+    $plan = @()
+    foreach ($entry in $entries) {
+        $dir = [string]$entry.install
+        $before = Get-RecordedVersion $entry.records
+        $running = @(Get-InstallationProcess $dir)
+        $status = 'install'
+        if ($running.Count -gt 0) {
+            $status = 'running'
+        } elseif ($before -and (Compare-BundleVersion $repoVersion $before) -lt 0) {
+            if ($AllowDowngrade) { $status = 'downgrade-allowed' } else { $status = 'downgrade' }
+        } elseif ($before -and (Compare-BundleVersion $repoVersion $before) -eq 0) {
+            $status = 'current'
+        }
+        $plan += [PSCustomObject]@{
+            Install = $dir
+            Edt     = Get-InstallProductVersion $dir
+            Before  = $before
+            After   = $before
+            Status  = $status
+            Records = @($entry.records)
+            Running = $running
+            Java    = Get-InstallJavaExe $dir
+            Launch  = [string]$entry.launcher
+        }
+    }
+
+    Write-Step "Found $($plan.Count) installation(s) recording $BundleSymbolicName; repository has $repoVersion"
+    foreach ($p in $plan) {
+        Write-PlanLine $p
+        foreach ($record in $p.Records) {
+            Write-Note ("    {0} {1} = {2}" -f ($record.kind + ':'), $record.bundlesInfo, (@($record.versions) -join ', '))
+        }
+    }
+
+    # Each installation's own director: it installs into the profile that installation is
+    # configured with, which for a read-only installation is the one in the user's home.
+    $actions = @()
+    foreach ($p in $plan) {
+        if ($p.Status -ne 'install' -and $p.Status -ne 'downgrade-allowed') { continue }
+        $launcher = $p.Launch
+        if (-not $launcher -or -not (Test-Path -LiteralPath $launcher)) {
+            $launcher = Join-Path $p.Install '1cedtc.exe'
+            if (-not (Test-Path -LiteralPath $launcher)) { $launcher = Join-Path $p.Install '1cedt.exe' }
+        }
+        $arguments = @()
+        if ($p.Java) {
+            $arguments += @('-vm', $p.Java)
+        } else {
+            Write-Warn2 "No java for $($p.Install): the director will use the one on PATH (-JavaExe <java.exe> says which)."
+        }
+        $arguments += @('-nosplash', '-application', 'org.eclipse.equinox.p2.director',
+                        '-repository', $repoUrl)
+        if (-not $SkipUninstall) { $arguments += @('-uninstallIU', $FeatureIU) }
+        $arguments += @('-installIU', $FeatureIU, '-profileProperties', 'org.eclipse.update.reconcile=true')
+        $actions += [PSCustomObject]@{ Install = $p.Install; Launcher = $launcher; Arguments = $arguments }
+    }
+
+    $running = @($plan | Where-Object { $_.Status -eq 'running' })
+    $refused = @($plan | Where-Object { $_.Status -eq 'downgrade' })
+
+    if ($WhatIf) {
+        Write-Step "-WhatIf: nothing was downloaded, installed or otherwise changed."
+        if ($actions.Count -eq 0) {
+            Write-Note "  Every installation already carries $repoVersion."
+        } else {
+            Write-Note "  The director would run:"
+            foreach ($a in $actions) {
+                Write-Note "    $($a.Launcher)"
+                Write-Note "      $($a.Arguments -join ' ')"
+            }
+        }
+    }
+
+    if ($running.Count -gt 0) {
+        Write-Err2 "$($running.Count) installation(s) have a running 1C:EDT: close it and re-run. No process is closed or killed here."
+        foreach ($p in $running) {
+            foreach ($process in $p.Running) {
+                Write-Note "  PID $($process.ProcessId) $($process.Name)  [$($p.Install)]"
+            }
+        }
+    }
+    if ($refused.Count -gt 0) {
+        Write-Err2 "$($refused.Count) installation(s) carry a higher version than $repoVersion. Re-run with -AllowDowngrade to replace it."
+        foreach ($p in $refused) { Write-Note "  $($p.Install) is at $($p.Before)" }
+    }
+    if ($running.Count -gt 0 -or $refused.Count -gt 0) {
+        Write-Step "Nothing was installed."
+        exit 3
+    }
+    if ($WhatIf) { exit 0 }
+    if ($actions.Count -eq 0) {
+        Write-Step "Every installation already carries $repoVersion. Nothing to do."
+        exit 0
+    }
+
+    $failed = @()
+    foreach ($a in $actions) {
+        Write-Step "Installing into $($a.Install)"
+        $directorArgs = $a.Arguments
+        Write-Note "  $($a.Launcher) $($directorArgs -join ' ')"
+        $code = 1
+        try {
+            $output = & $a.Launcher @directorArgs 2>&1
+            $code = $LASTEXITCODE
+            $output | ForEach-Object { Write-Note "  | $_" }
+        } catch {
+            Write-Err2 "The director did not run: $($_.Exception.Message)"
+        }
+        if ($code -ne 0) {
+            Write-Err2 "The director failed (exit $code) for $($a.Install)."
+            $failed += $a.Install
+        }
+    }
+
+    Write-Step "Reading the versions back from bundles.info..."
+    $after = Get-InstallationReport $python $reportPath $BundleSymbolicName
+    if (-not $after) {
+        Write-Err2 "The installation report failed after the install, so the versions are not confirmed."
+        exit 6
+    }
+    foreach ($p in $plan) {
+        $p.After = Get-ReportedVersion $after $p.Install
+        if ($p.Status -ne 'install' -and $p.Status -ne 'downgrade-allowed') { continue }
+        if ($p.After -eq $repoVersion) { $p.Status = 'updated' } else { $p.Status = 'NOT CONFIRMED' }
+    }
+
+    Write-Step "Installation - version before - version after"
+    foreach ($p in $plan) { Write-PlanLine $p }
+
+    $unconfirmed = @($plan | Where-Object { $_.Status -eq 'NOT CONFIRMED' })
+    if ($failed.Count -gt 0) {
+        Write-Err2 "The director failed for: $($failed -join '; ')"
+        exit 5
+    }
+    if ($unconfirmed.Count -gt 0) {
+        Write-Err2 "The version was not confirmed in: $(@($unconfirmed | ForEach-Object { $_.Install }) -join '; ')"
+        exit 6
+    }
+    Write-Step "Every installation that records the plugin carries $repoVersion."
+    exit 0
+}
 
 # ---------------------------------------------------------------------------
 # 1. Locate the single target 1cedt.exe (dev workspace), capture relaunch info

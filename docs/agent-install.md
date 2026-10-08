@@ -145,6 +145,37 @@ With a single EDT session running, `-WorkspaceMatch` can be omitted entirely.
 | `-McpPort` | MCP port. `0` discovers it from the workspace preferences. |
 | `-CloseTimeoutSec`, `-HealthTimeoutSec` | Waiting limits for the close and for the health check. |
 
+## Install into every installation, with EDT closed
+
+One machine commonly holds several installations - the one under Program Files and the ones the 1C
+launcher keeps in `%LOCALAPPDATA%\1C\1cedtstart\installations` - and each of them records the plugin
+in its own `bundles.info`, or in a shared profile under `%USERPROFILE%\.eclipse`. Updating one of
+them leaves the others on the build they already had. `-AllInstallations` installs the given
+repository into every installation that records the plugin and reports the version each of them
+carries before and after:
+
+```powershell
+pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -RepoPath <repository>
+```
+
+The mode starts no session and closes none. It refuses, naming the PIDs, while a `1cedt.exe` or the
+JVM it started belongs to a target installation: close those sessions yourself and run it again.
+`-WhatIf` prints the plan and the director command of each installation without downloading or
+installing anything, so a release can be checked before the sessions are closed.
+
+| Parameter | Purpose |
+|---|---|
+| `-AllInstallations` | Install into every installation that records the plugin. |
+| `-WhatIf` (alias `-DryRun`) | Print the plan and change nothing. Requires `-AllInstallations`. |
+| `-PythonExe` | Interpreter for `scripts/report-plugin-jars.py`, which lists the installations. Empty searches `python` and `python3`. |
+| `-JavaExe` | `java.exe` for installations whose `1cedt.ini` names no `-vm`. Empty takes `JAVA_HOME`, and with that empty too the director uses the `java` on `PATH`. |
+| `-BundleSymbolicName` | Bundle whose installations and versions are read. Defaults to `ru.aiedt.mcp.server`. |
+
+Exit codes: `0` every installation carries the installed version; `2` repository, interpreter or
+argument problem; `3` refused (an EDT of a target installation is running, or an installation
+carries a higher version and `-AllowDowngrade` was not given); `5` a director run failed; `6` a
+version was not confirmed afterwards.
+
 ## Rules worth keeping
 
 - **Never force-kill EDT** and never close a session other than the one you were asked to
