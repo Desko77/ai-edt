@@ -72,6 +72,9 @@ public class GeneralPrefTab
 
     private final IPreferenceStore store;
 
+    /** Told when a button of this tab starts (true) or stops (false) the server. */
+    private java.util.function.Consumer<Boolean> serverActedOnByHand = started -> { };
+
     /** Server, tools, network and control sections. */
     private final Composite controlServer;
 
@@ -845,6 +848,7 @@ public class GeneralPrefTab
         try
         {
             server.start(portSpinner.getSelection());
+            serverActedOnByHand.accept(Boolean.TRUE);
         }
         catch (IOException e)
         {
@@ -855,6 +859,17 @@ public class GeneralPrefTab
         refreshServerStatus();
     }
 
+    /**
+     * Names who is told when a button of this tab starts or stops the server.
+     *
+     * @param listener receives <code>true</code> after a start or restart that succeeded and
+     *     <code>false</code> after a stop
+     */
+    void whenServerIsActedOnByHand(java.util.function.Consumer<Boolean> listener)
+    {
+        serverActedOnByHand = listener == null ? started -> { } : listener;
+    }
+
     private void stopServer()
     {
         McpHttpEndpoint server = Activator.getDefault().getMcpServer();
@@ -863,6 +878,7 @@ public class GeneralPrefTab
             return;
         }
         server.stop();
+        serverActedOnByHand.accept(Boolean.FALSE);
         refreshServerStatus();
     }
 
@@ -882,6 +898,7 @@ public class GeneralPrefTab
         try
         {
             server.restart(portSpinner.getSelection());
+            serverActedOnByHand.accept(Boolean.TRUE);
         }
         catch (IOException e)
         {

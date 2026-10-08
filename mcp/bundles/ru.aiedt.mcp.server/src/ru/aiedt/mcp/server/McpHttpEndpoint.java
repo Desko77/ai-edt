@@ -939,7 +939,7 @@ public class McpHttpEndpoint
      * @throws IOException when neither the port asked for nor the one the server was on can be
      *         opened
      */
-    public void restart(int serverPort) throws IOException
+    public synchronized void restart(int serverPort) throws IOException
     {
         // Read before stopping: start() writes the field with every port it tries, so after a failure
         // it no longer names the port the server was serving on.
@@ -963,11 +963,10 @@ public class McpHttpEndpoint
                 // would take the next free port and come back reporting success, leaving the server
                 // one port away from where the caller, its own label and every configured client
                 // read it, with nothing on screen saying it had moved.
-                // Held under the monitor an ordinary start and stop take. A restart takes no monitor
-                // of its own - it must not, since it calls both - so without this a stop arriving
-                // between the refused start and this one runs against an endpoint that is not
-                // listening, finds nothing to close, returns, and leaves this start to open a
-                // listener with nobody left to close it.
+                // The whole restart holds the monitor an ordinary start and stop take (it is
+                // reentrant, so the calls above take it again without waiting). A stop that arrives
+                // during a restart therefore runs after it, against the listener the restart left,
+                // and not in the gap between the refused start and this one.
                 synchronized (this)
                 {
                     if (fallbackWindowForTest != null)

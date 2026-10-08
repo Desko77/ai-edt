@@ -73,6 +73,18 @@ public class McpSettingsPage
         tabFolder.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
 
         generalTab = new GeneralPrefTab(tabFolder);
+        // A start or a stop made with the tab's own buttons settles what a failed restart left
+        // owed: the next OK must not start a server the user has since stopped by hand.
+        generalTab.whenServerIsActedOnByHand(started -> {
+            if (started.booleanValue())
+            {
+                pendingRestart.startedByHand();
+            }
+            else
+            {
+                pendingRestart.stoppedByHand();
+            }
+        });
         generalTab.setValidationListener(this::revalidate);
         // The general tab had grown past the dialog - the user reads a name and goes straight to
         // it rather than scrolls a page. The workbench section goes last, where its side of the

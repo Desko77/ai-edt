@@ -75,4 +75,24 @@ final class PendingRestart
         pending = false;
         stoppedByFailure = false;
     }
+
+    /**
+     * Records that the user stopped the server by hand after the failed restart.
+     * <p>
+     * A server the user stopped is stopped by choice, whatever stopped it before; the next OK does
+     * not start it. The unapplied change stays owed and is applied by the next restart.
+     * </p>
+     */
+    void stoppedByHand()
+    {
+        stoppedByFailure = false;
+    }
+
+    /**
+     * Records that the user started or restarted the server by hand, which applied what was owed.
+     */
+    void startedByHand()
+    {
+        applied();
+    }
 }
