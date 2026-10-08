@@ -23,8 +23,12 @@ public final class MetadataPathMapper
     /** Directory of the common forms, which sit at the top level rather than under an owner. */
     private static final String COMMON_FORMS_DIR = "CommonForms"; //$NON-NLS-1$
 
-    /** The segment between an owner and one of its forms, as EDT spells it on disk. */
-    private static final String FORMS_SEGMENT = "Forms"; //$NON-NLS-1$
+    /**
+     * The segment between an owner and one of its forms, as EDT spells it on disk. Read by the
+     * module level as well, which has to name a form directory in a module FQN and must spell it
+     * the way this one is looked up by.
+     */
+    static final String FORMS_SEGMENT = "Forms"; //$NON-NLS-1$
 
     /** File holding the form itself. */
     private static final String FORM_FILE = "Form.form"; //$NON-NLS-1$
