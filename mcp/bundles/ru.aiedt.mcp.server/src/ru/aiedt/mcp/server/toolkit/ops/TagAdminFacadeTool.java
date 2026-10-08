@@ -833,7 +833,8 @@ public class TagAdminFacadeTool
         }
         objectFqn = check.fqn;
         // Every tag must be defined before the first assignment is made: one unknown tag refuses
-        // the whole call and nothing is assigned.
+        // the whole call and nothing is assigned. The check reads a snapshot outside the write
+        // lock, so a definition racing it still meets the operation's own refusal under the lock.
         Set<String> defined = new LinkedHashSet<>();
         for (Marker marker : context.service.getMarkers(context.project))
         {
@@ -846,37 +847,18 @@ public class TagAdminFacadeTool
                 return tagNotFound(tag);
             }
         }
-        Set<String> carried = context.service.getMarkerStorage(context.project)
-            .getMarkerNames(objectFqn);
-        List<String> toAssign = new ArrayList<>();
-        List<Map<String, Object>> skipped = new ArrayList<>();
-        for (String tag : tags)
+        MarkerWriteOutcome outcome = assignViaService(context.service, context.project, objectFqn,
+            tags);
+        if (outcome.isRefused())
         {
-            if (carried.contains(tag))
-            {
-                Map<String, Object> skip = new LinkedHashMap<>();
-                skip.put("tag", tag); //$NON-NLS-1$
-                skip.put("reason", "alreadyAssigned"); //$NON-NLS-1$ //$NON-NLS-2$
-                skipped.add(skip);
-            }
-            else
-            {
-                toAssign.add(tag);
-            }
+            return refusalOf(outcome, "assign_tag").toJson(); //$NON-NLS-1$
         }
-        if (!toAssign.isEmpty())
-        {
-            MarkerWriteOutcome outcome = context.service.assignMarkersWithOutcome(context.project,
-                objectFqn, toAssign);
-            if (outcome.isRefused())
-            {
-                return refusalOf(outcome, "assign_tag").toJson(); //$NON-NLS-1$
-            }
-        }
+        // The answer names what this operation itself changed under its write lock: a tag another
+        // call assigned in between reads as skipped, not as assigned here.
         return ToolResult.success()
             .put("objectFqn", objectFqn) //$NON-NLS-1$
-            .put("assigned", toAssign) //$NON-NLS-1$
-            .put("skipped", skipped) //$NON-NLS-1$
+            .put("assigned", outcome.getAppliedNames()) //$NON-NLS-1$
+            .put("skipped", skippedNodes(outcome.getSkippedReasons())) //$NON-NLS-1$
             .toJson();
     }
 
@@ -924,46 +906,85 @@ public class TagAdminFacadeTool
                 .toJson();
         }
         objectFqn = objectFqn.trim();
-        Set<String> carried = context.service.getMarkerStorage(context.project)
-            .getMarkerNames(objectFqn);
-        List<String> toRemove = new ArrayList<>();
-        List<Map<String, Object>> skipped = new ArrayList<>();
-        for (String tag : tags)
-        {
-            if (carried.contains(tag))
-            {
-                toRemove.add(tag);
-            }
-            else
-            {
-                Map<String, Object> skip = new LinkedHashMap<>();
-                skip.put("tag", tag); //$NON-NLS-1$
-                skip.put("reason", "notAssigned"); //$NON-NLS-1$ //$NON-NLS-2$
-                skipped.add(skip);
-            }
-        }
-        if (toRemove.isEmpty())
-        {
-            // Nothing would be removed: the answer is an error rather than a no-op success, so a
-            // caller that mistyped the object hears about it instead of reading "done".
-            return ToolResult.error("The object '" + objectFqn + "' carries none of the named " //$NON-NLS-1$ //$NON-NLS-2$
-                + "tags, so nothing was removed.")
-                    .put("reason", REASON_NOT_ASSIGNED) //$NON-NLS-1$
-                    .put("removed", toRemove) //$NON-NLS-1$
-                    .put("skipped", skipped) //$NON-NLS-1$
-                    .toJson();
-        }
-        MarkerWriteOutcome outcome = context.service.unassignMarkersWithOutcome(context.project,
-            objectFqn, toRemove);
+        MarkerWriteOutcome outcome = unassignViaService(context.service, context.project,
+            objectFqn, tags);
         if (outcome.isRefused())
         {
             return refusalOf(outcome, "unassign_tag").toJson(); //$NON-NLS-1$
         }
+        if (outcome.getAppliedNames().isEmpty())
+        {
+            // This operation removed nothing: the answer is an error rather than a no-op success,
+            // so a caller that mistyped the object hears about it instead of reading "done".
+            return ToolResult.error("The object '" + objectFqn + "' carries none of the named " //$NON-NLS-1$ //$NON-NLS-2$
+                + "tags, so nothing was removed.")
+                    .put("reason", REASON_NOT_ASSIGNED) //$NON-NLS-1$
+                    .put("removed", outcome.getAppliedNames()) //$NON-NLS-1$
+                    .put("skipped", skippedNodes(outcome.getSkippedReasons())) //$NON-NLS-1$
+                    .toJson();
+        }
+        // The answer names what this operation itself removed under its write lock: a tag another
+        // call took off in between reads as skipped, not as removed here.
         return ToolResult.success()
             .put("objectFqn", objectFqn) //$NON-NLS-1$
-            .put("removed", toRemove) //$NON-NLS-1$
-            .put("skipped", skipped) //$NON-NLS-1$
+            .put("removed", outcome.getAppliedNames()) //$NON-NLS-1$
+            .put("skipped", skippedNodes(outcome.getSkippedReasons())) //$NON-NLS-1$
             .toJson();
+    }
+
+    /**
+     * Runs the assignment through the marker service. A seam for tests: the method sits between
+     * the call's pre-checks and the operation's own write lock, the window in which another call
+     * can assign to the same object first, so a test arranges that interleaving by overriding it.
+     *
+     * @param service the marker service
+     * @param project the project
+     * @param objectFqn the object the tags go on, as the model spelled it
+     * @param tags the tag names, every one defined
+     * @return the operation's outcome
+     */
+    MarkerWriteOutcome assignViaService(MarkerManager service, IProject project, String objectFqn,
+        List<String> tags)
+    {
+        return service.assignMarkersWithOutcome(project, objectFqn, tags);
+    }
+
+    /**
+     * Runs the removal through the marker service. A seam for tests, the counterpart of
+     * {@link #assignViaService(MarkerManager, IProject, String, List)}: the method sits between
+     * the call's pre-checks and the operation's own write lock, the window in which another call
+     * can take the same tags off the object first.
+     *
+     * @param service the marker service
+     * @param project the project
+     * @param objectFqn the object the tags come off
+     * @param tags the tag names, every one defined
+     * @return the operation's outcome
+     */
+    MarkerWriteOutcome unassignViaService(MarkerManager service, IProject project,
+        String objectFqn, List<String> tags)
+    {
+        return service.unassignMarkersWithOutcome(project, objectFqn, tags);
+    }
+
+    /**
+     * The skipped part of a list answer, as the nodes the response carries.
+     *
+     * @param skippedReasons why each skipped name was not applied, in the order the operation
+     *            recorded them
+     * @return one node per name
+     */
+    private static List<Map<String, Object>> skippedNodes(Map<String, String> skippedReasons)
+    {
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (Map.Entry<String, String> skip : skippedReasons.entrySet())
+        {
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("tag", skip.getKey()); //$NON-NLS-1$
+            node.put("reason", skip.getValue()); //$NON-NLS-1$
+            skipped.add(node);
+        }
+        return skipped;
     }
 
     /**

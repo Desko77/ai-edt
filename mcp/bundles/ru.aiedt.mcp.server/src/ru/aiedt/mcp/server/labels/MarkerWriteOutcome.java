@@ -6,6 +6,12 @@
 
 package ru.aiedt.mcp.server.labels;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 import ru.aiedt.mcp.server.labels.model.Marker;
 
 /**
@@ -16,6 +22,12 @@ import ru.aiedt.mcp.server.labels.model.Marker;
  * the {@code tag_admin} facade over MCP - also needs the reason, so the edit runs through this
  * outcome instead. A refusal leaves the file and the live storage as they were; nothing here is
  * remembered between calls.
+ * </p>
+ * <p>
+ * An edit that works through a list of names - an assign or an unassign - also answers per name:
+ * which names it changed itself and which it skipped because the object already carried them, or
+ * did not. The lists are read under the manager's write lock, so they say what the edit itself
+ * found, not what an earlier snapshot guessed.
  * </p>
  */
 public final class MarkerWriteOutcome
@@ -49,6 +61,10 @@ public final class MarkerWriteOutcome
 
     private final String detail;
 
+    private final List<String> appliedNames;
+
+    private final Map<String, String> skippedReasons;
+
     /**
      * @param marker the marker the edit stored or changed, or {@code null} when there is none
      * @param changedAssignments how many assignments the edit added, moved or removed
@@ -57,10 +73,26 @@ public final class MarkerWriteOutcome
      */
     private MarkerWriteOutcome(Marker marker, int changedAssignments, String code, String detail)
     {
+        this(marker, changedAssignments, code, detail, Collections.emptyList(), Collections.emptyMap());
+    }
+
+    /**
+     * @param marker the marker the edit stored or changed, or {@code null} when there is none
+     * @param changedAssignments how many assignments the edit added, moved or removed
+     * @param code the refusal code, or {@code null} when the edit was stored
+     * @param detail a sentence for a person, never {@code null}
+     * @param appliedNames the names the edit itself assigned or removed, in call order
+     * @param skippedReasons why each remaining name of the call was not applied
+     */
+    private MarkerWriteOutcome(Marker marker, int changedAssignments, String code, String detail,
+        List<String> appliedNames, Map<String, String> skippedReasons)
+    {
         this.marker = marker;
         this.changedAssignments = changedAssignments;
         this.code = code;
         this.detail = detail;
+        this.appliedNames = Collections.unmodifiableList(new ArrayList<>(appliedNames));
+        this.skippedReasons = Collections.unmodifiableMap(new LinkedHashMap<>(skippedReasons));
     }
 
     /**
@@ -74,6 +106,21 @@ public final class MarkerWriteOutcome
     {
         return new MarkerWriteOutcome(marker, changedAssignments, null,
             "the marker file was written"); //$NON-NLS-1$
+    }
+
+    /**
+     * An edit over a list of names that was stored, with what it did to each name.
+     *
+     * @param appliedNames the names the edit itself assigned or removed, in call order
+     * @param skippedReasons a refusal reason for each name the edit did not apply
+     * @param changedAssignments how many assignments the edit added or removed
+     * @return the outcome
+     */
+    public static MarkerWriteOutcome storedPerName(List<String> appliedNames,
+        Map<String, String> skippedReasons, int changedAssignments)
+    {
+        return new MarkerWriteOutcome(null, changedAssignments, null, "the marker file was written", //$NON-NLS-1$
+            appliedNames, skippedReasons);
     }
 
     /**
@@ -142,5 +189,27 @@ public final class MarkerWriteOutcome
     public int getChangedAssignments()
     {
         return changedAssignments;
+    }
+
+    /**
+     * The names an edit over a list applied itself, in the order the call listed them. Empty for
+     * an edit that is not over a list, and for one whose every name was skipped.
+     *
+     * @return the applied names, never <code>null</code>
+     */
+    public List<String> getAppliedNames()
+    {
+        return appliedNames;
+    }
+
+    /**
+     * Why each remaining name of a list edit was not applied: {@code alreadyAssigned} for an
+     * assign, {@code notAssigned} for an unassign. Empty for an edit that is not over a list.
+     *
+     * @return the skipped name to its reason, never <code>null</code>
+     */
+    public Map<String, String> getSkippedReasons()
+    {
+        return skippedReasons;
     }
 }

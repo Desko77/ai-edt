@@ -19,6 +19,7 @@ import java.util.Arrays;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
@@ -38,6 +39,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.labels.MarkerManager;
+import ru.aiedt.mcp.server.labels.MarkerWriteOutcome;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
 /**
@@ -529,6 +531,86 @@ public class ATagAdminFacadeAnswersItsOperationsTest
         assertEquals("tagNotFound", answer.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(MarkerManager.getInstance().getMarkerStorage(project)
             .getMarkerNames("Catalog.Products").contains("One")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A tag another call assigned between this call's pre-checks and the operation's write lock is
+     * reported as skipped: the answer names what the operation itself changed, so an operation
+     * that changed nothing answers an empty {@code assigned}.
+     */
+    @Test
+    public void aTagAnotherCallAssignedFirstIsSkippedNotAssigned()
+    {
+        assertTrue(call("create_tag", "tag", "One").get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        TagAdminFacadeTool racing = new TagAdminFacadeTool()
+        {
+            @Override
+            ObjectCheck checkObject(IProject askedProject, String objectFqn)
+            {
+                return ObjectCheck.of(objectFqn.trim());
+            }
+
+            @Override
+            MarkerWriteOutcome assignViaService(MarkerManager service, IProject project,
+                String objectFqn, List<String> tags)
+            {
+                // The competing write lands in the window between the pre-checks and the lock:
+                // the operation this call runs changes nothing of its own.
+                service.assignMarkersWithOutcome(project, objectFqn, tags);
+                return service.assignMarkersWithOutcome(project, objectFqn, tags);
+            }
+        };
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("operation", "assign_tag"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", PROJECT); //$NON-NLS-1$
+        params.put("objectFqn", "Catalog.Products"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("tags", "[\"One\"]"); //$NON-NLS-1$
+        JsonObject answer = JsonParser.parseString(racing.execute(params)).getAsJsonObject();
+        assertTrue(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals(0, answer.getAsJsonArray("assigned").size()); //$NON-NLS-1$
+        JsonObject skip = answer.getAsJsonArray("skipped").get(0).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals("One", skip.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("alreadyAssigned", skip.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        // The object does carry the tag - the competing call put it there.
+        assertTrue(MarkerManager.getInstance().getMarkerStorage(project)
+            .getMarkerNames("Catalog.Products").contains("One")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A tag another call took off between this call's pre-checks and the operation's write lock is
+     * reported as skipped: an operation that removed nothing answers the {@code notAssigned}
+     * error with an empty {@code removed}, not a success naming tags it did not take off.
+     */
+    @Test
+    public void aTagAnotherCallRemovedFirstIsSkippedNotRemoved()
+    {
+        assertTrue(call("create_tag", "tag", "One").get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(call("assign_tag", "objectFqn", "Catalog.Products", "tags", "[\"One\"]") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .get("success").getAsBoolean()); //$NON-NLS-1$
+        TagAdminFacadeTool racing = new TagAdminFacadeTool()
+        {
+            @Override
+            MarkerWriteOutcome unassignViaService(MarkerManager service, IProject project,
+                String objectFqn, List<String> tags)
+            {
+                // The competing write lands in the window between the pre-checks and the lock:
+                // the operation this call runs removes nothing of its own.
+                service.unassignMarkersWithOutcome(project, objectFqn, tags);
+                return service.unassignMarkersWithOutcome(project, objectFqn, tags);
+            }
+        };
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("operation", "unassign_tag"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("projectName", PROJECT); //$NON-NLS-1$
+        params.put("objectFqn", "Catalog.Products"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("tags", "[\"One\"]"); //$NON-NLS-1$
+        JsonObject answer = JsonParser.parseString(racing.execute(params)).getAsJsonObject();
+        assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("notAssigned", answer.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(0, answer.getAsJsonArray("removed").size()); //$NON-NLS-1$
+        JsonObject skip = answer.getAsJsonArray("skipped").get(0).getAsJsonObject(); //$NON-NLS-1$
+        assertEquals("One", skip.get("tag").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("notAssigned", skip.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /** A file that does not parse refuses every write with unreadableFile. */

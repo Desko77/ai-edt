@@ -38,6 +38,8 @@ import java.util.HashMap;
 
 import java.util.HashSet;
 
+import java.util.LinkedHashMap;
+
 import java.util.List;
 
 import java.util.Map;
@@ -1066,17 +1068,24 @@ public class MarkerManager
                 else
                 {
                     MarkerStore before = storage.copy();
-                    int assigned = 0;
+                    List<String> applied = new ArrayList<>();
+                    Map<String, String> skipped = new LinkedHashMap<>();
                     for (String markerName : markerNames)
                     {
                         if (storage.assignMarker(objectFqn, markerName))
                         {
-                            assigned++;
+                            applied.add(markerName);
+                        }
+                        else
+                        {
+                            // An undefined name was already refused above, so this names a marker
+                            // the object carried when the edit itself looked.
+                            skipped.put(markerName, "alreadyAssigned"); //$NON-NLS-1$
                         }
                     }
-                    if (assigned == 0)
+                    if (applied.isEmpty())
                     {
-                        outcome = MarkerWriteOutcome.stored(null, 0);
+                        outcome = MarkerWriteOutcome.storedPerName(applied, skipped, 0);
                     }
                     else
                     {
@@ -1085,7 +1094,7 @@ public class MarkerManager
                             ? MarkerWriteOutcome.refused(refusal,
                                 "no marker was assigned to \"" + objectFqn + "\": " //$NON-NLS-1$ //$NON-NLS-2$
                                     + refusalText(refusal))
-                            : MarkerWriteOutcome.stored(null, assigned);
+                            : MarkerWriteOutcome.storedPerName(applied, skipped, applied.size());
                     }
                 }
             }
@@ -1172,17 +1181,24 @@ public class MarkerManager
                 else
                 {
                     MarkerStore before = storage.copy();
-                    int removed = 0;
+                    List<String> applied = new ArrayList<>();
+                    Map<String, String> skipped = new LinkedHashMap<>();
                     for (String markerName : markerNames)
                     {
                         if (storage.unassignMarker(objectFqn, markerName))
                         {
-                            removed++;
+                            applied.add(markerName);
+                        }
+                        else
+                        {
+                            // An undefined name was already refused above, so this names a marker
+                            // the object did not carry when the edit itself looked.
+                            skipped.put(markerName, "notAssigned"); //$NON-NLS-1$
                         }
                     }
-                    if (removed == 0)
+                    if (applied.isEmpty())
                     {
-                        outcome = MarkerWriteOutcome.stored(null, 0);
+                        outcome = MarkerWriteOutcome.storedPerName(applied, skipped, 0);
                     }
                     else
                     {
@@ -1191,7 +1207,7 @@ public class MarkerManager
                             ? MarkerWriteOutcome.refused(refusal,
                                 "no marker was removed from \"" + objectFqn + "\": " //$NON-NLS-1$ //$NON-NLS-2$
                                     + refusalText(refusal))
-                            : MarkerWriteOutcome.stored(null, removed);
+                            : MarkerWriteOutcome.storedPerName(applied, skipped, applied.size());
                     }
                 }
             }
