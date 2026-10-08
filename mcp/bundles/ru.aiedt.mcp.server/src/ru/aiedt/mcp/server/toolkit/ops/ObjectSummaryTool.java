@@ -298,7 +298,9 @@ public class ObjectSummaryTool implements IMcpTool
             {
                 return -1;
             }
-            if (md.contains("No Errors Found")) //$NON-NLS-1$
+            // The problems reader heads an empty result "# Nothing Found"; the older wording is
+            // kept for an answer that still carries it.
+            if (md.contains("No Errors Found") || md.stripLeading().startsWith("# Nothing Found")) //$NON-NLS-1$ //$NON-NLS-2$
             {
                 return 0;
             }

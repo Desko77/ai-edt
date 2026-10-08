@@ -85,4 +85,12 @@ public class ErrorCountIsUnknownWhenTheDelegateDidNotAnswerTest
         assertEquals(12, ObjectSummaryTool.errorCountFrom(
             new FixedAnswer("**Found:** 12 problems"), "Demo", "Catalog.Goods")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
+
+    /** The empty result the problems reader really writes counts as zero, not as unknown. */
+    @Test
+    public void theReadersEmptyResultIsZero()
+    {
+        assertEquals(0, ObjectSummaryTool.errorCountFrom(
+            new FixedAnswer("# Nothing Found\n\nScope: **object**\n"), "Demo", "Catalog.Goods")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
 }
