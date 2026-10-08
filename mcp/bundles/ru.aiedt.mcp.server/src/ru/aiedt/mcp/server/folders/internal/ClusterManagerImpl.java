@@ -134,6 +134,10 @@ import ru.aiedt.mcp.server.folders.repository.YamlClusterStore;
 
  * event; the resource listener drops the affected project's cache entry so the next read reloads.
 
+ * A change the service itself wrote is recognized by the bytes the file carries and skipped: the
+
+ * cache the write produced is current, and the write path has already told the listeners.
+
  * </p>
 
  */
@@ -890,17 +894,51 @@ public class ClusterManagerImpl
 
         {
 
-            invalidateCache(project);
+            clustersFileTouched(project);
 
         }
 
-        for (IProject project : affected)
+    }
+
+
+
+    /**
+
+     * Reacts to a project's clusters file having changed on disk.
+
+     * <p>
+
+     * A change this service itself wrote does not count: the cache the write produced already
+
+     * holds the file's clusters and the write path has told the listeners, so dropping the cache
+
+     * would only force the next read to reload what it has, and the listeners would hear the
+
+     * same change twice. The file carrying the bytes this store last saw is exactly that case.
+
+     * </p>
+
+     *
+
+     * @param project the project whose clusters file changed
+
+     */
+
+    void clustersFileTouched(IProject project)
+
+    {
+
+        if (repository.holdsWhatWasLastReadOrWritten(project))
 
         {
 
-            fireClustersChanged(project);
+            return;
 
         }
+
+        invalidateCache(project);
+
+        fireClustersChanged(project);
 
     }
 
