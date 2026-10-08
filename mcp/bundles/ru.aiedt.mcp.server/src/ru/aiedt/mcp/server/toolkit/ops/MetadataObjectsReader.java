@@ -20,7 +20,6 @@ import org.eclipse.emf.ecore.EStructuralFeature;
 
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
-import com._1c.g5.v8.dt.metadata.mdclass.Language;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 import ru.aiedt.mcp.server.Activator;
@@ -28,7 +27,9 @@ import ru.aiedt.mcp.server.settings.ToolParamSettings;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.DefaultLanguage;
 import ru.aiedt.mcp.server.support.ExternalProjectResolver;
+import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -367,7 +368,9 @@ public class MetadataObjectsReader
                 objects.add(new MetadataInfo(root.getName(), synonymForLanguage(root, effectiveLanguage),
                     comment(root), ExternalProjectResolver.kindOf(root), false, false));
             }
-            return formatOutput(objects, projectName, metadataType, limit);
+            // No configuration to translate a language name against and no collection to filter by
+            // type: the walk above ignored metadataType, so the answer must not claim it applied one.
+            return formatOutput(objects, projectName, metadataType, limit, false);
         }
 
         Configuration configuration = configurationProvider.getConfiguration(project);
@@ -396,7 +399,7 @@ public class MetadataObjectsReader
             }
             collectOne(configuration, collector, nameFilter, effectiveLanguage, objects);
         }
-        return formatOutput(objects, projectName, metadataType, limit);
+        return formatOutput(objects, projectName, metadataType, limit, true);
     }
 
     /**
@@ -487,12 +490,16 @@ public class MetadataObjectsReader
     /**
      * Reads an object's synonym, preferring the requested language and falling back to any non-empty
      * entry.
+     * <p>
+     * Package-private for the synonym-language test: the map is keyed by language code, and the test
+     * pins that contract from the reading side.
+     * </p>
      *
      * @param object the object
-     * @param language the requested language
+     * @param language the requested language, as a code
      * @return the synonym, or the empty string
      */
-    private static String synonymForLanguage(MdObject object, String language)
+    static String synonymForLanguage(MdObject object, String language)
     {
         EMap<String, String> synonym = object.getSynonym();
         if (synonym == null || synonym.isEmpty())
@@ -530,18 +537,24 @@ public class MetadataObjectsReader
     }
 
     /**
-     * @param language the requested language, or <code>null</code>
+     * The language the synonyms are read by.
+     * <p>
+     * The answer is a CODE, which is what the synonym map is keyed by: a language object's name
+     * ("Русский") would miss the "ru" entry and fall through to whichever synonym happens to be
+     * first. A requested value that is a language name is translated through the configuration's
+     * language list, so a caller naming the language either way reads the same entry.
+     * </p>
+     * <p>
+     * Package-private for the synonym-language test.
+     * </p>
+     *
+     * @param language the requested language, code or name, or <code>null</code>
      * @param configuration the configuration, for its default language
-     * @return the language to prefer for synonyms
+     * @return the language code to prefer for synonyms
      */
-    private static String effectiveLanguage(String language, Configuration configuration)
+    static String effectiveLanguage(String language, Configuration configuration)
     {
-        if (language != null && !language.isEmpty())
-        {
-            return language;
-        }
-        Language defaultLanguage = configuration.getDefaultLanguage();
-        return defaultLanguage != null ? defaultLanguage.getName() : DEFAULT_LANGUAGE;
+        return DefaultLanguage.resolve(language, configuration);
     }
 
     /**
@@ -600,15 +613,23 @@ public class MetadataObjectsReader
 
     /**
      * Renders the collected objects.
+     * <p>
+     * Package-private for the table and filter tests. The three free-text cells - name, synonym,
+     * comment - are escaped for a markdown table cell: a comment written across several lines or
+     * carrying a vertical bar would otherwise split its own row, and every row after it would be
+     * read against the wrong columns.
+     * </p>
      *
      * @param objects the objects
      * @param projectName the project, for the heading
      * @param metadataType the type argument, for the filter line
      * @param limit the most rows to show
+     * @param filterApplied whether the walk really narrowed itself to {@code metadataType}; the
+     *            filter line is printed only when it did, so an unfiltered walk never claims one
      * @return the markdown
      */
-    private static String formatOutput(List<MetadataInfo> objects, String projectName, String metadataType,
-        int limit)
+    static String formatOutput(List<MetadataInfo> objects, String projectName, String metadataType,
+        int limit, boolean filterApplied)
     {
         StringBuilder builder = new StringBuilder();
         builder.append("## Configuration Metadata Overview: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -616,7 +637,7 @@ public class MetadataObjectsReader
         int total = objects.size();
         int shown = Math.min(total, limit);
 
-        if (!metadataType.equals(ALL))
+        if (filterApplied && !metadataType.equals(ALL))
         {
             builder.append("**Applied filter:** ").append(metadataType).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -638,9 +659,9 @@ public class MetadataObjectsReader
         for (int i = 0; i < shown; i++)
         {
             MetadataInfo object = objects.get(i);
-            builder.append("| ").append(object.name) //$NON-NLS-1$
-                .append(" | ").append(object.synonym) //$NON-NLS-1$
-                .append(" | ").append(object.comment) //$NON-NLS-1$
+            builder.append("| ").append(MarkdownTableHelper.escapeForTable(object.name)) //$NON-NLS-1$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable(object.synonym)) //$NON-NLS-1$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable(object.comment)) //$NON-NLS-1$
                 .append(" | ").append(object.type) //$NON-NLS-1$
                 .append(" | ").append(object.hasObjectModule ? "Yes" : "-") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 .append(" | ").append(object.hasManagerModule ? "Yes" : "-") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -668,8 +689,8 @@ public class MetadataObjectsReader
             + String.join(", ", accepted); //$NON-NLS-1$
     }
 
-    /** One object, flattened to the six columns the table shows. */
-    private static final class MetadataInfo
+    /** One object, flattened to the six columns the table shows. Package-private for the tests. */
+    static final class MetadataInfo
     {
         private final String name;
 

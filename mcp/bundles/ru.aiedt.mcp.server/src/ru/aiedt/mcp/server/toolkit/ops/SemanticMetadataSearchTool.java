@@ -118,13 +118,36 @@ public class SemanticMetadataSearchTool implements IMcpTool
                 return ToolResult.error("Unknown metadataType: " + metadataType).toJson(); //$NON-NLS-1$
             }
         }
+        return ToolResult.success().put("semanticMetadataSearch", //$NON-NLS-1$
+            searchBody(cfg, query, englishType, max)).toJson();
+    }
+
+    /**
+     * Walks the configuration and builds the search answer.
+     * <p>
+     * Package-private so the ranking is testable against a configuration built in memory. The
+     * walk visits every collection however many hits it already holds: the rank of a hit is only
+     * known once the whole configuration has been seen, and stopping at the limit mid-walk would
+     * leave a stronger match - an exact name, say - unvisited behind a cap that weaker matches
+     * filled first. Sorting happens over everything found; the limit takes the head of the sorted
+     * list, and {@code matchCount} says how many were found before that cut.
+     * </p>
+     *
+     * @param cfg the configuration to walk
+     * @param query the caller's query, as written
+     * @param englishType an English singular type to restrict to, or {@code null} for any
+     * @param max the most results to return
+     * @return the answer body: query, matchCount, truncated, cancelled, results
+     */
+    static Map<String, Object> searchBody(Configuration cfg, String query, String englishType, int max)
+    {
         String needle = query.toLowerCase();
         List<Map<String, Object>> hits = new ArrayList<>();
         WatchForCancel watch = WatchForCancel.begin();
         // EMF references on Configuration include all the catalogs / documents / etc collections.
         for (EReference ref : cfg.eClass().getEAllReferences())
         {
-            if (hits.size() >= max || watch.raised())
+            if (watch.raised())
             {
                 break;
             }
@@ -142,7 +165,7 @@ public class SemanticMetadataSearchTool implements IMcpTool
             {
                 // One object is the boundary: a name, a synonym and a comment are read
                 // per object, so stopping between two leaves every hit whole.
-                if (hits.size() >= max || watch.stopHere())
+                if (watch.stopHere())
                 {
                     break;
                 }
@@ -214,18 +237,21 @@ public class SemanticMetadataSearchTool implements IMcpTool
             return na.compareToIgnoreCase(nb);
         });
 
+        int total = hits.size();
+        List<Map<String, Object>> results = total > max ? new ArrayList<>(hits.subList(0, max)) : hits;
+
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("query", query); //$NON-NLS-1$
-        body.put("matchCount", hits.size()); //$NON-NLS-1$
-        body.put("truncated", hits.size() >= max); //$NON-NLS-1$
+        body.put("matchCount", total); //$NON-NLS-1$
+        body.put("truncated", total > max); //$NON-NLS-1$
         if (watch.stopped())
         {
             // Kept apart from truncated, which says the max cap was reached and invites
             // the caller to raise it and ask again.
             body.put("cancelled", watch.note("objects")); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        body.put("results", hits); //$NON-NLS-1$
-        return ToolResult.success().put("semanticMetadataSearch", body).toJson(); //$NON-NLS-1$
+        body.put("results", results); //$NON-NLS-1$
+        return body;
     }
 
     private static String extractSynonym(MdObject obj)
