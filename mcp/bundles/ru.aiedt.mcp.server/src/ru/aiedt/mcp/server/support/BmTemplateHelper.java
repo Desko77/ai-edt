@@ -1770,6 +1770,12 @@ public final class BmTemplateHelper
             c.setText(ls);
         }
         ls.getContent().put(lang, text == null ? "" : text); //$NON-NLS-1$
+        if (text != null && !text.isEmpty())
+        {
+            // An empty string on an empty cell is a cell the file carries, not a table: a read
+            // does not list such a cell, and the extent must not grow for one.
+            settleExtent(doc);
+        }
     }
 
     /**
@@ -1929,6 +1935,12 @@ public final class BmTemplateHelper
             {
                 return outcome.error;
             }
+        }
+        if ((text != null && !text.isEmpty()) || named || (kind != null && !kind.isEmpty()))
+        {
+            // A write that left the cell as empty as it found it grows nothing: an empty string on
+            // an empty cell is a cell the file carries, not a row the table gained.
+            settleExtent(doc);
         }
         return null;
     }
@@ -3421,6 +3433,7 @@ public final class BmTemplateHelper
         rect.setHeight(mergeSpan(fromRow, toRow));
         merge.setPosition(rect);
         doc.getMerges().add(merge);
+        settleExtent(doc);
     }
 
     /**
@@ -3524,6 +3537,7 @@ public final class BmTemplateHelper
         // An EMap put replaces the value under a key that is already there, so naming an area twice
         // moves it instead of leaving two areas contending for one name.
         doc.getNamedItems().put(name, item);
+        settleExtent(doc);
     }
 
     private static Area areaOf(String kind, int fromRow, int fromCol, int toRow, int toCol)
@@ -3825,6 +3839,7 @@ public final class BmTemplateHelper
         moveDocumentAreas(doc, true, at, count, Axis.ROW);
         moveViewPointers(doc, true, at, count, Axis.ROW);
         moveHeight(doc, true, at, count);
+        settleExtent(doc);
         outcome.lastRow = lastRowOf(doc);
         return outcome;
     }
@@ -3879,6 +3894,7 @@ public final class BmTemplateHelper
         moveDocumentAreas(doc, false, first, count, Axis.ROW);
         moveViewPointers(doc, false, first, count, Axis.ROW);
         moveHeight(doc, false, first, count);
+        settleExtent(doc);
         outcome.lastRow = lastRowOf(doc);
         return outcome;
     }
@@ -3955,10 +3971,7 @@ public final class BmTemplateHelper
             repointNoteRows(copy, targetFirst + i, delta);
         }
         replaceMergesOverRange(doc, sourceFirst, targetFirst, count, outcome, Axis.ROW);
-        if (doc.getHeight() > 0)
-        {
-            doc.setHeight(Math.max(doc.getHeight(), targetFirst + count));
-        }
+        settleExtent(doc);
         outcome.lastRow = lastRowOf(doc);
         return outcome;
     }
@@ -4068,6 +4081,7 @@ public final class BmTemplateHelper
             Collections.<Integer> emptyList());
         moveDocumentAreas(doc, true, at, count, Axis.COLUMN);
         moveViewPointers(doc, true, at, count, Axis.COLUMN);
+        settleExtent(doc);
         outcome.lastColumn = lastColumnOf(doc);
         return outcome;
     }
@@ -4123,6 +4137,7 @@ public final class BmTemplateHelper
             removedDrawingIds);
         moveDocumentAreas(doc, false, first, count, Axis.COLUMN);
         moveViewPointers(doc, false, first, count, Axis.COLUMN);
+        settleExtent(doc);
         outcome.lastColumn = lastColumnOf(doc);
         return outcome;
     }
@@ -4246,6 +4261,7 @@ public final class BmTemplateHelper
             }
         }
         replaceMergesOverRange(doc, sourceFirst, targetFirst, count, outcome, Axis.COLUMN);
+        settleExtent(doc);
         outcome.lastColumn = lastColumnOf(doc);
         return outcome;
     }
@@ -4450,6 +4466,50 @@ public final class BmTemplateHelper
             }
         }
         return maxKey + 1;
+    }
+
+    /**
+     * Settles the two numbers a reader takes as the table's size: the document's declared height
+     * and the declared size of its own column set.
+     * <p>
+     * Both are the last row and the last column the content reaches, by the same measure the row
+     * and column operations already work with - the rows carrying a format, cells or a column set
+     * of their own, the merges and whole-row merges, the named areas, the row groups, the drawings
+     * and the areas they read from, the print and repeat areas, and the declared numbers
+     * themselves. The platform reads the height as the table's number of rows and the set size as
+     * its number of columns, so a document written without them answers zero rows and zero columns
+     * however much it holds.
+     * </p>
+     * <p>
+     * The numbers only grow here. A document that declares more than it holds keeps what it
+     * declares, so a file that already answers the platform correctly is left as it was. A removal
+     * lowers them where it happens, through the declared numbers the row and column removals carry
+     * with them; this is the floor under that, not a replacement for it.
+     * </p>
+     *
+     * @param doc the spreadsheet; may be <code>null</code>
+     */
+    private static void settleExtent(SpreadsheetDocument doc)
+    {
+        if (doc == null)
+        {
+            return;
+        }
+        int rows = lastRowOf(doc);
+        if (rows > doc.getHeight())
+        {
+            doc.setHeight(rows);
+        }
+        int columns = lastColumnOf(doc);
+        if (columns > 0)
+        {
+            ensureColumnSet(doc);
+            Columns set = doc.getColumns();
+            if (set.getSize() < columns)
+            {
+                set.setSize(columns);
+            }
+        }
     }
 
     /**
@@ -6001,8 +6061,12 @@ public final class BmTemplateHelper
      * {@link #setCellText} / {@link #mergeCells}. Read-only. The moxel row/cell
      * maps are sparse (only populated rows/cols exist), so {@code rowCount} /
      * {@code colCount} are the maximum populated (or merged) 1-based indices -
-     * 0 when the sheet is empty. Indices are reported 1-based (row 1 = the
-     * physical top-left), the inverse of {@link #setCellText} /
+     * 0 when the sheet is empty. The declared extent counts as populated: the
+     * declared height and the size of the column sets are the row and column
+     * counts the platform answers with, so a sheet whose cells are listed short
+     * of its declared extent reads as the extent it declares. Indices are
+     * reported 1-based (row 1 = the physical top-left), the inverse of
+     * {@link #setCellText} /
      * {@link #mergeCells}: the moxel model stores 0-based keys internally and
      * this read adds 1 at the boundary. Populates:
      * <ul>
@@ -6111,6 +6175,19 @@ public final class BmTemplateHelper
                 Map<String, Object> dm = new LinkedHashMap<>();
                 dm.put("id", Integer.valueOf(d.getDrawingId())); //$NON-NLS-1$
                 drawings.add(dm);
+            }
+            // The declared extent counts too. A sheet answers with the rows and columns it holds,
+            // and the platform reads the row count from the declared height and the column count
+            // from the declared size of the column set - a template whose cells were written but
+            // whose extent was never settled holds rows the listed cells do not name. Reporting the
+            // listed cells alone would answer a smaller sheet than the file carries.
+            maxRow = Math.max(maxRow, doc.getHeight());
+            for (Columns set : columnSetsOf(doc))
+            {
+                if (set != null)
+                {
+                    maxCol = Math.max(maxCol, set.getSize());
+                }
             }
         }
         Map<String, Object> out = new LinkedHashMap<>();
@@ -6337,6 +6414,7 @@ public final class BmTemplateHelper
             td.setValue(McoreFactory.eINSTANCE.createUndefinedValue());
         }
         doc.getDrawings().add(d);
+        settleExtent(doc);
         return id;
     }
 
