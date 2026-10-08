@@ -139,6 +139,7 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
                 order.add("release"); //$NON-NLS-1$
                 return true;
             }, () -> order.add("launcher"), () -> { //$NON-NLS-1$
+                order.add("reconnect"); //$NON-NLS-1$
                 throw new java.io.IOException("connectInfobase failed"); //$NON-NLS-1$
             });
             fail("a reconnection that failed has to reach the caller"); //$NON-NLS-1$

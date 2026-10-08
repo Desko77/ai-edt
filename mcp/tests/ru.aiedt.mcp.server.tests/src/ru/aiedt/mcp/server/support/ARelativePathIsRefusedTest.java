@@ -41,24 +41,26 @@ public class ARelativePathIsRefusedTest
     @Test
     public void aRelativeTargetIsRefused()
     {
+        String target = "relative/target"; //$NON-NLS-1$
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.convertExternalToXml(
-            ANY_PROJECT, null, "C:/temp/absolute-source.epf", "relative/target"); //$NON-NLS-1$ //$NON-NLS-2$
+            ANY_PROJECT, null, "C:/temp/absolute-source.epf", target); //$NON-NLS-1$
 
         assertFalse(r.ok);
         assertTrue("the refusal names what is wrong: " + r.error, r.error.contains("absolute")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(r.error, r.error.contains("relative/target")); //$NON-NLS-1$
+        assertTrue(r.error, r.error.contains(java.nio.file.Paths.get(target).toString()));
     }
 
     /** A relative outputPath in a .cf export is refused before anything is resolved. */
     @Test
     public void aRelativeOutputIsRefused()
     {
+        String output = "relative/export.cf"; //$NON-NLS-1$
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.exportConfigurationCf(
-            ANY_PROJECT, null, "relative/export.cf"); //$NON-NLS-1$
+            ANY_PROJECT, null, output);
 
         assertFalse(r.ok);
         assertTrue("the refusal names what is wrong: " + r.error, r.error.contains("absolute")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(r.error, r.error.contains("relative/export.cf")); //$NON-NLS-1$
+        assertTrue(r.error, r.error.contains(java.nio.file.Paths.get(output).toString()));
         assertTrue(ErrorTags.INVALID_OUTPUT_PATH.wire().equals(r.failureKind));
     }
 
