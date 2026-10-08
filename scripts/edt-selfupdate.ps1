@@ -2,9 +2,11 @@
 .SYNOPSIS
   Self-update the EDT MCP plugin into ONE running 1C:EDT session (the dev/test
   workspace), without touching any other EDT session on the same installation. With
-  -AllInstallations, install into EVERY installation that carries the plugin while no
-  EDT of those installations is running - the release-checklist step that makes all
-  installations on the machine hold the same build.
+  -AllInstallations, work on the installations that carry the plugin while no EDT of
+  those installations is running - the release-checklist step that makes all
+  installations on the machine hold the same build. -AllInstallations alone prints what
+  it found and installs nothing; -Every or -InstallationMatch says which installations
+  the run works on.
 
 .DESCRIPTION
   One running session (default mode). Steps:
@@ -33,15 +35,18 @@
        where each of them reads it from - its own configuration area or a shared profile
        in the user's home. One place decides what an installation is, so the installer
        and the jar report never disagree.
-    2. Read the version each installation holds now, the highest among its records: a
-       bundle recorded in a shared profile is the one that wins over the install's file.
-    3. Refuse the whole run while any 1cedt.exe or javaw.exe of a target installation is
-       alive, naming the PIDs. No process is closed or killed in this mode, and no
-       session is started: close them yourself and re-run.
-    4. Run the p2 director of EACH target installation, with the -vm from that
-       installation's 1cedt.ini.
+    2. Print every installation found with its EDT version, every record of the plugin it
+       holds and which of them it actually loads, and the java its director would run.
+       With -Every or -InstallationMatch the run then works on the installations named;
+       with neither it stops here and installs nothing.
+    3. Refuse the whole run when a record belongs to no installation found here, when a
+       bundles.info cannot be read, or while any 1cedt.exe or javaw.exe of a selected
+       installation is alive, naming the PIDs. No process is closed or killed in this
+       mode, and no session is started: close them yourself and re-run.
+    4. Run the p2 director of EACH selected installation, with the java named by that
+       installation's ini, then -JavaExe, then JAVA_HOME, then the java on PATH.
     5. Read the versions back and print installation / before / after, exiting non-zero
-       unless every installation carries the installed version.
+       unless every selected installation carries the installed version.
 
   -WhatIf prints that plan without downloading, installing or otherwise changing
   anything.
@@ -54,8 +59,9 @@
   is mid p2-operation); if it does fail on a lock, this script reports it and relaunches
   the dev session with the existing (un-updated) plugin so you are never left without an IDE.
 
-  Exit codes: 0 done; 2 repository or argument problem; 3 refused (an EDT of a target
-  installation is running, or a downgrade without -AllowDowngrade); 4 the session did not
+  Exit codes: 0 done; 2 repository or argument problem; 3 refused (no installation named,
+  a record of no installation found here, an unreadable bundles.info, an EDT of a selected
+  installation running, or a downgrade without -AllowDowngrade); 4 the session did not
   close; 5 the director failed; 6 the version could not be confirmed afterwards; 7 the
   session could not be relaunched.
 
@@ -76,6 +82,10 @@
 .EXAMPLE
   pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -WhatIf -RepoPath .\mcp\repositories\ru.aiedt.mcp.server.repository\target\repository
   Which installations would take this build, and which are held back by a running EDT.
+
+.EXAMPLE
+  pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -Every -RepoPath .\mcp\repositories\ru.aiedt.mcp.server.repository\target\repository
+  Install into every installation found. -InstallationMatch <substring> names them one by one.
 #>
 [CmdletBinding()]
 param(
@@ -112,10 +122,15 @@ param(
     # First install of a NEW feature id (not yet in the p2 profile): omit -uninstallIU so
     # the director does not hard-fail trying to remove an IU that is not installed.
     [switch]$SkipUninstall,
-    # Closed-EDT mode: install into EVERY installation that carries the plugin, one
-    # director run each, instead of into one running session. Refuses while an EDT of a
-    # target installation is running - no session is closed, killed or started.
+    # Closed-EDT mode: work on the installations that carry the plugin, one director run each,
+    # instead of on one running session. Refuses while an EDT of a target installation is running -
+    # no session is closed, killed or started.
     [switch]$AllInstallations,
+    # Which installations to install into: a substring of the installation path, repeatable. Only
+    # the named ones are touched, and a substring matching none is an error rather than a no-op.
+    [string[]]$InstallationMatch = @(),
+    # Install into every installation found. The other way to name them is -InstallationMatch.
+    [switch]$Every,
     # Print the plan of -AllInstallations and change nothing.
     [Alias('DryRun')]
     [switch]$WhatIf,
@@ -139,6 +154,18 @@ function Write-Err2($m) { Write-Host "[selfupdate] ERROR: $m" -ForegroundColor R
 
 if ($WhatIf -and -not $AllInstallations) {
     Write-Err2 "-WhatIf belongs to -AllInstallations: the single-session mode changes a running session and has no dry run."
+    exit 2
+}
+if ($InstallationMatch.Count -gt 0 -and -not $AllInstallations) {
+    Write-Err2 "-InstallationMatch belongs to -AllInstallations: the single-session mode works on the one running session."
+    exit 2
+}
+if ($Every -and -not $AllInstallations) {
+    Write-Err2 "-Every belongs to -AllInstallations: the single-session mode works on the one running session."
+    exit 2
+}
+if ($Every -and $InstallationMatch.Count -gt 0) {
+    Write-Err2 "-Every and -InstallationMatch name the installations two ways. Pass one of them."
     exit 2
 }
 
@@ -343,8 +370,8 @@ $repoVersion = $repoInfo.Version
 if ($builtJar) { Write-Note "  bundle: $($builtJar.Name)" }
 
 # ---------------------------------------------------------------------------
-# 0b. -AllInstallations: install into every installation that records the plugin
-#     while no EDT of those installations is running (closed-EDT mode)
+# 0b. -AllInstallations: work on the installations that record the plugin while no EDT of
+#     the named ones is running (closed-EDT mode)
 # ---------------------------------------------------------------------------
 if ($AllInstallations) {
 
@@ -404,29 +431,39 @@ if ($AllInstallations) {
         return $found
     }
 
-    # The java.exe an installation's own launcher would use. The director runs without a session,
-    # so there is no command line to take one from: the ini of the installation names it, and an
-    # installation the 1C launcher starts has none written down - for those the caller's -JavaExe
-    # or JAVA_HOME answers, and with neither the director falls back to the java on PATH.
+    # The java.exe an installation's director runs on, and where that choice came from. The director
+    # runs without a session, so there is no command line to take one from. The order is the ini of
+    # the installation, the caller's -JavaExe, then JAVA_HOME, then the java on PATH. The source
+    # travels with the path because the last of the four is the one worth naming before an install:
+    # a JAVA_HOME of another version is a choice, a java found on PATH is a guess.
     function Get-InstallJavaExe([string]$installDir) {
-        $ini = Join-Path $installDir '1cedt.ini'
-        if (Test-Path -LiteralPath $ini) {
+        # The file on disk does not always follow the executable's name. Both names a 1C:EDT
+        # launcher reads are tried, and the first with a -vm wins.
+        foreach ($name in @('1cedt.ini', '1cedtc.ini')) {
+            $ini = Join-Path $installDir $name
+            if (-not (Test-Path -LiteralPath $ini)) { continue }
             $lines = @(Get-Content -LiteralPath $ini)
             for ($i = 0; $i -lt $lines.Count - 1; $i++) {
                 if ($lines[$i].Trim() -ne '-vm') { continue }
                 $value = $lines[$i + 1].Trim()
                 $console = $value -replace 'javaw\.exe$', 'java.exe'
-                if (Test-Path -LiteralPath $console) { return $console }
-                if (Test-Path -LiteralPath $value) { return $value }
+                if (Test-Path -LiteralPath $console) {
+                    return [PSCustomObject]@{ Path = $console; Source = "-vm in $ini" }
+                }
+                if (Test-Path -LiteralPath $value) {
+                    return [PSCustomObject]@{ Path = $value; Source = "-vm in $ini" }
+                }
                 break
             }
         }
-        if ($JavaExe) { return $JavaExe }
+        if ($JavaExe) { return [PSCustomObject]@{ Path = $JavaExe; Source = '-JavaExe' } }
         if ($env:JAVA_HOME) {
             $fromHome = Join-Path $env:JAVA_HOME 'bin\java.exe'
-            if (Test-Path -LiteralPath $fromHome) { return $fromHome }
+            if (Test-Path -LiteralPath $fromHome) {
+                return [PSCustomObject]@{ Path = $fromHome; Source = 'JAVA_HOME' }
+            }
         }
-        return $null
+        return [PSCustomObject]@{ Path = $null; Source = 'PATH' }
     }
 
     # The version of EDT an installation carries, for the table.
@@ -440,15 +477,25 @@ if ($AllInstallations) {
         return $null
     }
 
-    # What an installation loads now: the highest version among its records. A bundle recorded in a
-    # shared profile is the one that wins over the same bundle in the installation's own file, so
-    # the highest of them is what a session started from this installation would run.
-    function Get-RecordedVersion($records) {
-        $best = $null
+    # The record of an installation its launcher reads bundles from, or $null when the report marks
+    # none. The report decides that by the configuration area the installation uses; the other
+    # records are areas it stopped reading from.
+    function Get-ActiveRecord($records) {
         foreach ($record in @($records)) {
-            foreach ($version in @($record.versions)) {
-                if (-not $best -or (Compare-BundleVersion $version $best) -gt 0) { $best = $version }
-            }
+            if ($record.active) { return $record }
+        }
+        return $null
+    }
+
+    # What an installation loads now: the highest version in its active record, or $null when the
+    # report marks none. A build recorded only in an area the launcher ignores is not what runs, so
+    # the version there does not decide whether this installation needs the build.
+    function Get-RecordedVersion($records) {
+        $active = Get-ActiveRecord $records
+        if (-not $active) { return $null }
+        $best = $null
+        foreach ($version in @($active.versions)) {
+            if (-not $best -or (Compare-BundleVersion $version $best) -gt 0) { $best = $version }
         }
         return $best
     }
@@ -489,12 +536,32 @@ if ($AllInstallations) {
     $report = Get-InstallationReport $python $reportPath $BundleSymbolicName
     if (-not $report) { exit 2 }
 
+    # A record belonging to no installation here is a build this run would leave alone, and a
+    # bundles.info that could not be read is a build the report is guessing about. Either one stops
+    # the run before anything is installed: installing past them would end in a report of success
+    # over a file the report never read.
+    $orphans = @($report.unclaimed)
+    $unreadable = @($report.unreadable)
+    if ($orphans.Count -gt 0 -or $unreadable.Count -gt 0) {
+        if ($orphans.Count -gt 0) {
+            Write-Err2 "$($orphans.Count) bundles.info record $BundleSymbolicName for an installation that is not here:"
+            foreach ($orphan in $orphans) {
+                Write-Note ("  {0} = {1}" -f $orphan.bundlesInfo, (@($orphan.versions) -join ', '))
+            }
+        }
+        if ($unreadable.Count -gt 0) {
+            Write-Err2 "$($unreadable.Count) bundles.info could not be read:"
+            foreach ($entry in $unreadable) {
+                Write-Note ("  {0}: {1}" -f $entry.bundlesInfo, $entry.reason)
+            }
+        }
+        Write-Step "Nothing was installed."
+        exit 3
+    }
+
     $entries = @($report.installations)
     if ($entries.Count -eq 0) {
         Write-Err2 "No installation records $BundleSymbolicName. Nothing to install into."
-        foreach ($orphan in @($report.unclaimed)) {
-            Write-Note "  recorded but attributed to no installation: $($orphan.bundlesInfo)"
-        }
         exit 3
     }
 
@@ -506,21 +573,28 @@ if ($AllInstallations) {
         $status = 'install'
         if ($running.Count -gt 0) {
             $status = 'running'
-        } elseif ($before -and (Compare-BundleVersion $repoVersion $before) -lt 0) {
+        } elseif (-not $before) {
+            # No record is marked active, so what this installation loads is not known and neither
+            # is whether it needs the build. Nothing is written over an answer the report lacks.
+            $status = 'no active record'
+        } elseif ((Compare-BundleVersion $repoVersion $before) -lt 0) {
             if ($AllowDowngrade) { $status = 'downgrade-allowed' } else { $status = 'downgrade' }
-        } elseif ($before -and (Compare-BundleVersion $repoVersion $before) -eq 0) {
+        } elseif ((Compare-BundleVersion $repoVersion $before) -eq 0) {
             $status = 'current'
         }
+        $java = Get-InstallJavaExe $dir
         $plan += [PSCustomObject]@{
-            Install = $dir
-            Edt     = Get-InstallProductVersion $dir
-            Before  = $before
-            After   = $before
-            Status  = $status
-            Records = @($entry.records)
-            Running = $running
-            Java    = Get-InstallJavaExe $dir
-            Launch  = [string]$entry.launcher
+            Install  = $dir
+            Edt      = Get-InstallProductVersion $dir
+            Before   = $before
+            After    = $before
+            Status   = $status
+            Records  = @($entry.records)
+            Running  = $running
+            Java     = $java.Path
+            JavaFrom = $java.Source
+            Launch   = [string]$entry.launcher
+            Selected = $false
         }
     }
 
@@ -528,14 +602,50 @@ if ($AllInstallations) {
     foreach ($p in $plan) {
         Write-PlanLine $p
         foreach ($record in $p.Records) {
-            Write-Note ("    {0} {1} = {2}" -f ($record.kind + ':'), $record.bundlesInfo, (@($record.versions) -join ', '))
+            Write-Note ("    {0} {1} {2} = {3}" -f ($record.kind + ':'),
+                        $(if ($record.active) { '(active)' } else { '        ' }),
+                        $record.bundlesInfo, (@($record.versions) -join ', '))
+        }
+        if ($p.Java) {
+            Write-Note ("    java: {0}  ({1})" -f $p.Java, $p.JavaFrom)
+        } else {
+            Write-Note ("    java: none named by the installation; the director would take the one on PATH (-JavaExe <java.exe> says which)")
         }
     }
+
+    # Which installations this run works on. -Every names all of them, -InstallationMatch names them
+    # by a substring of the path, and with neither the table above is the whole answer.
+    if ($Every) {
+        $selected = @($plan)
+    } elseif ($InstallationMatch.Count -gt 0) {
+        $selected = @()
+        $unmatched = @()
+        foreach ($pattern in $InstallationMatch) {
+            $hits = @($plan | Where-Object {
+                $_.Install.IndexOf($pattern, [StringComparison]::OrdinalIgnoreCase) -ge 0 })
+            if ($hits.Count -eq 0) { $unmatched += $pattern }
+            $selected += $hits
+        }
+        $selected = @($selected | Sort-Object Install -Unique)
+        if ($unmatched.Count -gt 0) {
+            Write-Err2 "No installation matches: $($unmatched -join '; ')"
+            Write-Step "Nothing was installed."
+            exit 3
+        }
+    } else {
+        Write-Step "Nothing was installed: -AllInstallations names the installations it found and installs into none of them."
+        Write-Note "  -InstallationMatch <substring of the path>   one or more of them (repeatable)"
+        Write-Note "  -Every                                       all of them"
+        Write-Note "  Add -WhatIf to print what the director would run and install nothing."
+        exit 3
+    }
+    foreach ($p in $selected) { $p.Selected = $true }
 
     # Each installation's own director: it installs into the profile that installation is
     # configured with, which for a read-only installation is the one in the user's home.
     $actions = @()
     foreach ($p in $plan) {
+        if (-not $p.Selected) { continue }
         if ($p.Status -ne 'install' -and $p.Status -ne 'downgrade-allowed') { continue }
         $launcher = $p.Launch
         if (-not $launcher -or -not (Test-Path -LiteralPath $launcher)) {
@@ -555,13 +665,14 @@ if ($AllInstallations) {
         $actions += [PSCustomObject]@{ Install = $p.Install; Launcher = $launcher; Arguments = $arguments }
     }
 
-    $running = @($plan | Where-Object { $_.Status -eq 'running' })
-    $refused = @($plan | Where-Object { $_.Status -eq 'downgrade' })
+    $running = @($plan | Where-Object { $_.Selected -and $_.Status -eq 'running' })
+    $refused = @($plan | Where-Object { $_.Selected -and $_.Status -eq 'downgrade' })
+    $unread = @($plan | Where-Object { $_.Selected -and $_.Status -eq 'no active record' })
 
     if ($WhatIf) {
         Write-Step "-WhatIf: nothing was downloaded, installed or otherwise changed."
         if ($actions.Count -eq 0) {
-            Write-Note "  Every installation already carries $repoVersion."
+            Write-Note "  Every installation named already carries $repoVersion."
         } else {
             Write-Note "  The director would run:"
             foreach ($a in $actions) {
@@ -583,13 +694,17 @@ if ($AllInstallations) {
         Write-Err2 "$($refused.Count) installation(s) carry a higher version than $repoVersion. Re-run with -AllowDowngrade to replace it."
         foreach ($p in $refused) { Write-Note "  $($p.Install) is at $($p.Before)" }
     }
-    if ($running.Count -gt 0 -or $refused.Count -gt 0) {
+    if ($unread.Count -gt 0) {
+        Write-Err2 "$($unread.Count) installation(s) have no record the report marks as the one they load:"
+        foreach ($p in $unread) { Write-Note "  $($p.Install)" }
+    }
+    if ($running.Count -gt 0 -or $refused.Count -gt 0 -or $unread.Count -gt 0) {
         Write-Step "Nothing was installed."
         exit 3
     }
     if ($WhatIf) { exit 0 }
     if ($actions.Count -eq 0) {
-        Write-Step "Every installation already carries $repoVersion. Nothing to do."
+        Write-Step "Every installation named already carries $repoVersion. Nothing to do."
         exit 0
     }
 
@@ -620,6 +735,7 @@ if ($AllInstallations) {
     }
     foreach ($p in $plan) {
         $p.After = Get-ReportedVersion $after $p.Install
+        if (-not $p.Selected) { continue }
         if ($p.Status -ne 'install' -and $p.Status -ne 'downgrade-allowed') { continue }
         if ($p.After -eq $repoVersion) { $p.Status = 'updated' } else { $p.Status = 'NOT CONFIRMED' }
     }
@@ -636,7 +752,7 @@ if ($AllInstallations) {
         Write-Err2 "The version was not confirmed in: $(@($unconfirmed | ForEach-Object { $_.Install }) -join '; ')"
         exit 6
     }
-    Write-Step "Every installation that records the plugin carries $repoVersion."
+    Write-Step "Every installation named carries $repoVersion."
     exit 0
 }
 
