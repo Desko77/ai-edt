@@ -54,7 +54,7 @@ public class ARelativePathIsRefusedTest
     public void aRelativeOutputIsRefused()
     {
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.exportConfigurationCf(
-            ANY_PROJECT, null, "relative/export.cf", true); //$NON-NLS-1$
+            ANY_PROJECT, null, "relative/export.cf"); //$NON-NLS-1$
 
         assertFalse(r.ok);
         assertTrue("the refusal names what is wrong: " + r.error, r.error.contains("absolute")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -67,7 +67,7 @@ public class ARelativePathIsRefusedTest
     public void anAbsoluteOutputIsNotRefusedForBeingAbsolute()
     {
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.exportConfigurationCf(
-            ANY_PROJECT, null, "C:/temp/absolute-export.cf", true); //$NON-NLS-1$
+            ANY_PROJECT, null, "C:/temp/absolute-export.cf"); //$NON-NLS-1$
 
         assertFalse(r.ok);
         assertFalse("an absolute path is not refused as relative: " + r.error, //$NON-NLS-1$
