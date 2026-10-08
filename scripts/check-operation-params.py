@@ -601,11 +601,36 @@ def facade_common_reads(source: str, handlers: set[str], depth: int = 5,
     return names
 
 
+def resolve_body(called: str, call_site: str, holder: str) -> tuple[str, str]:
+    """The body of `called`, in `holder` or in the class the call site names.
+
+    A branch hands `params` to helpers of other classes too - `SnapshotKeeper.run(params)` - and
+    what those read sits in that class's file, not in the facade's. Returned beside the body is
+    the source the body came from, so the next level of calls is looked up in the right file.
+    Looking in the facade alone left such a read out of the map, and the guard then refused a
+    call that works.
+    """
+    body = method_body(holder, called)
+    if body:
+        return body, holder
+    owner = re.search(r"\b([A-Z]\w+)\s*\.\s*" + re.escape(called) + r"\s*\(", call_site)
+    if owner:
+        path = OPS / f"{owner.group(1)}.java"
+        if path.is_file():
+            other = path.read_text(encoding="utf-8")
+            body = method_body(other, called)
+            if body:
+                return body, other
+    return "", holder
+
+
 def branch_deep_reads(branch: str, source: str, dispatch: str, depth: int = 5) -> set[str]:
     """What the methods a dispatch branch hands `params` to read, down to `depth` calls.
 
     `parameters_of` follows one call; a branch like `case "backup": return runSnapshotExport(params)`
-    may read further down. These reads go into the operation's union only - the set the
+    may read further down. A method reached from the branch may live in another class - called as
+    `Owner.method(params)` - and is followed into that class's file, as far as the calls keep
+    handing the map down. These reads go into the operation's union only - the set the
     unread-argument guard checks - and not into what its help prints. `execute` and the dispatch
     text are left out: walking them would give the branch the reads of every other branch. A
     method that hands the map on to another tool - `new SyncControlTool().execute(forwarded)`
@@ -613,23 +638,25 @@ def branch_deep_reads(branch: str, source: str, dispatch: str, depth: int = 5) -
     """
     names: set[str] = set()
     seen: set[str] = {"execute"}
-    frontier = re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", branch)
+    frontier = [(method, branch, source) for method in
+                re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", branch)]
     for _ in range(depth):
-        following: list[str] = []
-        for method in frontier:
+        following: list[tuple[str, str, str]] = []
+        for method, call_site, holder in frontier:
             if method in seen or method in CONTROL_WORDS:
                 continue
             seen.add(method)
-            body = method_body(source, method)
+            body, found_in = resolve_body(method, call_site, holder)
             if dispatch:
                 body = body.replace(dispatch, " ", 1)
             if not body:
                 continue
             names |= set(EXTRACT.findall(body))
-            names |= names_read_through_a_loop(body, source)
+            names |= names_read_through_a_loop(body, found_in)
             for class_name in DELEGATE.findall(body):
                 names |= schema_parameters(class_name) or set()
-            following.extend(re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", body))
+            following.extend((called, body, found_in) for called in
+                             re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", body))
         frontier = following
     return names
 

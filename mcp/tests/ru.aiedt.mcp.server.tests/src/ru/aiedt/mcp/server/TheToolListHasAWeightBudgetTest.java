@@ -220,8 +220,13 @@ public class TheToolListHasAWeightBudgetTest
      * (measured 08.10: 2904). Its five write doors are hidden under Canonical and weigh
      * nothing here.
      * </p>
+     * <p>
+     * And from 191599 to 191852 for childName and name on extension_workshop: borrow_child reads
+     * the child's name from either spelling, and the schema is the only place a client learns
+     * a parameter exists. Measured 08.10: 191852.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 191599;
+    private static final int DOCUMENT_BUDGET = 191852;
 
     private LiveServer server;
 

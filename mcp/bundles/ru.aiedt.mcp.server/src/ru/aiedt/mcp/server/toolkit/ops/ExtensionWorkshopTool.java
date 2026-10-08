@@ -121,6 +121,11 @@ public class ExtensionWorkshopTool implements IMcpTool
                     + "objectFqns and this runKey to fetch the final per-FQN batchResults.") //$NON-NLS-1$
             .stringProperty("childKind", //$NON-NLS-1$
                 "borrow_child: Attribute / TabularSection / Form / Template") //$NON-NLS-1$
+            .stringProperty("childName", //$NON-NLS-1$
+                "borrow_child: the child's name when objectFqn names the owner; read when name " //$NON-NLS-1$
+                    + "is not given.") //$NON-NLS-1$
+            .stringProperty("name", //$NON-NLS-1$
+                "borrow_child: the child's name; childName is read when this is not given.") //$NON-NLS-1$
             .stringProperty("itemName", //$NON-NLS-1$
                 "borrow_form_item: the item you mean to change. The item itself is not " //$NON-NLS-1$
                     + "borrowed - the form is, and the item is then yours to change.") //$NON-NLS-1$
