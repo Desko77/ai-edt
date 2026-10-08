@@ -9,8 +9,10 @@ as a ``file:`` URL) while the jar is found by walking a directory.
 
 The same files answer the other question the script is asked - which installations carry the bundle -
 and that answer decides where an install goes. It is checked on a made-up set of installations: one
-reading the bundles.info inside itself, one reading a shared profile in the user's home, and a set of
-installations at equal depth that the relative ``-configuration`` alone cannot tell apart.
+reading the bundles.info inside itself, one whose profile in the user's home is named after the hash
+of its path, a profile left behind by a removed installation, and an installation whose ini names the
+area it loads. Which of an installation's records its launcher actually reads is checked on the same
+set, and so is a bundles.info that cannot be read at all.
 
 Run: python3 scripts/tests/test_report_plugin_jars.py
 """
@@ -23,6 +25,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
@@ -96,14 +99,10 @@ class TheReportNamesTheStrayJar(unittest.TestCase):
         self.assertIn("  none", lines)
 
 
-def make_installation(directory, launcher="1cedtc.exe", platform=None):
-    """An installation directory: a launcher, and optionally the platform bundle it carries."""
+def make_installation(directory, launcher="1cedtc.exe"):
+    """An installation directory: a launcher, which is what marks the directory as one."""
     directory.mkdir(parents=True, exist_ok=True)
     (directory / launcher).write_bytes(b"")
-    if platform:
-        plugins = directory / "plugins"
-        plugins.mkdir(exist_ok=True)
-        (plugins / ("org.eclipse.platform_%s.v20250101-0000" % platform)).mkdir()
     return directory
 
 
@@ -134,6 +133,26 @@ class AnInstallationIsFoundByItsLauncher(unittest.TestCase):
         self.assertEqual("1cedtc.exe", launcher.name)
 
 
+def write_profile(root, install, version, lines):
+    """A profile in the user's home named the way Eclipse names it for that installation path.
+
+    The name carries the platform version and the hash of the installation path, which is the only
+    thing that ties a profile to its installation once the installations are laid out anywhere.
+    """
+    profile = (pathlib.Path(root) / "home" / ".eclipse" /
+               ("org.eclipse.platform_%s_%s_win32_win32_x86_64"
+                % (version, REPORT.install_path_hash(install))))
+    write_bundles_info(profile / "configuration", lines)
+    return profile
+
+
+def write_ini(install, lines):
+    """The launcher ini of an installation, beside the executable it belongs to."""
+    target = pathlib.Path(install) / "1cedt.ini"
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return target
+
+
 class AnInstallationOwnsItsConfigurationArea(unittest.TestCase):
     """The bundles.info inside an installation belongs to that installation."""
 
@@ -142,7 +161,7 @@ class AnInstallationOwnsItsConfigurationArea(unittest.TestCase):
             install = make_installation(pathlib.Path(directory) / "edt")
             write_bundles_info(install / "configuration",
                                [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
-            found, unclaimed = REPORT.installations([pathlib.Path(directory)], BUNDLE)
+            found, unclaimed, _ = REPORT.installations([pathlib.Path(directory)], BUNDLE)
         self.assertEqual([], unclaimed)
         self.assertEqual(1, len(found))
         self.assertEqual(str(install), found[0]["install"])
@@ -151,47 +170,162 @@ class AnInstallationOwnsItsConfigurationArea(unittest.TestCase):
         self.assertEqual("installation", found[0]["records"][0]["kind"])
 
 
-class ASharedProfileBelongsToOneInstallation(unittest.TestCase):
-    """A profile outside every installation is tied to one by the -configuration the launcher recorded.
+class AProfileIsTiedToItsInstallationByTheHashOfItsPath(unittest.TestCase):
+    """A profile in the user's home is owned by the installation whose path hash its name carries.
 
-    The profile of a read-only installation sits in the user's home, and the relative path in that
-    record resolves from every installation at the same depth - so equal-depth installations are a
-    tie, decided by the platform version the profile is named after.
+    The path itself is not enough to decide: a relative ``-configuration`` resolves from every
+    installation at the same depth, so a single surviving installation would take the profile of a
+    removed one. The name carries the hash of the path the profile was laid out for.
     """
 
-    def build(self, root, platforms):
-        installs = {}
-        for name, platform in platforms.items():
-            installs[name] = make_installation(root / "installs" / name, platform=platform)
-        profile = root / "home" / ".eclipse" / "org.eclipse.platform_4.38.0_2023930198_win32_win32_x86_64"
-        write_bundles_info(profile / "configuration",
-                           [BUNDLE + ",0.2.58.202610060526,plugins/" + BUNDLE + "_0.2.58.jar,4,false"])
-        relative = pathlib.Path("..", "..", "home", ".eclipse", profile.name, "configuration")
-        (profile / "configuration" / "eclipse.ini.ignored").write_text(
-            "-configuration\n%s\n" % relative.as_posix(), encoding="utf-8")
-        return installs, profile
-
-    def test_the_platform_version_separates_equal_depth_installations(self):
+    def test_the_hash_names_one_installation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            installs, profile = self.build(root, {"edt-2026": "4.38.0", "edt-2025": "4.30.0"})
-            found, unclaimed = REPORT.installations([root], BUNDLE)
+            first = make_installation(root / "installs" / "edt-a")
+            second = make_installation(root / "installs" / "edt-b")
+            profile = write_profile(root, first, "4.38.0",
+                                    [BUNDLE + ",0.2.58,plugins/" + BUNDLE + "_0.2.58.jar,4,false"])
+            found, unclaimed, _ = REPORT.installations([root], BUNDLE)
         self.assertEqual([], unclaimed)
         by_install = {entry["install"]: entry for entry in found}
-        records = by_install[str(installs["edt-2026"])]["records"]
-        self.assertEqual(["profile"], [record["kind"] for record in records])
-        self.assertTrue(records[0]["bundlesInfo"].startswith(str(profile)))
-        self.assertNotIn(str(installs["edt-2025"]), by_install)
+        self.assertEqual([str(first)], list(by_install))
+        self.assertEqual(["profile"], [record["kind"] for record in by_install[str(first)]["records"]])
+        self.assertTrue(by_install[str(first)]["records"][0]["bundlesInfo"].startswith(str(profile)))
+        self.assertNotIn(str(second), by_install)
 
-    def test_an_unbreakable_tie_is_reported_rather_than_guessed(self):
+    def test_a_profile_of_a_removed_installation_belongs_to_nobody(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
-            installs, profile = self.build(root, {"edt-a": None, "edt-b": None})
-            found, unclaimed = REPORT.installations([root], BUNDLE)
+            surviving = make_installation(root / "installs" / "edt")
+            removed = root / "installs" / "edt-removed"
+            profile = write_profile(root, removed, "4.30.0",
+                                    [BUNDLE + ",0.2.0,plugins/" + BUNDLE + "_0.2.0.jar,4,false"])
+            found, unclaimed, _ = REPORT.installations([root], BUNDLE)
         self.assertEqual([], found)
         self.assertEqual(1, len(unclaimed))
         self.assertEqual("unclaimed", unclaimed[0]["kind"])
         self.assertTrue(unclaimed[0]["bundlesInfo"].startswith(str(profile)))
+        self.assertNotEqual(REPORT.install_path_hash(surviving), REPORT.install_path_hash(removed))
+
+    def test_a_name_without_a_hash_is_not_attributed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            make_installation(root / "installs" / "edt")
+            write_bundles_info(root / "home" / ".eclipse" / "org.eclipse.platform_4.38.0" / "configuration",
+                               [BUNDLE + ",0.2.0,plugins/" + BUNDLE + "_0.2.0.jar,4,false"])
+            found, unclaimed, _ = REPORT.installations([root], BUNDLE)
+        self.assertEqual([], found)
+        self.assertEqual(1, len(unclaimed))
+
+
+class TheActiveRecordIsTheOneTheLauncherLoads(unittest.TestCase):
+    """An installation can record the bundle twice; only one of the two decides what it runs.
+
+    An installation under Program Files cannot write its own configuration area, so Eclipse lays out
+    a profile in the user's home and the launcher reads that. The area inside the installation stays
+    behind with whatever it held. Comparing the higher of the two is right only by accident, and
+    wrong as soon as the stale one is the higher.
+    """
+
+    def test_the_profile_decides_over_the_area_inside_the_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.59.202610090000,plugins/" + BUNDLE + "_0.2.59.jar,4,false"])
+            profile = write_profile(root, install, "4.38.0",
+                                    [BUNDLE + ",0.2.58,plugins/" + BUNDLE + "_0.2.58.jar,4,false"])
+            found, _, _ = REPORT.installations([root], BUNDLE)
+        records = {record["kind"]: record for record in found[0]["records"]}
+        self.assertTrue(records["profile"]["active"])
+        self.assertFalse(records["installation"]["active"])
+        self.assertTrue(records["profile"]["bundlesInfo"].startswith(str(profile)))
+
+    def test_the_area_named_by_the_ini_decides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
+            write_profile(root, install, "4.38.0",
+                          [BUNDLE + ",0.2.58,plugins/" + BUNDLE + "_0.2.58.jar,4,false"])
+            write_ini(install, ["-configuration", "configuration", "-vmargs", "-Xmx4096m"])
+            found, _, _ = REPORT.installations([root], BUNDLE)
+        records = {record["kind"]: record for record in found[0]["records"]}
+        self.assertTrue(records["installation"]["active"])
+        self.assertFalse(records["profile"]["active"])
+
+    def test_an_ini_naming_an_area_that_records_nothing_leaves_no_active_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
+            write_ini(install, ["-configuration", "elsewhere", "-vmargs", "-Xmx4096m"])
+            found, _, _ = REPORT.installations([root], BUNDLE)
+        self.assertEqual([False], [record["active"] for record in found[0]["records"]])
+
+    def test_an_installation_recording_the_bundle_once_has_that_record_active(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
+            found, _, _ = REPORT.installations([root], BUNDLE)
+        self.assertTrue(found[0]["records"][0]["active"])
+
+
+class ABundlesInfoThatCannotBeReadIsReported(unittest.TestCase):
+    """A bundles.info that cannot be read is named with its reason, not skipped.
+
+    Skipping it answers "this installation records nothing", and a caller that installs would then
+    report the machine consistent while a file it could not read still says otherwise.
+    """
+
+    def installations_with_a_swallowed_file(self, root, swallowed):
+        """The report of a root whose named bundles.info raises when read."""
+        original = pathlib.Path.read_text
+
+        def failing(self, *args, **kwargs):
+            if self == swallowed:
+                raise PermissionError(13, "Access is denied")
+            return original(self, *args, **kwargs)
+
+        with unittest.mock.patch.object(pathlib.Path, "read_text", failing):
+            return REPORT.installations([root], BUNDLE)
+
+    def test_the_report_names_the_file_and_the_reason(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            info = write_bundles_info(install / "configuration",
+                                      [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
+            found, unclaimed, unreadable = self.installations_with_a_swallowed_file(root, info)
+        self.assertEqual([], found)
+        self.assertEqual([], unclaimed)
+        self.assertEqual([str(info)], [entry["bundlesInfo"] for entry in unreadable])
+        self.assertIn("denied", unreadable[0]["reason"])
+
+    def test_the_json_report_carries_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            info = write_bundles_info(install / "configuration",
+                                      [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
+            original = pathlib.Path.read_text
+
+            def failing(self, *args, **kwargs):
+                if self == info:
+                    raise PermissionError(13, "Access is denied")
+                return original(self, *args, **kwargs)
+
+            out = io.StringIO()
+            with unittest.mock.patch.object(pathlib.Path, "read_text", failing):
+                with contextlib.redirect_stdout(out):
+                    REPORT.main(["--json", "--root", str(root)])
+        payload = json.loads(out.getvalue())
+        self.assertEqual([str(info)], [entry["bundlesInfo"] for entry in payload["unreadable"]])
+        self.assertIn("denied", payload["unreadable"][0]["reason"])
 
 
 class TheJsonReportCarriesTheInstallations(unittest.TestCase):
