@@ -128,5 +128,10 @@ public class WhatTheYaxunitSurfacePromisesTest
                 assertFalse(tool.getName(), properties.has("reuseRecent")); //$NON-NLS-1$
             }
         }
+        JsonObject facade = properties(new YaxunitTestsTool());
+        assertEquals("boolean", //$NON-NLS-1$
+            facade.getAsJsonObject("installYaxunit").get("type").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("boolean", //$NON-NLS-1$
+            facade.getAsJsonObject("yaxunitUnsafeMode").get("type").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
 }

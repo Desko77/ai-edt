@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.List;
 import java.util.Map;
 
 import com.google.gson.JsonElement;
@@ -21,7 +22,6 @@ import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.GitHubReleaseResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
-import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.YaxunitHelp;
 
 /**
@@ -60,6 +60,13 @@ import ru.aiedt.mcp.server.support.YaxunitHelp;
  *       within the last 5 minutes instead of starting a new one. Defaults to
  *       false: a second call after a delivered report runs the tests again, so
  *       an edit-and-rerun loop cannot read a stale report as its own result</li>
+ *   <li>{@code installYaxunit=true} with {@code yaxunitUnsafeMode} (default true) - after the
+ *       engine is in the infobase, its safe mode and unsafe action protection are read through
+ *       the designer session, both lowered in one write when either is on, and confirmed by a
+ *       read-back; a flag that stayed on is an error naming the actual value of each and the
+ *       tests are not started. {@code yaxunitUnsafeMode=false} leaves the flags untouched. The
+ *       step runs on the already-installed path as well, and the whole pre-step is gated on
+ *       {@code install_extension}</li>
  * </ul>
  *
  * <p>Implementation strategy: the tool delegates to the existing
@@ -93,6 +100,9 @@ public class YaxunitTestsTool implements IMcpTool
             + "the launch when the update does not finish. " //$NON-NLS-1$
             + "reuseRecent=true returns the report of a run finished within the last 5 minutes "
             + "instead of running the tests again (default false). " //$NON-NLS-1$
+            + "installYaxunit=true installs the engine when needed and, by default, lowers and " //$NON-NLS-1$
+            + "confirms its safe-mode and unsafe-action-protection flags before the run; set " //$NON-NLS-1$
+            + "yaxunitUnsafeMode=false to leave both flags untouched. " //$NON-NLS-1$
             + "run_yaxunit_tests (mode=run) and debug_yaxunit_tests (mode=debug) are back-compat " //$NON-NLS-1$
             + "aliases of this facade; prefer it for new prompts."; //$NON-NLS-1$
     }
@@ -129,6 +139,11 @@ public class YaxunitTestsTool implements IMcpTool
                     + "outcome is reported in the response as 'installYaxunit'. Needs network " //$NON-NLS-1$
                     + "access to GitHub and a resolvable thick-client runtime + stored IB " //$NON-NLS-1$
                     + "credentials.") //$NON-NLS-1$
+            .booleanProperty("yaxunitUnsafeMode", //$NON-NLS-1$
+                "Default true; read only with installYaxunit=true. On new and already-installed " //$NON-NLS-1$
+                    + "paths, reads both YAxUnit safety flags, lowers both in one write when " //$NON-NLS-1$
+                    + "either is on, and confirms them before launch. A mismatch aborts with " //$NON-NLS-1$
+                    + "both actual values. False leaves the flags unread and unchanged.") //$NON-NLS-1$
             .stringProperty("yaxunitRepo", //$NON-NLS-1$
                 "GitHub repo to pull YAxUnit from for installYaxunit, as 'owner/repo'. " //$NON-NLS-1$
                     + "Default 'bia-technologies/yaxunit'.") //$NON-NLS-1$
@@ -157,8 +172,43 @@ public class YaxunitTestsTool implements IMcpTool
         return "run_yaxunit_tests"; //$NON-NLS-1$
     }
 
+    /**
+     * The install door of the {@code installYaxunit} pre-step.
+     * <p>
+     * The facade reads and runs under Debug &amp; Test, and so do both of its folded runner names -
+     * yet the pre-step installs an engine extension through the same write
+     * {@code install_extension} performs, and that name is one the test preset disables. The step
+     * asks {@code ToolGate.gateIfPresetDisabled} about it before its first write, which is what
+     * keeps the preset's promise here.
+     * </p>
+     *
+     * @return the standalone name gating this tool's install pre-step
+     */
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of("install_extension"); //$NON-NLS-1$
+    }
+
     @Override
     public String execute(Map<String, String> params)
+    {
+        return executeWithInstallSteps(params, PRODUCTION_STEPS);
+    }
+
+    /**
+     * The call with the install pre-step's doors given from outside.
+     * <p>
+     * The doors decide nothing - the probe, the order the steps run in and what a flags failure
+     * does to the launch all live in here - so a test can hold that part without an infobase,
+     * while the production doors keep doing the real work.
+     * </p>
+     *
+     * @param params the call arguments
+     * @param steps the doors the install pre-step goes through
+     * @return the answer of this tool
+     */
+    String executeWithInstallSteps(Map<String, String> params, InstallSteps steps)
     {
         // Help dispatch first - other parameters ignored when help is set
         String helpTopic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
@@ -209,20 +259,41 @@ public class YaxunitTestsTool implements IMcpTool
         // aborts the launch with the error; the outcome otherwise is merged into the
         // test-run response as 'installYaxunit'.
         boolean installYaxunit = JsonUtils.extractBooleanArgument(params, "installYaxunit", false); //$NON-NLS-1$
+        boolean unsafeMode = JsonUtils.extractBooleanArgument(params, "yaxunitUnsafeMode", true); //$NON-NLS-1$
         String installSummary = null;
         if (installYaxunit)
         {
-            installSummary = ensureYaxunitInstalled(params);
-            if (installSummary == null || installSummary.startsWith("ERROR:")) //$NON-NLS-1$
+            // The pre-step writes the infobase through the very call install_extension
+            // makes, and the preset gate above checks only the runner names - which a
+            // test preset keeps on. First action of the branch, then: ask the install
+            // door, so a preset that blocks writing refuses before the infobase is
+            // touched instead of after the engine is already in it.
+            String installGate = ToolGate.gateIfPresetDisabled("install_extension"); //$NON-NLS-1$
+            if (installGate != null)
             {
-                String msg = installSummary == null
-                    ? "installYaxunit failed for an unknown reason" //$NON-NLS-1$
-                    : installSummary.substring("ERROR:".length()); //$NON-NLS-1$
-                return ToolResult.error(msg)
+                return ToolResult.error(installGate)
                     .put("operation", NAME) //$NON-NLS-1$
-                    .put("installYaxunit", "failed") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("installYaxunit", "blocked by preset") //$NON-NLS-1$ //$NON-NLS-2$
                     .toJson();
             }
+            InstallOutcome installed = ensureYaxunitInstalled(params, unsafeMode, steps);
+            if (!installed.isOk())
+            {
+                // The flags as the last read saw them travel with the refusal: a caller has to
+                // see WHICH flag stayed on, not only that one did - the two are lowered by
+                // different hands in the Configurator.
+                ToolResult refusal = ToolResult.error(installed.error)
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .put("installYaxunit", "failed"); //$NON-NLS-1$ //$NON-NLS-2$
+                if (installed.flags != null)
+                {
+                    refusal.put("safeMode", BmInfobaseExtensionHelper.flagWord(installed.flags.safeMode)); //$NON-NLS-1$
+                    refusal.put("unsafeActionProtection", //$NON-NLS-1$
+                        BmInfobaseExtensionHelper.flagWord(installed.flags.unsafeActionProtection));
+                }
+                return refusal.toJson();
+            }
+            installSummary = installed.summary;
         }
 
         String result;
@@ -242,11 +313,15 @@ public class YaxunitTestsTool implements IMcpTool
                     .put("operation", NAME)
                     .toJson();
         }
+        // Decide whether the delegate answered with success or an error before adding the install
+        // summary. Prepending the summary to runner markdown would hide its leading **Error:** and
+        // turn a failed launch into success:true merely because the pre-step itself succeeded.
+        result = asJsonEnvelope(result);
         if (installSummary != null)
         {
             result = mergeStringField(result, "installYaxunit", installSummary); //$NON-NLS-1$
         }
-        return asJsonEnvelope(result);
+        return result;
     }
 
     /**
@@ -325,14 +400,167 @@ public class YaxunitTestsTool implements IMcpTool
     private static final String RUNNER_ERROR = "**Error:**"; //$NON-NLS-1$
 
     /**
-     * Ensures the YAxUnit engine extension is installed in the project's infobase. When
-     * already present, returns a short note and downloads nothing. Otherwise resolves the
-     * latest {@code YAxUnit*.cfe} from the GitHub repo and installs it as {@code YAxUnit}.
-     *
-     * @return a human-readable outcome (never null on success), or {@code "ERROR:..."} on a
-     *     hard failure that should abort the launch
+     * The outcome of the install pre-step.
      */
-    private static String ensureYaxunitInstalled(Map<String, String> params)
+    static final class InstallOutcome
+    {
+        /** The success summary merged into the test-run response; {@code null} on failure. */
+        final String summary;
+
+        /** The failure text; {@code null} on success. */
+        final String error;
+
+        /** The engine's safety flags as the last read saw them, when the flags step ran. */
+        final BmInfobaseExtensionHelper.ExtensionFlags flags;
+
+        InstallOutcome(String summary, String error, BmInfobaseExtensionHelper.ExtensionFlags flags)
+        {
+            this.summary = summary;
+            this.error = error;
+            this.flags = flags;
+        }
+
+        /**
+         * A success carrying its summary.
+         *
+         * @param summary what the response tells about the install
+         * @return the outcome
+         */
+        static InstallOutcome done(String summary)
+        {
+            return new InstallOutcome(summary, null, null);
+        }
+
+        /**
+         * A failure carrying its text and whatever the last read of the flags saw.
+         *
+         * @param error why the pre-step did not get through
+         * @param flags the flags as last read; may be {@code null}
+         * @return the outcome
+         */
+        static InstallOutcome failed(String error, BmInfobaseExtensionHelper.ExtensionFlags flags)
+        {
+            return new InstallOutcome(null, error, flags);
+        }
+
+        /**
+         * @return whether the pre-step got through
+         */
+        boolean isOk()
+        {
+            return error == null;
+        }
+    }
+
+    /**
+     * The external steps the install pre-step is made of, one door each.
+     * <p>
+     * The pre-step's own logic - the already-installed probe, the order the steps run in, what a
+     * flags failure does to the launch - is decided in {@link #ensureYaxunitInstalled}; what the
+     * doors do against a live infobase lives behind them. The seams are what lets a test hold the
+     * order without one, the same way the pre-launch update step is held.
+     * </p>
+     */
+    interface InstallSteps
+    {
+        /**
+         * Lists the extension names the infobase holds.
+         *
+         * @param projectName the project that owns the infobase
+         * @param applicationId the infobase application id; may be {@code null}
+         * @return the listing
+         */
+        BmInfobaseExtensionHelper.ListResult listExtensions(String projectName, String applicationId);
+
+        /**
+         * Resolves the latest engine {@code .cfe} from the repo and installs it.
+         *
+         * @param projectName the project that owns the infobase
+         * @param applicationId the infobase application id; may be {@code null}
+         * @param repo the GitHub repo to pull from, {@code owner/repo}
+         * @return the install outcome
+         */
+        InstallOutcome installEngine(String projectName, String applicationId, String repo);
+
+        /**
+         * Reads the engine extension's safety flags, lowers both in one write when either is on,
+         * and confirms them by reading back.
+         *
+         * @param projectName the project that owns the infobase
+         * @param applicationId the infobase application id; may be {@code null}
+         * @return the flags outcome
+         */
+        BmInfobaseExtensionHelper.ExtensionFlagsResult lowerEngineFlags(String projectName,
+            String applicationId);
+    }
+
+    /**
+     * The production steps: each door is the helper that performs it against a live infobase.
+     */
+    private static final InstallSteps PRODUCTION_STEPS = new InstallSteps()
+    {
+        @Override
+        public BmInfobaseExtensionHelper.ListResult listExtensions(String projectName,
+            String applicationId)
+        {
+            return BmInfobaseExtensionHelper.listExtensions(projectName, applicationId);
+        }
+
+        @Override
+        public InstallOutcome installEngine(String projectName, String applicationId, String repo)
+        {
+            GitHubReleaseResolver.Asset asset;
+            try
+            {
+                asset = GitHubReleaseResolver.resolveLatestCfe(repo, "YAxUnit"); //$NON-NLS-1$
+            }
+            catch (Exception e)
+            {
+                return InstallOutcome.failed("Could not resolve the latest YAxUnit release from " //$NON-NLS-1$
+                    + repo + ": " + TextSuggest.safeMessage(e), null); //$NON-NLS-1$
+            }
+            if (asset == null)
+            {
+                return InstallOutcome.failed("No YAxUnit*.cfe asset found in the latest release of " //$NON-NLS-1$
+                    + repo + " (the asset-name prefix 'YAxUnit' did not match).", null); //$NON-NLS-1$
+            }
+            // Install and apply to the database. Idempotent: a repeat call updates in place.
+            BmInfobaseExtensionHelper.InstallResult installed = BmInfobaseExtensionHelper
+                .installExtension(projectName, applicationId, "YAxUnit", asset.url, true); //$NON-NLS-1$
+            if (!installed.ok)
+            {
+                return InstallOutcome.failed("Install of YAxUnit failed: " + installed.error, null); //$NON-NLS-1$
+            }
+            return InstallOutcome.done("Installed " + asset.name + " from " + repo + "."); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+
+        @Override
+        public BmInfobaseExtensionHelper.ExtensionFlagsResult lowerEngineFlags(String projectName,
+            String applicationId)
+        {
+            return BmInfobaseExtensionHelper.ensureExtensionUnsafeFlags(projectName, applicationId,
+                "YAxUnit"); //$NON-NLS-1$
+        }
+    };
+
+    /**
+     * Ensures the YAxUnit engine extension is installed in the project's infobase and, when
+     * {@code unsafeMode} is on, that its two safety flags are off.
+     * <p>
+     * When the engine is already present nothing is downloaded - but the flags are still read and,
+     * when either is on, lowered and confirmed, on the same terms as after a fresh install: the
+     * engine executes no tests while either flag is on, whatever installed it. The flags step runs
+     * after the install (which reconnects the infobase and its designer session); a flags failure
+     * is a failure of the whole pre-step, so the launch it precedes does not start.
+     * </p>
+     *
+     * @param params the call arguments
+     * @param unsafeMode whether the engine's safety flags are read, lowered and confirmed
+     * @param steps the external doors the pre-step goes through
+     * @return the outcome, its summary or its error never both
+     */
+    static InstallOutcome ensureYaxunitInstalled(Map<String, String> params, boolean unsafeMode,
+        InstallSteps steps)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         if (projectName == null || projectName.isEmpty())
@@ -342,9 +570,9 @@ public class YaxunitTestsTool implements IMcpTool
             // installYaxunit runs before the launch-config resolution the downstream tool
             // does, so it needs an explicit projectName to target the infobase. If only a
             // launchConfigurationName was given, ask for projectName too.
-            return "ERROR:installYaxunit requires projectName (the infobase target). When " //$NON-NLS-1$
-                + "using only launchConfigurationName, also pass projectName so the engine " //$NON-NLS-1$
-                + "can be installed before the run."; //$NON-NLS-1$
+            return InstallOutcome.failed("installYaxunit requires projectName (the infobase " //$NON-NLS-1$
+                + "target). When using only launchConfigurationName, also pass projectName so " //$NON-NLS-1$
+                + "the engine can be installed before the run.", null); //$NON-NLS-1$
         }
         String applicationId = JsonUtils.extractStringArgument(params, "applicationId"); //$NON-NLS-1$
         String repo = JsonUtils.extractStringArgument(params, "yaxunitRepo"); //$NON-NLS-1$
@@ -353,18 +581,21 @@ public class YaxunitTestsTool implements IMcpTool
             repo = "bia-technologies/yaxunit"; //$NON-NLS-1$
         }
 
-        // 1. Skip the download when the engine is already installed.
+        // 1. Skip the download when the engine is already installed. Only the probe is guarded:
+        // the flags step below is not part of it, and a failure there must not be read as a
+        // probe that failed - that would download and reinstall an engine that is in place.
+        boolean alreadyInstalled = false;
         try
         {
             BmInfobaseExtensionHelper.ListResult listed =
-                BmInfobaseExtensionHelper.listExtensions(projectName, applicationId);
+                steps.listExtensions(projectName, applicationId);
             if (listed.ok && listed.extensions != null)
             {
                 for (String name : listed.extensions)
                 {
                     if (name != null && "YAxUnit".equalsIgnoreCase(name.trim())) //$NON-NLS-1$
                     {
-                        return "YAxUnit already installed - no download needed."; //$NON-NLS-1$
+                        alreadyInstalled = true;
                     }
                 }
             }
@@ -377,32 +608,60 @@ public class YaxunitTestsTool implements IMcpTool
             Activator.logWarning("installYaxunit: listExtensions probe failed, attempting " //$NON-NLS-1$
                 + "install anyway: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
         }
+        if (alreadyInstalled)
+        {
+            return withUnsafeMode("YAxUnit already installed - no download needed.", //$NON-NLS-1$
+                unsafeMode, projectName, applicationId, steps);
+        }
 
-        // 2. Resolve the latest engine .cfe asset URL from GitHub.
-        GitHubReleaseResolver.Asset asset;
+        // 2. Install (also applies to the database), then see to the flags.
+        InstallOutcome installed = steps.installEngine(projectName, applicationId, repo);
+        if (!installed.isOk())
+        {
+            return installed;
+        }
+        return withUnsafeMode(installed.summary, unsafeMode, projectName, applicationId, steps);
+    }
+
+    /**
+     * Runs the flags step of the pre-step when {@code unsafeMode} asks for it and appends what it
+     * confirmed to the summary.
+     *
+     * @param summary the summary the install itself produced
+     * @param unsafeMode whether the flags step runs
+     * @param projectName the project that owns the infobase
+     * @param applicationId the infobase application id; may be {@code null}
+     * @param steps the external doors the pre-step goes through
+     * @return the outcome; a flags failure carries the flags as the last read saw them
+     */
+    private static InstallOutcome withUnsafeMode(String summary, boolean unsafeMode,
+        String projectName, String applicationId, InstallSteps steps)
+    {
+        if (!unsafeMode)
+        {
+            // The flags are neither read nor written: the engine keeps whatever it has, and
+            // the summary says nothing about flags it did not look at.
+            return InstallOutcome.done(summary);
+        }
+        BmInfobaseExtensionHelper.ExtensionFlagsResult flags;
         try
         {
-            asset = GitHubReleaseResolver.resolveLatestCfe(repo, "YAxUnit"); //$NON-NLS-1$
+            flags = steps.lowerEngineFlags(projectName, applicationId);
         }
-        catch (Exception e)
+        catch (RuntimeException failure)
         {
-            return "ERROR:Could not resolve the latest YAxUnit release from " + repo //$NON-NLS-1$
-                + ": " + TextSuggest.safeMessage(e); //$NON-NLS-1$
+            // The step answers its own refusals; what it throws is a failure nobody confirmed the
+            // flags after, so the tests do not launch and the answer names it.
+            return InstallOutcome.failed("the extension safety flags could not be read or lowered: " //$NON-NLS-1$
+                + TextSuggest.safeMessage(failure), null);
         }
-        if (asset == null)
+        if (!flags.ok)
         {
-            return "ERROR:No YAxUnit*.cfe asset found in the latest release of " + repo //$NON-NLS-1$
-                + " (the asset-name prefix 'YAxUnit' did not match)."; //$NON-NLS-1$
+            return InstallOutcome.failed(flags.error, flags.flags);
         }
-
-        // 3. Install (also applies to the database). Idempotent: a repeat call updates in place.
-        BmInfobaseExtensionHelper.InstallResult installed = BmInfobaseExtensionHelper.installExtension(
-            projectName, applicationId, "YAxUnit", asset.url, true); //$NON-NLS-1$
-        if (!installed.ok)
-        {
-            return "ERROR:Install of YAxUnit failed: " + installed.error; //$NON-NLS-1$
-        }
-        return "Installed " + asset.name + " from " + repo + "."; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        String base = summary.endsWith(".") ? summary.substring(0, summary.length() - 1) //$NON-NLS-1$
+            : summary;
+        return InstallOutcome.done(base + "; safe mode off; unsafe action protection off."); //$NON-NLS-1$
     }
 
     /**

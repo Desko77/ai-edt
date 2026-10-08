@@ -450,8 +450,8 @@
 | `XdtoWorkshopTool` | `remove_property` | `dryRun:boolean`, `name:string`, `objectType:string`, `ownerFqn:string`, `packageName:string`, `projectName:string` | read in place |
 | `XdtoWorkshopTool` | `remove_value_type` | `dryRun:boolean`, `name:string`, `ownerFqn:string`, `packageName:string`, `projectName:string` | read in place |
 | `XdtoWorkshopTool` | `set_namespace` | `attributeFormQualified:boolean`, `dryRun:boolean`, `elementFormQualified:boolean`, `namespace:string`, `ownerFqn:string`, `packageName:string`, `projectName:string` | read in place |
-| `YaxunitTestsTool` | `debug` | `applicationId:string`, `extensions:string`, `help:string`, `installYaxunit:boolean`, `launchConfigurationName:string`, `mode:string`, `modules:string`, `projectName:string`, `tests:string`, `updateBeforeLaunch:boolean`, `yaxunitRepo:string` | delegate YaxunitDebugRunner |
-| `YaxunitTestsTool` | `run` | `applicationId:string`, `extensions:string`, `help:string`, `installYaxunit:boolean`, `launchConfigurationName:string`, `mode:string`, `modules:string`, `projectName:string`, `reuseRecent:boolean`, `tests:string`, `timeoutSeconds:string`, `updateBeforeLaunch:boolean`, `yaxunitRepo:string` | delegate YaxunitTestRunner |
+| `YaxunitTestsTool` | `debug` | `applicationId:string`, `extensions:string`, `help:string`, `installYaxunit:boolean`, `launchConfigurationName:string`, `mode:string`, `modules:string`, `projectName:string`, `tests:string`, `updateBeforeLaunch:boolean`, `yaxunitRepo:string`, `yaxunitUnsafeMode:boolean` | delegate YaxunitDebugRunner |
+| `YaxunitTestsTool` | `run` | `applicationId:string`, `extensions:string`, `help:string`, `installYaxunit:boolean`, `launchConfigurationName:string`, `mode:string`, `modules:string`, `projectName:string`, `reuseRecent:boolean`, `tests:string`, `timeoutSeconds:string`, `updateBeforeLaunch:boolean`, `yaxunitRepo:string`, `yaxunitUnsafeMode:boolean` | delegate YaxunitTestRunner |
 
 ## Что сюда не попало
 

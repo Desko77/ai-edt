@@ -63,7 +63,12 @@ public class PresetWriteBlockingTest
             "create_tag", "update_tag", "delete_tag", "assign_tag", "unassign_tag",
             "edit_form_writes", "edit_metadata_writes", "dcs_workshop_writes", "mxl_workshop_writes",
             "xdto_workshop_writes", "external_object_workshop_writes",
-            "external_data_source_workshop_writes");
+            "external_data_source_workshop_writes",
+            // The installYaxunit pre-step of yaxunit_tests writes the infobase through this name,
+            // and the one write-blocking preset that keeps the facade on (Debug & Test) keeps the
+            // whole applications group on as well - the name is disabled by hand there or the
+            // pre-step writes under a preset that promises it will not.
+            "install_extension");
 
     /** Agent composites that only read or only return text, and may stay on under any preset. */
     private static final List<String> NON_WRITING_COMPOSITES =

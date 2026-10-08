@@ -14,10 +14,14 @@ import org.eclipse.swt.custom.CTabFolder;
 import org.eclipse.swt.custom.CTabItem;
 import org.eclipse.swt.layout.GridData;
 import org.eclipse.swt.layout.GridLayout;
+import org.eclipse.swt.program.Program;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Label;
+import org.eclipse.swt.widgets.Link;
 import org.eclipse.ui.IWorkbench;
 import org.eclipse.ui.IWorkbenchPreferencePage;
+import org.osgi.framework.FrameworkUtil;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.McpHttpEndpoint;
@@ -107,8 +111,50 @@ public class McpSettingsPage
         toolsItem.setControl(toolsTab.getControl());
 
         tabFolder.setSelection(0);
+        createFooter(composite);
         revalidate();
         return composite;
+    }
+
+    /**
+     * Adds the page footer below the tab folder.
+     *
+     * @param parent the page composite
+     */
+    private static void createFooter(Composite parent)
+    {
+        Label separator = new Label(parent, SWT.SEPARATOR | SWT.HORIZONTAL);
+        separator.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        Composite footer = new Composite(parent, SWT.NONE);
+        GridLayout layout = new GridLayout(4, false);
+        layout.marginWidth = 0;
+        layout.marginHeight = 0;
+        layout.horizontalSpacing = 12;
+        footer.setLayout(layout);
+        footer.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        Label text = new Label(footer, SWT.NONE);
+        text.setText(SettingsFooter.text(FrameworkUtil.getBundle(McpSettingsPage.class)));
+        text.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+
+        addFooterLink(footer, "Repository", SettingsFooter.REPOSITORY_URL); //$NON-NLS-1$
+        addFooterLink(footer, "Telegram", SettingsFooter.TELEGRAM_URL); //$NON-NLS-1$
+        addFooterLink(footer, "Update site", SettingsFooter.UPDATE_SITE_URL); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds one browser link to the footer.
+     *
+     * @param parent the footer row
+     * @param label visible link text
+     * @param url destination opened by the system browser
+     */
+    private static void addFooterLink(Composite parent, String label, String url)
+    {
+        Link link = new Link(parent, SWT.NONE);
+        link.setText("<a href=\"" + url + "\">" + label + "</a>"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        link.addListener(SWT.Selection, event -> Program.launch(url));
     }
 
     /**

@@ -8,11 +8,14 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.locks.Lock;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.NullProgressMonitor;
 
+import com._1c.g5.designer.ssh.client.IDesignerSession;
+import com._1c.g5.designer.ssh.client.operation.IExtensionProperties;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessType;
 import com._1c.g5.v8.dt.platform.services.core.infobases.sync.IInfobaseSynchronizationManager;
@@ -1687,6 +1690,391 @@ public final class BmInfobaseExtensionHelper
             return DatabaseUpdateOutcome.FAILED;
         }
         return confirmed ? DatabaseUpdateOutcome.CONFIRMED : DatabaseUpdateOutcome.UNVERIFIED;
+    }
+
+    /** What one read of an extension's properties says about the two safety flags. */
+    public static final class ExtensionFlags
+    {
+        /** Whether the named extension was in the list the read returned at all. */
+        public boolean found;
+
+        /** The safe-mode flag as last read; {@code null} while the extension was not found. */
+        public Boolean safeMode;
+
+        /**
+         * The unsafe-action-protection flag as last read; {@code null} while the extension was
+         * not found.
+         */
+        public Boolean unsafeActionProtection;
+    }
+
+    /** Result of lowering an extension's safety flags through the designer agent session. */
+    public static final class ExtensionFlagsResult
+    {
+        public boolean ok;
+        public String error;
+        public String failureKind;
+        public String infobaseName;
+        public String extensionName;
+        /** True when a write ran - the first read found at least one flag still on. */
+        public boolean wrote;
+        /**
+         * The flags as the last successful read saw them: before the write when the write or the
+         * control read failed, after it otherwise. {@code null} when no read ever answered.
+         */
+        public ExtensionFlags flags;
+    }
+
+    /**
+     * Reads the two safety flags of one extension out of the list the designer agent returns.
+     * <p>
+     * Pure on purpose: the name matching (trimmed, case-insensitive - the same reading the
+     * install probe gives an extension name) is exactly the part a test can hold to without an
+     * infobase, so it lives here rather than inline in the session-bound code.
+     * </p>
+     *
+     * @param properties the list of all extensions' properties; may be {@code null}
+     * @param extensionName the extension to pick from the list
+     * @return the flags, {@link ExtensionFlags#found} false when the list has no such extension
+     */
+    public static ExtensionFlags flagsOf(List<IExtensionProperties> properties, String extensionName)
+    {
+        ExtensionFlags flags = new ExtensionFlags();
+        if (properties == null || extensionName == null)
+        {
+            return flags;
+        }
+        String sought = extensionName.trim();
+        for (IExtensionProperties property : properties)
+        {
+            if (property == null || property.getName() == null)
+            {
+                continue;
+            }
+            if (sought.equalsIgnoreCase(property.getName().trim()))
+            {
+                flags.found = true;
+                flags.safeMode = Boolean.valueOf(property.isSafeMode());
+                flags.unsafeActionProtection = Boolean.valueOf(property.isUnsafeActionProtected());
+                return flags;
+            }
+        }
+        return flags;
+    }
+
+    /**
+     * One safety flag as the answer words it.
+     *
+     * @param flag the flag as last read; may be {@code null}
+     * @return {@code on}, {@code off} or {@code unknown}
+     */
+    public static String flagWord(Boolean flag)
+    {
+        return flag == null ? "unknown" //$NON-NLS-1$
+            : flag.booleanValue() ? "on" : "off"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Reads both safety flags of one extension through a live designer session and, when at least
+     * one is on, lowers both in a single property-write call, then reads them back.
+     * <p>
+     * Package-visible and bound to the session interface only, so a stub session can prove the
+     * order - read, one write carrying both flags, control read - and every refusal wording
+     * without an infobase. The YAxUnit documentation requires both flags off for the engine to
+     * run its tests, which is why a read-back that still finds one on is answered as an error
+     * naming the actual value of each flag, with no second write attempted: whether the first
+     * one landed is exactly what the control read just said, and retrying it blind writes again
+     * over a state nobody has looked at.
+     * </p>
+     *
+     * @param session the designer session to read and write through
+     * @param extensionName the extension whose flags are lowered
+     * @return the outcome; {@link ExtensionFlagsResult#error} is set unless both flags ended up off
+     */
+    static ExtensionFlagsResult ensureUnsafeFlags(IDesignerSession session, String extensionName)
+    {
+        ExtensionFlagsResult r = new ExtensionFlagsResult();
+        r.extensionName = extensionName;
+        ExtensionFlags first = readFlagsThrough(session, extensionName, r);
+        if (first == null)
+        {
+            return r; // the read itself failed; r.error is set
+        }
+        r.flags = first;
+        if (!first.found)
+        {
+            r.error = "The extension '" + extensionName + "' is not among the infobase's " //$NON-NLS-1$ //$NON-NLS-2$
+                + "extensions, so its safe mode and unsafe action protection could not be read."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.NOT_FOUND.wire();
+            return r;
+        }
+        if (!first.safeMode.booleanValue() && !first.unsafeActionProtection.booleanValue())
+        {
+            r.ok = true; // both already off - nothing to write
+            return r;
+        }
+        try
+        {
+            // One property-write call carrying both flags: two calls would leave the extension
+            // half-configured between them, and the designer applies the pair atomically.
+            session.extensions().properties().set().extension(extensionName.trim())
+                .safeMode(false).unsafeActionProtection(false).exec();
+            r.wrote = true;
+        }
+        catch (RuntimeException e)
+        {
+            // DesignerClientException - what exec() declares - is a RuntimeException, so the one
+            // catch reads both the protocol's refusal and anything the plumbing throws.
+            r.error = "Lowering the safe mode and the unsafe action protection of '" //$NON-NLS-1$
+                + extensionName + "' failed: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.WRITE_FAILED.wire();
+            return r;
+        }
+        ExtensionFlags back = readFlagsThrough(session, extensionName, r);
+        if (back == null)
+        {
+            // The write answered success but nothing confirms it; say that rather than claim it.
+            r.error = "The flags of '" + extensionName + "' were written but the control read " //$NON-NLS-1$ //$NON-NLS-2$
+                + "failed, so whether they landed is unknown. Lower them in the Configurator " //$NON-NLS-1$
+                + "by hand and retry."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.READBACK_FAILED.wire();
+            return r;
+        }
+        r.flags = back;
+        if (back.found && !back.safeMode.booleanValue() && !back.unsafeActionProtection.booleanValue())
+        {
+            r.ok = true;
+            return r;
+        }
+        r.error = "The flags of '" + extensionName + "' are not confirmed: safe mode " //$NON-NLS-1$ //$NON-NLS-2$
+            + flagWord(back.safeMode) + ", unsafe action protection " //$NON-NLS-1$
+            + flagWord(back.unsafeActionProtection) + ". A run with them on executes no tests, " //$NON-NLS-1$
+            + "so nothing was launched; lower both in the Configurator by hand and retry."; //$NON-NLS-1$
+        r.failureKind = ErrorTags.READBACK_FAILED.wire();
+        return r;
+    }
+
+    /**
+     * Reads every extension's properties through the session and picks the named one out.
+     *
+     * @param session the designer session to read through
+     * @param extensionName the extension to pick
+     * @param r the result the failure text is written into
+     * @return the flags, or {@code null} when the read itself failed ({@code r.error} set)
+     */
+    private static ExtensionFlags readFlagsThrough(IDesignerSession session, String extensionName,
+        ExtensionFlagsResult r)
+    {
+        List<IExtensionProperties> listed;
+        try
+        {
+            listed = session.extensions().properties().get().allExtensions().exec();
+        }
+        catch (RuntimeException e)
+        {
+            // DesignerClientException - what exec() declares - is a RuntimeException, so the one
+            // catch reads the protocol's refusal and anything the plumbing throws alike.
+            r.error = "Reading the extension properties of the infobase failed: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
+            return null;
+        }
+        return flagsOf(listed, extensionName);
+    }
+
+    /**
+     * Lowers the safe mode and the unsafe action protection of an installed extension through
+     * EDT's own designer agent session - the persistent {@code /AgentMode} designer EDT keeps for
+     * a connected infobase.
+     * <p>
+     * This is the step the batch install cannot do: the DESIGNER command set has no switch for
+     * either flag, so an installed extension carries the platform defaults (both on) until
+     * someone turns them off by hand. The agent session speaks the other protocol, the one EDT's
+     * own extension viewer reads through, and its {@code config extensions properties set}
+     * command writes both flags in one call. The step is NOT run under the thick-client
+     * handshake - the handshake tears the agent session down to let a batch designer take the
+     * platform lock, while this step needs the agent alive. Call it after the batch install has
+     * finished and the infobase is reconnected.
+     * </p>
+     * <p>
+     * Idempotent: the flags are read first and written only when at least one differs, so an
+     * extension that already has both off is answered without a write. After a write the flags
+     * are read again, and a read-back that disagrees is an error carrying the actual values
+     * rather than a success.
+     * </p>
+     *
+     * @param projectName the EDT project that owns the infobase
+     * @param applicationId the infobase application id (nullable -> the project default)
+     * @param extensionName the extension whose flags are lowered
+     * @return the outcome (check {@link ExtensionFlagsResult#ok})
+     */
+    public static ExtensionFlagsResult ensureExtensionUnsafeFlags(String projectName,
+        String applicationId, String extensionName)
+    {
+        ExtensionFlagsResult r = new ExtensionFlagsResult();
+        r.extensionName = extensionName;
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
+        if (ctx.error != null)
+        {
+            r.error = ctx.error;
+            r.failureKind = ctx.failureKind;
+            r.infobaseName = ctx.infobaseName;
+            return r;
+        }
+        r.infobaseName = ctx.infobaseName;
+
+        // Same in-process lock as the batch calls: it keeps this EDT's own callers apart, so a
+        // flags write cannot land in the middle of an install or an update of the same infobase.
+        MonopolyLock.Claim claim =
+            MonopolyLock.claim(InfobaseIdentity.of(ctx.infobase), "set_extension_flags"); //$NON-NLS-1$
+        if (!claim.granted())
+        {
+            r.error = claim.refusal();
+            r.failureKind = ErrorTags.BUSY.wire();
+            return r;
+        }
+        try
+        {
+            IDesignerSession session = designerSessionOf(ctx, r);
+            if (session == null)
+            {
+                return r; // r.error says why the agent is unavailable
+            }
+            ExtensionFlagsResult done = ensureUnsafeFlags(session, extensionName);
+            done.infobaseName = ctx.infobaseName;
+            return done;
+        }
+        finally
+        {
+            claim.close();
+        }
+    }
+
+    /**
+     * The designer agent session EDT keeps for the infobase, or an explanation of why there is
+     * none to have.
+     * <p>
+     * The session pool is an internal class of the platform-services bundle, reached the same way
+     * the batch install reaches {@code executeRuntimeProcessCommand}: by name, up the launcher's
+     * class hierarchy, so this bundle needs no compile dependency on the internal package. The
+     * pool answers with the live connection when EDT has one and raises the agent when it does
+     * not; the flag operations themselves go through the exported {@link IDesignerSession}, so
+     * only the plumbing is reflective.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param r the result the failure text is written into
+     * @return the session, or {@code null} with {@code r.error} set
+     */
+    private static IDesignerSession designerSessionOf(ThickClientLaunch.LauncherContext ctx,
+        ExtensionFlagsResult r)
+    {
+        Object pool = findFieldUp(ctx.launcher, "designerSessionPool"); //$NON-NLS-1$
+        if (pool == null)
+        {
+            r.error = "This EDT runtime exposes no designer session pool on its thick-client " //$NON-NLS-1$
+                + "launcher, so the extension flags cannot be read or written through the " //$NON-NLS-1$
+                + "designer agent. Lower them in the Configurator by hand."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+            return null;
+        }
+        java.lang.reflect.Method get = findMethodUp(pool.getClass(), "get", //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        java.lang.reflect.Method acquire = findMethodUp(pool.getClass(), "acquire", //$NON-NLS-1$
+            RuntimeInstallation.class, InfobaseReference.class, RuntimeExecutionArguments.class);
+        if (get == null || acquire == null)
+        {
+            r.error = "This EDT runtime does not expose the designer session internals required " //$NON-NLS-1$
+                + "to change extension flags."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+            return null;
+        }
+        Object connection = null;
+        try
+        {
+            Object maybe = get.invoke(pool, ctx.component.getInstallation(), ctx.infobase, ctx.args);
+            if (maybe instanceof Optional<?> present && present.isPresent())
+            {
+                connection = present.get();
+            }
+            if (connection == null)
+            {
+                // No live session yet: acquire raises the agent, which the platform below 8.3.14
+                // cannot offer - that refusal names itself and reaches the caller as-is.
+                connection = acquire.invoke(pool, ctx.component.getInstallation(), ctx.infobase, ctx.args);
+            }
+            java.lang.reflect.Method getSession = findMethodUp(connection.getClass(), "getSession"); //$NON-NLS-1$
+            if (getSession == null)
+            {
+                r.error = "This EDT runtime's designer connection carries no session."; //$NON-NLS-1$
+                r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+                return null;
+            }
+            Object session = getSession.invoke(connection);
+            if (!(session instanceof IDesignerSession typed))
+            {
+                r.error = "The designer session this EDT runtime hands out is not the session " //$NON-NLS-1$
+                    + "interface the flag operations are written against."; //$NON-NLS-1$
+                r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+                return null;
+            }
+            return typed;
+        }
+        catch (java.lang.reflect.InvocationTargetException e)
+        {
+            Throwable cause = e.getCause() != null ? e.getCause() : e;
+            r.error = "The designer agent session could not be established: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(cause))
+                + ". Lower the extension flags in the Configurator by hand."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.THICK_CLIENT_FAILED.wire();
+            return null;
+        }
+        catch (RuntimeException | IllegalAccessException e)
+        {
+            r.error = "The designer session pool refused the call: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.INSTALL_API_NOT_FOUND.wire();
+            return null;
+        }
+    }
+
+    /**
+     * Finds a (possibly private / inherited) field by walking up the class hierarchy of the
+     * object that holds it.
+     *
+     * @param holder the object whose class hierarchy is walked
+     * @param name the field name
+     * @return the field's value, or {@code null} when no class of the hierarchy declares it
+     */
+    private static Object findFieldUp(Object holder, String name)
+    {
+        if (holder == null)
+        {
+            return null;
+        }
+        for (Class<?> k = holder.getClass(); k != null; k = k.getSuperclass())
+        {
+            try
+            {
+                java.lang.reflect.Field field = k.getDeclaredField(name);
+                field.setAccessible(true);
+                return field.get(holder);
+            }
+            catch (NoSuchFieldException ignore)
+            {
+                // not declared here; walk up to the superclass
+            }
+            catch (IllegalAccessException | RuntimeException e)
+            {
+                // Present but unreachable - reported, not swallowed: the caller must not read
+                // "this EDT offers no pool" over a pool it merely refused to hand out.
+                Activator.logWarning("reading the field '" + name + "' failed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)));
+                return null;
+            }
+        }
+        return null;
     }
 
     /**
