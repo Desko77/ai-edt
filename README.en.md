@@ -289,7 +289,7 @@ The Equinox P2 director installs the same feature with no UI. Close the EDT sess
 
 The feature is a p2 singleton, so installing a new version over an existing one fails unless the old unit is removed in the same request. On a first installation drop the `-uninstallIU` line - there is nothing to remove yet.
 
-For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check.
+For a development session, `scripts/edt-selfupdate.ps1` performs the whole cycle: graceful close, install, relaunch and health check. When the machine holds several EDT installations, `-AllInstallations` prints, with EDT closed, the table of installations it found - directory, EDT version, the plugin record each of them loads and the Java it would use - and stops there; `-Every` or `-InstallationMatch <substring of the path>` name the installations to update and print the version before and after. `-WhatIf` prints the plan and changes nothing.
 
 #### 🎓 Install the skill while you are at it
 
