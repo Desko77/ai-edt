@@ -598,7 +598,8 @@ public class TagAdminFacadeTool
 
     /**
      * Reads the tag names a call handed in, as a list that keeps the caller's order and drops
-     * nothing.
+     * nothing: a blank or null element stays in the list, so the caller refuses the whole call
+     * with {@code invalidName} instead of writing the rest of the list.
      *
      * @param params the call arguments
      * @return the names; empty when the call brought none
@@ -613,10 +614,7 @@ public class TagAdminFacadeTool
         Set<String> unique = new LinkedHashSet<>();
         for (String name : raw)
         {
-            if (name != null && !name.isBlank())
-            {
-                unique.add(name.trim());
-            }
+            unique.add(name == null ? "" : name.trim()); //$NON-NLS-1$
         }
         return new ArrayList<>(unique);
     }
@@ -881,6 +879,13 @@ public class TagAdminFacadeTool
         {
             return ToolResult.error("tags must be provided. Example: tags: ['Important', " //$NON-NLS-1$
                 + "'NeedsReview'].").toJson(); //$NON-NLS-1$
+        }
+        for (String tag : tags)
+        {
+            if (tag.trim().isEmpty())
+            {
+                return nameRefusal("tags").toJson(); //$NON-NLS-1$
+            }
         }
         ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
         if (fileRefusal != null)

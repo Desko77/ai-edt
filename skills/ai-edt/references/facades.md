@@ -158,9 +158,12 @@ default gray), `update_tag` (`newName`, `color`, `description`; an omitted argum
 an empty `description` clears it; a rename carries the assignments and the answer names
 `movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`;
 `dryRun=true` answers the count and writes nothing), `assign_tag` (`objectFqn` plus a `tags` array;
-the list writes as one, so one unknown tag refuses the whole call and nothing is assigned),
-`unassign_tag` (a `tags` array; a tag the object does not carry is `skipped`, and nothing removed
-answers `isError` with `reason=notAssigned`).
+the list writes as one, so one unknown tag refuses the whole call and nothing is assigned; a blank
+or whitespace element refuses the whole call with `invalidName`), `unassign_tag` (a `tags` array; a
+tag the object does not carry is `skipped`, and nothing removed answers `isError` with
+`reason=notAssigned`). The `assign_tag` and `unassign_tag` answers name what the operation itself
+changed under its write lock: a tag a parallel call assigned or removed first reads as `skipped`,
+not as `assigned` or `removed`.
 
 `assign_tag` checks the object against the EDT model first: an object that is not in the
 configuration is refused with `objectNotFound` and the nearest names. Nested addresses resolve
@@ -168,7 +171,9 @@ too, in kind-name pairs the way the marker file spells them: `Catalog.Products.A
 `Catalog.Products.Form.ItemForm`. Names that differ only in case are different tags; a name empty
 after trim is refused with `invalidName`, a color that is not `#RRGGBB` with `invalidColor`. The
 file refusals every write can answer are `unreadableFile`, `readOnlyFile`, `changedOnDisk` (the
-file changed after it was read and was left as the changing party wrote it) and `saveFailed`.
+file changed after it was read and was left as the changing party wrote it) and `saveFailed` -
+which also answers when the file's bytes cannot be read at all: refused access, a drive that went
+away.
 
 ## Diagnostics
 

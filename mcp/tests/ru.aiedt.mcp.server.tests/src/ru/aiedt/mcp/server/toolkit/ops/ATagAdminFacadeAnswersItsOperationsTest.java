@@ -545,6 +545,38 @@ public class ATagAdminFacadeAnswersItsOperationsTest
             .getMarkerNames("Catalog.Products").contains("One")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /** A blank element in the tags array refuses the whole assign, and nothing is written. */
+    @Test
+    public void aBlankTagRefusesTheWholeAssign()
+    {
+        assertTrue(call("create_tag", "tag", "One").get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        String before = markersFileBytes();
+        JsonObject answer = call("assign_tag", "objectFqn", "Catalog.Products", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "tags", "[\"One\", \" \"]"); //$NON-NLS-1$
+        assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("invalidName", answer.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(before, markersFileBytes());
+        assertTrue(MarkerManager.getInstance().getMarkerStorage(project)
+            .getMarkerNames("Catalog.Products").isEmpty()); //$NON-NLS-1$
+    }
+
+    /** A blank element in the tags array refuses the whole unassign, and nothing is written. */
+    @Test
+    public void aBlankTagRefusesTheWholeUnassign()
+    {
+        assertTrue(call("create_tag", "tag", "One").get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(call("assign_tag", "objectFqn", "Catalog.Products", "tags", "[\"One\"]") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            .get("success").getAsBoolean()); //$NON-NLS-1$
+        String before = markersFileBytes();
+        JsonObject answer = call("unassign_tag", "objectFqn", "Catalog.Products", //$NON-NLS-1$ //$NON-NLS-2$
+            "tags", "[\"One\", \"\"]"); //$NON-NLS-1$
+        assertFalse(answer.toString(), answer.get("success").getAsBoolean()); //$NON-NLS-1$
+        assertEquals("invalidName", answer.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(before, markersFileBytes());
+        assertTrue(MarkerManager.getInstance().getMarkerStorage(project)
+            .getMarkerNames("Catalog.Products").contains("One")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     /**
      * A marker file that cannot be read at all - refused access, a drive that went away - refuses
      * the pre-checked writes with {@code saveFailed}, not with {@code tagNotFound} off an empty
