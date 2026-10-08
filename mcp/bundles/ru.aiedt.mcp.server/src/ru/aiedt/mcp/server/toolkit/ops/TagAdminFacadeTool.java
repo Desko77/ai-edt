@@ -988,9 +988,11 @@ public class TagAdminFacadeTool
     }
 
     /**
-     * The refusal an unreadable marker file answers with, checked before the tags themselves are
+     * The refusal an unusable marker file answers with, checked before the tags themselves are
      * read: a pre-check that cannot see the definitions would otherwise answer {@code tagNotFound}
-     * for a tag the file does define.
+     * for a tag the file does define. A file that does not parse answers {@code unreadableFile};
+     * one whose bytes could not be read at all - refused access, a drive that went away - answers
+     * {@code saveFailed}.
      *
      * @param service the marker service
      * @param project the project
@@ -999,12 +1001,18 @@ public class TagAdminFacadeTool
     private static ToolResult fileRefusalOf(MarkerManager service, IProject project)
     {
         String refusal = service.markerFileRefusal(project);
-        if (refusal == null)
+        if (refusal != null)
         {
-            return null;
+            return ToolResult.error(refusal + " No tag was written.") //$NON-NLS-1$
+                .put("reason", MarkerWriteOutcome.UNREADABLE_FILE); //$NON-NLS-1$
         }
-        return ToolResult.error(refusal + " No tag was written.") //$NON-NLS-1$
-            .put("reason", MarkerWriteOutcome.UNREADABLE_FILE); //$NON-NLS-1$
+        if (service.markerFileReadFailed(project))
+        {
+            return ToolResult.error("The marker file of project " + project.getName() //$NON-NLS-1$
+                + " could not be read, so its tags cannot be checked. No tag was written.") //$NON-NLS-1$
+                    .put("reason", MarkerWriteOutcome.SAVE_FAILED); //$NON-NLS-1$
+        }
+        return null;
     }
 
     /**

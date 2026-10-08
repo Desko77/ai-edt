@@ -223,6 +223,20 @@ public class MarkerManager
 
 
 
+    /**
+
+     * Projects whose marker file could not be read at all on the last load attempt - a sharing
+
+     * violation, a network drive that went away. Not a state, only the answer to the last
+
+     * attempt: the next load reads the file again and a read that succeeds clears it.
+
+     */
+
+    private final Set<IProject> readFailed = new HashSet<>();
+
+
+
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
 
@@ -1395,6 +1409,36 @@ public class MarkerManager
     }
 
     /**
+     * Tells whether the last load attempt of the project's marker file could not read its bytes at
+     * all - as opposed to reading them and finding they do not parse, which
+     * {@link #markerFileRefusal(IProject)} answers.
+     * <p>
+     * The answer describes the last attempt, so the question is meaningful after a call that
+     * loads: {@code getMarkerStorage}, {@code markerFileRefusal}. A read that failed is not a
+     * state - the next load reads the file again, and one that succeeds clears this.
+     * </p>
+     *
+     * @param project the project
+     * @return <code>true</code> when the last load attempt of its marker file failed to read
+     */
+    public boolean markerFileReadFailed(IProject project)
+    {
+        if (project == null)
+        {
+            return false;
+        }
+        lock.readLock().lock();
+        try
+        {
+            return readFailed.contains(project);
+        }
+        finally
+        {
+            lock.readLock().unlock();
+        }
+    }
+
+    /**
 
      * Moves an object's assignments, and the assignments of every object nested under it, to a new FQN.
 
@@ -1864,6 +1908,8 @@ public class MarkerManager
 
             unreadable.remove(project);
 
+            readFailed.remove(project);
+
             fingerprints.remove(project);
 
         }
@@ -2203,10 +2249,12 @@ public class MarkerManager
         catch (CoreException | IOException e)
         {
             fingerprints.remove(project);
+            readFailed.add(project);
             Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
             return null;
         }
         unreadable.remove(project);
+        readFailed.remove(project);
         if (bytes == null)
         {
             fingerprints.put(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
@@ -2222,6 +2270,7 @@ public class MarkerManager
         catch (IOException e)
         {
             fingerprints.remove(project);
+            readFailed.add(project);
             Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
             return null;
         }
