@@ -316,7 +316,14 @@ public class GeneralPrefTab
         store.setValue(PrefKeys.PREF_HISTORY_DISK_ENABLED, historyDiskCheck.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_DISK_DAYS, historyDiskDaysSpinner.getSelection());
         store.setValue(PrefKeys.PREF_HISTORY_DISK_PATH, historyDiskPathField.getText().trim());
-        writeUpkeep();
+        String upkeepNotSaved = writeUpkeep();
+        if (upkeepNotSaved != null)
+        {
+            // Start and Restart reach here without passing the page's own refusal, and an update
+            // address the user was told would not be kept must not be the price of starting a
+            // server: they are told what to fix instead.
+            return upkeepNotSaved;
+        }
         store.setValue(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR, showMarkersCheck.getSelection());
         MarkerSettingsMigration.mirrorToLegacyKey(PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR,
             Boolean.toString(showMarkersCheck.getSelection()));
@@ -342,29 +349,29 @@ public class GeneralPrefTab
      * <p>
      * All five keys move together because they are only meaningful together: writing the
      * local-source flag on its own would combine a new flag with a previously stored address and
-     * produce a pairing the user never chose. The rejected text stays in the field, and the reason
-     * is already on screen from the validation that runs as it is typed.
+     * produce a pairing the user never chose. The rejected text stays in the field.
      * </p>
+     *
+     * @return <code>null</code> when the five keys were written, otherwise the reason the address
+     *         was refused
      */
-    private void writeUpkeep()
+    private String writeUpkeep()
     {
-        if (validateUpkeepSite() != null)
+        String problem = validateUpkeepSite();
+        if (problem != null)
         {
-            return;
+            return problem;
         }
         store.setValue(PrefKeys.PREF_UPKEEP_ENABLED, upkeepEnabledCheck.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_SITE_URL, upkeepSiteText.getText().trim());
         store.setValue(PrefKeys.PREF_UPKEEP_INTERVAL_HOURS, upkeepIntervalSpinner.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_NOTIFY_POPUP, upkeepNotifyCheck.getSelection());
         store.setValue(PrefKeys.PREF_UPKEEP_ALLOW_LOCAL_SITE, upkeepAllowLocalCheck.getSelection());
+        return null;
     }
 
     /**
      * Puts the widgets back to the shipped values. Nothing is saved until OK.
-     * <p>
-     * The two Vanessa fields are left as they are - a known gap from when they were added after this
-     * method, kept here so the fix can be its own reviewed change.
-     * </p>
      */
     public void performDefaults()
     {
@@ -374,6 +381,8 @@ public class GeneralPrefTab
         checksFolderText.setText(store.getDefaultString(PrefKeys.PREF_CHECKS_FOLDER));
         bslLsJarText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAR));
         bslLsJavaText.setText(store.getDefaultString(PrefKeys.PREF_BSL_LS_JAVA));
+        vanessaEpfText.setText(store.getDefaultString(PrefKeys.PREF_VANESSA_EPF));
+        vanessa1cExeText.setText(store.getDefaultString(PrefKeys.PREF_VANESSA_1C_EXE));
         naparnikBridgeCheck.setSelection(
             store.getDefaultBoolean(PrefKeys.PREF_NAPARNIK_BRIDGE_ENABLED));
         naparnikAllToolsCheck.setSelection(
@@ -439,6 +448,10 @@ public class GeneralPrefTab
         portSpinner.setMinimum(MIN_PORT);
         portSpinner.setMaximum(MAX_PORT);
         portSpinner.setSelection(store.getInt(PrefKeys.PREF_PORT));
+        portSpinner.setToolTipText("The port the server listens on. A change here applies when the " //$NON-NLS-1$
+            + "server next starts: it does not move a server that is already running, and it does " //$NON-NLS-1$
+            + "not restart one either. A change on the Tools tab restarts a running server, and so " //$NON-NLS-1$
+            + "does the Restart button below."); //$NON-NLS-1$
         spacer(section);
 
         Label spanLabel = new Label(section, SWT.NONE);
