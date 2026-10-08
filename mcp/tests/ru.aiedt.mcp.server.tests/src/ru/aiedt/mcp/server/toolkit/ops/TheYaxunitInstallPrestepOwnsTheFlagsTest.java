@@ -102,6 +102,22 @@ public class TheYaxunitInstallPrestepOwnsTheFlagsTest
         assertTrue(outcome.summary.contains("unsafe action protection off")); //$NON-NLS-1$
     }
 
+    /** A flags step that throws on the installed path fails the pre-step and reinstalls nothing. */
+    @Test
+    public void aThrowingFlagsStepOnTheInstalledPathDoesNotReinstallTheEngine()
+    {
+        StubSteps steps = new StubSteps();
+        steps.listed = listing("YAxUnit"); //$NON-NLS-1$
+        steps.loweredFailure = new IllegalStateException("no designer session"); //$NON-NLS-1$
+
+        YaxunitTestsTool.InstallOutcome outcome = YaxunitTestsTool.ensureYaxunitInstalled(
+            params(), true, steps);
+
+        org.junit.Assert.assertFalse(outcome.isOk());
+        assertEquals(Arrays.asList("list", "flags"), steps.events); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(outcome.error, outcome.error.contains("no designer session")); //$NON-NLS-1$
+    }
+
     /** The explicit opt-out neither reads nor writes the flags, on the installed path too. */
     @Test
     public void unsafeModeFalseDoesNotTouchTheFlags()
@@ -209,6 +225,9 @@ public class TheYaxunitInstallPrestepOwnsTheFlagsTest
         /** Staged flags result. */
         ExtensionFlagsResult lowered;
 
+        /** What the flags step throws instead of answering; <code>null</code> when it answers. */
+        RuntimeException loweredFailure;
+
         @Override
         public ListResult listExtensions(String projectName, String applicationId)
         {
@@ -228,6 +247,10 @@ public class TheYaxunitInstallPrestepOwnsTheFlagsTest
         public ExtensionFlagsResult lowerEngineFlags(String projectName, String applicationId)
         {
             events.add("flags"); //$NON-NLS-1$
+            if (loweredFailure != null)
+            {
+                throw loweredFailure;
+            }
             return lowered;
         }
     }

@@ -581,7 +581,10 @@ public class YaxunitTestsTool implements IMcpTool
             repo = "bia-technologies/yaxunit"; //$NON-NLS-1$
         }
 
-        // 1. Skip the download when the engine is already installed.
+        // 1. Skip the download when the engine is already installed. Only the probe is guarded:
+        // the flags step below is not part of it, and a failure there must not be read as a
+        // probe that failed - that would download and reinstall an engine that is in place.
+        boolean alreadyInstalled = false;
         try
         {
             BmInfobaseExtensionHelper.ListResult listed =
@@ -592,8 +595,7 @@ public class YaxunitTestsTool implements IMcpTool
                 {
                     if (name != null && "YAxUnit".equalsIgnoreCase(name.trim())) //$NON-NLS-1$
                     {
-                        return withUnsafeMode("YAxUnit already installed - no download needed.", //$NON-NLS-1$
-                            unsafeMode, projectName, applicationId, steps);
+                        alreadyInstalled = true;
                     }
                 }
             }
@@ -605,6 +607,11 @@ public class YaxunitTestsTool implements IMcpTool
         {
             Activator.logWarning("installYaxunit: listExtensions probe failed, attempting " //$NON-NLS-1$
                 + "install anyway: " + TextSuggest.safeMessage(e)); //$NON-NLS-1$
+        }
+        if (alreadyInstalled)
+        {
+            return withUnsafeMode("YAxUnit already installed - no download needed.", //$NON-NLS-1$
+                unsafeMode, projectName, applicationId, steps);
         }
 
         // 2. Install (also applies to the database), then see to the flags.
@@ -636,8 +643,18 @@ public class YaxunitTestsTool implements IMcpTool
             // the summary says nothing about flags it did not look at.
             return InstallOutcome.done(summary);
         }
-        BmInfobaseExtensionHelper.ExtensionFlagsResult flags =
-            steps.lowerEngineFlags(projectName, applicationId);
+        BmInfobaseExtensionHelper.ExtensionFlagsResult flags;
+        try
+        {
+            flags = steps.lowerEngineFlags(projectName, applicationId);
+        }
+        catch (RuntimeException failure)
+        {
+            // The step answers its own refusals; what it throws is a failure nobody confirmed the
+            // flags after, so the tests do not launch and the answer names it.
+            return InstallOutcome.failed("the extension safety flags could not be read or lowered: " //$NON-NLS-1$
+                + TextSuggest.safeMessage(failure), null);
+        }
         if (!flags.ok)
         {
             return InstallOutcome.failed(flags.error, flags.flags);
