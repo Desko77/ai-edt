@@ -255,6 +255,24 @@ class TheActiveRecordIsTheOneTheLauncherLoads(unittest.TestCase):
         self.assertTrue(records["installation"]["active"])
         self.assertFalse(records["profile"]["active"])
 
+    def test_the_area_named_as_a_file_url_decides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
+            write_profile(root, install, "4.38.0",
+                          [BUNDLE + ",0.2.58,plugins/" + BUNDLE + "_0.2.58.jar,4,false"])
+            write_ini(install, ["-configuration", (install / "configuration").as_uri(), "-vmargs"])
+            found, _, _ = REPORT.installations([root], BUNDLE)
+        records = {record["kind"]: record for record in found[0]["records"]}
+        self.assertTrue(records["installation"]["active"])
+        self.assertFalse(records["profile"]["active"])
+
+    def test_the_hash_counts_utf16_units(self):
+        self.assertEqual(REPORT.java_string_hash("abc"), 96354)
+        self.assertEqual(REPORT.java_string_hash(chr(0x1F600)), 31 * 0xD83D + 0xDE00)
+
     def test_an_ini_naming_an_area_that_records_nothing_leaves_no_active_record(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

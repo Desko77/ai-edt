@@ -22,6 +22,8 @@ loads, so a caller compares versions against the one that decides what runs.
 import argparse
 import json
 import os
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 import re
 import sys
 from pathlib import Path
@@ -139,8 +141,9 @@ def config_area_of(bundles_info):
 def java_string_hash(text):
     """Java's String.hashCode of a text, as the signed 32-bit value the platform returns."""
     value = 0
-    for character in text:
-        value = (31 * value + ord(character)) & 0xFFFFFFFF
+    units = text.encode("utf-16-le", "surrogatepass")
+    for index in range(0, len(units), 2):
+        value = (31 * value + int.from_bytes(units[index:index + 2], "little")) & 0xFFFFFFFF
     return value - 0x100000000 if value >= 0x80000000 else value
 
 
@@ -199,6 +202,8 @@ def configured_area(install_dir):
                 value = stripped.split("=", 1)[1].strip()
                 break
         if value:
+            if value.lower().startswith("file:"):
+                value = url2pathname(urlparse(value).path)
             return os.path.normcase(os.path.normpath(os.path.join(str(install_dir), value)))
     return None
 

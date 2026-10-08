@@ -85,7 +85,7 @@
 
 .EXAMPLE
   pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -Every -RepoPath .\mcp\repositories\ru.aiedt.mcp.server.repository\target\repository
-  Install into every installation found. -InstallationMatch <substring> names them one by one.
+  Install into every installation found. -InstallationMatch "<substring>;<substring>" names some of them.
 #>
 [CmdletBinding()]
 param(
@@ -126,8 +126,8 @@ param(
     # instead of on one running session. Refuses while an EDT of a target installation is running -
     # no session is closed, killed or started.
     [switch]$AllInstallations,
-    # Which installations to install into: a substring of the installation path, repeatable. Only
-    # the named ones are touched, and a substring matching none is an error rather than a no-op.
+    # Which installations to install into: substrings of the installation path, separated by ';'.
+    # Only the named ones are touched, and a substring matching none is an error rather than a no-op.
     [string[]]$InstallationMatch = @(),
     # Install into every installation found. The other way to name them is -InstallationMatch.
     [switch]$Every,
@@ -156,6 +156,10 @@ if ($WhatIf -and -not $AllInstallations) {
     Write-Err2 "-WhatIf belongs to -AllInstallations: the single-session mode changes a running session and has no dry run."
     exit 2
 }
+# pwsh -File binds a repeated named parameter as an error and "a,b" as one string, so several
+# substrings travel in one value.
+$InstallationMatch = @($InstallationMatch | ForEach-Object { $_ -split ';' } |
+    ForEach-Object { $_.Trim() } | Where-Object { $_ })
 if ($InstallationMatch.Count -gt 0 -and -not $AllInstallations) {
     Write-Err2 "-InstallationMatch belongs to -AllInstallations: the single-session mode works on the one running session."
     exit 2
@@ -634,7 +638,7 @@ if ($AllInstallations) {
         }
     } else {
         Write-Step "Nothing was installed: -AllInstallations names the installations it found and installs into none of them."
-        Write-Note "  -InstallationMatch <substring of the path>   one or more of them (repeatable)"
+        Write-Note "  -InstallationMatch <substring[;substring]>   the ones whose path contains a substring"
         Write-Note "  -Every                                       all of them"
         Write-Note "  Add -WhatIf to print what the director would run and install nothing."
         exit 3

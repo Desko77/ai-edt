@@ -184,7 +184,7 @@ prints the same table and installs nothing.
 |---|---|
 | `-AllInstallations` | Work on the installations that record the plugin, with EDT closed. Alone it prints them and installs nothing. |
 | `-Every` | Install into every installation found. |
-| `-InstallationMatch` | Substring of the installation path; repeat the parameter to name several. A substring matching no installation is an error. |
+| `-InstallationMatch` | Substring of the installation path; several are separated by `;` in one value. A substring matching no installation is an error. |
 | `-WhatIf` (alias `-DryRun`) | Print the plan and change nothing. Requires `-AllInstallations`. |
 | `-PythonExe` | Interpreter for `scripts/report-plugin-jars.py`, which lists the installations. Empty searches `python` and `python3`. |
 | `-JavaExe` | `java.exe` for installations whose ini names no `-vm`. Empty takes `JAVA_HOME`, and with that empty too the director uses the `java` on `PATH`. |
