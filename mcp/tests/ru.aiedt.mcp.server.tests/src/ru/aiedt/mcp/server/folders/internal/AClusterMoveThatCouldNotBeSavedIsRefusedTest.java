@@ -204,6 +204,14 @@ public class AClusterMoveThatCouldNotBeSavedIsRefusedTest
             return true;
         }
 
+        @Override
+        public boolean holdsWhatWasLastReadOrWritten(org.eclipse.core.resources.IProject project)
+        {
+            // The in-memory fake never carries bytes somebody else wrote, so a change event is
+            // never its own write coming back.
+            return false;
+        }
+
         /**
          * Copies storage deeply enough that a rejected edit cannot alter persisted state.
          *

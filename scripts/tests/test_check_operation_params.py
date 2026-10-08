@@ -196,5 +196,66 @@ class BranchReadsStayWithTheirBranch(unittest.TestCase):
         self.assertNotIn("backupTo", sync)
 
 
+class AReadThroughAnotherClassIsCounted(unittest.TestCase):
+    """`branch_deep_reads` follows a call into a method of another class.
+
+    A branch may hand the map to a helper that lives in another file - `SnapshotKeeper.run(params)`
+    - and what that helper reads is in that file. Resolving every call against the facade's own
+    source left the read out of the map, and the unread-argument guard then refused a call that
+    works.
+    """
+
+    SOURCE = (
+        'public String execute(Map<String, String> params) {\n'
+        '    switch (operation) {\n'
+        '        case "snapshot":\n'
+        '            return SnapshotKeeper.run(params);\n'
+        '        case "list":\n'
+        '            return list(params);\n'
+        '    }\n'
+        '}\n'
+        '\n'
+        'private String list(Map<String, String> params) {\n'
+        '    return JsonUtils.extractStringArgument(params, "projectName");\n'
+        '}\n')
+
+    OWNER = (
+        'class SnapshotKeeper {\n'
+        '    static String run(Map<String, String> params) {\n'
+        '        return SnapshotKeeper.finish(params);\n'
+        '    }\n'
+        '\n'
+        '    static String finish(Map<String, String> params) {\n'
+        '        return JsonUtils.extractStringArgument(params, "snapshotName");\n'
+        '    }\n'
+        '}\n')
+
+    def setUp(self):
+        import pathlib
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        pathlib.Path(self.tmp.name, "SnapshotKeeper.java").write_text(self.OWNER,
+                                                                      encoding="utf-8")
+        self.saved_ops = MODULE.OPS
+        MODULE.OPS = pathlib.Path(self.tmp.name)
+        self.dispatch = MODULE.dispatch_body(self.SOURCE)
+        self.branches = MODULE.branches(self.dispatch)
+
+    def tearDown(self):
+        MODULE.OPS = self.saved_ops
+        self.tmp.cleanup()
+
+    def test_a_read_in_another_class_is_counted(self):
+        reads = MODULE.branch_deep_reads(self.branches["snapshot"], self.SOURCE, self.dispatch)
+        self.assertIn("snapshotName", reads)
+
+    def test_another_classs_read_stays_with_its_branch(self):
+        reads = MODULE.branch_deep_reads(self.branches["snapshot"], self.SOURCE, self.dispatch)
+        self.assertNotIn("projectName", reads)
+        own = MODULE.branch_deep_reads(self.branches["list"], self.SOURCE, self.dispatch)
+        self.assertIn("projectName", own)
+        self.assertNotIn("snapshotName", own)
+
+
 if __name__ == "__main__":
     unittest.main()

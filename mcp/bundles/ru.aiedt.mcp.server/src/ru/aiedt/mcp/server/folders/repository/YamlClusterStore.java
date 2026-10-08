@@ -176,9 +176,13 @@ public class YamlClusterStore
      * The state is kept here rather than in {@link ClusterStore}, which is what the YAML is written
      * from: a field on the store would be dumped into the file, and a reader of another build would
      * meet a key it does not know. The map is per instance, and the manager that owns this store is
-     * the only writer for a project's file. A name that is absent means this store never read that
-     * project - which is not the same as having read no file, and is stored as
-     * {@link AtomicFileReplace#NO_FILE_FINGERPRINT} instead.
+     * the only writer for a project's file. A name that is absent means this store does not
+     * know what it last read from that project - it never read it, or a read failed and was
+     * forgotten - which is not the same as having read no file, and is stored as
+     * {@link AtomicFileReplace#NO_FILE_FINGERPRINT} instead. A write sets the fingerprint of
+     * the bytes it is about to land before it runs, so the change notification the refresh
+     * inside the write fires reads as this store's own write; a refused write puts the
+     * previous fingerprint back.
      * </p>
      */
     private final Map<String, String> loadedFingerprints = new ConcurrentHashMap<>();
@@ -360,6 +364,8 @@ public class YamlClusterStore
 
             }
 
+            dropBlankClusters(storage);
+
             cleanupOrphanedFqns(storage);
 
             return storage;
@@ -387,6 +393,26 @@ public class YamlClusterStore
             forgetFingerprint(project);
 
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
+
+            return null;
+
+        }
+
+        catch (RuntimeException e)
+
+        {
+
+            // A document that parses and still does not fit the shape - a null list element, an
+
+            // entry of the wrong kind - must refuse as unreadable rather than throw into the
+
+            // caller: every read of a project's clusters runs through here.
+
+            forgetFingerprint(project);
+
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+
+                + " could not be read and was left unchanged: " + e); //$NON-NLS-1$
 
             return null;
 
@@ -632,6 +658,32 @@ public class YamlClusterStore
         return deleteIfExists(project).succeeded();
     }
 
+    /**
+     * Tells whether the file on disk holds the bytes this store last read or wrote.
+     * <p>
+     * Not knowing what was last read and having read no file are different states. A project this
+     * store never read, or whose read failed and was forgotten, has no bytes to compare: nothing
+     * the disk holds is that project's own state, not even the absence of the file. Only a store
+     * that read the absence - or wrote the removal - counts no file as its own.
+     * </p>
+     *
+     * @param project the project
+     * @return {@code true} when the disk carries exactly those bytes; {@code false} when it holds
+     *         something else, when this store holds no fingerprint to compare, or when the file
+     *         cannot be read
+     */
+    @Override
+    public boolean holdsWhatWasLastReadOrWritten(IProject project)
+    {
+        String known = loadedFingerprints.get(project.getName());
+        if (known == null)
+        {
+            return false;
+        }
+        String onDisk = diskFingerprint(clustersFile(project));
+        return onDisk != null && known.equals(onDisk);
+    }
+
 
 
     /**
@@ -852,6 +904,62 @@ public class YamlClusterStore
 
     /**
 
+     * Drops null cluster entries after a load.
+
+     * <p>
+
+     * An empty list element in the YAML - a dash with nothing after it, which a hand edit or a
+
+     * merge leaves behind - reads as null, and a null entry reached by every later reader as a
+
+     * cluster is a NullPointerException on each of the project's cluster reads. The load drops
+
+     * such entries; what remains is the file's clusters.
+
+     * </p>
+
+     *
+
+     * @param storage the freshly loaded storage
+
+     */
+
+    private static void dropBlankClusters(ClusterStore storage)
+
+    {
+
+        List<Cluster> clusters = storage.getGroups();
+
+        List<Cluster> kept = new ArrayList<>(clusters.size());
+
+        for (Cluster cluster : clusters)
+
+        {
+
+            if (cluster != null)
+
+            {
+
+                kept.add(cluster);
+
+            }
+
+        }
+
+        if (kept.size() != clusters.size())
+
+        {
+
+            storage.setGroups(kept);
+
+        }
+
+    }
+
+
+
+    /**
+
      * Strips blank object references from every cluster after a load.
 
      *
@@ -951,7 +1059,11 @@ public class YamlClusterStore
      * The write runs under the file's lock, against the fingerprint of the bytes this store
      * read. A write that succeeds is remembered from the bytes handed to the helper, not from
      * a later read of the file, and the workspace is refreshed after the write; a refresh the
-     * workspace refuses is a warning on a completed write rather than a failure of it.
+     * workspace refuses is a warning on a completed write rather than a failure of it. The
+     * fingerprint of the new bytes is set before the write runs, because the refresh inside it
+     * tells the workspace about the new bytes before the write returns - with the old
+     * fingerprint still standing, that notification read as a foreign change. A refused write
+     * puts the fingerprint back to what the file still holds.
      * </p>
      *
      * @param project the project
@@ -963,28 +1075,54 @@ public class YamlClusterStore
         IFile clustersFile = clustersFile(project);
         IPath location = clustersFile.getLocation();
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        String read = loadedFingerprints.get(project.getName());
         if (location == null)
         {
+            rememberFingerprint(project, AtomicFileReplace.fingerprint(bytes));
             ClusterSaveOutcome direct = saveDirectly(project, clustersFile, content);
             if (direct.isOk())
             {
                 rememberWritten(project, bytes);
             }
+            else
+            {
+                restoreFingerprint(project, read);
+            }
             return direct;
         }
         Path osPath = location.toFile().toPath();
-        String read = loadedFingerprints.get(project.getName());
         String expected = read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : read;
+        rememberFingerprint(project, AtomicFileReplace.fingerprint(bytes));
         AtomicFileReplace.Outcome written = AtomicFileReplace.replace(osPath, expected, bytes,
             clustersFile);
         if (!written.isOk())
         {
+            restoreFingerprint(project, read);
             Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
                 + " could not be written (" + written + "); the write was refused"); //$NON-NLS-1$ //$NON-NLS-2$
             return refusal(written);
         }
         rememberWritten(project, bytes);
         return ClusterSaveOutcome.ok();
+    }
+
+    /**
+     * Puts a project's fingerprint back after a write that did not land.
+     *
+     * @param project the project
+     * @param read the fingerprint the store held before the refused write, or {@code null} when
+     *            it held none
+     */
+    private void restoreFingerprint(IProject project, String read)
+    {
+        if (read == null)
+        {
+            forgetFingerprint(project);
+        }
+        else
+        {
+            rememberFingerprint(project, read);
+        }
     }
 
     /**
@@ -1061,6 +1199,10 @@ public class YamlClusterStore
      * a delete that trusted the tree would leave it behind and answer that nothing changed.
      * The removal runs under the file's lock against the fingerprint of the bytes this store
      * read. A project whose file has no location on disk is deleted through the workspace.
+     * The no-file fingerprint is set before the removal, because the refresh inside it tells
+     * the workspace the file is gone before the removal returns - with the deleted file's
+     * fingerprint still standing, that notification read as a foreign change. A refused
+     * removal puts the fingerprint back to what the file still holds.
      * </p>
      *
      * @param project the project
@@ -1074,7 +1216,14 @@ public class YamlClusterStore
         IPath location = file.getLocation();
         if (location == null)
         {
-            return deleteThroughWorkspace(project, file);
+            String read = loadedFingerprints.get(project.getName());
+            rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
+            ClusterSaveOutcome deleted = deleteThroughWorkspace(project, file);
+            if (deleted.isRefused())
+            {
+                restoreFingerprint(project, read);
+            }
+            return deleted;
         }
         Path osPath = location.toFile().toPath();
         if (Files.notExists(osPath))
@@ -1083,8 +1232,14 @@ public class YamlClusterStore
         }
         String read = loadedFingerprints.get(project.getName());
         String expected = read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : read;
+        rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
         AtomicFileReplace.Outcome removed = AtomicFileReplace.remove(osPath, expected, file);
-        return removed.isOk() ? ClusterSaveOutcome.ok() : refusal(removed);
+        if (!removed.isOk())
+        {
+            restoreFingerprint(project, read);
+            return refusal(removed);
+        }
+        return ClusterSaveOutcome.ok();
     }
 
     /**

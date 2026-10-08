@@ -672,6 +672,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And for tag_admin joining the list with the prose of its five operations' arguments.
      * Measured 08.10: 106755.
      * </p>
+     * <p>
+     * And by 164 for childName and name on extension_workshop: borrow_child reads the child's
+     * name from either spelling, and a client could not discover either. Measured 08.10: 106919.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 106755;
+    private static final int DOCUMENT_PROSE = 106919;
 }

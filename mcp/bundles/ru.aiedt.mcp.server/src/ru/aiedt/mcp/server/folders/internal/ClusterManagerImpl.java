@@ -32,6 +32,7 @@ import java.nio.file.WatchKey;
 
 import java.nio.file.WatchService;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 
 import java.util.HashSet;
@@ -132,6 +133,10 @@ import ru.aiedt.mcp.server.folders.repository.YamlClusterStore;
  * being rewritten from outside and asks the workspace to catch up, which turns into a resource-change
 
  * event; the resource listener drops the affected project's cache entry so the next read reloads.
+
+ * A change the service itself wrote is recognized by the bytes the file carries and skipped: the
+
+ * cache the write produced is current, and the write path has already told the listeners.
 
  * </p>
 
@@ -246,6 +251,50 @@ public class ClusterManagerImpl
 
 
     /**
+     * Answers a question from the project's store without copying the store.
+     * <p>
+     * The Navigator filter asks about every object it draws, on the UI thread. A detached copy of
+     * the whole store per question would allocate the store once per object; the question is put
+     * to the cached store under the lock instead, and detaches only what it returns.
+     * </p>
+     *
+     * @param <T> what the question answers
+     * @param project the project; <code>null</code> is answered from an empty store
+     * @param question reads the store and returns a value that shares nothing with it
+     * @return the answer
+     */
+    private <T> T serveFromStorage(IProject project, java.util.function.Function<ClusterStore, T> question)
+    {
+        if (project == null)
+        {
+            return question.apply(new ClusterStore());
+        }
+        cacheLock.readLock().lock();
+        try
+        {
+            ClusterStore cached = projectStorageCache.get(project.getName());
+            if (cached != null)
+            {
+                return question.apply(cached);
+            }
+        }
+        finally
+        {
+            cacheLock.readLock().unlock();
+        }
+        cacheLock.writeLock().lock();
+        try
+        {
+            ClusterStore loaded = loadStorageLocked(project);
+            return question.apply(loaded == null ? new ClusterStore() : loaded);
+        }
+        finally
+        {
+            cacheLock.writeLock().unlock();
+        }
+    }
+
+    /**
 
      * Takes the service down: stops listening, stops the watcher, and clears the cache and listeners.
 
@@ -329,7 +378,7 @@ public class ClusterManagerImpl
 
             {
 
-                return cached;
+                return cached.detachedCopy();
 
             }
 
@@ -350,7 +399,7 @@ public class ClusterManagerImpl
         {
 
             ClusterStore loaded = loadStorageLocked(project);
-            return loaded == null ? new ClusterStore() : loaded;
+            return loaded == null ? new ClusterStore() : loaded.detachedCopy();
 
         }
 
@@ -371,27 +420,7 @@ public class ClusterManagerImpl
     public List<Cluster> getClustersAtPath(IProject project, String path)
 
     {
-
-        ClusterStore storage = getClusterStorage(project);
-
-        cacheLock.readLock().lock();
-
-        try
-
-        {
-
-            return storage.getClustersAtPath(path);
-
-        }
-
-        finally
-
-        {
-
-            cacheLock.readLock().unlock();
-
-        }
-
+        return serveFromStorage(project, storage -> detachedCopies(storage.getClustersAtPath(path)));
     }
 
 
@@ -401,27 +430,7 @@ public class ClusterManagerImpl
     public List<Cluster> getAllClusters(IProject project)
 
     {
-
-        ClusterStore storage = getClusterStorage(project);
-
-        cacheLock.readLock().lock();
-
-        try
-
-        {
-
-            return storage.getGroups();
-
-        }
-
-        finally
-
-        {
-
-            cacheLock.readLock().unlock();
-
-        }
-
+        return serveFromStorage(project, storage -> detachedCopies(storage.getGroups()));
     }
 
 
@@ -467,7 +476,7 @@ public class ClusterManagerImpl
                 projectStorageCache.remove(project.getName());
                 return ClusterWriteOutcome.of(saved);
             }
-            created = cluster;
+            created = cluster.detachedCopy();
         }
         finally
         {
@@ -608,7 +617,14 @@ public class ClusterManagerImpl
     @Override
     public ClusterWriteOutcome removeObjectFromCluster(IProject project, String objectFqn)
     {
-        return removeHeldObject(project, objectFqn);
+        return mutate(project, storage -> {
+            if (storage.findClusterForObject(objectFqn) == null)
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            storage.removeObjectFromAllClusters(objectFqn);
+            return null;
+        });
     }
 
 
@@ -618,27 +634,10 @@ public class ClusterManagerImpl
     public Cluster findClusterForObject(IProject project, String objectFqn)
 
     {
-
-        ClusterStore storage = getClusterStorage(project);
-
-        cacheLock.readLock().lock();
-
-        try
-
-        {
-
-            return storage.findClusterForObject(objectFqn);
-
-        }
-
-        finally
-
-        {
-
-            cacheLock.readLock().unlock();
-
-        }
-
+        return serveFromStorage(project, storage -> {
+            Cluster found = storage.findClusterForObject(objectFqn);
+            return found == null ? null : found.detachedCopy();
+        });
     }
 
 
@@ -758,7 +757,7 @@ public class ClusterManagerImpl
 
 
     /**
-     * Removes an object from every cluster naming it.
+     * Removes an object, and every name nested under it, from every cluster naming either.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
@@ -880,17 +879,51 @@ public class ClusterManagerImpl
 
         {
 
-            invalidateCache(project);
+            clustersFileTouched(project);
 
         }
 
-        for (IProject project : affected)
+    }
+
+
+
+    /**
+
+     * Reacts to a project's clusters file having changed on disk.
+
+     * <p>
+
+     * A change this service itself wrote does not count: the cache the write produced already
+
+     * holds the file's clusters and the write path has told the listeners, so dropping the cache
+
+     * would only force the next read to reload what it has, and the listeners would hear the
+
+     * same change twice. The file carrying the bytes this store last saw is exactly that case.
+
+     * </p>
+
+     *
+
+     * @param project the project whose clusters file changed
+
+     */
+
+    void clustersFileTouched(IProject project)
+
+    {
+
+        if (repository.holdsWhatWasLastReadOrWritten(project))
 
         {
 
-            fireClustersChanged(project);
+            return;
 
         }
+
+        invalidateCache(project);
+
+        fireClustersChanged(project);
 
     }
 
@@ -957,6 +990,26 @@ public class ClusterManagerImpl
     }
 
     /**
+     * Copies a list of clusters so the copies share nothing with the storage they came from.
+     * <p>
+     * The read seam serves these: a caller holding one reads outside the cache lock, where the
+     * live instances could be edited under the write lock at the same time.
+     * </p>
+     *
+     * @param clusters the clusters the storage holds
+     * @return a fresh list of detached copies, never <code>null</code>
+     */
+    private static List<Cluster> detachedCopies(List<Cluster> clusters)
+    {
+        List<Cluster> copies = new ArrayList<>(clusters.size());
+        for (Cluster cluster : clusters)
+        {
+            copies.add(cluster == null ? null : cluster.detachedCopy());
+        }
+        return copies;
+    }
+
+    /**
      * Tells whether renaming {@code cluster} to {@code newName} would collide with another cluster.
      *
      * @param storage the project's clusters
@@ -976,20 +1029,21 @@ public class ClusterManagerImpl
     }
 
     /**
-     * Removes an object from every cluster that holds it.
+     * Removes an object, and every name nested under it, from every cluster that held either.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return {@link ClusterSaveOutcome#NO_CHANGE} when the object is not held, otherwise the save
+     * @return {@link ClusterSaveOutcome#NO_CHANGE} when neither the object nor a nested name is
+     *         held, otherwise the save
      */
     private ClusterWriteOutcome removeHeldObject(IProject project, String objectFqn)
     {
         return mutate(project, storage -> {
-            if (storage.findClusterForObject(objectFqn) == null)
+            if (!storage.holdsObjectOrDescendant(objectFqn))
             {
                 return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
             }
-            storage.removeObjectFromAllClusters(objectFqn);
+            storage.removeObjectTree(objectFqn);
             return null;
         });
     }

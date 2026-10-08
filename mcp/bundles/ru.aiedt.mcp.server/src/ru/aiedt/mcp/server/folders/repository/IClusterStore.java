@@ -47,6 +47,24 @@ public interface IClusterStore
     boolean exists(IProject project);
 
     /**
+     * Tells whether the clusters file on disk still holds exactly what this store last read or
+     * wrote for the project.
+     * <p>
+     * A change notification about a file carrying those bytes is the service's own write coming
+     * back as an event, not a change from outside: the cache the write produced is current, and
+     * the bytes nobody else touched are not something to reload from. A store with no fingerprint
+     * for the project - it never read the project, or its read failed and was forgotten - counts
+     * nothing as its own state, not even the absence of the file: only the absence it actually
+     * read or wrote is its own.
+     * </p>
+     *
+     * @param project the project
+     * @return <code>true</code> when the file holds the bytes this store last saw; also
+     *         <code>false</code> when the file cannot be read, which reads as foreign
+     */
+    boolean holdsWhatWasLastReadOrWritten(IProject project);
+
+    /**
      * Deletes a project's clusters file.
      *
      * @param project the project

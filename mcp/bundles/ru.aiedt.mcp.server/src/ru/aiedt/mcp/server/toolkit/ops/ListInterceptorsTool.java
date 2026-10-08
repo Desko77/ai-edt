@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -62,8 +63,11 @@ public class ListInterceptorsTool implements IMcpTool
     static final String CHANGE_AND_VALIDATE = "changeAndValidate"; //$NON-NLS-1$
 
     static final Pattern ANNOTATION_PATTERN = Pattern.compile(
-        // &Перед / &После / &Вместо / &ИзменениеИКонтроль / English equivalents
-        "&\\s*(Перед|После|Вместо" //$NON-NLS-1$
+        // &Перед / &После / &Вместо / &ИзменениеИКонтроль / English equivalents. The annotation is
+        // anchored to the start of its line: one commented out - `// &Перед("X")` above a live
+        // procedure - is not an interceptor the extension carries, and without the anchor the
+        // pattern read the commented annotation as the procedure's own.
+        "^[ \\t]*&\\s*(Перед|После|Вместо" //$NON-NLS-1$
             + "|ИзменениеИКонтроль" //$NON-NLS-1$
             + "|Before|After|Around|ChangeAndValidate)\\s*\\(\\s*\"([^\"]+)\"\\s*\\)" //$NON-NLS-1$
             + "\\s*(?://[^\\n]*)?\\s*\\r?\\n\\s*(?:&[^\\n]+\\r?\\n\\s*)*" //$NON-NLS-1$
@@ -600,7 +604,7 @@ public class ListInterceptorsTool implements IMcpTool
         {
             return "unknown"; //$NON-NLS-1$
         }
-        String a = annotation.toLowerCase();
+        String a = annotation.toLowerCase(Locale.ROOT);
         if (a.equals("перед") || a.equals("before")) //$NON-NLS-1$ //$NON-NLS-2$
         {
             return "before"; //$NON-NLS-1$
@@ -630,7 +634,7 @@ public class ListInterceptorsTool implements IMcpTool
         List<String> out = new ArrayList<>();
         for (String s : csv.split(",")) //$NON-NLS-1$
         {
-            String t = s.trim().toLowerCase();
+            String t = s.trim().toLowerCase(Locale.ROOT);
             if (!t.isEmpty())
             {
                 if (t.equals("changeandvalidate")) //$NON-NLS-1$

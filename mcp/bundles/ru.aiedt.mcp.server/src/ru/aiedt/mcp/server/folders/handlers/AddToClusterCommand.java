@@ -7,7 +7,10 @@
 package ru.aiedt.mcp.server.folders.handlers;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
 import org.eclipse.core.commands.AbstractHandler;
 import org.eclipse.core.commands.ExecutionEvent;
@@ -35,7 +38,9 @@ import ru.aiedt.mcp.server.labels.MarkerHelpers;
 /**
  * Adds the selected metadata objects to a cluster the user picks.
  * <p>
- * Each object is moved into the chosen cluster, out of any cluster it was already in.
+ * Each object is moved into the chosen cluster, out of any cluster it was already in. A selection
+ * that spans projects is split: each project's objects are moved into a cluster of that project,
+ * picked per project.
  * </p>
  */
 public class AddToClusterCommand
@@ -56,29 +61,45 @@ public class AddToClusterCommand
         {
             return null;
         }
-        IProject project = MarkerHelpers.extractProject(objects.get(0));
-        if (project == null)
-        {
-            return null;
-        }
         IClusterManager service = Activator.getClusterServiceStatic();
         if (service == null)
         {
             return null;
         }
-
         Shell shell = HandlerUtil.getActiveShell(event);
+        // A selection can span projects - a configuration beside an extension. Each project's
+        // objects go into that project's clusters: taking the project of the first selected
+        // object wrote the second project's objects into the first project's clusters file.
+        for (Map.Entry<IProject, List<EObject>> each : groupedBy(objects, MarkerHelpers::extractProject)
+            .entrySet())
+        {
+            addToClusters(service, shell, each.getKey(), each.getValue());
+        }
+        return null;
+    }
+
+    /**
+     * Moves one project's objects into a cluster of that project the user picks.
+     *
+     * @param service the cluster service
+     * @param shell the parent shell for the picker
+     * @param project the project the objects and the clusters belong to
+     * @param objects the selected objects of that project, never empty
+     */
+    private static void addToClusters(IClusterManager service, Shell shell, IProject project,
+        List<EObject> objects)
+    {
         List<Cluster> clusters = service.getAllClusters(project);
         if (clusters.isEmpty())
         {
             MessageDialog.openInformation(shell, "Add to Cluster", //$NON-NLS-1$
                 "There are no clusters yet. Create one from a collection folder first."); //$NON-NLS-1$
-            return null;
+            return;
         }
         Cluster target = chooseCluster(shell, clusters);
         if (target == null)
         {
-            return null;
+            return;
         }
         for (EObject object : objects)
         {
@@ -94,7 +115,32 @@ public class AddToClusterCommand
                 break;
             }
         }
-        return null;
+    }
+
+    /**
+     * Splits items by the key an extractor reads from each, keeping the order both of the groups
+     * and of the items inside them. An item with no key is dropped: it belongs to no project the
+     * command can write to.
+     *
+     * @param <K> the key type, the project in the command
+     * @param <T> the item type, the metadata object in the command
+     * @param items the items to split
+     * @param keyOf reads the key of one item; {@code null} drops the item
+     * @return the items grouped by key, in first-seen order
+     */
+    static <K, T> Map<K, List<T>> groupedBy(List<T> items, Function<T, K> keyOf)
+    {
+        Map<K, List<T>> grouped = new LinkedHashMap<>();
+        for (T item : items)
+        {
+            K key = keyOf.apply(item);
+            if (key == null)
+            {
+                continue;
+            }
+            grouped.computeIfAbsent(key, missing -> new ArrayList<>()).add(item);
+        }
+        return grouped;
     }
 
     /**
