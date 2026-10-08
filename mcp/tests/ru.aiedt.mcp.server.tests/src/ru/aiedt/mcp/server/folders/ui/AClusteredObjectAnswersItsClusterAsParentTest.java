@@ -113,4 +113,31 @@ public class AClusteredObjectAnswersItsClusterAsParentTest
 
         assertSame(given, new ClusterTreeContent().getParent(node));
     }
+
+    /**
+     * The node answered for an object of a nested cluster carries the chain of ancestors above
+     * it: a viewer walking the parent chain reaches the top cluster instead of stopping on a
+     * node the tree shows under other nodes, and a collapsed nested cluster can be revealed.
+     */
+    @Test
+    public void aNestedClustersNodeCarriesItsAncestors()
+    {
+        assertTrue(manager.createCluster(probe.project, "Rack", "Catalogs/Shelf", null).succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(manager.addObjectToCluster(probe.project, "Catalog.Products", "Catalogs/Shelf/Rack") //$NON-NLS-1$ //$NON-NLS-2$
+            .succeeded());
+
+        Object parent = ClusterTreeContent.parentOfClusteredObject(manager, probe.project,
+            "Catalog.Products"); //$NON-NLS-1$
+
+        assertTrue(parent instanceof ClusterNavigatorBridge);
+        ClusterNavigatorBridge rack = (ClusterNavigatorBridge)parent;
+        assertEquals("Catalogs/Shelf/Rack", rack.getCluster().getFullPath()); //$NON-NLS-1$
+
+        Object above = rack.getParent(rack);
+        assertTrue("the nested node's parent is the enclosing cluster's node", //$NON-NLS-1$
+            above instanceof ClusterNavigatorBridge);
+        assertEquals("Catalogs/Shelf", ((ClusterNavigatorBridge)above).getCluster().getFullPath()); //$NON-NLS-1$
+        assertNull("the top cluster ends the chain", //$NON-NLS-1$
+            ((ClusterNavigatorBridge)above).getParent(above));
+    }
 }

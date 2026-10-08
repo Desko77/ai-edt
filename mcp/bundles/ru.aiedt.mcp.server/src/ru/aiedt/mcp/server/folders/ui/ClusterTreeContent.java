@@ -6,8 +6,14 @@
 
 package ru.aiedt.mcp.server.folders.ui;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
@@ -108,8 +114,9 @@ public class ClusterTreeContent
      * <p>
      * A viewer that is asked to select or reveal an element walks the parent chain this answers,
      * from the element up to a root, and only such a chain names an item in the tree. The cluster
-     * node this builds equals the rendered one for the same cluster, so the chain the viewer walks
-     * reaches the item that is on screen.
+     * node this builds equals the rendered one for the same cluster, and for a cluster nested
+     * under another it carries a chain of nodes for the clusters above it, so the walk reaches
+     * the top of the tree instead of stopping on a node the tree shows under other nodes.
      * </p>
      *
      * @param service the cluster service; <code>null</code> answers no parent
@@ -125,7 +132,46 @@ public class ClusterTreeContent
             return null;
         }
         Cluster cluster = service.findClusterForObject(project, fqn);
-        return cluster == null ? null : new ClusterNavigatorBridge(cluster, project, null);
+        return cluster == null ? null : nodeForClusterWithAncestors(service, project, cluster);
+    }
+
+    /**
+     * Builds the node for a cluster with a chain of parent nodes for the clusters above it.
+     * <p>
+     * A nested cluster is drawn under the node of the cluster its path names, so the chain a
+     * viewer walks has to name those nodes as well. The chain stops at the topmost cluster that
+     * exists - above it the parent is the collection, which the tree names through its own
+     * elements. A cycle a hand-edited file could carry, one cluster's path naming another that
+     * names the first, stops at the cluster already on the chain.
+     * </p>
+     *
+     * @param service the cluster service
+     * @param project the project
+     * @param cluster the cluster the node stands for
+     * @return the node, with the ancestor nodes linked as its parents
+     */
+    private static ClusterNavigatorBridge nodeForClusterWithAncestors(IClusterManager service,
+        IProject project, Cluster cluster)
+    {
+        Map<String, Cluster> byFullPath = new HashMap<>();
+        for (Cluster candidate : service.getAllClusters(project))
+        {
+            byFullPath.put(candidate.getFullPath(), candidate);
+        }
+        Deque<Cluster> ancestors = new ArrayDeque<>();
+        Set<String> onTheChain = new HashSet<>();
+        Cluster current = cluster;
+        while (current != null && onTheChain.add(current.getFullPath()))
+        {
+            ancestors.addFirst(current);
+            current = byFullPath.get(current.getPath());
+        }
+        ClusterNavigatorBridge node = null;
+        for (Cluster ancestor : ancestors)
+        {
+            node = new ClusterNavigatorBridge(ancestor, project, node);
+        }
+        return node;
     }
 
     @Override
