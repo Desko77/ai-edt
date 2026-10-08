@@ -88,6 +88,24 @@ public class NarrowingRulesStayInTheOperationHelpTest
             new DependencyGraphTool().getInputSchema().contains("judged on BOTH ends")); //$NON-NLS-1$
     }
 
+    /**
+     * The rules of the selectors the graph walks from: a selector decides the root on its own, and
+     * a scope that disagrees with it is refused. A selector used to be dropped in silence, and the
+     * walk ran over the whole project.
+     */
+    @Test
+    public void graphHelpCarriesTheSelectorRulesTheSchemaDoesNot()
+    {
+        String help = help(new InsightsFacadeTool(), "dependency_graph"); //$NON-NLS-1$
+        assertTrue(help, help.contains("the selectors decide the root")); //$NON-NLS-1$
+        assertTrue(help, help.contains("scope=project rejects every selector")); //$NON-NLS-1$
+        assertTrue(help, help.contains("selects the object on its own")); //$NON-NLS-1$
+        assertFalse(new InsightsFacadeTool().getInputSchema(),
+            new InsightsFacadeTool().getInputSchema().contains("the selectors decide the root")); //$NON-NLS-1$
+        assertFalse(new DependencyGraphTool().getInputSchema(),
+            new DependencyGraphTool().getInputSchema().contains("rejects every selector")); //$NON-NLS-1$
+    }
+
     private static String help(IMcpTool facade, String topic)
     {
         Map<String, String> params = new LinkedHashMap<>();

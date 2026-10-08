@@ -1060,10 +1060,11 @@ public class YamlClusterStore
      * read. A write that succeeds is remembered from the bytes handed to the helper, not from
      * a later read of the file, and the workspace is refreshed after the write; a refresh the
      * workspace refuses is a warning on a completed write rather than a failure of it. The
-     * fingerprint of the new bytes is set before the write runs, because the refresh inside it
-     * tells the workspace about the new bytes before the write returns - with the old
-     * fingerprint still standing, that notification read as a foreign change. A refused write
-     * puts the fingerprint back to what the file still holds.
+     * fingerprint of the new bytes is published from inside the replacement, once the file holds
+     * them and before the helper refreshes the workspace: a fingerprint standing before the file
+     * does names bytes the file does not hold yet, and the refresh then arrives as a change this
+     * store does not recognize as its own. A refused write, which publishes nothing, puts the
+     * fingerprint back to what the file still holds.
      * </p>
      *
      * @param project the project
@@ -1078,6 +1079,8 @@ public class YamlClusterStore
         String read = loadedFingerprints.get(project.getName());
         if (location == null)
         {
+            // The workspace writes the file and tells about it in one call, so there is no moment
+            // between the two for the caller to publish in: the bytes go in before the write runs.
             rememberFingerprint(project, AtomicFileReplace.fingerprint(bytes));
             ClusterSaveOutcome direct = saveDirectly(project, clustersFile, content);
             if (direct.isOk())
@@ -1092,9 +1095,8 @@ public class YamlClusterStore
         }
         Path osPath = location.toFile().toPath();
         String expected = read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : read;
-        rememberFingerprint(project, AtomicFileReplace.fingerprint(bytes));
         AtomicFileReplace.Outcome written = AtomicFileReplace.replace(osPath, expected, bytes,
-            clustersFile);
+            clustersFile, () -> rememberWritten(project, bytes));
         if (!written.isOk())
         {
             restoreFingerprint(project, read);
@@ -1102,7 +1104,6 @@ public class YamlClusterStore
                 + " could not be written (" + written + "); the write was refused"); //$NON-NLS-1$ //$NON-NLS-2$
             return refusal(written);
         }
-        rememberWritten(project, bytes);
         return ClusterSaveOutcome.ok();
     }
 
@@ -1199,10 +1200,11 @@ public class YamlClusterStore
      * a delete that trusted the tree would leave it behind and answer that nothing changed.
      * The removal runs under the file's lock against the fingerprint of the bytes this store
      * read. A project whose file has no location on disk is deleted through the workspace.
-     * The no-file fingerprint is set before the removal, because the refresh inside it tells
-     * the workspace the file is gone before the removal returns - with the deleted file's
-     * fingerprint still standing, that notification read as a foreign change. A refused
-     * removal puts the fingerprint back to what the file still holds.
+     * The no-file fingerprint is published from inside the removal, once the file is gone and
+     * before the helper refreshes the workspace: standing before the file is gone, it would name
+     * an absence the disk does not have yet, and the refresh would arrive as a change this store
+     * does not recognize as its own. A refused removal, which publishes nothing, puts the
+     * fingerprint back to what the file still holds.
      * </p>
      *
      * @param project the project
@@ -1232,8 +1234,8 @@ public class YamlClusterStore
         }
         String read = loadedFingerprints.get(project.getName());
         String expected = read == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : read;
-        rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT);
-        AtomicFileReplace.Outcome removed = AtomicFileReplace.remove(osPath, expected, file);
+        AtomicFileReplace.Outcome removed = AtomicFileReplace.remove(osPath, expected, file,
+            () -> rememberFingerprint(project, AtomicFileReplace.NO_FILE_FINGERPRINT));
         if (!removed.isOk())
         {
             restoreFingerprint(project, read);

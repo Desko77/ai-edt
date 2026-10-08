@@ -124,7 +124,7 @@ public class InsightsFacadeTool implements IMcpTool
                 "FQN of the object in question, e.g. 'Catalog.Products'.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "project_metrics: project / subsystem (default project). dependency_graph: " //$NON-NLS-1$
-                    + "project / subsystem / object / module (default project). " //$NON-NLS-1$
+                    + "project / subsystem / object / module. " //$NON-NLS-1$
                     + "detect_query_anti_patterns: project / module / method (default project). " //$NON-NLS-1$
                     + "compare_configurations: project / objectFqn (default project); " //$NON-NLS-1$
                     + "objectFqn narrows the comparison to one object.") //$NON-NLS-1$
@@ -526,6 +526,18 @@ public class InsightsFacadeTool implements IMcpTool
                 + "that method."); //$NON-NLS-1$
         rules.put("detect_query_anti_patterns", Collections.unmodifiableMap(queries)); //$NON-NLS-1$
         Map<String, String> graph = new LinkedHashMap<>();
+        graph.put("scope", //$NON-NLS-1$
+            "Absent, the selectors decide the root: objectFqn an object, moduleFqn a module, " //$NON-NLS-1$
+                + "subsystemName a subsystem, and nothing the whole project. Two selectors " //$NON-NLS-1$
+                + "together are refused: they name different roots. scope=project rejects every " //$NON-NLS-1$
+                + "selector; a scope that disagrees with its selector, or a scope without the " //$NON-NLS-1$
+                + "argument that names its root, is refused by name."); //$NON-NLS-1$
+        graph.put("objectFqn", //$NON-NLS-1$
+            "Required for scope=object. Without scope it selects the object on its own."); //$NON-NLS-1$
+        graph.put("moduleFqn", //$NON-NLS-1$
+            "Required for scope=module. Without scope it selects the module on its own."); //$NON-NLS-1$
+        graph.put("subsystemName", //$NON-NLS-1$
+            "Required for scope=subsystem. Without scope it selects the subsystem on its own."); //$NON-NLS-1$
         graph.put("edgeKinds", //$NON-NLS-1$
             "On metadata and mixed an edge is judged on BOTH ends: an end that is not an object " //$NON-NLS-1$
                 + "of the level is dropped, as the target and as the source, and is not queued; " //$NON-NLS-1$

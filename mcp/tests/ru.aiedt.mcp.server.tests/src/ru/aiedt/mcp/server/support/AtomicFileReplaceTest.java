@@ -18,6 +18,7 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
+import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +33,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.eclipse.core.resources.IFile;
@@ -167,7 +169,7 @@ public class AtomicFileReplaceTest
                 {
                     throw new UncheckedIOException(e);
                 }
-            });
+            }, null);
         assertEquals(AtomicFileReplace.CHANGED_ON_DISK, refused.getCode());
         assertEquals("the external edit survives whole", FOREIGN, Files.readString(file)); //$NON-NLS-1$
         assertEquals("no staging file remains", 1, entries()); //$NON-NLS-1$
@@ -194,6 +196,76 @@ public class AtomicFileReplaceTest
     }
 
     /**
+     * The committed replacement is reported while the inter-process lock is still held, so nothing
+     * can replace the file between the move and the caller's own record of what the file holds.
+     *
+     * @throws Exception when the file cannot be written
+     */
+    @Test
+    public void theCommittedReplacementIsReportedUnderTheLock() throws Exception
+    {
+        Path file = aFileWith(ORIGINAL);
+        AtomicBoolean held = new AtomicBoolean();
+
+        assertTrue(AtomicFileReplace.replace(file, fingerprint(ORIGINAL), bytes(REPLACEMENT), null,
+            () -> held.set(theLockFileIsHeldFor(file))).isOk());
+
+        assertEquals(REPLACEMENT, Files.readString(file));
+        assertTrue("the callback runs while the lock file is held", held.get()); //$NON-NLS-1$
+    }
+
+    /**
+     * The committed removal is reported under the same lock.
+     *
+     * @throws Exception when the file cannot be removed
+     */
+    @Test
+    public void theCommittedRemovalIsReportedUnderTheLock() throws Exception
+    {
+        Path file = aFileWith(ORIGINAL);
+        AtomicBoolean held = new AtomicBoolean();
+
+        assertTrue(AtomicFileReplace.remove(file, fingerprint(ORIGINAL), null,
+            () -> held.set(theLockFileIsHeldFor(file))).isOk());
+
+        assertFalse("the file is gone before the callback runs", Files.exists(file)); //$NON-NLS-1$
+        assertTrue("the callback runs while the lock file is held", held.get()); //$NON-NLS-1$
+    }
+
+    /**
+     * Tells whether the lock file of a target is held by this instance at the moment of the call.
+     * <p>
+     * A second lock of the same file from the same process is what the file-lock API refuses with
+     * {@link OverlappingFileLockException}, so getting that exception back is the proof that the
+     * holder still holds it; a free lock file is taken here and released at once.
+     * </p>
+     *
+     * @param target the target whose lock file is asked about
+     * @return {@code true} when the lock file was still held
+     */
+    private static boolean theLockFileIsHeldFor(Path target)
+    {
+        try (FileChannel channel = FileChannel.open(
+            AtomicFileReplace.lockFileOf(AtomicFileReplace.physicalTarget(target)), StandardOpenOption.WRITE))
+        {
+            FileLock taken = channel.tryLock();
+            if (taken != null)
+            {
+                taken.release();
+            }
+            return false;
+        }
+        catch (OverlappingFileLockException stillHeld)
+        {
+            return true;
+        }
+        catch (IOException e)
+        {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /**
      * A second writer of this instance waits for the first and is then refused by the fingerprint:
      * the file now holds what the first writer wrote, not what the second one read.
      *
@@ -212,11 +284,11 @@ public class AtomicFileReplaceTest
                 file, fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 8000L, () -> {
                     staged.countDown();
                     await(release);
-                }));
+                }, null));
             assertTrue("the first writer must reach the staging seam", staged.await(5, TimeUnit.SECONDS)); //$NON-NLS-1$
 
             Future<AtomicFileReplace.Outcome> second = pool.submit(() -> AtomicFileReplace.replace(
-                file, fingerprint(ORIGINAL), bytes("groups: []\n"), null, 8000L, null)); //$NON-NLS-1$
+                file, fingerprint(ORIGINAL), bytes("groups: []\n"), null, 8000L, null, null)); //$NON-NLS-1$
 
             release.countDown();
             assertEquals(AtomicFileReplace.OK, first.get(10, TimeUnit.SECONDS).getCode());
@@ -244,7 +316,7 @@ public class AtomicFileReplaceTest
         try
         {
             AtomicFileReplace.Outcome refused = AtomicFileReplace.replace(file,
-                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 400L, null);
+                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 400L, null, null);
             assertEquals(AtomicFileReplace.LOCK_REFUSED, refused.getCode());
             assertNotNull(refused.getDetail());
             assertTrue("the refusal names the wait limit: " + refused.getDetail(), //$NON-NLS-1$
@@ -271,7 +343,7 @@ public class AtomicFileReplaceTest
         try
         {
             AtomicFileReplace.Outcome waited = AtomicFileReplace.replace(file,
-                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 5000L, null);
+                fingerprint(ORIGINAL), bytes(REPLACEMENT), null, 5000L, null, null);
             assertEquals(AtomicFileReplace.OK, waited.getCode());
             assertEquals(REPLACEMENT, Files.readString(file));
         }

@@ -1156,13 +1156,24 @@ public final class BmSupportRegistryHelper
         return mode == null ? null : mode.getName();
     }
 
+    /** What a support column says about a project that is on nobody's support. */
+    public static final String NOT_ON_SUPPORT = "not on support"; //$NON-NLS-1$
+
     /**
      * The support mode of each metadata object of a project, read the way {@link #objectMode} reads
      * it: the user mode the support service holds for the object.
+     * <p>
+     * Whether the project is on anybody's support is decided before any object is read, and it is
+     * decided by the vendor configurations the project names. The support object alone does not
+     * answer it: a project written from scratch is handed one as well, and reading the mode of an
+     * object of it then throws, which put <code>unreadable: RuntimeException</code> into the
+     * properties table and into the form column of an object whose support state is simply "none".
+     * </p>
      *
      * @param project the project; may be <code>null</code>
-     * @return object to its mode name, or to <code>null</code> when it has none; <code>null</code>
-     *         when the support service is not reachable or the project is not on support
+     * @return object to its mode name, or to {@link #NOT_ON_SUPPORT} when the project is on none;
+     *         <code>null</code> only when the support service itself is not reachable, which is
+     *         what leaves the properties table without a support row at all
      */
     public static Function<MdObject, String> userModes(IProject project)
     {
@@ -1171,21 +1182,101 @@ public final class BmSupportRegistryHelper
             return null;
         }
         Service service = findService();
-        if (service.manager == null || service.manager.getDistributionSupport(project) == null)
+        if (service.manager == null)
+        {
+            return null;
+        }
+        DistributionSupport support = service.manager.getDistributionSupport(project);
+        if (support == null)
         {
             return null;
         }
         IDistributionSupportManager manager = service.manager;
+        return supportModes(object -> literal(manager.getUserSupportMode(object)),
+            namesAVendor(support));
+    }
+
+    /**
+     * The answer each object of a project gets about its support mode.
+     * <p>
+     * A project that names no vendor configuration is on nobody's support, and every object of it
+     * says so rather than letting the read fail into an <code>unreadable</code> the reader cannot
+     * act on. Whether the project names one is asked of the support object and not of the object
+     * being read, so the answer does not depend on which object is asked about.
+     * </p>
+     * <p>
+     * A read that fails on a project which DOES name a vendor stays <code>unreadable</code>, with
+     * the name of the exception and its message: a support service this server cannot reach is not
+     * evidence that the object has no mode.
+     * </p>
+     *
+     * @param read how the registry reads one object's mode, which may throw
+     * @param namesAVendor {@link Boolean#TRUE} when the project names a vendor configuration,
+     *            {@link Boolean#FALSE} when it names none, <code>null</code> when that could not be
+     *            asked - and then a failing read stays <code>unreadable</code>, because the support
+     *            state was never established
+     * @return the answer per object, never <code>null</code>
+     */
+    static Function<MdObject, String> supportModes(Function<MdObject, String> read,
+        Boolean namesAVendor)
+    {
+        if (Boolean.FALSE.equals(namesAVendor))
+        {
+            return object -> NOT_ON_SUPPORT;
+        }
         return object -> {
             try
             {
-                return literal(manager.getUserSupportMode(object));
+                return read.apply(object);
             }
             catch (RuntimeException unreadable)
             {
-                return "unreadable: " + unreadable.getClass().getSimpleName(); //$NON-NLS-1$
+                return unreadableMode(unreadable);
             }
         };
+    }
+
+    /**
+     * Whether a support object names at least one vendor configuration.
+     *
+     * @param support the support object of a project, never <code>null</code>
+     * @return {@link Boolean#TRUE} when it names one, {@link Boolean#FALSE} when the list is empty,
+     *         <code>null</code> when the list could not be read
+     */
+    private static Boolean namesAVendor(DistributionSupport support)
+    {
+        try
+        {
+            for (ParentConfigurationInfo info : support.getParentConfigurationInfos())
+            {
+                if (info != null)
+                {
+                    return Boolean.TRUE;
+                }
+            }
+            return Boolean.FALSE;
+        }
+        catch (RuntimeException | LinkageError cannotAsk)
+        {
+            // A list that would not be read is not an empty list: reading it as one would answer
+            // "not on support" for a project that is on support and whose registry threw.
+            return null;
+        }
+    }
+
+    /**
+     * How a support mode that could not be read is written into a cell.
+     *
+     * @param unreadable what the read threw
+     * @return the exception's name and its message, on one line
+     */
+    private static String unreadableMode(RuntimeException unreadable)
+    {
+        String message = unreadable.getMessage();
+        String why = message == null || message.isBlank()
+            ? TextSuggest.safeMessage(unreadable)
+            : message.replace('\n', ' ').replace('\r', ' ').trim();
+        return "unreadable: " + unreadable.getClass().getSimpleName() + " (" + why + ")"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
     }
 
     /**

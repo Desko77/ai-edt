@@ -239,6 +239,13 @@ public class MarkerManager
 
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
+    /**
+     * Called before every attempt to read a project's marker file, so a test can make one attempt
+     * fail the way a share or a drive that went away does. Production leaves it {@code null}, and
+     * a reader that asks once cannot be made to judge one state and answer from another.
+     */
+    public static volatile java.util.function.Consumer<IProject> markerReadProbeForTests;
+
 
 
     private final CopyOnWriteArrayList<IMarkerChangeListener> listeners = new CopyOnWriteArrayList<>();
@@ -445,6 +452,116 @@ public class MarkerManager
 
     }
 
+
+
+    /**
+     * A project's markers together with why they cannot be answered from, both from one read.
+     * <p>
+     * A caller that asked twice - once for the refusal and once for the markers - read the file
+     * twice: a read that failed is not remembered as a state, so the second call reads again, and
+     * the answer it gives need not be the state the first call judged. A failure in that window
+     * was either refused with nothing behind it or answered as a project that defines no markers.
+     * </p>
+     */
+    public static final class MarkerRead
+    {
+        private final MarkerStore storage;
+
+        private final String refusal;
+
+        /**
+         * Holds what one read of a project's marker file answered.
+         *
+         * @param storage the markers the read found
+         * @param refusal why they cannot be answered from, or {@code null} when the file is
+         *            readable or absent
+         */
+        MarkerRead(MarkerStore storage, String refusal)
+        {
+            this.storage = storage;
+            this.refusal = refusal;
+        }
+
+        /**
+         * The markers the read found, detached from the live storage.
+         *
+         * @return the markers; empty when the file is absent or unreadable
+         */
+        public MarkerStore storage()
+        {
+            return storage;
+        }
+
+        /**
+         * Why the read cannot be answered from, in a sentence for the person waiting.
+         *
+         * @return the refusal, or {@code null} when the marker file is readable or absent
+         */
+        public String refusal()
+        {
+            return refusal;
+        }
+    }
+
+    /**
+     * Reads a project's markers and judges that same read, so the markers and the refusal describe
+     * one attempt at the file.
+     * <p>
+     * The load happens once, inside {@link #getMarkerStorage(IProject)}; the signs it left are read
+     * straight after it under the same hold of the lock, so no other read comes in between.
+     * </p>
+     *
+     * @param project the project; may be {@code null}
+     * @return the markers and the refusal of one read
+     */
+    public MarkerRead readMarkers(IProject project)
+    {
+        if (project == null)
+        {
+            return new MarkerRead(new MarkerStore(), null);
+        }
+        // One hold of the lock over both: another request reading the same project in between
+        // would leave its own signs, and the markers of this read would carry that one's refusal.
+        lock.writeLock().lock();
+        try
+        {
+            return new MarkerRead(getMarkerStorage(project), refusalOfTheLastRead(project));
+        }
+        finally
+        {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /**
+     * Why a reading operation cannot answer from a project's marker file, in a sentence for the
+     * person waiting, from the signs the read just made left behind.
+     *
+     * @param project the project
+     * @return the refusal, or {@code null} when the marker file is readable or absent
+     */
+    private String refusalOfTheLastRead(IProject project)
+    {
+        lock.readLock().lock();
+        try
+        {
+            if (unreadable.contains(project))
+            {
+                return UNREADABLE_MARKER_FILE + " Nothing was read, so the markers of project " //$NON-NLS-1$
+                    + safeName(project) + " cannot be listed."; //$NON-NLS-1$
+            }
+            if (readFailed.contains(project))
+            {
+                return "The marker file of project " + safeName(project) //$NON-NLS-1$
+                    + " could not be read, so its markers cannot be listed."; //$NON-NLS-1$
+            }
+            return null;
+        }
+        finally
+        {
+            lock.readLock().unlock();
+        }
+    }
 
 
     /**
@@ -1439,6 +1556,32 @@ public class MarkerManager
     }
 
     /**
+     * Why a reading operation cannot answer from a project's marker file, in a sentence for the
+     * person waiting for the answer.
+     * <p>
+     * A file that does not parse and a file whose bytes could not be read are two states, and they
+     * are named apart. Both leave a reader with nothing: {@link #getMarkerStorage(IProject)}
+     * answers an empty storage in either case, and reporting that as "this project has no markers"
+     * answers a question about the project with a failure of the tool.
+     * </p>
+     * <p>
+     * The answer is established by the same two signs the writing operations refuse on, and it is
+     * established by loading the file, so this call is the one that tells {@link
+     * #markerFileReadFailed(IProject)} what the last attempt did. A reader that needs the markers as
+     * well as this refusal asks {@link #readMarkers(IProject)} once: two calls read the file twice,
+     * and a read that failed is not a state, so the second answer need not describe the state the
+     * first one judged.
+     * </p>
+     *
+     * @param project the project; may be <code>null</code>
+     * @return the refusal, or <code>null</code> when the marker file is readable or absent
+     */
+    public String markerReadRefusal(IProject project)
+    {
+        return readMarkers(project).refusal();
+    }
+
+    /**
 
      * Moves an object's assignments, and the assignments of every object nested under it, to a new FQN.
 
@@ -2227,6 +2370,25 @@ public class MarkerManager
     }
 
     /**
+     * Announces one attempt to read a project's marker file to a test probe, if one is set.
+     * <p>
+     * Every attempt goes through here - the load that parses the file and the fingerprint that
+     * decides whether a cached storage still describes it - so a test can make the attempt count
+     * the file's reads.
+     * </p>
+     *
+     * @param project the project the file belongs to
+     */
+    private static void beforeReadingTheMarkerFile(IProject project)
+    {
+        java.util.function.Consumer<IProject> probe = markerReadProbeForTests;
+        if (probe != null && project != null)
+        {
+            probe.accept(project);
+        }
+    }
+
+    /**
      * Reads a project's marker file into a storage and remembers the bytes it was read from.
      * <p>
      * A missing file resolves to an empty storage. A file the workspace does not know about is
@@ -2243,6 +2405,7 @@ public class MarkerManager
      */
     private MarkerStore loadMarkerStorage(IProject project)
     {
+        beforeReadingTheMarkerFile(project);
         if (project == null || !project.isAccessible())
         {
             return new MarkerStore();
@@ -2373,6 +2536,7 @@ public class MarkerManager
      */
     private static String diskFingerprint(IProject project, IFile file)
     {
+        beforeReadingTheMarkerFile(project);
         try
         {
             byte[] bytes = readMarkersBytes(file);

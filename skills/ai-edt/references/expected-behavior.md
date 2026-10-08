@@ -183,6 +183,19 @@ work asked for again inside that window answers `stillStopping: true` instead of
 run - that is the cancel being allowed to finish, not a failure to act on. `get_tasks` names the
 closed projects it did not read.
 
+## A dependency graph walks from the root its selector named
+
+`insights operation=dependency_graph` takes its root from `scope` or, with no scope asked, from
+the selector: `objectFqn` an object, `moduleFqn` a module, `subsystemName` a subsystem, and
+nothing the whole project. A selector under `scope=project`, a selector the scope does not
+take, and two selectors together are refused by name - never dropped in silence, which used to
+walk the whole project and read as thousands of nodes with no edges. The seed of the walk fits
+`maxNodes` like the walk itself: more roots than the cap are cut, the answer says
+`truncated=true`, and the edges of the roots it took are in it. The module level resolves its
+modules through the project files; a module whose file is there and whose model did not load is
+named in `modulesUnloaded` and `modulesUnloadedNames`, and a module level with not one loaded
+module is a refusal, not an empty graph.
+
 ## A metadata dependency graph names metadata
 
 `insights operation=dependency_graph` keeps what its level is about: `metadata` carries metadata
