@@ -6,12 +6,12 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 148 | a test class named after it |
-| exercised | 259 | reached by some other test |
+| exercised | 260 | reached by some other test |
 | tool-sweep | 29 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 34 | needs a display or an extension point |
+| ui-bound | 33 | needs a display or an extension point |
 | workspace-bound | 18 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **488** | across 713 test classes |
+| **total** | **488** | across 714 test classes |
 
 ## untested (0)
 
@@ -49,7 +49,7 @@ _none_
 - CommandInterfaceOps
 - FormEventOps
 
-## ui-bound (34)
+## ui-bound (33)
 
 **(root)**
 - McpAutoStart
@@ -92,7 +92,6 @@ _none_
 
 **settings**
 - DefaultPreferences
-- McpSettingsPage
 
 **support**
 - BslHoverAccess
@@ -138,7 +137,7 @@ _none_
 - TagsReader
 - UninstallExtensionTool
 
-## exercised (259)
+## exercised (260)
 
 **(root)**
 - Activator
@@ -195,6 +194,7 @@ _none_
 - GeneralPrefTab
 - MarkerSettingsMigration
 - McpAuth
+- McpSettingsPage
 - PendingRestart
 - PrefKeys
 - ToolsPrefTab
@@ -635,7 +635,7 @@ closes.
 | 9-16 | 61 |
 | 17+ | 26 |
 
-5408 test methods across 713 test classes; 148 classes have a test of their own, median 10 methods each.
+5416 test methods across 714 test classes; 148 classes have a test of their own, median 10 methods each.
 
 Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 148 of 488 classes have one: 29 are covered by the registry-wide contract sweep and 18 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
