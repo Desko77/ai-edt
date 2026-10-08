@@ -18,6 +18,8 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -203,6 +205,127 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
                 assertTrue("the port next to the old one must still be free", //$NON-NLS-1$
                     neighbour.isBound());
             }
+        }
+    }
+
+    /**
+     * A stop arriving while the fallback is opening the old port waits for it, and closes what it
+     * opened.
+     * <p>
+     * The fallback runs a start, and a start is what the status bar and the auto-start call the
+     * endpoint with as well. A restart cannot hold the monitor itself - it calls the stop and the
+     * start that do - so the fallback has to take that monitor on its own. Without it, a stop
+     * arriving between the refused start and the fallback runs against an endpoint that is not
+     * listening, finds nothing to close and returns, and the fallback then opens a listener that
+     * nothing is left to close: the endpoint is answering on a port its own stop was asked to free.
+     * </p>
+     * <p>
+     * The window is held open by the endpoint's own seam, so the stop is put beside the fallback at
+     * a known moment rather than at whatever moment a bare race happens to give.
+     * </p>
+     */
+    @Test
+    public void aStopDuringTheFallbackWaitsForItAndClosesWhatItOpened() throws Exception
+    {
+        int wasOn = endpoint.getPort();
+        int taken = LiveServer.freePort();
+        CountDownLatch atTheFallback = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        endpoint.fallbackWindowForTest = () ->
+        {
+            atTheFallback.countDown();
+            await(release);
+        };
+        try (ServerSocket holder = hold(taken))
+        {
+            Thread restarting = new Thread(() -> restartKeepingTheRefusalOut(taken), "a-restart"); //$NON-NLS-1$
+            restarting.start();
+            assertTrue("the fallback has to be reached", //$NON-NLS-1$
+                atTheFallback.await(10, TimeUnit.SECONDS));
+
+            Thread stopping = new Thread(endpoint::stop, "a-stop"); //$NON-NLS-1$
+            stopping.start();
+            try
+            {
+                assertTrue("the stop has to wait for the fallback", blockedFor(stopping)); //$NON-NLS-1$
+            }
+            finally
+            {
+                // Whatever the line above decided, the fallback has to be let go: the monitor it
+                // holds is the one the endpoint's own teardown waits for.
+                release.countDown();
+            }
+            restarting.join(TimeUnit.SECONDS.toMillis(20));
+            stopping.join(TimeUnit.SECONDS.toMillis(20));
+        }
+        assertFalse("nothing may be left listening", endpoint.isRunning()); //$NON-NLS-1$
+        // A bind that succeeds is the whole assertion: had the fallback opened after the stop
+        // returned, this port would still be this process's and this would not open.
+        try (ServerSocket probe = hold(wasOn))
+        {
+            assertTrue("the port the fallback had to be closed on has to be free", probe.isBound()); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Runs a restart on its own thread, keeping the refusal it can end in out of that thread's way.
+     *
+     * @param port the port to move to, which this test holds
+     */
+    private void restartKeepingTheRefusalOut(int port)
+    {
+        try
+        {
+            endpoint.restart(port);
+        }
+        catch (IOException refused)
+        {
+            // Expected when the fallback cannot have the old port either; the test is about the
+            // ordering, not about which of the two answers comes back.
+        }
+    }
+
+    /**
+     * Waits for a thread to be waiting for a monitor, which is what waiting for the endpoint's own
+     * looks like from the outside.
+     *
+     * @param thread the thread
+     * @return <code>true</code> when it was seen waiting; <code>false</code> when it finished, or
+     *         was still not waiting when the time ran out
+     * @throws InterruptedException when the test thread is interrupted
+     */
+    private static boolean blockedFor(Thread thread) throws InterruptedException
+    {
+        long deadline = System.currentTimeMillis() + 10000L;
+        while (System.currentTimeMillis() < deadline)
+        {
+            if (thread.getState() == Thread.State.BLOCKED)
+            {
+                return true;
+            }
+            if (!thread.isAlive())
+            {
+                return false;
+            }
+            Thread.sleep(20L);
+        }
+        return false;
+    }
+
+    /**
+     * Waits on a latch, for the seam the endpoint runs inside a restart.
+     *
+     * @param latch the latch
+     */
+    private static void await(CountDownLatch latch)
+    {
+        try
+        {
+            latch.await();
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
         }
     }
 

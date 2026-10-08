@@ -440,6 +440,13 @@ public class McpHttpEndpoint
 
     private volatile int port;
 
+    /**
+     * A window held open while the fallback start of {@link #restart(int)} runs, so a test can put a
+     * stop beside it and see whether the fallback holds the monitor an ordinary start and stop take.
+     * Left <code>null</code> outside tests.
+     */
+    Runnable fallbackWindowForTest;
+
     private final AtomicLong requestCount = new AtomicLong();
 
     /** Raised by the user when no call was in flight to answer; the next tool result carries it. */
@@ -956,7 +963,19 @@ public class McpHttpEndpoint
                 // would take the next free port and come back reporting success, leaving the server
                 // one port away from where the caller, its own label and every configured client
                 // read it, with nothing on screen saying it had moved.
-                startWithin(previousPort, 1);
+                // Held under the monitor an ordinary start and stop take. A restart takes no monitor
+                // of its own - it must not, since it calls both - so without this a stop arriving
+                // between the refused start and this one runs against an endpoint that is not
+                // listening, finds nothing to close, returns, and leaves this start to open a
+                // listener with nobody left to close it.
+                synchronized (this)
+                {
+                    if (fallbackWindowForTest != null)
+                    {
+                        fallbackWindowForTest.run();
+                    }
+                    startWithin(previousPort, 1);
+                }
             }
             catch (IOException alsoRefused)
             {
