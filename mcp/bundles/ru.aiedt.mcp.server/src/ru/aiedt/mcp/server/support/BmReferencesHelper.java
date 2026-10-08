@@ -323,8 +323,11 @@ public final class BmReferencesHelper
                     result.truncated = true;
                     break outer;
                 }
-                if (result.nodes.size() >= maxNodes || result.edges.size() >= maxEdges)
+                if (result.edges.size() >= maxEdges)
                 {
+                    // The node cap is not read here. It forbids new nodes, and refusing one is what
+                    // the add step does; a node already accepted is walked whatever the node count,
+                    // so the edges between the roots survive a seed that filled the cap exactly.
                     result.truncated = true;
                     break outer;
                 }
