@@ -164,7 +164,7 @@ public class TheBundlesWordForAnExportTest
         Map<String, String> params = new LinkedHashMap<>();
         params.put("operation", "export_database_configuration"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
-        params.put("outputPath", "whatever.cf"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", anAbsoluteOutput("whatever.cf")); //$NON-NLS-1$ //$NON-NLS-2$
 
         String answer = new ConfigIoFacadeTool().execute(params);
 
@@ -184,7 +184,7 @@ public class TheBundlesWordForAnExportTest
         params.put("operation", "export_database_extension"); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("projectName", "no-such-project-" + System.nanoTime()); //$NON-NLS-1$ //$NON-NLS-2$
         params.put("extensionName", "YAxUnit"); //$NON-NLS-1$ //$NON-NLS-2$
-        params.put("outputPath", "whatever.cfe"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("outputPath", anAbsoluteOutput("whatever.cfe")); //$NON-NLS-1$ //$NON-NLS-2$
 
         String answer = new ConfigIoFacadeTool().execute(params);
 
@@ -336,6 +336,24 @@ public class TheBundlesWordForAnExportTest
                 }
             });
         }
+    }
+
+    /**
+     * An absolute output path under this host's temporary directory, without creating anything
+     * there.
+     * <p>
+     * The guarded export refuses a relative output before it looks the project up, so a path
+     * carrying a Windows drive letter reaches that refusal as a relative path on a host that has
+     * no such drive, and the answer names the output path instead of the project this test is
+     * about. No file is created: the project lookup fails first either way.
+     * </p>
+     *
+     * @param name the file name under the temporary directory
+     * @return the absolute path as text
+     */
+    private static String anAbsoluteOutput(String name)
+    {
+        return Path.of(System.getProperty("java.io.tmpdir"), name).toAbsolutePath().toString(); //$NON-NLS-1$
     }
 
     /**

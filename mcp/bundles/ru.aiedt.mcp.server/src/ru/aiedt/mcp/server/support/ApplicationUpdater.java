@@ -202,7 +202,11 @@ public final class ApplicationUpdater
         {
             return Result.skipped("project not open: " + projectName);
         }
-        IApplicationManager appManager = Activator.getDefault().getApplicationManager();
+        // getDefault() is null while the bundle is stopping, which is exactly when a launch
+        // winding down can still ask for its pre-launch update - the ternary keeps that window
+        // a refusal rather than an NPE.
+        Activator activator = Activator.getDefault();
+        IApplicationManager appManager = activator != null ? activator.getApplicationManager() : null;
         if (appManager == null)
         {
             return Result.serviceUnavailable("IApplicationManager is null");

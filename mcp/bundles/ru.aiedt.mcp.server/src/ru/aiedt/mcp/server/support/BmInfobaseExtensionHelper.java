@@ -139,13 +139,14 @@ public final class BmInfobaseExtensionHelper
             {
                 // Same disconnect/reconnect as install/uninstall: the list
                 // thick-client also needs EDT's designer agent off the file
-                // infobase, or it blocks on the monopoly (row 55).
-                underThickClientHandshake(ctx, () -> {
+                // infobase, or it blocks on the monopoly (row 55). The success is claimed
+                // after the reconnection, so a base left disconnected is answered as the
+                // failure it is rather than as a listing that went through.
+                underThickClientHandshakeThenClaimSuccess(ctx, () -> {
                     List<String> exts = ctx.launcher.listConfigurationExtensions(ctx.component,
                         ctx.infobase, ctx.args);
-                    r.ok = true;
                     r.extensions = exts != null ? exts : Collections.emptyList();
-                });
+                }, () -> r.ok = true);
             }
             finally
             {
@@ -194,10 +195,13 @@ public final class BmInfobaseExtensionHelper
             }
             try
             {
-                underThickClientHandshake(ctx, () -> {
-                    ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase, ctx.args, name);
-                    r.ok = true;
-                });
+                // The removal is claimed only once the base is back: an uninstall that ran but
+                // left the infobase disconnected is answered as a failure naming the
+                // reconnection, not as a removal that went through.
+                underThickClientHandshakeThenClaimSuccess(ctx,
+                    () -> ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase,
+                        ctx.args, name),
+                    () -> r.ok = true);
             }
             finally
             {
@@ -361,11 +365,37 @@ public final class BmInfobaseExtensionHelper
      *
      * @param ctx the resolved launcher context
      * @param work the launcher call
-     * @throws Exception whatever the call throws
+     * @throws Exception whatever the call throws, or the reconnection failed after it - the
+     *             infobase then stays disconnected, which the answer has to say rather than
+     *             report the run as an unconditional success
      */
     static void underThickClientHandshake(ThickClientLaunch.LauncherContext ctx, Work work) throws Exception
     {
         handshakeOrder(ctx.lock, () -> disconnectForThickClient(ctx), work, () -> reconnectInfobase(ctx));
+    }
+
+    /**
+     * The handshake of {@link #underThickClientHandshake(ThickClientLaunch.LauncherContext, Work)}
+     * for a call whose success claim is a step of its own.
+     * <p>
+     * The launcher call returning is not the end of the exchange: the infobase still has to be taken
+     * back, and a reconnection that fails leaves it disconnected in EDT. A run that claims success
+     * from inside itself therefore reports the operation as done while the workspace is left in a
+     * state the caller is never told about. The claim is made here instead, after the reconnection,
+     * so a run whose reconnection failed reaches its caller as a failure that names it.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param work the launcher call, which fills in everything but the success
+     * @param claimSuccess marks the operation as done; run only when nothing threw
+     * @throws Exception whatever the call throws, or the reconnection failed after it - the claim
+     *             does not run then
+     */
+    static void underThickClientHandshakeThenClaimSuccess(ThickClientLaunch.LauncherContext ctx,
+        Work work, Runnable claimSuccess) throws Exception
+    {
+        handshakeThenClaimSuccess(ctx.lock, () -> disconnectForThickClient(ctx), work,
+            () -> reconnectInfobase(ctx), claimSuccess);
     }
 
     /**
@@ -375,12 +405,15 @@ public final class BmInfobaseExtensionHelper
      * @param release releases the infobase and says whether it had been connected
      * @param work the launcher call, run under the lock and nothing else
      * @param reconnect takes the infobase back, run only when the release reported a connection
-     * @throws Exception whatever the work throws, after the infobase has been taken back
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception
      */
     static void handshakeOrder(java.util.concurrent.locks.Lock lock,
-        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
+        Exception workFailure = null;
         try
         {
             if (lock != null)
@@ -390,6 +423,11 @@ public final class BmInfobaseExtensionHelper
             try
             {
                 work.run();
+            }
+            catch (Exception failed)
+            {
+                workFailure = failed;
+                throw failed;
             }
             finally
             {
@@ -403,9 +441,41 @@ public final class BmInfobaseExtensionHelper
         {
             if (disconnected)
             {
-                reconnect.run();
+                try
+                {
+                    reconnect.reconnect();
+                }
+                catch (Exception reconnectFailed)
+                {
+                    if (workFailure != null)
+                    {
+                        reconnectFailed.addSuppressed(workFailure);
+                    }
+                    throw reconnectFailed;
+                }
             }
         }
+    }
+
+    /**
+     * The order of {@link #handshakeOrder} with the claim of success made after it, with every step
+     * handed in so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and nothing else
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @param claimSuccess marks the operation as done; run only when nothing threw
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception. The claim does not run in either case
+     */
+    static void handshakeThenClaimSuccess(java.util.concurrent.locks.Lock lock,
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect,
+        Runnable claimSuccess) throws Exception
+    {
+        handshakeOrder(lock, release, work, reconnect);
+        claimSuccess.run();
     }
 
     /**
@@ -429,7 +499,9 @@ public final class BmInfobaseExtensionHelper
      * @param work the launcher call, run under the lock and only once the boundary is this run's
      * @throws InterruptedException when the boundary was claimed before this worker reached it; the
      *             launcher is not called then
-     * @throws Exception whatever the call throws, after the infobase has been taken back
+     * @throws Exception whatever the call throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the call's own failure
+     *             attached to it as a suppressed exception
      */
     static void underThickClientHandshakeWithLaunchClaim(ThickClientLaunch.LauncherContext ctx,
         Work work) throws Exception
@@ -450,13 +522,16 @@ public final class BmInfobaseExtensionHelper
      * @param reconnect takes the infobase back, run only when the release reported a connection
      * @throws InterruptedException when the boundary was already claimed; the lock, when it was
      *             taken, is given back and the work does not run
-     * @throws Exception whatever the work throws, after the infobase has been taken back
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception
      */
     static void handshakeOrderWithLaunchClaim(java.util.concurrent.locks.Lock lock,
         LaunchBoundary launchClaim,
-        java.util.function.BooleanSupplier release, Work work, Runnable reconnect) throws Exception
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect) throws Exception
     {
         boolean disconnected = release.getAsBoolean();
+        Exception workFailure = null;
         try
         {
             if (lock != null)
@@ -476,6 +551,11 @@ public final class BmInfobaseExtensionHelper
             {
                 work.run();
             }
+            catch (Exception failed)
+            {
+                workFailure = failed;
+                throw failed;
+            }
             finally
             {
                 if (lock != null)
@@ -488,7 +568,18 @@ public final class BmInfobaseExtensionHelper
         {
             if (disconnected)
             {
-                reconnect.run();
+                try
+                {
+                    reconnect.reconnect();
+                }
+                catch (Exception reconnectFailed)
+                {
+                    if (workFailure != null)
+                    {
+                        reconnectFailed.addSuppressed(workFailure);
+                    }
+                    throw reconnectFailed;
+                }
             }
         }
     }
@@ -586,6 +677,18 @@ public final class BmInfobaseExtensionHelper
         {
             r.error = "sourcePath or targetPath is not a valid file path: " //$NON-NLS-1$
                 + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e));
+            r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
+            return r;
+        }
+        // A relative path resolves against whatever directory the EDT process happens to be
+        // running in, which no caller can rely on and no answer names - so it is refused
+        // rather than silently read from or written to an unpredictable place.
+        if (!source.isAbsolute() || !target.isAbsolute())
+        {
+            r.error = "sourcePath and targetPath must be absolute paths: source=" + source //$NON-NLS-1$
+                + ", target=" + target //$NON-NLS-1$
+                + ". A relative path would resolve against the EDT process's working " //$NON-NLS-1$
+                + "directory, which is not where the caller meant."; //$NON-NLS-1$
             r.failureKind = ErrorTags.INVALID_INPUT_PATH.wire();
             return r;
         }
@@ -695,18 +798,7 @@ public final class BmInfobaseExtensionHelper
                 }
                 else
                 {
-                    boolean disconnected = disconnectForThickClient(ctx);
-                    try
-                    {
-                        convertUnderInfobaseLock(ctx, target, source);
-                    }
-                    finally
-                    {
-                        if (disconnected)
-                        {
-                            reconnectInfobase(ctx);
-                        }
-                    }
+                    underThickClientHandshake(ctx, () -> convertUnderInfobaseLock(ctx, target, source));
                 }
             }
             finally
@@ -898,19 +990,10 @@ public final class BmInfobaseExtensionHelper
         ExportResult r = new ExportResult();
         r.extensionName = extensionName;
         r.outputPath = outputPath;
-        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
-        if (ctx.error != null)
-        {
-            r.error = ctx.error;
-            r.failureKind = ctx.failureKind;
-            r.infobaseName = ctx.infobaseName;
-            return r;
-        }
-        r.infobaseName = ctx.infobaseName;
 
-        // Resolve and prepare the output path client-side, before the thick-client call,
-        // so a bad path or missing directory is reported as such instead of being
-        // misclassified as an infobase/runtime failure by classifyThickClientFailure.
+        // Resolve the output path client-side, before the launcher and everything behind it
+        // is touched, so a bad path is reported as such instead of being misclassified as an
+        // infobase/runtime failure by classifyThickClientFailure.
         java.nio.file.Path dest;
         try
         {
@@ -922,7 +1005,28 @@ public final class BmInfobaseExtensionHelper
             r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
             return r;
         }
-        java.nio.file.Path parent = dest.toAbsolutePath().getParent();
+        // A relative path resolves against whatever directory the EDT process happens to be
+        // running in, which no caller can rely on and no answer names - so it is refused
+        // rather than written to an unpredictable place.
+        if (!dest.isAbsolute())
+        {
+            r.error = "outputPath must be an absolute path: " + dest //$NON-NLS-1$
+                + ". A relative path would resolve against the EDT process's working " //$NON-NLS-1$
+                + "directory, which is not where the caller meant."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
+            return r;
+        }
+        ThickClientLaunch.LauncherContext ctx = ThickClientLaunch.resolveLauncher(projectName, applicationId);
+        if (ctx.error != null)
+        {
+            r.error = ctx.error;
+            r.failureKind = ctx.failureKind;
+            r.infobaseName = ctx.infobaseName;
+            return r;
+        }
+        r.infobaseName = ctx.infobaseName;
+
+        java.nio.file.Path parent = dest.getParent();
         if (parent != null)
         {
             try
@@ -2048,7 +2152,15 @@ public final class BmInfobaseExtensionHelper
         }
     }
 
-    private static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx)
+    /**
+     * Takes the infobase back after a thick-client run. Package-visible: the handshake tests
+     * watch a reconnection that cannot run.
+     *
+     * @param ctx the resolved launcher context
+     * @throws Exception when the reconnection failed; the infobase then shows as disconnected
+     *             in EDT until somebody reconnects it by hand
+     */
+    static void reconnectInfobase(ThickClientLaunch.LauncherContext ctx) throws Exception
     {
         if (ctx.project == null)
         {
@@ -2063,8 +2175,13 @@ public final class BmInfobaseExtensionHelper
         }
         catch (Throwable e)
         {
+            rethrowIfFatal(e);
             Activator.logWarning("connectInfobase failed; the infobase may show as " //$NON-NLS-1$
                 + "disconnected in EDT - reconnect it manually: " + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e))); //$NON-NLS-1$
+            throw new IllegalStateException("EDT could not reconnect the infobase " //$NON-NLS-1$
+                + ctx.infobaseName + " after the Designer run; it shows as disconnected in EDT " //$NON-NLS-1$
+                + "- reconnect it by hand: " //$NON-NLS-1$
+                + ThickClientLaunch.oneLine(ThickClientLaunch.causeChainText(e)), e);
         }
     }
 

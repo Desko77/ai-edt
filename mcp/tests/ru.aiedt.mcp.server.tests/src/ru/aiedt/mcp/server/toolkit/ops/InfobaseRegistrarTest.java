@@ -166,6 +166,25 @@ public class InfobaseRegistrarTest
     }
 
     @Test
+    public void aBindingMadeOnAContextThatWasNotReadIsNamedInTheAnswer()
+    {
+        RegisterResult r = new RegisterResult();
+        r.ok = true;
+        r.infobaseName = "new-base"; //$NON-NLS-1$
+        r.added = true;
+        r.applicationId = "app-one"; //$NON-NLS-1$
+        r.associationContextWarning =
+            "the project's association context could not be read (the context store is locked), " //$NON-NLS-1$
+                + "so the binding went to the default context"; //$NON-NLS-1$
+
+        String json = InfobaseRegistrar.response(r);
+
+        assertTrue(json.contains("\"associationContextWarning\"")); //$NON-NLS-1$
+        assertTrue(json.contains("the context store is locked")); //$NON-NLS-1$
+        assertTrue(json.contains("default context")); //$NON-NLS-1$
+    }
+
+    @Test
     public void theFailureAnswerNamesTheRollbackAndTheGuardOutcome()
     {
         RegisterResult r = new RegisterResult();

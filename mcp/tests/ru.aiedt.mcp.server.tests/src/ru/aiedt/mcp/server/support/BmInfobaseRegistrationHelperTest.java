@@ -30,10 +30,13 @@ import org.junit.Test;
 
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAccessSettings;
+import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationContextProvider;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseAssociationManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.IInfobaseManager;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAccessSettings;
 import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationContext;
+import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationException;
+import com._1c.g5.v8.dt.platform.services.core.infobases.InfobaseAssociationSettings;
 import com._1c.g5.v8.dt.platform.services.model.FileConnectionString;
 import com._1c.g5.v8.dt.platform.services.model.Group;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseAccess;
@@ -80,6 +83,15 @@ public class BmInfobaseRegistrationHelperTest
 
         /** Whether {@code associate} ran at all. */
         boolean associateRan;
+
+        /** The settings {@code associate} was last called with, or {@code null} when it never ran. */
+        InfobaseAssociationSettings associateSettings;
+
+        /**
+         * The context provider the association context is read from, or <code>null</code> for
+         * none - the same state as a workspace whose provider is not registered.
+         */
+        IInfobaseAssociationContextProvider associationContextProvider;
 
         /** When set, the access-settings write fails with this message. */
         String accessWriteFailure;
@@ -227,6 +239,10 @@ public class BmInfobaseRegistrationHelperTest
                             throw new IllegalStateException(associateFailure);
                         }
                         String projectName = ((IProject)args[0]).getName();
+                        if (args.length > 2 && args[2] instanceof InfobaseAssociationSettings)
+                        {
+                            associateSettings = (InfobaseAssociationSettings)args[2];
+                        }
                         boolean firstOfProject = !applications.containsKey(projectName)
                             || applications.get(projectName).isEmpty();
                         IInfobaseApplication created =
@@ -300,9 +316,12 @@ public class BmInfobaseRegistrationHelperTest
         }
 
         @Override
-        public InfobaseAssociationContext associationContext(IProject project)
+        public BmInfobaseLifecycleHelper.ContextRead associationContextRead(IProject project)
         {
-            return InfobaseAssociationContext.empty();
+            // The real read, so the test sees the answer a provider of its own produces: the
+            // failure of a provider that throws, and the context of one that names a branch.
+            return BmInfobaseLifecycleHelper.theProviderAnswered(associationContextProvider,
+                project);
         }
 
         @Override
@@ -865,6 +884,75 @@ public class BmInfobaseRegistrationHelperTest
         assertEquals(List.of("project-two"), r.alsoAssociatedWith); //$NON-NLS-1$
         assertEquals("a failed read is not answered as \"not bound\"", //$NON-NLS-1$
             List.of("project-three"), r.associationCheckFailed); //$NON-NLS-1$
+    }
+
+    /**
+     * A context read that failed is named in the answer: the binding went to the default context,
+     * and a branch project bound there is never read from it.
+     */
+    @Test
+    public void aFailedAssociationContextReadIsNamedInTheAnswer()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        env.associationContextProvider = contextProvider(null, "the context store is locked"); //$NON-NLS-1$
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertTrue("the binding goes ahead rather than taking the operation away", //$NON-NLS-1$
+            env.associateRan);
+        assertNotNull("a binding made on a context that was not read is not answered silently", //$NON-NLS-1$
+            r.associationContextWarning);
+        assertTrue(r.associationContextWarning, //$NON-NLS-1$
+            r.associationContextWarning.contains("the context store is locked")); //$NON-NLS-1$
+        assertTrue(r.associationContextWarning, //$NON-NLS-1$
+            r.associationContextWarning.contains("default")); //$NON-NLS-1$
+    }
+
+    /** A context that read is what the binding got, and the answer says nothing about it. */
+    @Test
+    public void aContextThatReadReachesTheBindingWithoutAWarning()
+    {
+        FakeEnvironment env = new FakeEnvironment();
+        env.project("project-one"); //$NON-NLS-1$
+        InfobaseAssociationContext branch = InfobaseAssociationContext.of("refs/heads/main"); //$NON-NLS-1$
+        env.associationContextProvider = contextProvider(branch, null);
+
+        RegisterResult r = BmInfobaseRegistrationHelper.registerInfobase("project-one", //$NON-NLS-1$
+            "C:/bases/new", null, null, null, env); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertNull(r.associationContextWarning);
+        assertNotNull(env.associateSettings);
+        assertEquals("the branch the provider named is the one the binding went to", branch, //$NON-NLS-1$
+            env.associateSettings.getContext());
+    }
+
+    /**
+     * A context provider that answers one context, or throws when the reason is set.
+     *
+     * @param context what {@code get} answers; ignored when {@code failure} is set
+     * @param failure when set, {@code get} throws with it
+     * @return the provider
+     */
+    private static IInfobaseAssociationContextProvider contextProvider(
+        InfobaseAssociationContext context, String failure)
+    {
+        return (IInfobaseAssociationContextProvider)Proxy.newProxyInstance(
+            BmInfobaseRegistrationHelperTest.class.getClassLoader(),
+            new Class<?>[] { IInfobaseAssociationContextProvider.class }, (proxy, method, args) -> {
+                if ("get".equals(method.getName())) //$NON-NLS-1$
+                {
+                    if (failure != null)
+                    {
+                        throw new InfobaseAssociationException(failure);
+                    }
+                    return context;
+                }
+                return null;
+            });
     }
 
     @Test

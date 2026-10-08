@@ -200,6 +200,10 @@ public class InfobaseRegistrar implements IMcpTool
         {
             ok.put("defaultWarning", r.defaultWarning); //$NON-NLS-1$
         }
+        if (r.associationContextWarning != null)
+        {
+            ok.put("associationContextWarning", r.associationContextWarning); //$NON-NLS-1$
+        }
         if (r.ordinaryApplicationFlag != null)
         {
             ok.put("ordinaryApplicationFlag", r.ordinaryApplicationFlag); //$NON-NLS-1$
