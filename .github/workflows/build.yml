@@ -88,6 +88,11 @@ jobs:
       - name: Release manifest script
         run: python3 scripts/tests/test_write_release_manifest.py
 
+      # The jar report decides which builds of the plugin no installation refers to. It is run by
+      # hand before a release, so what it reads is checked here on a made-up installation.
+      - name: Plugin jar report script
+        run: python3 scripts/tests/test_report_plugin_jars.py
+
       # A facade that delegates without asking whether a preset switched the tool off lets the whole
       # preset be walked around by calling the facade instead. It is structural, so it is counted
       # here rather than in the suite, which cannot read the sources from inside the OSGi runtime.
