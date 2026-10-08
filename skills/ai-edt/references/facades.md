@@ -570,6 +570,14 @@ report, the `Pending` one and the report a repeat call picks up, carries
 the last five minutes instead of starting another, saying so with `cached: true` and the moment it
 finished.
 
+`installYaxunit=true` installs the engine when it is absent and, on both the fresh-install and
+already-installed paths, reads its safe-mode and unsafe-action-protection flags through the designer
+session. By default `yaxunitUnsafeMode=true`: when either is on, both are lowered in one write and a
+control read must confirm both off before the tests start. A mismatch is an error carrying both actual
+values, and no test launch follows it. `yaxunitUnsafeMode=false` leaves the flags entirely untouched.
+Write-blocking presets refuse this pre-step through the `install_extension` door before it changes the
+infobase.
+
 Every completed run writes a receipt file under `<state-location>/run-receipts/<tool>/`, at most
 twenty, the oldest displaced first. The answer names it in `receiptPath`, or `receiptError` when it
 could not be written. A key that looks like a secret (`password`, `pwd`, `scenarioText`) is left out

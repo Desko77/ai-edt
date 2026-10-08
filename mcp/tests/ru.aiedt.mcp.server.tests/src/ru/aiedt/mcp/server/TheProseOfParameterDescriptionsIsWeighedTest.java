@@ -348,7 +348,7 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised by 121 for updateBeforeLaunch naming the preset that launches an omitted update
         // without updating (measured 07.10: 1244), and by 54 more for the sentence saying every
         // answer of the run names the drop in databaseUpdate (measured 07.10: 1298).
-        PROSE.put("yaxunit_tests", Integer.valueOf(1298));
+        PROSE.put("yaxunit_tests", Integer.valueOf(1581));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -676,6 +676,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And by 164 for childName and name on extension_workshop: borrow_child reads the child's
      * name from either spelling, and a client could not discover either. Measured 08.10: 106919.
      * </p>
+     * <p>
+     * And by 283 for yaxunitUnsafeMode on yaxunit_tests: the schema says the default, the fresh and
+     * already-installed paths, the single write and control read, the mismatch refusal, and the
+     * explicit opt-out. Measured 08.10: 107202.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 106919;
+    private static final int DOCUMENT_PROSE = 107202;
 }

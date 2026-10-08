@@ -1768,7 +1768,7 @@ public final class BmInfobaseExtensionHelper
      * @param flag the flag as last read; may be {@code null}
      * @return {@code on}, {@code off} or {@code unknown}
      */
-    static String flagWord(Boolean flag)
+    public static String flagWord(Boolean flag)
     {
         return flag == null ? "unknown" //$NON-NLS-1$
             : flag.booleanValue() ? "on" : "off"; //$NON-NLS-1$ //$NON-NLS-2$
