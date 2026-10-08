@@ -123,6 +123,9 @@ com._1c.g5.v8.dt.internal.debug.core.model.breakpoints.BslRunToLineBreakpoint
 com._1c.g5.v8.dt.internal.form.FormPlugin getDefault,getInjector
 com._1c.g5.v8.dt.internal.md.extension.MdExtensionPlugin getDefault,getInjector
 com._1c.g5.v8.dt.internal.platform.services.core.PlatformServicesCore getDefault,getInjector
+com._1c.g5.v8.dt.internal.platform.services.core.runtimes.execution.DesignerSessionPool get,acquire
+com._1c.g5.v8.dt.internal.platform.services.core.runtimes.execution.DesignerAgentConnection getSession
+com._1c.g5.v8.dt.platform.services.core.runtimes.execution.impl.DesignerSessionThickClientLauncher designerSessionPool
 com._1c.g5.v8.dt.internal.search.core.SearchCorePlugin
 id com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_AUTO_SELECT
 id com._1c.g5.v8.dt.launching.core.ATTR_CLIENT_TYPE
