@@ -3971,6 +3971,14 @@ public final class BmTemplateHelper
             repointNoteRows(copy, targetFirst + i, delta);
         }
         replaceMergesOverRange(doc, sourceFirst, targetFirst, count, outcome, Axis.ROW);
+        if (doc.getHeight() > 0)
+        {
+            // The target runs the document to its far end whether or not the source rows hold
+            // anything: a source row the model never materialized copies as an empty row, and the
+            // declared height still has to reach the last row the call names. The extent below is
+            // a floor, not the whole answer here.
+            doc.setHeight(Math.max(doc.getHeight(), targetFirst + count));
+        }
         settleExtent(doc);
         outcome.lastRow = lastRowOf(doc);
         return outcome;
@@ -4302,10 +4310,46 @@ public final class BmTemplateHelper
      */
     private static int lastRowOf(SpreadsheetDocument doc)
     {
+        return lastRowOf(doc, false);
+    }
+
+    /**
+     * The same question asked of the content a reader sees, for the declared extent: the rows
+     * whose cells hold a text, a parameter, a parameter or template fill or a turned text, plus
+     * every holder of a row number outside the rows themselves. A row a format walked over - no
+     * text, a format index and nothing else - is not a row of the table: counting it would declare
+     * a table for a font. The declared height is not folded in here either; it is what the caller
+     * settles, and reading it back into the measure would make the number its own reason.
+     *
+     * @param doc the spreadsheet
+     * @return the last row a reader reaches, 1-based; 0 when the content reaches none
+     */
+    private static int extentRowOf(SpreadsheetDocument doc)
+    {
+        return lastRowOf(doc, true);
+    }
+
+    /**
+     * The document's last row, 1-based: the highest row anything of the model reaches, by the
+     * measure the caller names.
+     *
+     * @param doc the spreadsheet
+     * @param readableOnly whether only the content a reader lists counts, rather than every row
+     *     entry the model carries
+     * @return the last row, 1-based; 0 when nothing reaches any row
+     */
+    private static int lastRowOf(SpreadsheetDocument doc, boolean readableOnly)
+    {
         int maxKey = -1;
         for (Map.Entry<Integer, Row> held : doc.getRows())
         {
-            if (held != null && held.getKey() != null && rowCarriesContent(held.getValue()))
+            if (held == null || held.getKey() == null)
+            {
+                continue;
+            }
+            boolean counts = readableOnly ? rowCarriesReadableContent(doc, held.getValue())
+                : rowCarriesContent(held.getValue());
+            if (counts)
             {
                 maxKey = Math.max(maxKey, held.getKey().intValue());
             }
@@ -4353,11 +4397,88 @@ public final class BmTemplateHelper
         }
         maxKey = Math.max(maxKey, spanFarEdgeOf(doc.getPrintArea(), Axis.ROW));
         maxKey = Math.max(maxKey, spanFarEdgeOf(doc.getRepeatRows(), Axis.ROW));
-        if (doc.getHeight() > maxKey + 1)
+        if (!readableOnly && doc.getHeight() > maxKey + 1)
         {
             maxKey = doc.getHeight() - 1;
         }
         return maxKey + 1;
+    }
+
+    /**
+     * Whether a row holds a cell a reader lists: a non-empty text in any language, a parameter
+     * name, a parameter or template fill, or a turned text. Presentation alone - a row format, a
+     * column set of the row's own - is not content, and neither is a cell whose text is empty.
+     *
+     * @param doc the spreadsheet, for the format a cell points at
+     * @param row the row, or <code>null</code>
+     * @return <code>true</code> when a cell of the row holds something readable
+     */
+    private static boolean rowCarriesReadableContent(SpreadsheetDocument doc, Row row)
+    {
+        if (row == null)
+        {
+            return false;
+        }
+        for (Cell cell : row.getCells().values())
+        {
+            if (cellCarriesReadableContent(doc, cell))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a cell holds something a reader lists, by the same test the read applies: a
+     * non-empty text in any language, a parameter name, a parameter or template fill, or a turned
+     * text. A cell that exists in the model but carries none of them is what an empty write or a
+     * format left behind, and it is not a table.
+     *
+     * @param doc the spreadsheet, for the format the cell points at
+     * @param cell the cell, or <code>null</code>
+     * @return <code>true</code> when the cell holds something readable
+     */
+    private static boolean cellCarriesReadableContent(SpreadsheetDocument doc, Cell cell)
+    {
+        if (cell == null)
+        {
+            return false;
+        }
+        String text = cellText(cell, null);
+        if (text != null && !text.isEmpty())
+        {
+            return true;
+        }
+        String parameter = cell.getParameter();
+        if (parameter != null && !parameter.isEmpty())
+        {
+            return true;
+        }
+        return cellIsReadableByFillOrTurn(doc, cell);
+    }
+
+    /**
+     * The part of the readable test that reads the cell's format: a parameter or template fill, or
+     * a text turned away from the horizontal.
+     *
+     * @param doc the spreadsheet, for the format the cell points at
+     * @param cell the cell
+     * @return <code>true</code> when the format makes the cell one a reader lists
+     */
+    private static boolean cellIsReadableByFillOrTurn(SpreadsheetDocument doc, Cell cell)
+    {
+        Format format = formatAt(doc, cell.getFormatIndex());
+        if (format != null && format.isSetFillType())
+        {
+            FillType fill = format.getFillType();
+            if (fill == FillType.PARAMETER || fill == FillType.TEMPLATE)
+            {
+                return true;
+            }
+        }
+        Integer degrees = textOrientationDegrees(format);
+        return degrees != null && degrees.intValue() != 0;
     }
 
     /**
@@ -4396,6 +4517,35 @@ public final class BmTemplateHelper
      */
     private static int lastColumnOf(SpreadsheetDocument doc)
     {
+        return lastColumnOf(doc, false);
+    }
+
+    /**
+     * The same question asked of the content a reader sees, for the declared extent: the columns
+     * whose cells hold a text, a parameter, a parameter or template fill or a turned text, plus
+     * every holder of a column number outside the cells. A column set's declared size and its
+     * entries are not folded in - a width is presentation, and the set size is what the caller
+     * settles, so reading it back would make the number its own reason.
+     *
+     * @param doc the spreadsheet
+     * @return the last column a reader reaches, 1-based; 0 when the content reaches none
+     */
+    private static int extentColumnOf(SpreadsheetDocument doc)
+    {
+        return lastColumnOf(doc, true);
+    }
+
+    /**
+     * The document's last column, 1-based: the highest column anything of the model reaches, by the
+     * measure the caller names.
+     *
+     * @param doc the spreadsheet
+     * @param readableOnly whether only the content a reader lists counts, rather than every cell
+     *     entry and column set the model carries
+     * @return the last column, 1-based; 0 when nothing reaches any column
+     */
+    private static int lastColumnOf(SpreadsheetDocument doc, boolean readableOnly)
+    {
         int maxKey = -1;
         for (Row row : doc.getRows().values())
         {
@@ -4405,7 +4555,11 @@ public final class BmTemplateHelper
             }
             for (Map.Entry<Integer, Cell> held : row.getCells())
             {
-                if (held != null && held.getKey() != null)
+                if (held == null || held.getKey() == null)
+                {
+                    continue;
+                }
+                if (!readableOnly || cellCarriesReadableContent(doc, held.getValue()))
                 {
                     maxKey = Math.max(maxKey, held.getKey().intValue());
                 }
@@ -4454,14 +4608,17 @@ public final class BmTemplateHelper
         }
         maxKey = Math.max(maxKey, spanFarEdgeOf(doc.getPrintArea(), Axis.COLUMN));
         maxKey = Math.max(maxKey, spanFarEdgeOf(doc.getRepeatColumns(), Axis.COLUMN));
-        for (Columns set : columnSetsOf(doc))
+        if (!readableOnly)
         {
-            maxKey = Math.max(maxKey, set.getSize() - 1);
-            for (Map.Entry<Integer, Column> held : set.getColumns())
+            for (Columns set : columnSetsOf(doc))
             {
-                if (held != null && held.getKey() != null)
+                maxKey = Math.max(maxKey, set.getSize() - 1);
+                for (Map.Entry<Integer, Column> held : set.getColumns())
                 {
-                    maxKey = Math.max(maxKey, held.getKey().intValue());
+                    if (held != null && held.getKey() != null)
+                    {
+                        maxKey = Math.max(maxKey, held.getKey().intValue());
+                    }
                 }
             }
         }
@@ -4472,13 +4629,15 @@ public final class BmTemplateHelper
      * Settles the two numbers a reader takes as the table's size: the document's declared height
      * and the declared size of its own column set.
      * <p>
-     * Both are the last row and the last column the content reaches, by the same measure the row
-     * and column operations already work with - the rows carrying a format, cells or a column set
-     * of their own, the merges and whole-row merges, the named areas, the row groups, the drawings
-     * and the areas they read from, the print and repeat areas, and the declared numbers
-     * themselves. The platform reads the height as the table's number of rows and the set size as
-     * its number of columns, so a document written without them answers zero rows and zero columns
-     * however much it holds.
+     * Both are the last row and the last column the content reaches by the measure a reader uses -
+     * the cells holding a text, a parameter, a parameter or template fill or a turned text, the
+     * merges and whole-row merges, the named areas, the row groups, the drawings and the areas they
+     * read from, the print and repeat areas. Presentation is not content: a row the format walked
+     * over, a cell whose text is empty, a column width with no cell under it. Counting those would
+     * declare a table for a font, and a write of an empty string far down the sheet would declare
+     * one the size of the coordinate. The platform reads the height as the table's number of rows
+     * and the set size as its number of columns, so a document written without them answers zero
+     * rows and zero columns however much it holds.
      * </p>
      * <p>
      * The numbers only grow here. A document that declares more than it holds keeps what it
@@ -4495,12 +4654,12 @@ public final class BmTemplateHelper
         {
             return;
         }
-        int rows = lastRowOf(doc);
+        int rows = extentRowOf(doc);
         if (rows > doc.getHeight())
         {
             doc.setHeight(rows);
         }
-        int columns = lastColumnOf(doc);
+        int columns = extentColumnOf(doc);
         if (columns > 0)
         {
             ensureColumnSet(doc);
@@ -4901,7 +5060,9 @@ public final class BmTemplateHelper
 
     /**
      * Moves every column from a 0-based key right: the cells of every row, and the entries of every
-     * column set with the size the set declares.
+     * column set with the size the set declares. A point at the declared size appends past every
+     * declared column, so nothing inside the set moves and the size stays: the columns the
+     * insertion adds are empty, and an empty column is no wider a table.
      *
      * @param doc the spreadsheet
      * @param fromKey the first 0-based column to move
@@ -4915,7 +5076,7 @@ public final class BmTemplateHelper
         {
             shifted += shiftEntriesRight(set.getColumns(), fromKey, count, null);
             int size = set.getSize();
-            if (size > 0 && fromKey <= size)
+            if (size > 0 && fromKey < size)
             {
                 set.setSize(size + count);
             }
@@ -5774,7 +5935,10 @@ public final class BmTemplateHelper
      * Moves the declared height over an insertion or a deletion of rows.
      * <p>
      * A height of zero is nothing declared, and stays that way: the document then sizes itself by
-     * its content, which the operation just changed.
+     * its content, which the operation just changed. An insertion at the declared end moves nothing
+     * down: the declared rows all stay above it, and the rows the insertion adds are empty, so the
+     * table is no taller. Anything from the declared last row down does move, and the height
+     * follows it.
      * </p>
      *
      * @param doc the spreadsheet
@@ -5791,7 +5955,7 @@ public final class BmTemplateHelper
         }
         if (inserting)
         {
-            if (at <= height)
+            if (at < height)
             {
                 doc.setHeight(height + count);
             }

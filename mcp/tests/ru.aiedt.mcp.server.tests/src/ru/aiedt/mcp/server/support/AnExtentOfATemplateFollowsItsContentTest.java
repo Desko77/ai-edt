@@ -38,10 +38,13 @@ import com._1c.g5.v8.dt.moxel.util.V8MoxelSerializer;
  * </p>
  * <p>
  * Every write that changes the composition of the sheet therefore settles the declared extent: the
- * height becomes the last occupied row and the column set size the last occupied column, by the
- * same measure the row and column operations move. The numbers only grow in a write - a removal
- * lowers them through the declared numbers the row and column removals already carry - so a
- * template that already declares a larger extent than its content occupies keeps it.
+ * height becomes the last row a reader reaches and the column set size the last column one reaches.
+ * The measure is what a read lists - a non-empty text, a parameter, a parameter or template fill, a
+ * turned text - plus the merges, named areas, groups, drawings and print areas; presentation alone
+ * is not content, so a row a format walked over or a cell holding an empty string declares nothing.
+ * The numbers only grow in a write - a removal lowers them through the declared numbers the row and
+ * column removals already carry - so a template that already declares a larger extent than its
+ * content occupies keeps it.
  * </p>
  * <p>
  * The numbers asserted here are the ones the platform's own serializer reads out of the model: the
@@ -283,5 +286,81 @@ public class AnExtentOfATemplateFollowsItsContentTest
 
         assertExtent(doc, 11, 7);
         assertEquals("Всего", cellTextAt(doc, 11, 2)); //$NON-NLS-1$
+    }
+
+    /**
+     * A copy whose source row is inside the declared height but was never materialized still
+     * carries the declaration to the last row the call names. The source row copies as an empty
+     * row, so no content arrives to grow the extent by itself, and the target sits past the
+     * declared end: the document grows to hold it, the way a copy past the end always did.
+     */
+    @Test
+    public void aCopyPastTheEndGrowsTheDeclaredHeightEvenWhenTheSourceRowIsEmpty()
+    {
+        SpreadsheetDocument doc = empty();
+        BmTemplateHelper.setCellText(doc, 1, 1, "Шапка", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        doc.setHeight(4);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.copyRows(doc, 3, 6, 1);
+
+        assertNull(outcome.error);
+        assertEquals("the declared height reaches the last row the copy names", 6, //$NON-NLS-1$
+            doc.getHeight());
+        assertExtent(doc, 6, 1);
+        assertNull("the row the copy replaced holds nothing", cellTextAt(doc, 6, 1)); //$NON-NLS-1$
+    }
+
+    /**
+     * A cell written with an empty text far down the sheet declares nothing, however far out it
+     * sits: the write materializes a cell, and a cell whose text is empty is what a read skips.
+     * The next write settles the extent to the content that is really there, not to the
+     * coordinate the empty write reached.
+     */
+    @Test
+    public void anEmptyCellWrittenFarOutDoesNotDeclareATable()
+    {
+        SpreadsheetDocument doc = empty();
+
+        BmTemplateHelper.setCellText(doc, 100, 100, "", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.setCellText(doc, 1, 2, "Итого", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertExtent(doc, 1, 2);
+        assertEquals("Итого", cellTextAt(doc, 1, 2)); //$NON-NLS-1$
+    }
+
+    /** Rows inserted and then deleted leave the declared height where it started. */
+    @Test
+    public void rowsInsertedAndDeletedReturnTheHeightTheyStartedWith()
+    {
+        SpreadsheetDocument doc = empty();
+        BmTemplateHelper.setCellText(doc, 1, 1, "Шапка", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.setCellText(doc, 3, 1, "Итог", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertExtent(doc, 3, 1);
+
+        assertNull(BmTemplateHelper.insertRows(doc, 2, 2, "none").error); //$NON-NLS-1$
+        assertExtent(doc, 5, 1);
+
+        assertNull(BmTemplateHelper.deleteRows(doc, 2, 2).error);
+        assertExtent(doc, 3, 1);
+        assertEquals("Шапка", cellTextAt(doc, 1, 1)); //$NON-NLS-1$
+        assertEquals("Итог", cellTextAt(doc, 3, 1)); //$NON-NLS-1$
+    }
+
+    /** Columns inserted and then deleted leave the declared width where it started. */
+    @Test
+    public void columnsInsertedAndDeletedReturnTheWidthTheyStartedWith()
+    {
+        SpreadsheetDocument doc = empty();
+        BmTemplateHelper.setCellText(doc, 1, 1, "Код", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.setCellText(doc, 1, 3, "Сумма", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertExtent(doc, 1, 3);
+
+        assertNull(BmTemplateHelper.insertColumns(doc, 2, 2, "none").error); //$NON-NLS-1$
+        assertExtent(doc, 1, 5);
+
+        assertNull(BmTemplateHelper.deleteColumns(doc, 2, 2).error);
+        assertExtent(doc, 1, 3);
+        assertEquals("Код", cellTextAt(doc, 1, 1)); //$NON-NLS-1$
+        assertEquals("Сумма", cellTextAt(doc, 1, 3)); //$NON-NLS-1$
     }
 }
