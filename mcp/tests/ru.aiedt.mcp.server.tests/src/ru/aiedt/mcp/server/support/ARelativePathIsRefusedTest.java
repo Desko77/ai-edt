@@ -29,7 +29,7 @@ public class ARelativePathIsRefusedTest
     public void aRelativeSourceIsRefused()
     {
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.convertExternalToXml(
-            ANY_PROJECT, null, "relative-source.epf", "C:/temp/absolute-target"); //$NON-NLS-1$ //$NON-NLS-2$
+            ANY_PROJECT, null, "relative-source.epf", absoluteOnThisHost("absolute-target")); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertFalse(r.ok);
         assertTrue("the refusal names what is wrong: " + r.error, r.error.contains("absolute")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -43,7 +43,7 @@ public class ARelativePathIsRefusedTest
     {
         String target = "relative/target"; //$NON-NLS-1$
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.convertExternalToXml(
-            ANY_PROJECT, null, "C:/temp/absolute-source.epf", target); //$NON-NLS-1$
+            ANY_PROJECT, null, absoluteOnThisHost("absolute-source.epf"), target); //$NON-NLS-1$
 
         assertFalse(r.ok);
         assertTrue("the refusal names what is wrong: " + r.error, r.error.contains("absolute")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -69,10 +69,29 @@ public class ARelativePathIsRefusedTest
     public void anAbsoluteOutputIsNotRefusedForBeingAbsolute()
     {
         BmInfobaseExtensionHelper.ExportResult r = BmInfobaseExtensionHelper.exportConfigurationCf(
-            ANY_PROJECT, null, "C:/temp/absolute-export.cf"); //$NON-NLS-1$
+            ANY_PROJECT, null, absoluteOnThisHost("absolute-export.cf")); //$NON-NLS-1$
 
         assertFalse(r.ok);
         assertFalse("an absolute path is not refused as relative: " + r.error, //$NON-NLS-1$
             r.error.contains("absolute path")); //$NON-NLS-1$
+    }
+
+    /**
+     * An absolute path under this host's temporary directory, without creating anything there.
+     * <p>
+     * The path tests reach for has to be absolute for the check under test to be the one that
+     * answers. A path carrying a Windows drive letter is absolute on Windows alone: a host that
+     * has no such drive reads it as a relative path, the call refuses it as relative, and the
+     * assertion about what is NOT refused never sees an absolute path at all.
+     * The file is never created, because no test here needs it to exist.
+     * </p>
+     *
+     * @param name the file name under the temporary directory
+     * @return the absolute path as text
+     */
+    private static String absoluteOnThisHost(String name)
+    {
+        return java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), name) //$NON-NLS-1$
+            .toAbsolutePath().toString();
     }
 }
