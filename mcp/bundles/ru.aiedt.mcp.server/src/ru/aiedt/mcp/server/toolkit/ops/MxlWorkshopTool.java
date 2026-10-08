@@ -797,7 +797,7 @@ public class MxlWorkshopTool implements IMcpTool
                 if (contentError != null)
                 {
                     contentErrorRef[0] = contentError;
-                    return contentError;
+                    abortOnRefusal(contentError);
                 }
                 // Persist BM-memory snapshot to Template.mxlx so the change
                 // survives an EDT restart. Without this, set_cell results
@@ -1857,7 +1857,7 @@ public class MxlWorkshopTool implements IMcpTool
                     if (outcome.error != null)
                     {
                         formatErrorRef[0] = outcome.error;
-                        return outcome.error;
+                        abortOnRefusal(outcome.error);
                     }
                     written = outcome.cellsChanged + " cells, " + outcome.columnsChanged //$NON-NLS-1$
                         + " columns"; //$NON-NLS-1$
@@ -1868,7 +1868,7 @@ public class MxlWorkshopTool implements IMcpTool
                     if (printError != null)
                     {
                         formatErrorRef[0] = printError;
-                        return printError;
+                        abortOnRefusal(printError);
                     }
                     written = written.isEmpty() ? "print settings" //$NON-NLS-1$
                         : written + "; print settings"; //$NON-NLS-1$
@@ -1886,9 +1886,8 @@ public class MxlWorkshopTool implements IMcpTool
             });
         if (formatErrorRef[0] != null)
         {
-            // The transaction may well have "succeeded" without changing anything - the request was
-            // rejected inside it. Reported as a failure so a bad textPlacement is not answered with
-            // success and an unchanged template.
+            // The refusal was raised inside the callback and rolled the transaction back. The answer
+            // is the refusal text itself rather than the exception's rendering of it.
             return ToolResult.error(formatErrorRef[0]).put("operation", "format_cells").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         if (persistErrorRef[0] != null && r.tags != null)
