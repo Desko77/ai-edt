@@ -13,6 +13,7 @@ import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.Language;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -53,17 +54,75 @@ public final class DefaultLanguage
         Activator activator = Activator.getDefault();
         IConfigurationProvider provider = activator == null ? null : activator.getConfigurationProvider();
         Configuration config = provider == null ? null : provider.getConfiguration(project);
-        if (config == null || config.getDefaultLanguage() == null)
+        return codeOfDefault(config);
+    }
+
+    /**
+     * The default language code of a configuration already in hand.
+     *
+     * @param configuration the configuration; may be <code>null</code>
+     * @return the code, or {@link #FALLBACK} when the configuration names no default language
+     */
+    public static String codeOfDefault(Configuration configuration)
+    {
+        if (configuration == null || configuration.getDefaultLanguage() == null)
         {
             return FALLBACK;
         }
-        String code = config.getDefaultLanguage().getLanguageCode();
+        String code = configuration.getDefaultLanguage().getLanguageCode();
         if (code != null && !code.isEmpty())
         {
             return code;
         }
-        String name = config.getDefaultLanguage().getName();
+        String name = configuration.getDefaultLanguage().getName();
         return name != null && !name.isEmpty() ? name : FALLBACK;
+    }
+
+    /**
+     * Resolves a caller-supplied language to the code a synonym map is keyed by.
+     * <p>
+     * The synonym {@code EMap} holds its entries under language CODES ({@code ru}, {@code en}),
+     * while a caller - or the configuration's own default language object - may hand out the
+     * language NAME ({@code Русский}). A lookup by name misses the entry and falls through to
+     * "whatever synonym is first", so the name is translated through the configuration's language
+     * list before any lookup happens. A value that is neither a known code nor a known name is
+     * returned unchanged: it may be a code of a language this configuration does not declare, and
+     * the empty-synonym fallback of the reader is the honest answer for it.
+     * </p>
+     *
+     * @param requested the requested language, code or name; may be <code>null</code> or empty
+     * @param configuration the configuration whose languages translate a name; may be
+     *            <code>null</code>
+     * @return the language code to look synonyms up by, never <code>null</code>
+     */
+    public static String resolve(String requested, Configuration configuration)
+    {
+        if (requested == null || requested.isEmpty())
+        {
+            return codeOfDefault(configuration);
+        }
+        if (configuration != null)
+        {
+            for (Language language : configuration.getLanguages())
+            {
+                if (language == null)
+                {
+                    continue;
+                }
+                String code = language.getLanguageCode();
+                String canonical = code != null && !code.isEmpty() ? code : null;
+                if (requested.equals(code) || (canonical != null && requested.equalsIgnoreCase(canonical)))
+                {
+                    return canonical != null ? canonical : requested;
+                }
+                String name = language.getName();
+                if (name != null && name.equalsIgnoreCase(requested))
+                {
+                    return canonical != null ? canonical : name;
+                }
+            }
+        }
+        return requested;
     }
 
     /**

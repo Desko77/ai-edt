@@ -17,7 +17,6 @@ import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
-import com._1c.g5.v8.dt.metadata.mdclass.Language;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 import ru.aiedt.mcp.server.Activator;
@@ -26,6 +25,7 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.mdreport.MetadataFormatterHub;
 import ru.aiedt.mcp.server.support.BmSupportRegistryHelper;
+import ru.aiedt.mcp.server.support.DefaultLanguage;
 import ru.aiedt.mcp.server.support.ExternalProjectResolver;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -221,30 +221,50 @@ public class MetadataDetailsReader
         boolean full, String language, View view)
     {
         String effectiveLanguage = language != null && !language.isEmpty() ? language : DEFAULT_LANGUAGE;
-        String rootFqn = ExternalProjectResolver.getRootFqn(project);
 
         StringBuilder builder = new StringBuilder();
         builder.append("# Metadata Object Details: ").append(projectName).append(" (external)\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         for (String fqn : objectFqns)
         {
-            String normalized = MetadataTypeCatalog.normalizeFqn(fqn);
-            MdObject object = ExternalProjectResolver.resolveByFqn(project, normalized);
-            if (object == null && rootFqn != null && !rootFqn.equals(normalized))
-            {
-                object = ExternalProjectResolver.resolveByFqn(project, rootFqn);
-            }
-            if (object == null)
-            {
-                builder.append("**Error:** no such object: ").append(fqn).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-            else
-            {
-                builder.append(MetadataFormatterHub.format(object, full, effectiveLanguage,
-                    view.sections, view.outline));
-            }
+            builder.append(externalObjectSection(
+                normalized -> ExternalProjectResolver.resolveByFqn(project, normalized),
+                fqn, full, effectiveLanguage, view.sections, view.outline));
             builder.append(SECTION_SEPARATOR);
         }
         return builder.toString();
+    }
+
+    /**
+     * Answers one requested FQN of an external-object project.
+     * <p>
+     * An FQN that resolves to nothing is refused by name. Nothing stands in for it: describing the
+     * project's root object because the root happens to resolve would answer a question nobody
+     * asked, and a caller who misspelled an FQN would read a full description of a different
+     * object instead of learning their request found nothing.
+     * </p>
+     * <p>
+     * Package-private with the resolver handed in so the refusal is testable without a live
+     * external-project model.
+     * </p>
+     *
+     * @param resolve resolves a normalized FQN to the project's object, or <code>null</code>
+     * @param fqn the requested FQN, as the caller wrote it
+     * @param full whether to dump every property
+     * @param language the synonym language
+     * @param sections which sections to write, or <code>null</code> for all of them
+     * @param outline whether to write only the section map
+     * @return the object's markdown, or a {@code **Error:**} line
+     */
+    static String externalObjectSection(Function<String, MdObject> resolve, String fqn, boolean full,
+        String language, Set<String> sections, boolean outline)
+    {
+        String normalized = MetadataTypeCatalog.normalizeFqn(fqn);
+        MdObject object = resolve.apply(normalized);
+        if (object == null)
+        {
+            return "**Error:** no such object: " + fqn + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return MetadataFormatterHub.format(object, full, language, sections, outline);
     }
 
     /**
@@ -359,17 +379,20 @@ public class MetadataDetailsReader
     }
 
     /**
-     * @param language the requested language, or <code>null</code>
+     * The language the synonyms are read by, as a code - the form the synonym map and the formatter
+     * both key on. A requested value that is a language name is translated through the
+     * configuration's language list, and an unset request answers the configuration's default
+     * language code.
+     * <p>
+     * Package-private for the synonym-language test.
+     * </p>
+     *
+     * @param language the requested language, code or name, or <code>null</code>
      * @param configuration the configuration, for its default language
-     * @return the language to prefer for synonyms
+     * @return the language code to prefer for synonyms
      */
-    private static String effectiveLanguage(String language, Configuration configuration)
+    static String effectiveLanguage(String language, Configuration configuration)
     {
-        if (language != null && !language.isEmpty())
-        {
-            return language;
-        }
-        Language defaultLanguage = configuration.getDefaultLanguage();
-        return defaultLanguage != null ? defaultLanguage.getName() : DEFAULT_LANGUAGE;
+        return DefaultLanguage.resolve(language, configuration);
     }
 }
