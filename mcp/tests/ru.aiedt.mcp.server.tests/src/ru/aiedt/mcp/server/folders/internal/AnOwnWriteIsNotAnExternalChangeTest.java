@@ -118,4 +118,29 @@ public class AnOwnWriteIsNotAnExternalChangeTest
         assertNotNull("the reload reads the foreign bytes", //$NON-NLS-1$
             served.getClusterByFullPath("Documents/Sales")); //$NON-NLS-1$
     }
+
+    /**
+     * The change event that arrives while the write is still running - the refresh inside the
+     * write tells the workspace before the write returns - is the write's own, not a foreign
+     * change: it must not tell the listeners a second time about what the write itself will
+     * tell them.
+     *
+     * @throws Exception when the project cannot be created
+     */
+    @Test
+    public void theEventInsideTheWriteIsNotToldAsForeign() throws Exception
+    {
+        try
+        {
+            manager.activate();
+
+            assertTrue(manager.createCluster(probe.project, "Shelf", "Catalogs", null).succeeded()); //$NON-NLS-1$ //$NON-NLS-2$
+
+            assertEquals("the notification inside the write was the write's own", 1, told); //$NON-NLS-1$
+        }
+        finally
+        {
+            manager.deactivate();
+        }
+    }
 }
