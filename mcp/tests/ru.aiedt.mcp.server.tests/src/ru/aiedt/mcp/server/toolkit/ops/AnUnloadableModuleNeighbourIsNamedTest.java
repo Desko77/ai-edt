@@ -38,7 +38,7 @@ public class AnUnloadableModuleNeighbourIsNamedTest
     public void aNeighbourWhoseModelDidNotLoadIsNamed()
     {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
-        Deque<Module> queue = new ArrayDeque<>();
+        Deque<DependencyGraphTool.QueuedModule> queue = new ArrayDeque<>();
         Set<String> visited = new LinkedHashSet<>();
         List<String> unloaded = new ArrayList<>();
 
@@ -72,7 +72,7 @@ public class AnUnloadableModuleNeighbourIsNamedTest
     public void aModuleThatLoadedIsWalked()
     {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
-        Deque<Module> queue = new ArrayDeque<>();
+        Deque<DependencyGraphTool.QueuedModule> queue = new ArrayDeque<>();
         List<String> unloaded = new ArrayList<>();
         Module module = (Module)java.lang.reflect.Proxy.newProxyInstance(
             AnUnloadableModuleNeighbourIsNamedTest.class.getClassLoader(),
