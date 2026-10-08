@@ -139,13 +139,14 @@ public final class BmInfobaseExtensionHelper
             {
                 // Same disconnect/reconnect as install/uninstall: the list
                 // thick-client also needs EDT's designer agent off the file
-                // infobase, or it blocks on the monopoly (row 55).
-                underThickClientHandshake(ctx, () -> {
+                // infobase, or it blocks on the monopoly (row 55). The success is claimed
+                // after the reconnection, so a base left disconnected is answered as the
+                // failure it is rather than as a listing that went through.
+                underThickClientHandshakeThenClaimSuccess(ctx, () -> {
                     List<String> exts = ctx.launcher.listConfigurationExtensions(ctx.component,
                         ctx.infobase, ctx.args);
-                    r.ok = true;
                     r.extensions = exts != null ? exts : Collections.emptyList();
-                });
+                }, () -> r.ok = true);
             }
             finally
             {
@@ -194,10 +195,13 @@ public final class BmInfobaseExtensionHelper
             }
             try
             {
-                underThickClientHandshake(ctx, () -> {
-                    ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase, ctx.args, name);
-                    r.ok = true;
-                });
+                // The removal is claimed only once the base is back: an uninstall that ran but
+                // left the infobase disconnected is answered as a failure naming the
+                // reconnection, not as a removal that went through.
+                underThickClientHandshakeThenClaimSuccess(ctx,
+                    () -> ctx.launcher.deleteConfigurationExtension(ctx.component, ctx.infobase,
+                        ctx.args, name),
+                    () -> r.ok = true);
             }
             finally
             {
@@ -371,6 +375,30 @@ public final class BmInfobaseExtensionHelper
     }
 
     /**
+     * The handshake of {@link #underThickClientHandshake(ThickClientLaunch.LauncherContext, Work)}
+     * for a call whose success claim is a step of its own.
+     * <p>
+     * The launcher call returning is not the end of the exchange: the infobase still has to be taken
+     * back, and a reconnection that fails leaves it disconnected in EDT. A run that claims success
+     * from inside itself therefore reports the operation as done while the workspace is left in a
+     * state the caller is never told about. The claim is made here instead, after the reconnection,
+     * so a run whose reconnection failed reaches its caller as a failure that names it.
+     * </p>
+     *
+     * @param ctx the resolved launcher context
+     * @param work the launcher call, which fills in everything but the success
+     * @param claimSuccess marks the operation as done; run only when nothing threw
+     * @throws Exception whatever the call throws, or the reconnection failed after it - the claim
+     *             does not run then
+     */
+    static void underThickClientHandshakeThenClaimSuccess(ThickClientLaunch.LauncherContext ctx,
+        Work work, Runnable claimSuccess) throws Exception
+    {
+        handshakeThenClaimSuccess(ctx.lock, () -> disconnectForThickClient(ctx), work,
+            () -> reconnectInfobase(ctx), claimSuccess);
+    }
+
+    /**
      * The order itself, with every step handed in, so that a test can watch it without EDT.
      *
      * @param lock the per-infobase lock; <code>null</code> when this runtime has none
@@ -427,6 +455,27 @@ public final class BmInfobaseExtensionHelper
                 }
             }
         }
+    }
+
+    /**
+     * The order of {@link #handshakeOrder} with the claim of success made after it, with every step
+     * handed in so that a test can watch it without EDT.
+     *
+     * @param lock the per-infobase lock; <code>null</code> when this runtime has none
+     * @param release releases the infobase and says whether it had been connected
+     * @param work the launcher call, run under the lock and nothing else
+     * @param reconnect takes the infobase back, run only when the release reported a connection
+     * @param claimSuccess marks the operation as done; run only when nothing threw
+     * @throws Exception whatever the work throws, after the infobase has been taken back; a
+     *             reconnection that failed is thrown in its place, with the work's own failure
+     *             attached to it as a suppressed exception. The claim does not run in either case
+     */
+    static void handshakeThenClaimSuccess(java.util.concurrent.locks.Lock lock,
+        java.util.function.BooleanSupplier release, Work work, Reconnect reconnect,
+        Runnable claimSuccess) throws Exception
+    {
+        handshakeOrder(lock, release, work, reconnect);
+        claimSuccess.run();
     }
 
     /**
