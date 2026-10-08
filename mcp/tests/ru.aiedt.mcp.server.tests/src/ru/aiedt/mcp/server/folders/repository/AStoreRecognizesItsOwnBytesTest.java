@@ -10,7 +10,10 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.runtime.NullProgressMonitor;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -94,19 +97,45 @@ public class AStoreRecognizesItsOwnBytesTest
     }
 
     /**
-     * A store that never read the project counts no file as its own untouched state, and any file
-     * that is there as foreign.
+     * A store that never read the project has no state of its own to find on the disk: neither a
+     * file that is there nor the absence of one counts as its own.
      *
      * @throws Exception when the file cannot be written
      */
     @Test
     public void aStoreThatNeverReadCountsAnyFileAsForeign() throws Exception
     {
-        assertTrue("no file at all is the untouched state of a store that never read", //$NON-NLS-1$
+        assertFalse("a store that never read has no own state, not even the absent file", //$NON-NLS-1$
             store.holdsWhatWasLastReadOrWritten(probe.project));
 
         probe.writeClusters(OTHER_CONTENT.getBytes(StandardCharsets.UTF_8));
         assertFalse("a file nobody read is a foreign one", //$NON-NLS-1$
+            store.holdsWhatWasLastReadOrWritten(probe.project));
+    }
+
+    /**
+     * Not knowing what was last read and having read no file are different states: a read that
+     * failed forgets the fingerprint, and the absence the store then finds on the disk is not the
+     * absence it read. Reading the now-absent file puts the store back into its own empty state,
+     * so a project whose unreadable file went away recovers instead of staying foreign forever.
+     *
+     * @throws Exception when the file cannot be written
+     */
+    @Test
+    public void aForgottenFingerprintIsNotTheReadAbsenceOfTheFile() throws Exception
+    {
+        probe.writeClusters(new byte[] {(byte)0xC3, (byte)0x28});
+        assertTrue("the unreadable file is refused", store.load(probe.project) == null); //$NON-NLS-1$
+        assertFalse("the failed read left nothing the disk could hold as own", //$NON-NLS-1$
+            store.holdsWhatWasLastReadOrWritten(probe.project));
+
+        Files.deleteIfExists(probe.clustersFile());
+        probe.project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+        assertFalse("the deleted bad file is still not an own state - nothing was read", //$NON-NLS-1$
+            store.holdsWhatWasLastReadOrWritten(probe.project));
+
+        assertTrue(store.load(probe.project) != null);
+        assertTrue("having read the absence, it is the store's own state", //$NON-NLS-1$
             store.holdsWhatWasLastReadOrWritten(probe.project));
     }
 }

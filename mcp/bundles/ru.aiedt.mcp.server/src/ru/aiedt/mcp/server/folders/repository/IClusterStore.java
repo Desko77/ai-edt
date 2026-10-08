@@ -52,8 +52,10 @@ public interface IClusterStore
      * <p>
      * A change notification about a file carrying those bytes is the service's own write coming
      * back as an event, not a change from outside: the cache the write produced is current, and
-     * the bytes nobody else touched are not something to reload from. A store that never read the
-     * project counts an absent file as its own state and any present one as foreign.
+     * the bytes nobody else touched are not something to reload from. A store with no fingerprint
+     * for the project - it never read the project, or its read failed and was forgotten - counts
+     * nothing as its own state, not even the absence of the file: only the absence it actually
+     * read or wrote is its own.
      * </p>
      *
      * @param project the project

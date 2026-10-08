@@ -176,8 +176,9 @@ public class YamlClusterStore
      * The state is kept here rather than in {@link ClusterStore}, which is what the YAML is written
      * from: a field on the store would be dumped into the file, and a reader of another build would
      * meet a key it does not know. The map is per instance, and the manager that owns this store is
-     * the only writer for a project's file. A name that is absent means this store never read that
-     * project - which is not the same as having read no file, and is stored as
+     * the only writer for a project's file. A name that is absent means this store does not
+     * know what it last read from that project - it never read it, or a read failed and was
+     * forgotten - which is not the same as having read no file, and is stored as
      * {@link AtomicFileReplace#NO_FILE_FINGERPRINT} instead. A write sets the fingerprint of
      * the bytes it is about to land before it runs, so the change notification the refresh
      * inside the write fires reads as this store's own write; a refused write puts the
@@ -659,18 +660,28 @@ public class YamlClusterStore
 
     /**
      * Tells whether the file on disk holds the bytes this store last read or wrote.
+     * <p>
+     * Not knowing what was last read and having read no file are different states. A project this
+     * store never read, or whose read failed and was forgotten, has no bytes to compare: nothing
+     * the disk holds is that project's own state, not even the absence of the file. Only a store
+     * that read the absence - or wrote the removal - counts no file as its own.
+     * </p>
      *
      * @param project the project
      * @return {@code true} when the disk carries exactly those bytes; {@code false} when it holds
-     *         something else or cannot be read
+     *         something else, when this store holds no fingerprint to compare, or when the file
+     *         cannot be read
      */
     @Override
     public boolean holdsWhatWasLastReadOrWritten(IProject project)
     {
         String known = loadedFingerprints.get(project.getName());
-        String expected = known == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : known;
+        if (known == null)
+        {
+            return false;
+        }
         String onDisk = diskFingerprint(clustersFile(project));
-        return onDisk != null && expected.equals(onDisk);
+        return onDisk != null && known.equals(onDisk);
     }
 
 
