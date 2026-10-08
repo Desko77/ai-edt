@@ -454,6 +454,11 @@ public class ToolsPrefTab
      * Paints every checkbox from the disabled set. Children are only pushed when their group is open;
      * a closed group's tool items do not exist yet and {@code setChecked} on them is ignored, which is
      * what {@link #pushGroupCheckStates} handles at the moment the group opens.
+     * <p>
+     * A group's own row is painted from the names the query is showing, which is the same list a tick
+     * on that row reaches: a name behind the query is not one the row stands for, and counting it
+     * would put the row back to ticked the moment the click that unticked the visible names returned.
+     * </p>
      */
     private void refreshChecks()
     {
@@ -467,6 +472,10 @@ public class ToolsPrefTab
                 boolean anyEnabled = false;
                 for (String toolName : group.getToolNames())
                 {
+                    if (!nameFilter.shows(toolName))
+                    {
+                        continue;
+                    }
                     boolean enabled = !disabledTools.contains(toolName);
                     if (enabled)
                     {
