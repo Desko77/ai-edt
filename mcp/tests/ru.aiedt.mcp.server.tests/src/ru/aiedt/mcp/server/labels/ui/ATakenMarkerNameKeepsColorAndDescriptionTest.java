@@ -43,6 +43,33 @@ public class ATakenMarkerNameKeepsColorAndDescriptionTest
     }
 
     @Test
+    public void aSecondUpdateThatDidNotStoreSaysSo()
+    {
+        // Both updates answer false - the name is taken and the kept-name write did not store
+        // either - so the message must not claim the color and description were kept.
+        MarkerEditCommit.Editor refusing = new MarkerEditCommit.Editor()
+        {
+            @Override
+            public boolean update(String oldName, String newName, String color, String description)
+            {
+                return false;
+            }
+
+            @Override
+            public boolean defined(String name)
+            {
+                return true;
+            }
+        };
+        MarkerEditCommit.Result result = MarkerEditCommit.apply(refusing, "bug", "note", //$NON-NLS-1$ //$NON-NLS-2$
+            "#ABCDEF", "kept"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(result.stored());
+        assertNotNull(result.message());
+        assertTrue("the message says the appearance was not stored: " + result.message(), //$NON-NLS-1$
+            result.message().contains("could not be stored")); //$NON-NLS-1$
+    }
+
+    @Test
     public void aFreeNameIsStoredWithNoMessage()
     {
         MarkerStore storage = new MarkerStore();

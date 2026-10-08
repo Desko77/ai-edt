@@ -215,8 +215,13 @@ public class TheToolListHasAWeightBudgetTest
      * three modes it applies them under, and the names themselves. The edit_metadata entry stayed
      * inside its per-tool headroom; the sum crossed the document. Measured 08.10: 188695.
      * </p>
+     * <p>
+     * And from 188695 to 191599 for tag_admin: the tag facade and its schema joined the list
+     * (measured 08.10: 2904). Its five write doors are hidden under Canonical and weigh
+     * nothing here.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 188695;
+    private static final int DOCUMENT_BUDGET = 191599;
 
     private LiveServer server;
 
@@ -434,6 +439,9 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("diff_module", Integer.valueOf(1816)); //$NON-NLS-1$
         BUDGETS.put("get_metadata_objects", Integer.valueOf(1802)); //$NON-NLS-1$
         BUDGETS.put("workspace_marks", Integer.valueOf(1771)); //$NON-NLS-1$
+        // First weigh of tag_admin: five operations, the tag node each answer carries, and
+        // the two places the refusals are named. Measured 08.10: 2904.
+        BUDGETS.put("tag_admin", Integer.valueOf(2904)); //$NON-NLS-1$
         BUDGETS.put("get_form_screenshot", Integer.valueOf(1748)); //$NON-NLS-1$
         BUDGETS.put("read_event_log", Integer.valueOf(1673)); //$NON-NLS-1$
         BUDGETS.put("get_metadata_details", Integer.valueOf(1613)); //$NON-NLS-1$

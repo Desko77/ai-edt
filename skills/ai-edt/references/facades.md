@@ -71,6 +71,7 @@ The answer carries `statistics.omittedBelowSeverityFilter` for what the severity
 | `workspace_marks` | `get_tags`, `get_objects_by_tags`, `get_bookmarks`, `get_tasks`, `help` |
 | `git` | `status`, `branches`, `log`, `commit`, `checkout`, `show_file_changes`, `revert_file`, `create_merge_restore_point`, `restore_merge_point` |
 | `cluster_admin` | `get_clusters`, `create_cluster`, `update_cluster`, `delete_cluster`, `add_to_cluster`, `remove_from_cluster`, `help` |
+| `tag_admin` | `create_tag`, `update_tag`, `delete_tag`, `assign_tag`, `unassign_tag`, `help` |
 
 ## Clusters
 
@@ -144,6 +145,35 @@ less is refused.
 `GET /health` names the open projects of the workspace (`projects`): at two stands on one machine
 the port that answers is read from the projects it serves, and a `project_not_found` is never
 read as the server being down when the port belongs to the other instance.
+
+## Tags
+
+`tag_admin` writes the project's metadata tags: a tag is a named, colored label attached to
+metadata objects, stored per project in `.settings/aiedt-markers.yaml`. Reading them - the list of
+tags, the objects carrying one - stays in `workspace_marks` (`get_tags`, `get_objects_by_tags`).
+
+The five writes each pass their own door, so a write-blocking preset refuses them before the file is
+read: `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a color the
+default gray), `update_tag` (`newName`, `color`, `description`; an omitted argument keeps the field,
+an empty `description` clears it; a rename carries the assignments and the answer names
+`movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`;
+`dryRun=true` answers the count and writes nothing), `assign_tag` (`objectFqn` plus a `tags` array;
+the list writes as one, so one unknown tag refuses the whole call and nothing is assigned; a blank
+or whitespace element refuses the whole call with `invalidName`), `unassign_tag` (a `tags` array; a
+tag the object does not carry is `skipped`, and nothing removed answers `isError` with
+`reason=notAssigned`). The `assign_tag` and `unassign_tag` answers name what the operation itself
+changed under its write lock: a tag a parallel call assigned or removed first reads as `skipped`,
+not as `assigned` or `removed`.
+
+`assign_tag` checks the object against the EDT model first: an object that is not in the
+configuration is refused with `objectNotFound` and the nearest names. Nested addresses resolve
+too, in kind-name pairs the way the marker file spells them: `Catalog.Products.Attribute.Code`,
+`Catalog.Products.Form.ItemForm`. Names that differ only in case are different tags; a name empty
+after trim is refused with `invalidName`, a color that is not `#RRGGBB` with `invalidColor`. The
+file refusals every write can answer are `unreadableFile`, `readOnlyFile`, `changedOnDisk` (the
+file changed after it was read and was left as the changing party wrote it) and `saveFailed` -
+which also answers when the file's bytes cannot be read at all: refused access, a drive that went
+away.
 
 ## Diagnostics
 

@@ -433,6 +433,11 @@
 | `SyncControlTool` | `retrieve_database_changes` | `applicationId:string`, `cancel:boolean`, `markSynchronized:boolean`, `projectName:string`, `replaceLocal:boolean`, `runKey:string` | read in place |
 | `SyncControlTool` | `status` | `projectName:string` | passed in as locals |
 | `SyncControlTool` | `suppress` | `enabled:boolean`, `projectName:string` | read in place |
+| `TagAdminFacadeTool` | `assign_tag` | `objectFqn:string`, `projectName:string`, `tags:string[]` | read in place |
+| `TagAdminFacadeTool` | `create_tag` | `color:string`, `description:string`, `projectName:string`, `tag:string` | read in place |
+| `TagAdminFacadeTool` | `delete_tag` | `dryRun:boolean`, `projectName:string`, `tag:string` | read in place |
+| `TagAdminFacadeTool` | `unassign_tag` | `objectFqn:string`, `projectName:string`, `tags:string[]` | read in place |
+| `TagAdminFacadeTool` | `update_tag` | `color:string`, `description:string`, `newName:string`, `projectName:string`, `tag:string` | read in place |
 | `WorkspaceMarksFacadeTool` | `get_bookmarks` | `filePath:string`, `limit:integer`, `projectName:string` | delegate BookmarksReader |
 | `WorkspaceMarksFacadeTool` | `get_objects_by_tags` | `limit:integer`, `projectName:string`, `tags:string[]` | delegate TaggedObjectsReader |
 | `WorkspaceMarksFacadeTool` | `get_tags` | `projectName:string` | delegate TagsReader |

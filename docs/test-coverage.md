@@ -5,13 +5,13 @@ bundle lands in exactly one bucket; the buckets add up to the total.
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 147 | a test class named after it |
-| exercised | 245 | reached by some other test |
-| tool-sweep | 32 | declaration checked by the registry-wide contract sweep |
+| direct | 148 | a test class named after it |
+| exercised | 253 | reached by some other test |
+| tool-sweep | 30 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 37 | needs a display or an extension point |
 | workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **480** | across 675 test classes |
+| **total** | **487** | across 688 test classes |
 
 ## untested (0)
 
@@ -109,11 +109,10 @@ _none_
 - OperatorSignalDialog
 - UpdateNoticePopup
 
-## tool-sweep (32)
+## tool-sweep (30)
 
 **toolkit/ops**
 - AttributeAdder
-- BookmarksReader
 - BreakpointsLister
 - CodeTemplateTool
 - ConfigurationInfoReader
@@ -141,11 +140,10 @@ _none_
 - ProjectsLister
 - SelfStatusTool
 - SemanticMetadataSearchTool
-- TaggedObjectsReader
 - TagsReader
 - UninstallExtensionTool
 
-## exercised (245)
+## exercised (253)
 
 **(root)**
 - Activator
@@ -309,6 +307,7 @@ _none_
 **toolkit/ops**
 - ApplicationsReader
 - AuditRoleRightsTool
+- BookmarksReader
 - BreakpointRemover
 - BreakpointSetter
 - BreakpointStateSetter
@@ -410,6 +409,13 @@ _none_
 - SuspendWaiter
 - SymbolInfoReader
 - SyncControlTool
+- TagAdminFacadeTool
+- TagAssignTool
+- TagCreateTool
+- TagDeleteTool
+- TagUnassignTool
+- TagUpdateTool
+- TaggedObjectsReader
 - TasksReader
 - TemplateOps
 - ValidateForExportTool
@@ -432,7 +438,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (147)
+## direct (148)
 
 **(root)**
 - BrowserOrigin
@@ -443,6 +449,9 @@ _none_
 
 **folders/refactoring**
 - ClusterRenameRefactorHook
+
+**labels**
+- MarkerWriteOutcome
 
 **labels/ui**
 - Messages
@@ -620,14 +629,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 2 |
-| 3-4 | 14 |
+| 3-4 | 15 |
 | 5-8 | 44 |
 | 9-16 | 61 |
 | 17+ | 26 |
 
-5284 test methods across 675 test classes; 147 classes have a test of their own, median 10 methods each.
+5356 test methods across 688 test classes; 148 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 147 of 480 classes have one: 32 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 148 of 487 classes have one: 30 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

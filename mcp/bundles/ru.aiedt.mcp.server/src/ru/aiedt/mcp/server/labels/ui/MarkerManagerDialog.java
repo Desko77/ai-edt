@@ -273,6 +273,13 @@ public class MarkerManagerDialog
             initiallyAssigned = MarkerRenamePlan.apply(marker, dialog.getMarkerName(), initiallyAssigned,
                 (nameBefore, newName) -> service.updateMarker(project, nameBefore, newName, dialog.getMarkerColor(),
                     dialog.getMarkerDescription()));
+            String asked = dialog.getMarkerName();
+            if (asked != null && !asked.trim().isEmpty() && !asked.equals(marker.getName()))
+            {
+                // A refused rename leaves the marker on its old name; saying so beats a table
+                // that silently shows the name the user asked for as if it had been stored.
+                MessageDialog.openWarning(getShell(), "Marker", "The marker could not be renamed; its name still is '" + marker.getName() + "'."); //$NON-NLS-1$
+            }
             refreshTablePreservingChecks();
         }
     }

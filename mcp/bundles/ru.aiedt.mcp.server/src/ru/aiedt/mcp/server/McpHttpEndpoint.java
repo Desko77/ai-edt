@@ -61,6 +61,12 @@ import ru.aiedt.mcp.server.toolkit.ops.ClusterAdminFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterCreateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterDeleteTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterRemoveTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagAdminFacadeTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagAssignTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagCreateTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagDeleteTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagUnassignTool;
+import ru.aiedt.mcp.server.toolkit.ops.TagUpdateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ClusterUpdateTool;
 import ru.aiedt.mcp.server.toolkit.ops.ProjectCleaner;
 import ru.aiedt.mcp.server.toolkit.ops.CodeSearchTool;
@@ -1573,7 +1579,13 @@ public class McpHttpEndpoint
             new ClusterUpdateTool(),
             new ClusterDeleteTool(),
             new ClusterAddTool(),
-            new ClusterRemoveTool());
+            new ClusterRemoveTool(),
+            new TagAdminFacadeTool(),
+            new TagCreateTool(),
+            new TagUpdateTool(),
+            new TagDeleteTool(),
+            new TagAssignTool(),
+            new TagUnassignTool());
     }
 
     /**

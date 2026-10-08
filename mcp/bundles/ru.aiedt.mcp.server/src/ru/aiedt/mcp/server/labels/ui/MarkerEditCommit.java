@@ -119,8 +119,13 @@ public final class MarkerEditCommit
         if (nameTaken)
         {
             boolean stored = editor.update(oldName, null, color, description);
-            return new Result(false, stored,
-                "A marker named \"" + newName + "\" already exists. The color and description were kept."); //$NON-NLS-1$ //$NON-NLS-2$
+            // The message follows the second update's own outcome: claiming the color and
+            // description were kept when that write was refused too would tell the user their
+            // edit landed somewhere it never reached.
+            return new Result(false, stored, stored
+                ? "A marker named \"" + newName + "\" already exists. The color and description were kept." //$NON-NLS-1$ //$NON-NLS-2$
+                : "A marker named \"" + newName + "\" already exists, and the color and description " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "could not be stored."); //$NON-NLS-1$
         }
         return new Result(false, false, "The marker could not be updated."); //$NON-NLS-1$
     }

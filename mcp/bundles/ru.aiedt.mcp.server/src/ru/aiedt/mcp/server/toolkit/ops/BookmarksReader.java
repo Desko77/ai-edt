@@ -21,6 +21,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
+import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 
 /**
@@ -82,12 +83,14 @@ public class BookmarksReader
      * Collects and renders the bookmark markers.
      * <p>
      * Public and static so callers outside the tool path can reuse it. Runs on the calling thread.
+     * A refusal is a JSON error document, so the caller reads <code>isError</code> instead of
+     * parsing a table that begins with <code>**Error:**</code>.
      * </p>
      *
      * @param projectName the project to look in, or <code>null</code>/empty for the whole workspace
      * @param filePath a path fragment to keep, or <code>null</code>/empty for any
      * @param limit the most bookmarks to return, already clamped
-     * @return the markdown table, or a {@code **Error:**} line
+     * @return the markdown table, or a JSON error document
      */
     public static String getBookmarks(String projectName, String filePath, int limit)
     {
@@ -99,7 +102,7 @@ public class BookmarksReader
                 IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
                 if (!project.exists())
                 {
-                    return "**Error:** " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+                    return ToolResult.error(ProjectResolver.describeNotFound(projectName)).toJson();
                 }
                 projects = new IProject[] {project};
             }
@@ -126,7 +129,7 @@ public class BookmarksReader
         }
         catch (Exception e)
         {
-            return "**Error:** " + e.getMessage(); //$NON-NLS-1$
+            return ToolResult.error("Could not read bookmarks: " + e.getMessage()).toJson(); //$NON-NLS-1$
         }
     }
 

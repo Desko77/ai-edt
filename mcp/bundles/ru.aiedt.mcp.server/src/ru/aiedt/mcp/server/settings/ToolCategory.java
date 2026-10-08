@@ -75,13 +75,19 @@ public enum ToolCategory
         "get_tasks", //$NON-NLS-1$
         "workspace_marks", //$NON-NLS-1$
         "cluster_admin", //$NON-NLS-1$
-        // The write doors of the cluster facade, named one by one: this group is a reading
-        // group, which no write-blocking preset switches off wholesale.
+        "tag_admin", //$NON-NLS-1$
+        // The write doors of the cluster and tag facades, named one by one: this group is a
+        // reading group, which no write-blocking preset switches off wholesale.
         "create_cluster", //$NON-NLS-1$
         "update_cluster", //$NON-NLS-1$
         "delete_cluster", //$NON-NLS-1$
         "add_to_cluster", //$NON-NLS-1$
-        "remove_from_cluster"), //$NON-NLS-1$
+        "remove_from_cluster", //$NON-NLS-1$
+        "create_tag", //$NON-NLS-1$
+        "update_tag", //$NON-NLS-1$
+        "delete_tag", //$NON-NLS-1$
+        "assign_tag", //$NON-NLS-1$
+        "unassign_tag"), //$NON-NLS-1$
 
     /**
      * Everything that touches a live infobase or the shape of the workspace: launching, updating,

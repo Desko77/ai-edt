@@ -256,6 +256,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // the two places a create hangs a cluster, the move's model check and collection rule, and
         // the dry run that still passes the write door (measured 30.09: 1590).
         PROSE.put("cluster_admin", Integer.valueOf(1590));
+        // tag_admin: one sentence per argument of five operations - the create, update and delete
+        // of a tag, the assignment batch and its removal, the dry run that still passes the write
+        // door (measured 08.10: 1587).
+        PROSE.put("tag_admin", Integer.valueOf(1587));
         // Grown to 3747: the intent sentence says a changing run records a restore point first.
         PROSE.put("compare_three_way", Integer.valueOf(3747));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
@@ -664,6 +668,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * applies them under, and the names themselves as standard command names of that object.
      * Measured 08.10: 105168.
      * </p>
+     * <p>
+     * And for tag_admin joining the list with the prose of its five operations' arguments.
+     * Measured 08.10: 106755.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 105168;
+    private static final int DOCUMENT_PROSE = 106755;
 }

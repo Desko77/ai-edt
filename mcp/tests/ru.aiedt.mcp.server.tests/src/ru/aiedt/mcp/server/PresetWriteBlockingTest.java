@@ -60,6 +60,7 @@ public class PresetWriteBlockingTest
             "git_revert_file", "git_create_merge_restore_point", "git_delete_merge_restore_point",
             "create_cluster", "update_cluster", "delete_cluster",
             "add_to_cluster", "remove_from_cluster",
+            "create_tag", "update_tag", "delete_tag", "assign_tag", "unassign_tag",
             "edit_form_writes", "edit_metadata_writes", "dcs_workshop_writes", "mxl_workshop_writes",
             "xdto_workshop_writes", "external_object_workshop_writes",
             "external_data_source_workshop_writes");

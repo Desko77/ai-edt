@@ -164,6 +164,7 @@ public class MarkerFilterController
             return;
         }
         MarkerQueryFilter filter = getSharedFilter();
+        filter.activate();
         if (showUnmarkedOnly)
         {
             filter.setShowUnmarkedOnly(true);
@@ -196,6 +197,7 @@ public class MarkerFilterController
         if (sharedFilter != null)
         {
             sharedFilter.clearSelectedMarkersMode();
+            sharedFilter.deactivate();
         }
         filterActive = false;
         updateToggleState(false);
