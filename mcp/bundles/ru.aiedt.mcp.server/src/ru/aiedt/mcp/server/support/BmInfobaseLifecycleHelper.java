@@ -176,8 +176,28 @@ public final class BmInfobaseLifecycleHelper
         return r;
     }
 
+    /** The association context of a project, with the read's own outcome beside it. */
+    public static final class ContextRead
+    {
+        /** The context that was read; the default one when the read failed. */
+        public final InfobaseAssociationContext context;
+
+        /**
+         * Why the context could not be read, or {@code null} when it was. A project without
+         * branches reads as the default context and no failure - the two are different answers,
+         * and a binding made while the read failed has to be able to say which one it was.
+         */
+        public final String readFailure;
+
+        ContextRead(InfobaseAssociationContext context, String readFailure)
+        {
+            this.context = context;
+            this.readFailure = readFailure;
+        }
+    }
+
     /**
-     * The association context of a project - the one EDT reads a project's applications from.
+     * Reads the association context of a project and says when the read itself failed.
      *
      * <p>A project under version control is bound per branch: its applications live in the
      * context of the current branch ({@code refs/heads/<branch>}), and an association made in the
@@ -185,22 +205,37 @@ public final class BmInfobaseLifecycleHelper
      * provider names, so a binding made here goes to the same place.</p>
      *
      * @param project the project
-     * @return the context; the default one when the provider is unavailable or fails
+     * @return the context and why it could not be read, when it could not; the default context
+     *         with no failure is a project without branches, a legitimate answer of its own
      */
-    public static InfobaseAssociationContext associationContextOf(IProject project)
+    public static ContextRead readAssociationContextOf(IProject project)
     {
         try
         {
             IInfobaseAssociationContextProvider provider = ServiceAccess.get(IInfobaseAssociationContextProvider.class);
             InfobaseAssociationContext context = provider == null ? null : provider.get(project);
-            return context == null ? InfobaseAssociationContext.empty() : context;
+            return new ContextRead(context == null ? InfobaseAssociationContext.empty() : context, null);
         }
         catch (Exception e)
         {
+            String why = firstLine(msg(e));
             Activator.logWarning("The association context of " + project.getName() + " was not read: " //$NON-NLS-1$ //$NON-NLS-2$
-                + msg(e));
-            return InfobaseAssociationContext.empty();
+                + why);
+            return new ContextRead(InfobaseAssociationContext.empty(), why);
         }
+    }
+
+    /**
+     * The association context of a project - the one EDT reads a project's applications from.
+     *
+     * @param project the project
+     * @return the context; the default one when the provider is unavailable or fails - use
+     *         {@link #readAssociationContextOf(IProject)} to tell the failure apart from a
+     *         project that simply has no branches
+     */
+    public static InfobaseAssociationContext associationContextOf(IProject project)
+    {
+        return readAssociationContextOf(project).context;
     }
 
     /**
@@ -250,11 +285,16 @@ public final class BmInfobaseLifecycleHelper
             r.failureKind = ErrorTags.INFOBASE_NOT_FOUND.wire();
             return r;
         }
-        InfobaseAssociationContext context = associationContextOf(project);
-        r.associationContext = describe(context);
+        ContextRead read = readAssociationContextOf(project);
+        // The binding still goes to the default context when the read failed - refusing would
+        // take the operation away from projects whose provider is merely absent - but the answer
+        // says the context was not read rather than letting "default" read as "no branches".
+        r.associationContext = describe(read.context)
+            + (read.readFailure == null ? "" : " (not read; the binding went to this context: " //$NON-NLS-1$ //$NON-NLS-2$
+                + read.readFailure + ")"); //$NON-NLS-1$
         try
         {
-            am.associate(project, ref.get(), InfobaseAssociationSettings.notSynchronized(context));
+            am.associate(project, ref.get(), InfobaseAssociationSettings.notSynchronized(read.context));
         }
         catch (Throwable e)
         {
@@ -324,34 +364,7 @@ public final class BmInfobaseLifecycleHelper
                         Activator.logWarning("delete_infobase: the association contexts of '" + projectName //$NON-NLS-1$
                             + "' were not listed: " + msg(e)); //$NON-NLS-1$
                     }
-                    Throwable failure = null;
-                    for (InfobaseAssociationContext context : contexts)
-                    {
-                        try
-                        {
-                            Optional<?> association = am.getAssociation(project, context);
-                            if (association.isEmpty())
-                            {
-                                continue;
-                            }
-                            am.dissociate(project, ref.get(), context);
-                            r.dissociated = true;
-                        }
-                        catch (Throwable e)
-                        {
-                            // Non-fatal: the infobase may simply not be bound in this context.
-                            failure = e;
-                        }
-                    }
-                    if (!r.dissociated && failure != null)
-                    {
-                        // Surface a warning (deletion still proceeds) so a genuine dissociate failure
-                        // that leaves a dangling launch config is visible to the caller.
-                        r.dissociateWarning = "could not dissociate from '" + projectName //$NON-NLS-1$
-                            + "': " + msg(failure) + " (deletion proceeded; the project's launch " //$NON-NLS-1$ //$NON-NLS-2$
-                            + "config may still reference the removed infobase)"; //$NON-NLS-1$
-                        Activator.logWarning("delete_infobase " + r.dissociateWarning); //$NON-NLS-1$
-                    }
+                    dissociateEverywhere(am, project, ref.get(), contexts, r, projectName);
                 }
             }
             try
@@ -377,6 +390,59 @@ public final class BmInfobaseLifecycleHelper
             return r;
         });
         return r;
+    }
+
+    /**
+     * Dissociates the infobase from every context that holds it, recording each success and
+     * each failure. Package-visible so the warning is testable without EDT's managers.
+     * <p>
+     * A context that could not be dissociated leaves a dangling binding whatever the other
+     * contexts did, so every failure is collected and named - one that follows a successful
+     * context is a warning of its own, not something an earlier success cancels.
+     * </p>
+     *
+     * @param am the association manager
+     * @param project the project the infobase is dissociated from
+     * @param infobase the infobase going away
+     * @param contexts the contexts to dissociate in, in order
+     * @param r the delete result the outcome is written into
+     * @param projectName the project's name, for the warning text
+     */
+    static void dissociateEverywhere(IInfobaseAssociationManager am, IProject project,
+        InfobaseReference infobase, Set<InfobaseAssociationContext> contexts, DeleteResult r,
+        String projectName)
+    {
+        List<String> failures = new ArrayList<>();
+        for (InfobaseAssociationContext context : contexts)
+        {
+            try
+            {
+                Optional<?> association = am.getAssociation(project, context);
+                if (association.isEmpty())
+                {
+                    continue;
+                }
+                am.dissociate(project, infobase, context);
+                r.dissociated = true;
+            }
+            catch (Throwable e)
+            {
+                // Non-fatal per context: the infobase may simply not be bound in this one, or
+                // the dissociation may have failed - both leave the deletion free to proceed.
+                failures.add(describe(context) + ": " + msg(e)); //$NON-NLS-1$
+            }
+        }
+        if (!failures.isEmpty())
+        {
+            // Surface a warning (deletion still proceeds) so a genuine dissociate failure
+            // that leaves a dangling launch config is visible to the caller.
+            r.dissociateWarning = "could not dissociate from '" + projectName + "' in " //$NON-NLS-1$ //$NON-NLS-2$
+                + (failures.size() == 1 ? "one context: " : failures.size() + " contexts: ") //$NON-NLS-1$ //$NON-NLS-2$
+                + String.join("; ", failures) //$NON-NLS-1$
+                + " (deletion proceeded; the project's launch config may still reference the " //$NON-NLS-1$
+                + "removed infobase)"; //$NON-NLS-1$
+            Activator.logWarning("delete_infobase " + r.dissociateWarning); //$NON-NLS-1$
+        }
     }
 
     /** The launch-manager state captured immediately before an infobase-list write. */
