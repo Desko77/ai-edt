@@ -88,8 +88,13 @@ jobs:
       - name: Release manifest script
         run: python3 scripts/tests/test_write_release_manifest.py
 
-      # The jar report decides which builds of the plugin no installation refers to. It is run by
-      # hand before a release, so what it reads is checked here on a made-up installation.
+      # The jar report decides which builds of the plugin no installation refers to, and its --json
+      # answer decides which installations the closed-EDT mode of scripts/edt-selfupdate.ps1
+      # installs into. Both are run by hand before a release, so what they read - the line of
+      # bundles.info, the launcher that marks an installation, the shared profile that belongs to
+      # one - is checked here on a made-up installation. The installer reads that answer instead of
+      # repeating the directory rules, so the parsing is covered here rather than in PowerShell,
+      # which no step of this workflow runs.
       - name: Plugin jar report script
         run: python3 scripts/tests/test_report_plugin_jars.py
 
