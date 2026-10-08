@@ -123,6 +123,68 @@ public class TheHandshakeHoldsTheLockAroundTheCallAloneTest
         assertEquals(Arrays.asList("release", "lock", "launcher", "unlock"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
     }
 
+    /**
+     * A reconnection that fails ends the handshake in a failure the caller sees: the infobase
+     * stays disconnected, which is not an outcome an operation may report as success.
+     */
+    @Test
+    public void aReconnectThatFailsEndsTheHandshakeInFailure()
+    {
+        List<String> order = new ArrayList<>();
+        Lock lock = new RecordingLock(order);
+
+        try
+        {
+            BmInfobaseExtensionHelper.handshakeOrder(lock, () -> {
+                order.add("release"); //$NON-NLS-1$
+                return true;
+            }, () -> order.add("launcher"), () -> { //$NON-NLS-1$
+                throw new java.io.IOException("connectInfobase failed"); //$NON-NLS-1$
+            });
+            fail("a reconnection that failed has to reach the caller"); //$NON-NLS-1$
+        }
+        catch (Exception expected)
+        {
+            assertEquals("connectInfobase failed", expected.getMessage()); //$NON-NLS-1$
+        }
+
+        assertEquals(Arrays.asList("release", "lock", "launcher", "unlock", "reconnect"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertFalse("the lock is not left held", ((ReentrantLock)lock).isLocked()); //$NON-NLS-1$
+    }
+
+    /**
+     * A run whose Designer call failed and whose reconnection then failed too reports the
+     * reconnection and keeps the call's failure attached to it, rather than one hiding the other.
+     */
+    @Test
+    public void aWorkFailureStaysAttachedToAReconnectFailure()
+    {
+        List<String> order = new ArrayList<>();
+
+        try
+        {
+            BmInfobaseExtensionHelper.handshakeOrder(null, () -> {
+                order.add("release"); //$NON-NLS-1$
+                return true;
+            }, () -> {
+                order.add("launcher"); //$NON-NLS-1$
+                throw new IllegalStateException("the Designer exited with code 1"); //$NON-NLS-1$
+            }, () -> {
+                order.add("reconnect"); //$NON-NLS-1$
+                throw new java.io.IOException("connectInfobase failed"); //$NON-NLS-1$
+            });
+            fail("the reconnection's failure has to reach the caller"); //$NON-NLS-1$
+        }
+        catch (Exception expected)
+        {
+            assertEquals("connectInfobase failed", expected.getMessage()); //$NON-NLS-1$
+            assertEquals("the call's own failure stays attached", 1, expected.getSuppressed().length); //$NON-NLS-1$
+            assertEquals("the Designer exited with code 1", expected.getSuppressed()[0].getMessage()); //$NON-NLS-1$
+        }
+
+        assertEquals(Arrays.asList("release", "launcher", "reconnect"), order); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    }
+
     @Test
     public void aReleaseThatThrowsRunsNeitherTheCallNorTheReconnection()
     {
