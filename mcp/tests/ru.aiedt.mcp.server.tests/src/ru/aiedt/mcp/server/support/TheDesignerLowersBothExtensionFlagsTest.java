@@ -169,6 +169,20 @@ public class TheDesignerLowersBothExtensionFlagsTest
         assertEquals(0, session.writes);
     }
 
+    /** The write names the extension the way the infobase spells it, not the way the caller did. */
+    @Test
+    public void theWriteNamesTheExtensionAsTheInfobaseSpellsIt()
+    {
+        StubSession session = new StubSession();
+        session.reads.add(page(extension("YAXUNIT", true, true))); //$NON-NLS-1$
+        session.reads.add(page(extension("YAXUNIT", false, false))); //$NON-NLS-1$
+
+        ExtensionFlagsResult r = BmInfobaseExtensionHelper.ensureUnsafeFlags(session, "YAxUnit"); //$NON-NLS-1$
+
+        assertTrue(r.error, r.ok);
+        assertEquals("YAXUNIT", session.writtenExtension); //$NON-NLS-1$
+    }
+
     /**
      * The name match between the extension asked for and the list the designer returns ignores
      * case and surrounding space - the same reading the install probe gives an extension name.

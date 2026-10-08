@@ -1698,6 +1698,14 @@ public final class BmInfobaseExtensionHelper
         /** Whether the named extension was in the list the read returned at all. */
         public boolean found;
 
+        /**
+         * The extension's name as the infobase spells it; {@code null} while the extension was not
+         * found. The list is matched without regard to case, the write is not: the designer answers
+         * a name in another case with "extension '' not found", so a write names the extension by
+         * this spelling.
+         */
+        public String name;
+
         /** The safe-mode flag as last read; {@code null} while the extension was not found. */
         public Boolean safeMode;
 
@@ -1754,6 +1762,7 @@ public final class BmInfobaseExtensionHelper
             if (sought.equalsIgnoreCase(property.getName().trim()))
             {
                 flags.found = true;
+                flags.name = property.getName().trim();
                 flags.safeMode = Boolean.valueOf(property.isSafeMode());
                 flags.unsafeActionProtection = Boolean.valueOf(property.isUnsafeActionProtected());
                 return flags;
@@ -1817,7 +1826,7 @@ public final class BmInfobaseExtensionHelper
         {
             // One property-write call carrying both flags: two calls would leave the extension
             // half-configured between them, and the designer applies the pair atomically.
-            session.extensions().properties().set().extension(extensionName.trim())
+            session.extensions().properties().set().extension(first.name)
                 .safeMode(false).unsafeActionProtection(false).exec();
             r.wrote = true;
         }
