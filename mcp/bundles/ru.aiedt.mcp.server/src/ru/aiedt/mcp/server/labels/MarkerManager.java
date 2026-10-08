@@ -1439,6 +1439,45 @@ public class MarkerManager
     }
 
     /**
+     * Why a reading operation cannot answer from a project's marker file, in a sentence for the
+     * person waiting for the answer.
+     * <p>
+     * A file that does not parse and a file whose bytes could not be read are two states, and they
+     * are named apart. Both leave a reader with nothing: {@link #getMarkerStorage(IProject)}
+     * answers an empty storage in either case, and reporting that as "this project has no markers"
+     * answers a question about the project with a failure of the tool.
+     * </p>
+     * <p>
+     * The answer is established by the same two signs the writing operations refuse on, and it is
+     * established by loading the file - so this call is the one that tells {@link
+     * #markerFileReadFailed(IProject)} what the last attempt did. Call it before reading the
+     * storage.
+     * </p>
+     *
+     * @param project the project; may be <code>null</code>
+     * @return the refusal, or <code>null</code> when the marker file is readable or absent
+     */
+    public String markerReadRefusal(IProject project)
+    {
+        if (project == null)
+        {
+            return null;
+        }
+        String unparseable = markerFileRefusal(project);
+        if (unparseable != null)
+        {
+            return unparseable + " Nothing was read, so the markers of project " + safeName(project) //$NON-NLS-1$
+                + " cannot be listed."; //$NON-NLS-1$
+        }
+        if (markerFileReadFailed(project))
+        {
+            return "The marker file of project " + safeName(project) //$NON-NLS-1$
+                + " could not be read, so its markers cannot be listed."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
 
      * Moves an object's assignments, and the assignments of every object nested under it, to a new FQN.
 

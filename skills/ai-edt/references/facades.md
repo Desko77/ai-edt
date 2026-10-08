@@ -151,6 +151,9 @@ read as the server being down when the port belongs to the other instance.
 `tag_admin` writes the project's metadata tags: a tag is a named, colored label attached to
 metadata objects, stored per project in `.settings/aiedt-markers.yaml`. Reading them - the list of
 tags, the objects carrying one - stays in `workspace_marks` (`get_tags`, `get_objects_by_tags`).
+Both reads answer a JSON error document - `isError` on the wire - when that file does not parse or
+its bytes cannot be read at all, so that neither reads as a project defining no tags. An absent file
+is not a refusal, and the answer is that the project defines no tags.
 
 The five writes each pass their own door, so a write-blocking preset refuses them before the file is
 read: `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a color the

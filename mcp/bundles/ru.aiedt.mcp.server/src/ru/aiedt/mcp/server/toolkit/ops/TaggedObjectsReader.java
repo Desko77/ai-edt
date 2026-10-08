@@ -168,9 +168,32 @@ public final class TaggedObjectsReader implements IMcpTool
         return result;
     }
 
-    private String getObjectsByMarkers(IProject project, List<String> markerNames, int limit)
+    /**
+     * Lists the objects carrying any of the named markers, or refuses when the project's marker
+     * file cannot be read.
+     * <p>
+     * A file that does not parse and one that could not be read both load as an empty storage, so
+     * without the check every named marker came back as an unmatched name - a report about the
+     * caller's names for a failure of the read.
+     * </p>
+     * <p>
+     * Package-private so a test can drive it with a project of its own: the tool path checks the
+     * project state before it gets here, which a scratch workspace project does not pass.
+     * </p>
+     *
+     * @param project the project
+     * @param markerNames the marker names to report on
+     * @param limit the upper bound per marker
+     * @return the markdown sections, or the refusal
+     */
+    String getObjectsByMarkers(IProject project, List<String> markerNames, int limit)
     {
         MarkerManager markerService = MarkerManager.getInstance();
+        String refusal = markerService.markerReadRefusal(project);
+        if (refusal != null)
+        {
+            return ToolResult.error(refusal).toJson();
+        }
         MarkerStore storage = markerService.getMarkerStorage(project);
         StringBuilder sb = new StringBuilder();
         sb.append("# Metadata Objects Marked in Project: " + project.getName() + "\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
