@@ -37,6 +37,35 @@ public class ACallSiteNamesTheCommonModuleItCallsTest
         assertNull(BslCallGraphHelper.commonModuleFqn(null, MODULES));
     }
 
+    /** A call through a name the module declares as a parameter is not an edge; the same call is one without it. */
+    @Test
+    public void aDeclaredNameIsNotReadAsACommonModule()
+    {
+        com._1c.g5.v8.dt.bsl.model.BslFactory factory = com._1c.g5.v8.dt.bsl.model.BslFactory.eINSTANCE;
+        com._1c.g5.v8.dt.bsl.model.Module module = factory.createModule();
+        com._1c.g5.v8.dt.bsl.model.Procedure method = factory.createProcedure();
+        module.getMethods().add(method);
+        com._1c.g5.v8.dt.bsl.model.StaticFeatureAccess source = factory.createStaticFeatureAccess();
+        source.setName("ОбщегоНазначения"); //$NON-NLS-1$
+        com._1c.g5.v8.dt.bsl.model.DynamicFeatureAccess access = factory.createDynamicFeatureAccess();
+        access.setSource(source);
+        access.setName("Метод"); //$NON-NLS-1$
+        com._1c.g5.v8.dt.bsl.model.Invocation call = factory.createInvocation();
+        call.setMethodAccess(access);
+        com._1c.g5.v8.dt.bsl.model.SimpleStatement statement = factory.createSimpleStatement();
+        statement.setLeft(call);
+        method.getStatements().add(statement);
+
+        assertEquals(java.util.List.of("CommonModule.ОбщегоНазначения.Module"), //$NON-NLS-1$
+            BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
+
+        com._1c.g5.v8.dt.bsl.model.FormalParam param = factory.createFormalParam();
+        param.setName("ОбщегоНазначения"); //$NON-NLS-1$
+        method.getFormalParams().add(param);
+
+        assertEquals(java.util.List.of(), BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
+    }
+
     /** Common modules that could not be listed answer null, not an empty list. */
     @Test
     public void unknownCommonModulesAnswerNull()

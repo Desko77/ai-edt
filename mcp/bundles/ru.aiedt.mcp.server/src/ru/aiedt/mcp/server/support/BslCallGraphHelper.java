@@ -30,6 +30,7 @@ import com._1c.g5.v8.dt.bsl.model.Invocation;
 import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
 import com._1c.g5.v8.dt.bsl.model.StaticFeatureAccess;
+import com._1c.g5.v8.dt.bsl.model.Variable;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess;
@@ -633,6 +634,19 @@ public final class BslCallGraphHelper
         }
         String selfFqn = moduleFqn(module);
         Set<String> called = new LinkedHashSet<>();
+        // A parameter or a variable of the module may carry the name of a common module, and a call
+        // through it is a call through a variable. The names are taken module-wide: a name declared
+        // anywhere in the module is not read as a common module anywhere in it.
+        Set<String> shadowed = new HashSet<>();
+        java.util.Iterator<EObject> declared = module.eAllContents();
+        while (declared.hasNext())
+        {
+            EObject node = declared.next();
+            if (node instanceof Variable && ((Variable)node).getName() != null)
+            {
+                shadowed.add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
         java.util.Iterator<EObject> contents = module.eAllContents();
         while (contents.hasNext())
         {
@@ -653,7 +667,12 @@ public final class BslCallGraphHelper
             {
                 continue;
             }
-            String fqn = commonModuleFqn(((StaticFeatureAccess)source).getName(), commonModules);
+            String name = ((StaticFeatureAccess)source).getName();
+            if (name == null || shadowed.contains(name.toLowerCase(java.util.Locale.ROOT)))
+            {
+                continue;
+            }
+            String fqn = commonModuleFqn(name, commonModules);
             if (fqn != null && !fqn.equals(selfFqn))
             {
                 called.add(fqn);
@@ -727,9 +746,15 @@ public final class BslCallGraphHelper
         }
         if (includeOutgoing)
         {
-            for (String callee : source.calleesOf(module))
+            // null: the called modules could not be read, so this direction is left out rather
+            // than answered as a module that calls nobody.
+            List<String> callees = source.calleesOf(module);
+            if (callees != null)
             {
-                visitor.visit(new ModuleEdge(selfFqn, callee, 1));
+                for (String callee : callees)
+                {
+                    visitor.visit(new ModuleEdge(selfFqn, callee, 1));
+                }
             }
         }
     }
