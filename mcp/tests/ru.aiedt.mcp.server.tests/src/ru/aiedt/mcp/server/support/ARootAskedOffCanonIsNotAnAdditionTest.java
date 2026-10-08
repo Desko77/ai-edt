@@ -99,8 +99,10 @@ public class ARootAskedOffCanonIsNotAnAdditionTest
         ScopeClosure.resolveRoots(configuration, List.of(name), closure, roots, asked);
         assertSame("the off-canon name resolved to the object", goods, roots.iterator().next()); //$NON-NLS-1$
         BmReferencesHelper.BfsResult found = new BmReferencesHelper.BfsResult();
-        found.nodes.put("Catalog.Товары", goods); //$NON-NLS-1$
-        found.nodes.put("Catalog.Единицы", units); //$NON-NLS-1$
+        // The interfaces of the model do not carry the BM base; every object the model stores
+        // does, so the cast states what the walk's map asks for.
+        found.nodes.put("Catalog.Товары", (IBmObject)goods); //$NON-NLS-1$
+        found.nodes.put("Catalog.Единицы", (IBmObject)units); //$NON-NLS-1$
         ScopeClosure.classifyReached(found, asked, closure);
         return closure;
     }

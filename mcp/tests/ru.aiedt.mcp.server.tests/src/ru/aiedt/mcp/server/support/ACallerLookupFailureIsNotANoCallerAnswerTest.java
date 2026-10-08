@@ -18,6 +18,7 @@ import org.eclipse.emf.common.util.BasicEList;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.xtext.resource.IReferenceDescription;
 import org.eclipse.xtext.ui.editor.findrefs.IReferenceFinder;
+import org.eclipse.xtext.util.IAcceptor;
 import org.junit.Test;
 
 import com._1c.g5.v8.bm.core.IBmObject;
@@ -62,8 +63,8 @@ public class ACallerLookupFailureIsNotANoCallerAnswerTest
     public void aReportedReferenceAnswersItsModule()
     {
         IReferenceFinder finder = finder("findAllReferences", (proxy, args) -> { //$NON-NLS-1$
-            IReferenceFinder.IReferenceAcceptor acceptor =
-                (IReferenceFinder.IReferenceAcceptor)args[2];
+            @SuppressWarnings("unchecked")
+            IAcceptor<IReferenceDescription> acceptor = (IAcceptor<IReferenceDescription>)args[2];
             acceptor.accept(referenceFrom(
                 "platform:/resource/P/src/CommonModules/Other/Module.bsl#//x")); //$NON-NLS-1$
             return null;
@@ -109,7 +110,7 @@ public class ACallerLookupFailureIsNotANoCallerAnswerTest
                 }
                 if ("eProxyURI".equals(method.getName())) //$NON-NLS-1$
                 {
-                    return URI.create("fake:/CommonModules/Probe/Module.bsl#//m"); //$NON-NLS-1$
+                    return URI.createURI("fake:/CommonModules/Probe/Module.bsl#//m"); //$NON-NLS-1$
                 }
                 return plain(method);
             });
@@ -138,7 +139,7 @@ public class ACallerLookupFailureIsNotANoCallerAnswerTest
             new Class<?>[] {IReferenceDescription.class}, (proxy, method, args) -> {
                 if ("getSourceEObjectUri".equals(method.getName())) //$NON-NLS-1$
                 {
-                    return URI.create(address);
+                    return URI.createURI(address);
                 }
                 return plain(method);
             });
