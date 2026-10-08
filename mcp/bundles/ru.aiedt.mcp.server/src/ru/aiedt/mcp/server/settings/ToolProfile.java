@@ -360,6 +360,13 @@ public enum ToolProfile
             "add_to_cluster", //$NON-NLS-1$
             "remove_from_cluster", //$NON-NLS-1$
 
+            // tag_admin covers these
+            "create_tag", //$NON-NLS-1$
+            "update_tag", //$NON-NLS-1$
+            "delete_tag", //$NON-NLS-1$
+            "assign_tag", //$NON-NLS-1$
+            "unassign_tag", //$NON-NLS-1$
+
             // docs_lookup covers these
             "get_platform_documentation", //$NON-NLS-1$
             "get_object_help", //$NON-NLS-1$
@@ -491,6 +498,13 @@ public enum ToolProfile
         names.add("delete_cluster"); //$NON-NLS-1$
         names.add("add_to_cluster"); //$NON-NLS-1$
         names.add("remove_from_cluster"); //$NON-NLS-1$
+        // The five write doors of the tag facade sit in the same reading group for the same
+        // reason: named one by one, or a preset writes through the one group it left open.
+        names.add("create_tag"); //$NON-NLS-1$
+        names.add("update_tag"); //$NON-NLS-1$
+        names.add("delete_tag"); //$NON-NLS-1$
+        names.add("assign_tag"); //$NON-NLS-1$
+        names.add("unassign_tag"); //$NON-NLS-1$
         // status itself only reads, but the tool can start 1C:Naparnik and, once the bridge is on,
         // send a question and whatever Naparnik's tools read to that service. A preset that blocks
         // writing switches the whole name off.

@@ -60,7 +60,8 @@ public class McpVisibilityTest
         // 11 from infobase_admin, 6 from config_io, 9 from insights, 3 from security_audit, 4 from
         // workspace_marks, 2 from docs_lookup, 3 from edit_metadata, 5 from cluster_admin.
         // Pinning the size catches an accidental add or drop.
-        assertEquals(98, unlisted.size());
+        // On 2026-10-08 the five tag write doors joined the hidden set (+5 -> 103).
+        assertEquals(103, unlisted.size());
 
         // A standalone from each facade is hidden.
         assertTrue(unlisted.contains("git_revert_file")); //$NON-NLS-1$ // git

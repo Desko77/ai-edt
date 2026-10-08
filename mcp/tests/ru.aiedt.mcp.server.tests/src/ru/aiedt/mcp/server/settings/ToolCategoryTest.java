@@ -161,7 +161,8 @@ public class ToolCategoryTest
         // On 2026-10-06 the two merge restore point doors joined VCS (+2 -> 147): taking a point
         // writes a ref or a copy beside the workspace and dropping one discards the way back from
         // a merge, so each is a door a read-only preset switches off by name.
-        assertEquals(147, ToolCategory.getTotalToolCount());
+        // On 2026-10-08 the tag facade and its five doors joined TAGS (+6 -> 153).
+        assertEquals(153, ToolCategory.getTotalToolCount());
     }
 
     @Test

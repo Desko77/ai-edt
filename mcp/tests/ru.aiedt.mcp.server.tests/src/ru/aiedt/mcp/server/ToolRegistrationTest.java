@@ -125,6 +125,7 @@ public class ToolRegistrationTest
         // On 2026-09-30 cluster_admin and its five write doors joined the declaration list
         // (+6 -> 145).
         // On 2026-10-06 the two merge restore point doors joined the declaration list (+2 -> 147).
-        assertEquals(147, declared.size());
+        // On 2026-10-08 the tag facade and its five doors joined it too (+6 -> 153).
+        assertEquals(153, declared.size());
     }
 }

@@ -61,6 +61,8 @@ public class FoldPresetHazardTest
         Map.entry("cluster_admin", //$NON-NLS-1$
             List.of("create_cluster", "update_cluster", "delete_cluster", "add_to_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                 "remove_from_cluster")), //$NON-NLS-1$
+        Map.entry("tag_admin", //$NON-NLS-1$
+            List.of("create_tag", "update_tag", "delete_tag", "assign_tag", "unassign_tag")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         // The constructor doors: not standalones the facades fold in, but the capability each
         // facade's writes are gated by. Recorded here so the hazard recomputation below holds the
         // gates to the same rule as a folded standalone - a preset that disables the door while
@@ -95,7 +97,8 @@ public class FoldPresetHazardTest
      * <p>
      * The five {@code cluster_admin/<door>} pairs are the same arrangement: the facade reads under
      * every preset, its writes edit {@code .settings/aiedt-clusters.yaml}, and the doors sit in the
-     * tags-and-marks group that no write-blocking preset takes off wholesale.
+     * tags-and-marks group that no write-blocking preset takes off wholesale. So are the five
+     * {@code tag_admin/<door>} pairs, whose writes edit {@code .settings/aiedt-markers.yaml}.
      * </p>
      */
     private static final Set<String> GATED = Set.of(
@@ -111,6 +114,8 @@ public class FoldPresetHazardTest
         "git/git_create_merge_restore_point", "git/git_delete_merge_restore_point", //$NON-NLS-1$ //$NON-NLS-2$
         "cluster_admin/create_cluster", "cluster_admin/update_cluster", "cluster_admin/delete_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "cluster_admin/add_to_cluster", "cluster_admin/remove_from_cluster", //$NON-NLS-1$ //$NON-NLS-2$
+        "tag_admin/create_tag", "tag_admin/update_tag", "tag_admin/delete_tag", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        "tag_admin/assign_tag", "tag_admin/unassign_tag", //$NON-NLS-1$ //$NON-NLS-2$
         // The constructor doors: each facade asks ToolGate.gateIfPresetDisabled about its
         // door before its first write, so the pair is gate-checked exactly where the
         // hazard below demands it.
