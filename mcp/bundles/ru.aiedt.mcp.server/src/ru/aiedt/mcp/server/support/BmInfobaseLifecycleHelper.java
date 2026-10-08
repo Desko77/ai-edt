@@ -249,15 +249,26 @@ public final class BmInfobaseLifecycleHelper
 
     /**
      * The association context of a project - the one EDT reads a project's applications from.
+     * <p>
+     * A read that failed is logged here, because this call hands the context on with nothing beside
+     * it: a project bound per branch would otherwise be bound in the default context and nobody
+     * told. A caller that has to say so in its own answer takes
+     * {@link #readAssociationContextOf(IProject)} and names the failure itself.
+     * </p>
      *
      * @param project the project
-     * @return the context; the default one when the provider is unavailable or fails - use
-     *         {@link #readAssociationContextOf(IProject)} to tell the failure apart from a
-     *         project that simply has no branches
+     * @return the context; the default one when the provider is unavailable or fails
      */
     public static InfobaseAssociationContext associationContextOf(IProject project)
     {
-        return readAssociationContextOf(project).context;
+        ContextRead read = readAssociationContextOf(project);
+        if (read.readFailure != null)
+        {
+            Activator.logWarning("The association context of " + project.getName() //$NON-NLS-1$
+                + " was not read: " + read.readFailure + "; the call went on with the " //$NON-NLS-1$ //$NON-NLS-2$
+                + describe(read.context) + " context"); //$NON-NLS-1$
+        }
+        return read.context;
     }
 
     /**
