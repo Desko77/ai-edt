@@ -360,6 +360,8 @@ public class YamlClusterStore
 
             }
 
+            dropBlankClusters(storage);
+
             cleanupOrphanedFqns(storage);
 
             return storage;
@@ -387,6 +389,26 @@ public class YamlClusterStore
             forgetFingerprint(project);
 
             Activator.logError("Failed to read aiedt-clusters.yaml for " + project.getName(), e); //$NON-NLS-1$
+
+            return null;
+
+        }
+
+        catch (RuntimeException e)
+
+        {
+
+            // A document that parses and still does not fit the shape - a null list element, an
+
+            // entry of the wrong kind - must refuse as unreadable rather than throw into the
+
+            // caller: every read of a project's clusters runs through here.
+
+            forgetFingerprint(project);
+
+            Activator.logWarning("aiedt-clusters.yaml for " + project.getName() //$NON-NLS-1$
+
+                + " could not be read and was left unchanged: " + e); //$NON-NLS-1$
 
             return null;
 
@@ -632,6 +654,22 @@ public class YamlClusterStore
         return deleteIfExists(project).succeeded();
     }
 
+    /**
+     * Tells whether the file on disk holds the bytes this store last read or wrote.
+     *
+     * @param project the project
+     * @return {@code true} when the disk carries exactly those bytes; {@code false} when it holds
+     *         something else or cannot be read
+     */
+    @Override
+    public boolean holdsWhatWasLastReadOrWritten(IProject project)
+    {
+        String known = loadedFingerprints.get(project.getName());
+        String expected = known == null ? AtomicFileReplace.NO_FILE_FINGERPRINT : known;
+        String onDisk = diskFingerprint(clustersFile(project));
+        return onDisk != null && expected.equals(onDisk);
+    }
+
 
 
     /**
@@ -846,6 +884,62 @@ public class YamlClusterStore
                 + project.getName(), e);
             return null;
         }
+    }
+
+
+
+    /**
+
+     * Drops null cluster entries after a load.
+
+     * <p>
+
+     * An empty list element in the YAML - a dash with nothing after it, which a hand edit or a
+
+     * merge leaves behind - reads as null, and a null entry reached by every later reader as a
+
+     * cluster is a NullPointerException on each of the project's cluster reads. The load drops
+
+     * such entries; what remains is the file's clusters.
+
+     * </p>
+
+     *
+
+     * @param storage the freshly loaded storage
+
+     */
+
+    private static void dropBlankClusters(ClusterStore storage)
+
+    {
+
+        List<Cluster> clusters = storage.getGroups();
+
+        List<Cluster> kept = new ArrayList<>(clusters.size());
+
+        for (Cluster cluster : clusters)
+
+        {
+
+            if (cluster != null)
+
+            {
+
+                kept.add(cluster);
+
+            }
+
+        }
+
+        if (kept.size() != clusters.size())
+
+        {
+
+            storage.setGroups(kept);
+
+        }
+
     }
 
 
