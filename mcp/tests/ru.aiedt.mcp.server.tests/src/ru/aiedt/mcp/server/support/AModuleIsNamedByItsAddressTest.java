@@ -122,6 +122,42 @@ public class AModuleIsNamedByItsAddressTest
         assertEquals("CommonModule.Remote.Module", BslCallGraphHelper.moduleFqn(module)); //$NON-NLS-1$
     }
 
+    /** The module of a form is named by the form directory, not by the one on disk. */
+    @Test
+    public void aFormModuleIsNamedByTheFormDirectory()
+    {
+        Module module = moduleAt("Catalogs/Products/Forms/ItemForm/Module.bsl", new BasicEList<>()); //$NON-NLS-1$
+
+        assertEquals("Catalog.Products.Form.ItemForm.Module", BslCallGraphHelper.moduleFqn(module)); //$NON-NLS-1$
+    }
+
+    /** A common form keeps its own collection, which is a directory of the metadata registry. */
+    @Test
+    public void aCommonFormModuleIsNamedByItsCollection()
+    {
+        Module module = moduleAt("CommonForms/Settings/Module.bsl", new BasicEList<>()); //$NON-NLS-1$
+
+        assertEquals("CommonForm.Settings.Module", BslCallGraphHelper.moduleFqn(module)); //$NON-NLS-1$
+    }
+
+    /** The module of a common command is named by its collection and its file. */
+    @Test
+    public void aCommandModuleIsNamedByItsCollection()
+    {
+        Module module = moduleAt("CommonCommands/Run/CommandModule.bsl", new BasicEList<>()); //$NON-NLS-1$
+
+        assertEquals("CommonCommand.Run.CommandModule", BslCallGraphHelper.moduleFqn(module)); //$NON-NLS-1$
+    }
+
+    /** A collection whose name ends in {@code s} keeps it: the type is FilterCriterion. */
+    @Test
+    public void aCollectionNameEndingInSIsNotTrimmed()
+    {
+        Module module = moduleAt("FilterCriteria/Selection/Module.bsl", new BasicEList<>()); //$NON-NLS-1$
+
+        assertEquals("FilterCriterion.Selection.Module", BslCallGraphHelper.moduleFqn(module)); //$NON-NLS-1$
+    }
+
     /**
      * A module whose model is addressed by the given path inside project {@code P}.
      *

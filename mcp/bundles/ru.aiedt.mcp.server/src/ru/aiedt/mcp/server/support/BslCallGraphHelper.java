@@ -440,9 +440,13 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * Heuristic: take a URI like
-     * {@code platform:/resource/Project/src/CommonModules/Foo/Module.bsl} and
-     * map it to a BM-canonical FQN like {@code CommonModule.Foo.Module}.
+     * Takes a URI like {@code platform:/resource/Project/src/CommonModules/Foo/Module.bsl} and maps
+     * it to a canonical FQN like {@code CommonModule.Foo.Module}.
+     * <p>
+     * The name is the inverse of the route the level looks a module up by
+     * ({@code BslModuleAccess.resolveModulePath}), so a module found under a name is named by the
+     * address it was found at.
+     * </p>
      */
     static String extractModuleFqnFromUri(URI uri)
     {
@@ -471,49 +475,47 @@ public final class BslCallGraphHelper
         {
             return tail.replace("/", "."); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        // Singularize the type prefix the same way EDT does:
-        // CommonModules/Foo/Module.bsl -> CommonModule.Foo.Module
-        String typePart = singularizeTypePrefix(parts[0]);
-        StringBuilder sb = new StringBuilder(typePart);
-        for (int i = 1; i < parts.length; i++)
+        // Every segment is named the way the level spells it when it looks a module up by FQN.
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++)
         {
-            sb.append(".").append(parts[i]); //$NON-NLS-1$
+            if (i > 0)
+            {
+                sb.append('.');
+            }
+            sb.append(moduleFqnSegment(parts[i], i));
         }
         return sb.toString();
     }
 
-    private static String singularizeTypePrefix(String typePart)
+    /**
+     * One segment of a module's address, spelled as it is spelled in a module FQN.
+     * <p>
+     * The first segment is the collection a type keeps its objects in, and goes through the metadata
+     * registry ({@code Catalogs} to {@code Catalog}). A path that names the form of an object carries
+     * the form directory after the owner, and that segment is spelled the way the form layout is
+     * looked up by. Every other segment is an object, a form or a file name, and keeps the spelling it
+     * has on disk: cutting a trailing {@code s} off it renamed objects rather than collections, which
+     * turned {@code FilterCriteria} into {@code FilterCriteri} and would have turned an object called
+     * {@code Documents} into {@code Document}.
+     * </p>
+     *
+     * @param segment the path segment
+     * @param index the position of the segment in the path
+     * @return the segment as a name spells it
+     */
+    private static String moduleFqnSegment(String segment, int index)
     {
-        if (typePart == null || typePart.isEmpty())
+        if (index == 0)
         {
-            return typePart;
+            String type = MetadataTypeCatalog.getTypeByDirectoryName(segment);
+            return type == null ? segment : type;
         }
-        // Common EDT directory plurals -> singular metadata type names.
-        switch (typePart)
+        if (index == 2 && MetadataPathMapper.FORMS_SEGMENT.equals(segment))
         {
-            case "CommonModules": return "CommonModule"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Catalogs": return "Catalog"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Documents": return "Document"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Reports": return "Report"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "DataProcessors": return "DataProcessor"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "InformationRegisters": return "InformationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "AccumulationRegisters": return "AccumulationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "AccountingRegisters": return "AccountingRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "CalculationRegisters": return "CalculationRegister"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ChartsOfAccounts": return "ChartOfAccounts"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ChartsOfCalculationTypes": return "ChartOfCalculationTypes"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ChartsOfCharacteristicTypes": return "ChartOfCharacteristicTypes"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "ExchangePlans": return "ExchangePlan"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "BusinessProcesses": return "BusinessProcess"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Tasks": return "Task"; //$NON-NLS-1$ //$NON-NLS-2$
-            case "Subsystems": return "Subsystem"; //$NON-NLS-1$ //$NON-NLS-2$
-            default:
-                if (typePart.endsWith("s")) //$NON-NLS-1$
-                {
-                    return typePart.substring(0, typePart.length() - 1);
-                }
-                return typePart;
+            return "Form"; //$NON-NLS-1$
         }
+        return segment;
     }
 
     /**
