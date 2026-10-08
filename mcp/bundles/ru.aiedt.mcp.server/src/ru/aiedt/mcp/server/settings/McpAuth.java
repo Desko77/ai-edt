@@ -26,7 +26,10 @@ import ru.aiedt.mcp.server.Activator;
  * store.
  * </p>
  * <p>
- * There is no switch. A server that has no token does not open its socket.
+ * Whether a request has to carry the token is not decided here. {@code McpHttpEndpoint} reads the
+ * preference that switches the check on and off, and demands the token whatever that preference
+ * holds while its socket is open to every interface. What is decided here is that a token is always
+ * in hand: a server that has none creates one and does not open its socket until it is saved.
  * </p>
  */
 public final class McpAuth

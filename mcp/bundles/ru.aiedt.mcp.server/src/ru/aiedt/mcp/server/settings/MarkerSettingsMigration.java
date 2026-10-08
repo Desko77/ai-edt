@@ -80,6 +80,13 @@ public final class MarkerSettingsMigration
     /**
      * Mirrors a marker setting onto its pre-rename key, so a downgrade still sees the current
      * choice. Call it wherever the current key is written.
+     * <p>
+     * The visibility setting is mirrored as text. No default is registered for the pre-rename key,
+     * so a store compares the value against what it assumes is the default and drops the key instead
+     * of writing it - which is what a boolean false looks like. The mirror would then say nothing
+     * exactly when it is worth reading, on a build that finds the key absent and paints markers the
+     * user had switched off.
+     * </p>
      *
      * @param key the current preference key; anything without a pre-rename twin is ignored
      * @param value the value just written under {@code key}
@@ -89,7 +96,8 @@ public final class MarkerSettingsMigration
         IPreferenceStore store = Activator.getDefault().getPreferenceStore();
         if (PrefKeys.PREF_MARKERS_SHOW_IN_NAVIGATOR.equals(key))
         {
-            store.setValue(PrefKeys.LEGACY_MARKERS_SHOW_IN_NAVIGATOR, Boolean.parseBoolean(value));
+            store.setValue(PrefKeys.LEGACY_MARKERS_SHOW_IN_NAVIGATOR,
+                Boolean.toString(Boolean.parseBoolean(value)));
         }
         else if (PrefKeys.PREF_MARKERS_DECORATION_STYLE.equals(key))
         {
