@@ -32,6 +32,7 @@ import java.nio.file.WatchKey;
 
 import java.nio.file.WatchService;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 
 import java.util.HashSet;
@@ -329,7 +330,7 @@ public class ClusterManagerImpl
 
             {
 
-                return cached;
+                return cached.detachedCopy();
 
             }
 
@@ -350,7 +351,7 @@ public class ClusterManagerImpl
         {
 
             ClusterStore loaded = loadStorageLocked(project);
-            return loaded == null ? new ClusterStore() : loaded;
+            return loaded == null ? new ClusterStore() : loaded.detachedCopy();
 
         }
 
@@ -380,7 +381,7 @@ public class ClusterManagerImpl
 
         {
 
-            return storage.getClustersAtPath(path);
+            return detachedCopies(storage.getClustersAtPath(path));
 
         }
 
@@ -410,7 +411,7 @@ public class ClusterManagerImpl
 
         {
 
-            return storage.getGroups();
+            return detachedCopies(storage.getGroups());
 
         }
 
@@ -467,7 +468,7 @@ public class ClusterManagerImpl
                 projectStorageCache.remove(project.getName());
                 return ClusterWriteOutcome.of(saved);
             }
-            created = cluster;
+            created = cluster.detachedCopy();
         }
         finally
         {
@@ -608,7 +609,14 @@ public class ClusterManagerImpl
     @Override
     public ClusterWriteOutcome removeObjectFromCluster(IProject project, String objectFqn)
     {
-        return removeHeldObject(project, objectFqn);
+        return mutate(project, storage -> {
+            if (storage.findClusterForObject(objectFqn) == null)
+            {
+                return ClusterWriteOutcome.of(ClusterSaveOutcome.noChange());
+            }
+            storage.removeObjectFromAllClusters(objectFqn);
+            return null;
+        });
     }
 
 
@@ -627,7 +635,9 @@ public class ClusterManagerImpl
 
         {
 
-            return storage.findClusterForObject(objectFqn);
+            Cluster found = storage.findClusterForObject(objectFqn);
+
+            return found == null ? null : found.detachedCopy();
 
         }
 
@@ -758,7 +768,7 @@ public class ClusterManagerImpl
 
 
     /**
-     * Removes an object from every cluster naming it.
+     * Removes an object, and every name nested under it, from every cluster naming either.
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
@@ -954,6 +964,26 @@ public class ClusterManagerImpl
     private static ClusterWriteOutcome unread()
     {
         return ClusterWriteOutcome.of(ClusterSaveOutcome.refused(ClusterSaveOutcome.READ_FAILED));
+    }
+
+    /**
+     * Copies a list of clusters so the copies share nothing with the storage they came from.
+     * <p>
+     * The read seam serves these: a caller holding one reads outside the cache lock, where the
+     * live instances could be edited under the write lock at the same time.
+     * </p>
+     *
+     * @param clusters the clusters the storage holds
+     * @return a fresh list of detached copies, never <code>null</code>
+     */
+    private static List<Cluster> detachedCopies(List<Cluster> clusters)
+    {
+        List<Cluster> copies = new ArrayList<>(clusters.size());
+        for (Cluster cluster : clusters)
+        {
+            copies.add(cluster == null ? null : cluster.detachedCopy());
+        }
+        return copies;
     }
 
     /**

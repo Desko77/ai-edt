@@ -45,7 +45,8 @@ public class ClusterStore
      * The returned list is a copy: adding to it or removing from it does not change the storage, so a
      * caller cannot corrupt the backing list, and iterating it cannot collide with a concurrent edit.
      * The {@link Cluster} objects inside it are the real ones, though - {@link #getClusterByFullPath(String)}
-     * returns the same instances.
+     * returns the same instances. Callers that read outside the service's lock take
+     * {@link #detachedCopy()} instead, which shares no cluster instance with this storage.
      * </p>
      *
      * @return a fresh list holding the real cluster instances, never <code>null</code>
@@ -53,6 +54,28 @@ public class ClusterStore
     public List<Cluster> getGroups()
     {
         return new ArrayList<>(clusters);
+    }
+
+    /**
+     * Returns a copy of this storage whose clusters share nothing with these.
+     * <p>
+     * Serves callers that read outside the service's lock: the copy cannot collide with an edit of
+     * the live storage, and changing the copy changes nothing the next reader is served. Clusters
+     * are copied in list order.
+     * </p>
+     *
+     * @return the detached copy, never <code>null</code>
+     */
+    public ClusterStore detachedCopy()
+    {
+        ClusterStore copy = new ClusterStore();
+        List<Cluster> copied = new ArrayList<>(clusters.size());
+        for (Cluster cluster : clusters)
+        {
+            copied.add(cluster == null ? null : cluster.detachedCopy());
+        }
+        copy.setGroups(copied);
+        return copy;
     }
 
     /**

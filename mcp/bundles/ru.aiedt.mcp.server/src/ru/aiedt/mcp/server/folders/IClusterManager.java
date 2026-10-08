@@ -35,10 +35,14 @@ import ru.aiedt.mcp.server.folders.repository.ClusterSaveOutcome;
 public interface IClusterManager
 {
     /**
-     * Returns the whole set of clusters for a project.
+     * Returns the whole set of clusters for a project, as a detached copy.
+     * <p>
+     * The copy shares no cluster instance with the cache, so a caller may read it outside the
+     * service's lock while a write is running; changes to it do not reach the service.
+     * </p>
      *
      * @param project the project
-     * @return the storage, never <code>null</code>; empty when the project has no clusters
+     * @return the copy, never <code>null</code>; empty when the project has no clusters
      */
     ClusterStore getClusterStorage(IProject project);
 
@@ -47,7 +51,7 @@ public interface IClusterManager
      *
      * @param project the project
      * @param path the collection path; <code>null</code> or empty matches root clusters
-     * @return a fresh, sorted list, never <code>null</code>
+     * @return a fresh, sorted list of detached copies, never <code>null</code>
      */
     List<Cluster> getClustersAtPath(IProject project, String path);
 
@@ -55,7 +59,7 @@ public interface IClusterManager
      * Returns all of a project's clusters.
      *
      * @param project the project
-     * @return a fresh list of the clusters, never <code>null</code>
+     * @return a fresh list of detached copies, never <code>null</code>
      */
     List<Cluster> getAllClusters(IProject project);
 
@@ -70,9 +74,9 @@ public interface IClusterManager
      * @param name the cluster name
      * @param path the collection path; may be <code>null</code> for a root cluster
      * @param description the description; may be <code>null</code>
-     * @return the outcome. A successful one carries the created cluster. An occupied path is
-     *         {@link ClusterWriteOutcome#CLUSTER_EXISTS}. A file that could not be read or written
-     *         carries that save code.
+     * @return the outcome. A successful one carries a detached copy of the created cluster. An
+     *         occupied path is {@link ClusterWriteOutcome#CLUSTER_EXISTS}. A file that could not
+     *         be read or written carries that save code.
      */
     ClusterWriteOutcome createCluster(IProject project, String name, String path, String description);
 
@@ -138,7 +142,7 @@ public interface IClusterManager
      *
      * @param project the project
      * @param objectFqn the fully qualified name of the object
-     * @return the cluster, or <code>null</code> if the object is not clustered
+     * @return a detached copy of the cluster, or <code>null</code> if the object is not clustered
      */
     Cluster findClusterForObject(IProject project, String objectFqn);
 

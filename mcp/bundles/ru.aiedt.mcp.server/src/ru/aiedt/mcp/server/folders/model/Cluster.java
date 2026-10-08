@@ -134,6 +134,26 @@ public class Cluster
     }
 
     /**
+     * Returns a copy of this cluster that shares nothing with it.
+     * <p>
+     * The service hands clusters it serves to callers that read them outside its lock - the
+     * Navigator on the display thread, the tools on a call thread - while a writer may be editing
+     * this one under the write lock. A copy cannot see those edits, so a reader holding one cannot
+     * collide with them. What a copy shows is a snapshot: changes to this cluster do not reach it.
+     * </p>
+     *
+     * @return the detached copy
+     */
+    public Cluster detachedCopy()
+    {
+        Cluster copy = new Cluster(name, path);
+        copy.setDescription(description);
+        copy.setOrder(order);
+        copy.setChildren(children);
+        return copy;
+    }
+
+    /**
      * Sets the sort order.
      *
      * @param order the new order
