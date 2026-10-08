@@ -537,8 +537,32 @@ public class DependencyGraphTool implements IMcpTool
         BmReferencesHelper.Direction direction, int depth, int maxNodes, int maxEdges,
         IProgressMonitor monitor, WatchForCancel watch)
     {
+        return buildModuleGraph(rootModules, lookup, unloaded, direction, depth, maxNodes, maxEdges,
+            monitor, watch, BslCallGraphHelper.ModuleCallSource.bslModel(project, bmModel));
+    }
+
+    /**
+     * The walk of the module level over a named source of call edges.
+     *
+     * @param rootModules the root modules, keyed by the FQN their address names
+     * @param lookup the module lookup, which turns an edge's FQN back into a module to walk
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
+     * @param direction in (back) | out (forward) | both
+     * @param depth how many rings to expand past the roots
+     * @param maxNodes the node cap
+     * @param maxEdges the edge cap
+     * @param monitor the cancel signal of the BM task
+     * @param watch the cancel signal of the call
+     * @param source where the two halves of the call graph come from
+     * @return the walk
+     */
+    static BmReferencesHelper.BfsResult buildModuleGraph(LinkedHashMap<String, Module> rootModules,
+        ModuleLookup lookup, List<String> unloaded, BmReferencesHelper.Direction direction,
+        int depth, int maxNodes, int maxEdges, IProgressMonitor monitor, WatchForCancel watch,
+        BslCallGraphHelper.ModuleCallSource source)
+    {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
-        java.util.Deque<Module> queue = new java.util.ArrayDeque<>();
+        java.util.Deque<QueuedModule> queue = new java.util.ArrayDeque<>();
         java.util.Set<String> visited = new java.util.LinkedHashSet<>();
         for (Map.Entry<String, Module> entry : rootModules.entrySet())
         {
@@ -557,7 +581,7 @@ public class DependencyGraphTool implements IMcpTool
             if (visited.add(entry.getKey()))
             {
                 result.nodes.put(entry.getKey(), (IBmObject)entry.getValue());
-                queue.add(entry.getValue());
+                queue.add(new QueuedModule(entry.getKey(), entry.getValue()));
             }
         }
         int currentDepth = 0;
@@ -578,13 +602,14 @@ public class DependencyGraphTool implements IMcpTool
                     result.truncated = true;
                     return result;
                 }
-                Module module = queue.poll();
-                if (module == null)
+                QueuedModule queued = queue.poll();
+                if (queued == null)
                 {
                     continue;
                 }
-                String selfFqn = BslCallGraphHelper.moduleFqnOf(module);
-                BslCallGraphHelper.emitEdgesForModule(project, bmModel, module,
+                Module module = queued.module;
+                String selfFqn = queued.fqn;
+                BslCallGraphHelper.emitEdgesForModule(module, selfFqn, source,
                     direction == BmReferencesHelper.Direction.IN
                         || direction == BmReferencesHelper.Direction.BOTH,
                     direction == BmReferencesHelper.Direction.OUT
@@ -592,10 +617,9 @@ public class DependencyGraphTool implements IMcpTool
                     edge -> {
                         // Which half of the call graph reported this edge: the module being walked
                         // is the source of an outgoing one and the target of an incoming one.
-                        BmReferencesHelper.Side side = selfFqn != null
-                            && selfFqn.equals(edge.fromFqn)
-                                ? BmReferencesHelper.Side.FORWARD
-                                : BmReferencesHelper.Side.BACKWARD;
+                        BmReferencesHelper.Side side = selfFqn.equals(edge.fromFqn)
+                            ? BmReferencesHelper.Side.FORWARD
+                            : BmReferencesHelper.Side.BACKWARD;
                         if (!endpointsFitTheNodeCap(result, visited, edge.fromFqn, edge.toFqn,
                             maxNodes)
                             || !addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
@@ -611,6 +635,26 @@ public class DependencyGraphTool implements IMcpTool
             currentDepth++;
         }
         return result;
+    }
+
+    /**
+     * A module the walk holds together with the FQN it is recorded under.
+     * <p>
+     * The walk names a node by its address, so the name travels with the module: an edge end is
+     * recorded under the name of the node it belongs to, and the object model does not name a
+     * module loaded by path.
+     * </p>
+     */
+    static final class QueuedModule
+    {
+        final String fqn;
+        final Module module;
+
+        QueuedModule(String fqn, Module module)
+        {
+            this.fqn = fqn;
+            this.module = module;
+        }
     }
 
     /**
@@ -706,7 +750,7 @@ public class DependencyGraphTool implements IMcpTool
      * @param unloaded the module FQNs whose file exists and whose model did not load, filled
      */
     static void addModuleNodeIfNew(BmReferencesHelper.BfsResult result,
-        java.util.Deque<Module> queue, java.util.Set<String> visited, ModuleLookup lookup,
+        java.util.Deque<QueuedModule> queue, java.util.Set<String> visited, ModuleLookup lookup,
         String fqn, int maxNodes, List<String> unloaded)
     {
         if (fqn == null || visited.contains(fqn))
@@ -724,7 +768,7 @@ public class DependencyGraphTool implements IMcpTool
         result.nodes.put(fqn, (IBmObject)module); // the renderer reads the key; the walk needs the object
         if (module != null)
         {
-            queue.add(module);
+            queue.add(new QueuedModule(fqn, module));
         }
         else if (resolution.addressPresent && !unloaded.contains(fqn))
         {
@@ -787,7 +831,7 @@ public class DependencyGraphTool implements IMcpTool
             if (root instanceof Module)
             {
                 Module module = (Module)root;
-                String own = BslCallGraphHelper.moduleFqnOf(module);
+                String own = BslCallGraphHelper.moduleFqn(module);
                 if (own == null)
                 {
                     // The module is its own top object on some builds, and then the lookup that
