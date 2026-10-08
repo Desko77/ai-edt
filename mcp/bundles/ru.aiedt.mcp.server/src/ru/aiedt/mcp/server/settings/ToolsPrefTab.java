@@ -189,13 +189,18 @@ public class ToolsPrefTab
     }
 
     /**
-     * Enables every tool, resets every parameter to its default, and repaints. Nothing is saved until
-     * OK.
+     * Puts the selection back to the preset the plugin ships with, resets every parameter to its
+     * default, and repaints. Nothing is saved until OK.
      */
     public void performDefaults()
     {
+        // The shipped selection is the Canonical preset, not every tool: a workspace that has never
+        // been touched advertises the compact surface, and clearing both sets would hand back a wider
+        // one than that.
         disabledTools.clear();
+        disabledTools.addAll(ToolProfile.CANONICAL.getDisabledTools());
         unlistedTools.clear();
+        unlistedTools.addAll(ToolProfile.CANONICAL.getUnlistedTools());
         refreshChecks();
         rederivePreset();
         updateCounter();
@@ -327,6 +332,10 @@ public class ToolsPrefTab
             nameFilter.setQuery(searchBox.getText());
             treeViewer.refresh();
             treeViewer.expandAll();
+            // Painted after the query has run: the groups it brings back are opened by expandAll,
+            // and their leaves take their ticks from the disabled set rather than from the widget
+            // state the previous query left behind.
+            refreshChecks();
         });
 
         treeViewer.addCheckStateListener(new ICheckStateListener()
@@ -387,7 +396,12 @@ public class ToolsPrefTab
         {
             for (String toolName : ((ToolCategory)element).getToolNames())
             {
-                setToolEnabled(toolName, enabled);
+                // Only the names the query is showing. With a filter on, the group header stands
+                // over a narrowed list, and a tool the user cannot see is not one they just ticked.
+                if (nameFilter.shows(toolName))
+                {
+                    setToolEnabled(toolName, enabled);
+                }
             }
         }
         else if (element instanceof String)
@@ -428,6 +442,9 @@ public class ToolsPrefTab
         disabledTools.addAll(preset.getDisabledTools());
         unlistedTools.clear();
         unlistedTools.addAll(preset.getUnlistedTools());
+        // Repainted before the ticks: the badge that marks a tool hidden from tools/list is drawn by
+        // the label provider, and a preset change moves names in and out of that set.
+        treeViewer.refresh();
         refreshChecks();
         updateCounter();
         // The combo keeps the user's pick; a shadowed duplicate snaps to its shadow on the next click.
@@ -835,22 +852,29 @@ public class ToolsPrefTab
             query = text == null ? "" : text.toLowerCase().trim(); //$NON-NLS-1$
         }
 
+        /**
+         * Tells whether a tool name passes the query as it stands.
+         *
+         * @param toolName the tool name
+         * @return <code>true</code> when the tool is shown
+         */
+        boolean shows(String toolName)
+        {
+            return query.isEmpty() || toolName.toLowerCase().contains(query);
+        }
+
         @Override
         public boolean select(Viewer viewer, Object parentElement, Object element)
         {
-            if (query.isEmpty())
-            {
-                return true;
-            }
             if (element instanceof String)
             {
-                return ((String)element).toLowerCase().contains(query);
+                return shows((String)element);
             }
             if (element instanceof ToolCategory)
             {
                 for (String toolName : ((ToolCategory)element).getToolNames())
                 {
-                    if (toolName.toLowerCase().contains(query))
+                    if (shows(toolName))
                     {
                         return true;
                     }

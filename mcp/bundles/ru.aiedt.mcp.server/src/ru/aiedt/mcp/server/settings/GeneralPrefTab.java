@@ -370,6 +370,12 @@ public class GeneralPrefTab
 
     /**
      * Puts the widgets back to the shipped values. Nothing is saved until OK.
+     * <p>
+     * The token field is left holding what it held. It is not a setting with a shipped value: it is
+     * the credential in force, and the shipped value is the empty string, which a save reads as
+     * "make me a new one". Restoring it would rotate the token of every client on the next OK, with
+     * nothing on the page saying so.
+     * </p>
      */
     public void performDefaults()
     {
@@ -389,7 +395,6 @@ public class GeneralPrefTab
         bindAllCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_BIND_ALL_INTERFACES));
         allowNullOriginCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_ALLOW_NULL_ORIGIN));
         requireTokenCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_AUTH_ENABLED));
-        authTokenText.setText(store.getDefaultString(PrefKeys.PREF_AUTH_TOKEN));
         upkeepEnabledCheck.setSelection(store.getDefaultBoolean(PrefKeys.PREF_UPKEEP_ENABLED));
         upkeepSiteText.setText(store.getDefaultString(PrefKeys.PREF_UPKEEP_SITE_URL));
         upkeepIntervalSpinner.setSelection(
