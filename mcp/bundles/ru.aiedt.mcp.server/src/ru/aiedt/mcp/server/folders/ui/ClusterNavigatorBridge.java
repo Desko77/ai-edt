@@ -238,6 +238,8 @@ public class ClusterNavigatorBridge
 
                 children.add(new ClusterNavigatorBridge(nested, project, this));
 
+                RenderedClusterPaths.noteClusterNodeDrawn(project, nested.getFullPath());
+
             }
 
         }

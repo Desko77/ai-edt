@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.emf.ecore.EObject;
 import org.eclipse.jface.viewers.StructuredViewer;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.Viewer;
@@ -92,7 +93,39 @@ public class ClusterTreeContent
         {
             return ((ClusterNavigatorBridge)element).getParent(element);
         }
+        if (element instanceof EObject)
+        {
+            EObject eObject = (EObject)element;
+            IClusterManager clusters = service != null ? service : Activator.getClusterServiceStatic();
+            return parentOfClusteredObject(clusters, MarkerHelpers.extractProject(eObject),
+                MarkerHelpers.extractFqn(eObject));
+        }
         return null;
+    }
+
+    /**
+     * The tree parent of a clustered object: the cluster node that holds it.
+     * <p>
+     * A viewer that is asked to select or reveal an element walks the parent chain this answers,
+     * from the element up to a root, and only such a chain names an item in the tree. The cluster
+     * node this builds equals the rendered one for the same cluster, so the chain the viewer walks
+     * reaches the item that is on screen.
+     * </p>
+     *
+     * @param service the cluster service; <code>null</code> answers no parent
+     * @param project the object's project; <code>null</code> answers no parent
+     * @param fqn the object's fully qualified name; <code>null</code> answers no parent
+     * @return a cluster node for the cluster holding the object, or <code>null</code> when the
+     *         object is in no cluster and its parent is EDT's own to name
+     */
+    static Object parentOfClusteredObject(IClusterManager service, IProject project, String fqn)
+    {
+        if (service == null || project == null || fqn == null)
+        {
+            return null;
+        }
+        Cluster cluster = service.findClusterForObject(project, fqn);
+        return cluster == null ? null : new ClusterNavigatorBridge(cluster, project, null);
     }
 
     @Override
@@ -123,6 +156,8 @@ public class ClusterTreeContent
             {
                 return false;
             }
+            // The expand affordance is asked about an item that exists, the same as its children.
+            RenderedClusterPaths.noteCollectionDrawn(project, path);
             return service.hasClustersAtPath(project, path);
         }
         return false;
@@ -216,6 +251,10 @@ public class ClusterTreeContent
             Activator.logDebug("ClusterTreeContent: unresolved collection " + adapter); //$NON-NLS-1$
             return NO_ELEMENTS;
         }
+        // Being asked about a collection is what a tree item for it existing means: the cluster
+        // nodes returned here are drawn, and the hiding filter hides a member only under a drawn
+        // cluster - see RenderedClusterPaths.
+        RenderedClusterPaths.noteCollectionDrawn(project, path);
         if (!service.hasClustersAtPath(project, path))
         {
             return NO_ELEMENTS;
@@ -225,6 +264,7 @@ public class ClusterTreeContent
         for (Cluster cluster : clusters)
         {
             nodes.add(new ClusterNavigatorBridge(cluster, project, adapter));
+            RenderedClusterPaths.noteClusterNodeDrawn(project, cluster.getFullPath());
         }
         return nodes.toArray();
     }
