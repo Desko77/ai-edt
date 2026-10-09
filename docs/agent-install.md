@@ -58,9 +58,10 @@ Get-CimInstance Win32_Process -Filter "Name='1cedt.exe'" |
 Several sessions may share one EDT installation. Identify yours by the `-data <workspace>`
 argument and keep the full command line: you will relaunch with exactly these arguments.
 
-A session started through 1C:EDT Start has no `1cedt.exe` process at all: the starter runs
+A session started through 1C:EDT Start may have no `1cedt.exe` process: the starter runs
 `javaw.exe` directly. Look for it the same way with `Name='javaw.exe'` and the workspace path in
-the command line. Such a session is the starter's to launch - see step 6.
+the command line, and keep two things from it: the workspace after `-data` and the path of that
+`javaw.exe`. Step 6 starts the same workspace from them.
 
 **2. Close that one session, gracefully.**
 
@@ -128,10 +129,22 @@ person's: the AI-EDT indicator in the EDT status bar, or **Window -> Preferences
 
 **6. Relaunch the session** with the command line recorded in step 1.
 
-A session that 1C:EDT Start launched is relaunched by the person, from the starter: `1cedt.exe`
-run by hand with the same arguments does not come up there, and an IDE started as a child of
-your own shell ends with it. Ask the person to open the project from 1C:EDT Start and wait for
-the process to appear.
+With no command line of `1cedt.exe` to repeat - no session was running, or the starter had run
+`javaw.exe` - start the workspace with the launcher of the installation and the JVM named
+explicitly, as a process of its own rather than a child that ends with your shell:
+
+```powershell
+Start-Process -FilePath "<EDT>\1cedt.exe" `
+  -ArgumentList '-data', '"<workspace>"', '-vm', '"<JDK>\bin\javaw.exe"'
+```
+
+Quote every argument that holds a space yourself: `Start-Process` in Windows PowerShell 5.1
+passes the list unquoted, and a path cut at its first space leaves the launcher waiting with no
+window and no message. Before starting, make sure no other EDT holds the same workspace - a
+second instance on a locked workspace does not come up either. The session is up when a
+`javaw.exe` with that workspace in its command line appears; if none has appeared after a
+minute, stop the launcher you started by its process id and ask the person to open the project
+from 1C:EDT Start.
 
 **7. Verify.** Poll `http://localhost:<port>/health` until it answers `status: ok`. The port is
 the one configured in that workspace (`mcpServerPort` in the workspace preferences), which is
