@@ -200,9 +200,11 @@ director (1cedtc.exe in the EDT installation directory). Do not use the
 "Install New Software" wizard.
 This is a first installation, so do not pass -uninstallIU.
 
-Before installing, close the running EDT session and record its command line;
-afterwards relaunch it with the same arguments and wait for the health endpoint
-to answer status: ok.
+Before installing, close the running EDT session and record its command line.
+Switch on the plugin server's auto-start in the workspace preferences as the recipe
+says: without it the server opens no port after installation. Afterwards relaunch
+EDT with the same arguments (when EDT is started from 1C:EDT Start, ask me to open
+the project from there) and wait for the health endpoint to answer status: ok.
 
 Then install the skill from the repository's skills/ai-edt folder for yourself -
 without it you drive the server blind. The procedure is in skills/README.md.

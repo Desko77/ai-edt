@@ -29,6 +29,15 @@ nothing, and reports its result as an exit code.
 - The EDT installation directory. It contains `1cedtc.exe`, the console launcher used to run
   the director. Do not use `1cedt.exe` for this - that one opens the IDE.
 - The workspace path of the EDT session you are updating, if any session is running.
+- When the machine holds several EDT installations, the one the workspace is opened with: the
+  executable of the running session, or the installation 1C:EDT Start lists for that project.
+  With no session and no way to tell, ask the person which installation to use rather than
+  choosing one.
+- The Java the installation runs on. An installation started through 1C:EDT Start has no `-vm`
+  in its `1cedt.ini`: the starter passes the JVM itself, and a launcher run by hand does not find
+  one. The JVM is the `javaw.exe` on the command line of a session the starter launched, or the
+  JDK under `C:\Program Files\1C\1CE\components` whose major version equals
+  `-Dosgi.requiredJavaVersion` in `1cedt.ini`.
 
 Whether the plugin is already installed changes two steps: how you close EDT (step 2) and
 whether the director gets `-uninstallIU` (step 4). Establish that first - a running server
@@ -48,6 +57,10 @@ Get-CimInstance Win32_Process -Filter "Name='1cedt.exe'" |
 
 Several sessions may share one EDT installation. Identify yours by the `-data <workspace>`
 argument and keep the full command line: you will relaunch with exactly these arguments.
+
+A session started through 1C:EDT Start has no `1cedt.exe` process at all: the starter runs
+`javaw.exe` directly. Look for it the same way with `Name='javaw.exe'` and the workspace path in
+the command line. Such a session is the starter's to launch - see step 6.
 
 **2. Close that one session, gracefully.**
 
@@ -92,13 +105,39 @@ the repository is added.
 On a very first installation there is nothing to remove, and `-uninstallIU` makes the director
 fail instead. Drop that line the first time.
 
-**5. Relaunch the session** with the command line recorded in step 1.
+When the installation has no `-vm` in its `1cedt.ini`, pass the JVM to the director yourself,
+straight after the executable: `-vm "<JDK>\bin\javaw.exe"`. Without it the launcher does not
+start a JVM and does not say so: the process stays alive with no output, no exit code and no CPU
+time. A director that has printed nothing for a minute is in that state - stop that one process
+by its id and run the command again with `-vm`.
 
-**6. Verify.** Poll `http://localhost:<port>/health` until it answers `status: ok`. The port is
+**5. Switch the server on, on a first installation.** The plugin ships with the server's
+auto-start off, so a freshly installed plugin opens no port and `/health` never answers. While
+EDT is still closed, write the setting into the workspace preferences file
+`<workspace>/.metadata/.plugins/org.eclipse.core.runtime/.settings/ru.aiedt.mcp.server.prefs`:
+
+```
+eclipse.preferences.version=1
+mcpServerAutoStart=true
+```
+
+Add the `mcpServerAutoStart` line to a file that already exists; create the file with both lines
+when it does not. This makes the workspace listen on `localhost` every time it starts, so do it
+only when the person asked for the plugin to be installed and connected. The other way is the
+person's: the AI-EDT indicator in the EDT status bar, or **Window -> Preferences -> AI-EDT**.
+
+**6. Relaunch the session** with the command line recorded in step 1.
+
+A session that 1C:EDT Start launched is relaunched by the person, from the starter: `1cedt.exe`
+run by hand with the same arguments does not come up there, and an IDE started as a child of
+your own shell ends with it. Ask the person to open the project from 1C:EDT Start and wait for
+the process to appear.
+
+**7. Verify.** Poll `http://localhost:<port>/health` until it answers `status: ok`. The port is
 the one configured in that workspace (`mcpServerPort` in the workspace preferences), which is
 not necessarily the default. Then confirm the running build is the one you installed.
 
-**7. Install the skill for yourself.** The plugin gives you the tools; the skill tells you how to
+**8. Install the skill for yourself.** The plugin gives you the tools; the skill tells you how to
 use them - which facade fits a job, which checks are mandatory after an edit, what a resume key
 means. Without it you still work, just the expensive way: reading whole modules, hand-editing files
 EDT owns, retrying a call that already told you to come back for the result.
@@ -124,7 +163,7 @@ Remove-Item -Recurse -Force "$env:TEMP\ai-edt-skill"
 The folder is four files: `SKILL.md` plus `references/facades.md`, `references/workflows.md` and
 `references/expected-behavior.md`, which the agent loads on demand rather than all at once.
 
-**8. Connect the client and call the server once.** An installed plugin answers on
+**9. Connect the client and call the server once.** An installed plugin answers on
 `http://localhost:12250/mcp`; the client still has to be told so. [clients.md](clients.md) carries the
 configuration fragment of each client - write the one for the client you are running in, and
 nothing else. For Claude Code it is one command:
@@ -133,7 +172,7 @@ nothing else. For Claude Code it is one command:
 claude mcp add --transport http --scope user AI-EDT http://localhost:12250/mcp
 ```
 
-The port is the one `GET /health` answered on in step 6; a server moved off the default port is
+The port is the one `GET /health` answered on in step 7; a server moved off the default port is
 connected by that port. When **Require bearer token** is on in the AI-EDT preferences, the client
 also needs the `Authorization: Bearer <token>` header - ask the user for the token, do not look for
 it yourself.
