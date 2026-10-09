@@ -131,16 +131,18 @@ person's: the AI-EDT indicator in the EDT status bar, or **Window -> Preferences
 
 With no command line of `1cedt.exe` to repeat - no session was running, or the starter had run
 `javaw.exe` - start the workspace with the launcher of the installation and the JVM named
-explicitly, as a process of its own rather than a child that ends with your shell:
+explicitly. Write the command to a one-line `.cmd` file and run that file:
 
-```powershell
-Start-Process -FilePath "<EDT>\1cedt.exe" `
-  -ArgumentList '-data', '"<workspace>"', '-vm', '"<JDK>\bin\javaw.exe"'
+```bat
+start "" "<EDT>\1cedt.exe" -data "<workspace>" -vm "<JDK>\bin\javaw.exe"
 ```
 
-Quote every argument that holds a space yourself: `Start-Process` in Windows PowerShell 5.1
-passes the list unquoted, and a path cut at its first space leaves the launcher waiting with no
-window and no message. Before starting, make sure no other EDT holds the same workspace - a
+The file keeps the quoting as written. The same arguments passed through
+`Start-Process -ArgumentList` in Windows PowerShell 5.1 reach the launcher with the paths
+altered, and a launcher given a path it cannot open waits with no window and no message. Send
+the output of the file to a file or discard it: the IDE inherits the handles of the command
+that started it, and a caller reading that output through a pipe waits until the IDE exits.
+Before starting, make sure no other EDT holds the same workspace - a
 second instance on a locked workspace does not come up either. The session is up when a
 `javaw.exe` with that workspace in its command line appears; if none has appeared after a
 minute, stop the launcher you started by its process id and ask the person to open the project
