@@ -269,6 +269,7 @@ public final class BmReferencesHelper
         Set<String> visited = new LinkedHashSet<>();
         Set<String> expanded = new LinkedHashSet<>();
         java.util.Deque<IBmObject> queue = new java.util.ArrayDeque<>();
+        boolean rootsCut = false;
         for (IBmObject root : roots)
         {
             if (root == null)
@@ -288,6 +289,14 @@ public final class BmReferencesHelper
                 result.internalRootsDropped.add(fqn);
                 continue;
             }
+            if (result.nodes.size() >= maxNodes)
+            {
+                // The seed obeys the cap it hands the walk. Every root used to be seeded first,
+                // so a project scope larger than maxNodes answered with thousands of nodes and
+                // not one edge - the cap tripped before the first ring was ever expanded.
+                rootsCut = true;
+                continue;
+            }
             if (visited.add(fqn))
             {
                 // A root listed twice is one node and is walked once: the queue is the expansion
@@ -295,6 +304,10 @@ public final class BmReferencesHelper
                 result.nodes.put(fqn, root);
                 queue.add(root);
             }
+        }
+        if (rootsCut)
+        {
+            result.truncated = true;
         }
         // Level-by-level so maxDepth bounds the rings expanded from the roots.
         // levelSize is captured before each ring; addBfsEdge enqueues the next
@@ -310,8 +323,11 @@ public final class BmReferencesHelper
                     result.truncated = true;
                     break outer;
                 }
-                if (result.nodes.size() >= maxNodes || result.edges.size() >= maxEdges)
+                if (result.edges.size() >= maxEdges)
                 {
+                    // The node cap is not read here. It forbids new nodes, and refusing one is what
+                    // the add step does; a node already accepted is walked whatever the node count,
+                    // so the edges between the roots survive a seed that filled the cap exactly.
                     result.truncated = true;
                     break outer;
                 }

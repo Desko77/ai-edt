@@ -225,8 +225,13 @@ public class TheToolListHasAWeightBudgetTest
      * the child's name from either spelling, and the schema is the only place a client learns
      * a parameter exists. Measured 08.10: 191852.
      * </p>
+     * <p>
+     * And from 191852 to 192404 for yaxunitUnsafeMode on yaxunit_tests: installYaxunit lowers the
+     * two safety flags of the extension it installs, and the schema is where a caller learns that
+     * before the call writes to the infobase. Measured 08.10: 192404.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 191852;
+    private static final int DOCUMENT_BUDGET = 192404;
 
     private LiveServer server;
 
@@ -432,7 +437,10 @@ public class TheToolListHasAWeightBudgetTest
         // infobase is updated before the launch and that a refused update starts nothing. The two
         // hidden aliases carry the same declarations and are not weighed: tools/list under the
         // default preset does not advertise them. Measured 29.09: 2639.
-        BUDGETS.put("yaxunit_tests", Integer.valueOf(2639)); //$NON-NLS-1$
+        // And to 3366 for yaxunitUnsafeMode, which a caller has to read before installYaxunit lowers
+        // the two safety flags of the extension, and for the sentence that says an unnamed update
+        // is dropped under a preset that disabled update_database. Measured 08.10: 3366.
+        BUDGETS.put("yaxunit_tests", Integer.valueOf(3366)); //$NON-NLS-1$
         // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains

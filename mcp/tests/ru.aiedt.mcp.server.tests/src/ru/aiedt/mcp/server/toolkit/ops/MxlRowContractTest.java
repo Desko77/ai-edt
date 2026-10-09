@@ -154,10 +154,10 @@ public class MxlRowContractTest
     /**
      * A refusal leaves the write by exception, so the transaction rolls back with it.
      * <p>
-     * The six row and column handlers call this from inside the write callback: returning the
-     * refusal text instead would let the transaction commit a model the call opened on the way in.
-     * What a workspace run then keeps untouched is read off the code; this is the part a plain
-     * test reaches.
+     * The row and column handlers, {@code set_cell} and {@code format_cells} call this from inside
+     * the write callback: returning the refusal text instead would let the transaction commit a
+     * model the call opened on the way in. What a workspace run then keeps untouched is read off the
+     * code; this is the part a plain test reaches.
      * </p>
      */
     @Test

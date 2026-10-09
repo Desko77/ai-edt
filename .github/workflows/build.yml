@@ -47,6 +47,13 @@ jobs:
           sudo apt-get install -y xvfb
           sudo apt-get install -y libgtk-3-0t64 || sudo apt-get install -y libgtk-3-0 || true
 
+      # Tycho 4.0.5 does not start under the Maven the runner image carries (3.9.16):
+      # 'No implementation for MavenTargetLocationFactory was bound'. The build runs on 3.9.9.
+      - name: Maven 3.9.9
+        run: |
+          curl -fsSL https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.9/bin" >> "$GITHUB_PATH"
+
       - name: Maven build
         working-directory: mcp
         env:
@@ -88,8 +95,14 @@ jobs:
       - name: Release manifest script
         run: python3 scripts/tests/test_write_release_manifest.py
 
-      # The jar report decides which builds of the plugin no installation refers to. It is run by
-      # hand before a release, so what it reads is checked here on a made-up installation.
+      # The jar report decides which builds of the plugin no installation refers to, and its --json
+      # answer decides which installations the closed-EDT mode of scripts/edt-selfupdate.ps1
+      # installs into. Both are run by hand before a release, so what they read - the line of
+      # bundles.info, the launcher that marks an installation, the profile named after the hash of
+      # an installation path, the record the launcher loads, a bundles.info that cannot be read - is
+      # checked here on a made-up installation. The installer reads that answer instead of repeating
+      # the directory rules, so the parsing is covered here rather than in PowerShell, which no step
+      # of this workflow runs.
       - name: Plugin jar report script
         run: python3 scripts/tests/test_report_plugin_jars.py
 

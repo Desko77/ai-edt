@@ -234,11 +234,38 @@ public final class AtomicFileReplace
      */
     public static Outcome replace(Path target, String expectedFingerprint, byte[] content, IFile workspaceFile)
     {
-        return replace(target, expectedFingerprint, content, workspaceFile, LOCK_WAIT_MILLIS, null);
+        return replace(target, expectedFingerprint, content, workspaceFile, null);
     }
 
     /**
-     * Replaces the target's content with a wait limit and a seam of the caller's choosing.
+     * Replaces the target's content and reports the committed replacement to the caller before the
+     * workspace is told about it.
+     * <p>
+     * {@code afterCommit} runs once the target holds the new bytes and before {@code workspaceFile}
+     * is refreshed, so a caller whose own state names those bytes publishes that state in time for
+     * the refresh to arrive as this write's own change. It does not run when the replacement is
+     * refused: a refusal leaves the target as it was, and therefore whatever the caller held about
+     * it still stands.
+     * </p>
+     *
+     * @param target the file to replace
+     * @param expectedFingerprint {@link #fingerprint(byte[])} of the bytes the caller's state was
+     *            read from, or {@link #NO_FILE_FINGERPRINT} when it was read from no file
+     * @param content the bytes to write
+     * @param workspaceFile the workspace handle of the target, refreshed after the write; may be
+     *            {@code null} when the file does not belong to a workspace
+     * @param afterCommit run once the target holds the new bytes, still under the inter-process
+     *            lock, and before the workspace handle is refreshed; may be {@code null}
+     * @return what the replacement did
+     */
+    public static Outcome replace(Path target, String expectedFingerprint, byte[] content, IFile workspaceFile,
+        Runnable afterCommit)
+    {
+        return replace(target, expectedFingerprint, content, workspaceFile, LOCK_WAIT_MILLIS, null, afterCommit);
+    }
+
+    /**
+     * Replaces the target's content with a wait limit and the seams of the caller's choosing.
      *
      * @param target the file to replace
      * @param expectedFingerprint the fingerprint of the bytes the caller read, or
@@ -248,12 +275,15 @@ public final class AtomicFileReplace
      * @param waitMillis how long to wait for the lock file
      * @param afterStaging run after the content is staged and before the second fingerprint check;
      *            may be {@code null}
+     * @param afterCommit run once the target holds the new bytes, still under the inter-process
+     *            lock, and before the workspace handle is refreshed; may be {@code null}
      * @return what the replacement did
      */
     static Outcome replace(Path target, String expectedFingerprint, byte[] content, IFile workspaceFile,
-        long waitMillis, Runnable afterStaging)
+        long waitMillis, Runnable afterStaging, Runnable afterCommit)
     {
-        return runUnderLocks(target, expectedFingerprint, content, workspaceFile, waitMillis, afterStaging);
+        return runUnderLocks(target, expectedFingerprint, content, workspaceFile, waitMillis, afterStaging,
+            afterCommit);
     }
 
     /**
@@ -268,7 +298,32 @@ public final class AtomicFileReplace
      */
     public static Outcome remove(Path target, String expectedFingerprint, IFile workspaceFile)
     {
-        return runUnderLocks(target, expectedFingerprint, null, workspaceFile, LOCK_WAIT_MILLIS, null);
+        return remove(target, expectedFingerprint, workspaceFile, null);
+    }
+
+    /**
+     * Removes the target and reports the committed removal to the caller before the workspace is
+     * told about it.
+     * <p>
+     * A target that is already gone counts as the requested content: the removal is reported, since
+     * the caller's state names the absence it asked for. {@code afterCommit} does not run when the
+     * removal is refused.
+     * </p>
+     *
+     * @param target the file to remove
+     * @param expectedFingerprint the fingerprint of the bytes the caller read, or
+     *            {@link #NO_FILE_FINGERPRINT}; {@code null} removes without comparing content
+     * @param workspaceFile the workspace handle of the target, refreshed after the removal; may be
+     *            {@code null}
+     * @param afterCommit run once the target holds no file, still under the inter-process lock, and
+     *            before the workspace handle is refreshed; may be {@code null}
+     * @return what the removal did
+     */
+    public static Outcome remove(Path target, String expectedFingerprint, IFile workspaceFile,
+        Runnable afterCommit)
+    {
+        return runUnderLocks(target, expectedFingerprint, null, workspaceFile, LOCK_WAIT_MILLIS, null,
+            afterCommit);
     }
 
     /**
@@ -308,10 +363,12 @@ public final class AtomicFileReplace
      * @param workspaceFile the workspace handle to refresh; may be {@code null}
      * @param waitMillis how long to wait for the locks
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
+     * @param afterCommit run by the lock-file holder once the target holds the new bytes; may be
+     *            {@code null}
      * @return what the write did
      */
     private static Outcome runUnderLocks(Path target, String expectedFingerprint, byte[] content,
-        IFile workspaceFile, long waitMillis, Runnable afterStaging)
+        IFile workspaceFile, long waitMillis, Runnable afterStaging, Runnable afterCommit)
     {
         Path physical;
         try
@@ -343,9 +400,14 @@ public final class AtomicFileReplace
         try
         {
             Outcome done = runUnderTheLockFile(physical, target, expectedFingerprint, content, waitMillis,
-                afterStaging);
+                afterStaging, afterCommit);
             if (done.isOk())
             {
+                // The refresh runs after the lock file is released. The callback that publishes what
+                // the caller now holds for the file's bytes ran earlier, still inside that lock, and
+                // the refresh tells the workspace after it: a caller that keeps its own name for the
+                // bytes has to publish them in time for that telling to arrive as this write's own
+                // change rather than a foreign one.
                 refreshQuietly(workspaceFile, physical);
             }
             return done;
@@ -398,10 +460,12 @@ public final class AtomicFileReplace
      * @param content the bytes to write, or {@code null} to remove the file
      * @param waitMillis how long to wait for the lock file
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
+     * @param afterCommit run once the target holds the new bytes and before the lock is released; may
+     *            be {@code null}
      * @return what the write did
      */
     private static Outcome runUnderTheLockFile(Path physical, Path requested, String expectedFingerprint,
-        byte[] content, long waitMillis, Runnable afterStaging)
+        byte[] content, long waitMillis, Runnable afterStaging, Runnable afterCommit)
     {
         Path lockFile;
         try
@@ -425,7 +489,8 @@ public final class AtomicFileReplace
             }
             try
             {
-                return writeHoldingTheLockFile(physical, requested, expectedFingerprint, content, afterStaging);
+                return writeHoldingTheLockFile(physical, requested, expectedFingerprint, content,
+                    afterStaging, afterCommit);
             }
             finally
             {
@@ -453,11 +518,13 @@ public final class AtomicFileReplace
      * @param expectedFingerprint the fingerprint the caller read, or {@code null} to skip comparing
      * @param content the bytes to write, or {@code null} to remove the file
      * @param afterStaging run between staging and the second fingerprint check; may be {@code null}
+     * @param afterCommit run once the target holds the new bytes and before the lock is released; may
+     *            be {@code null}
      * @return what the write did
      * @throws IOException when the file cannot be read, staged or replaced
      */
     private static Outcome writeHoldingTheLockFile(Path physical, Path requested, String expectedFingerprint,
-        byte[] content, Runnable afterStaging) throws IOException
+        byte[] content, Runnable afterStaging, Runnable afterCommit) throws IOException
     {
         if (Files.exists(physical))
         {
@@ -476,7 +543,7 @@ public final class AtomicFileReplace
         {
             if (Files.notExists(physical))
             {
-                return Outcome.ok();
+                return committed(afterCommit);
             }
             Outcome stillUnchanged = holdsWhatWasRead(physical, expectedFingerprint);
             if (!stillUnchanged.isOk())
@@ -491,7 +558,7 @@ public final class AtomicFileReplace
             {
                 return Outcome.refused(ACCESS_DENIED, null);
             }
-            return Outcome.ok();
+            return committed(afterCommit);
         }
         Path directory = physical.getParent();
         if (directory != null)
@@ -515,7 +582,7 @@ public final class AtomicFileReplace
                 return stillUnchanged;
             }
             moveReplacing(temporary, physical);
-            return Outcome.ok();
+            return committed(afterCommit);
         }
         catch (IOException e)
         {
@@ -537,6 +604,26 @@ public final class AtomicFileReplace
                 failure.addSuppressed(cleanupFailure);
             }
         }
+    }
+
+    /**
+     * Runs the commit callback, if there is one, and reports the write as done.
+     * <p>
+     * Called from the lock-file holder at the moment the target holds the new bytes, so the callback
+     * runs before the inter-process lock is released. Anything that reads the target between the
+     * move and the callback would otherwise see bytes the caller does not yet name as its own.
+     * </p>
+     *
+     * @param afterCommit run once the target holds the new bytes; may be {@code null}
+     * @return the successful outcome
+     */
+    private static Outcome committed(Runnable afterCommit)
+    {
+        if (afterCommit != null)
+        {
+            afterCommit.run();
+        }
+        return Outcome.ok();
     }
 
     /**

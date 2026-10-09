@@ -163,6 +163,57 @@ With a single EDT session running, `-WorkspaceMatch` can be omitted entirely.
 | `-McpPort` | MCP port. `0` discovers it from the workspace preferences. |
 | `-CloseTimeoutSec`, `-HealthTimeoutSec` | Waiting limits for the close and for the health check. |
 
+## Install into every installation, with EDT closed
+
+One machine commonly holds several installations - the one under Program Files and the ones the 1C
+launcher keeps in `%LOCALAPPDATA%\1C\1cedtstart\installations` - and each of them records the plugin
+in its own `bundles.info`, or in a shared profile under `%USERPROFILE%\.eclipse`. Updating one of
+them leaves the others on the build they already had.
+
+`-AllInstallations` on its own prints what it found - the installation path, the EDT version, every
+record of the plugin it holds and which of them it loads, and the `java.exe` its director would run -
+and installs nothing. Naming the installations with `-InstallationMatch` or `-Every` makes the run
+work on them and report the version each carries before and after:
+
+```powershell
+pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -RepoPath <repository>
+pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -Every -RepoPath <repository>
+pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -AllInstallations -InstallationMatch 2026.2 -RepoPath <repository>
+```
+
+The mode starts no session and closes none. It refuses before installing anything when a
+`bundles.info` record of the plugin belongs to no installation found on the machine, when a
+`bundles.info` cannot be read, and, naming the PIDs, while a `1cedt.exe` or the JVM it started
+belongs to a named installation: close those sessions yourself and run it again. `-WhatIf` prints
+the plan and the director command of each named installation without downloading or installing
+anything, so a release can be checked before the sessions are closed.
+
+The `java.exe` of a director is taken in this order: the `-vm` of the installation's own `1cedt.ini`
+or `1cedtc.ini`, then `-JavaExe`, then `JAVA_HOME`, then the `java` on `PATH`. The source of each
+choice is printed with it before the install. An installation whose ini names no `-vm` - which is
+what the 1C launcher writes - needs `-JavaExe` when `JAVA_HOME` points at another Java version than
+the one that installation starts with.
+
+Release step: with every EDT closed, run `-AllInstallations -Every` against the published
+repository, then run `-AllInstallations` alone and read the version each installation reports - it
+prints the same table and installs nothing.
+
+| Parameter | Purpose |
+|---|---|
+| `-AllInstallations` | Work on the installations that record the plugin, with EDT closed. Alone it prints them and installs nothing. |
+| `-Every` | Install into every installation found. |
+| `-InstallationMatch` | Substring of the installation path; several are separated by `;` in one value. A substring matching no installation is an error. |
+| `-WhatIf` (alias `-DryRun`) | Print the plan and change nothing. Requires `-AllInstallations`. |
+| `-PythonExe` | Interpreter for `scripts/report-plugin-jars.py`, which lists the installations. Empty searches `python` and `python3`. |
+| `-JavaExe` | `java.exe` for installations whose ini names no `-vm`. Empty takes `JAVA_HOME`, and with that empty too the director uses the `java` on `PATH`. |
+| `-BundleSymbolicName` | Bundle whose installations and versions are read. Defaults to `ru.aiedt.mcp.server`. |
+
+Exit codes: `0` every named installation carries the installed version; `2` repository, interpreter
+or argument problem; `3` refused (no installation named, a record of no installation found here, an
+unreadable `bundles.info`, an EDT of a named installation running, or an installation carrying a
+higher version without `-AllowDowngrade`); `5` a director run failed; `6` a version was not
+confirmed afterwards.
+
 ## Rules worth keeping
 
 - **Never force-kill EDT** and never close a session other than the one you were asked to

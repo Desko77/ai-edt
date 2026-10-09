@@ -94,9 +94,10 @@ public class DependencyGraphTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("level", //$NON-NLS-1$
-                "metadata | modules | mixed (default metadata)") //$NON-NLS-1$
+                "metadata | modules | mixed (default metadata); on modules an outgoing edge is a call " //$NON-NLS-1$
+                    + "into a common module, an incoming edge is any call") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
-                "project | subsystem | object | module (default project)") //$NON-NLS-1$
+                "project | subsystem | object | module; absent, the selectors decide the root") //$NON-NLS-1$
             .stringProperty("subsystemName", "Subsystem name when scope=subsystem") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("objectFqn", "Object FQN when scope=object") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("moduleFqn", "Module FQN when scope=module") //$NON-NLS-1$ //$NON-NLS-2$
@@ -133,8 +134,7 @@ public class DependencyGraphTool implements IMcpTool
 
         String levelStr = orDefault(JsonUtils.extractStringArgument(params, "level"), //$NON-NLS-1$
             "metadata"); //$NON-NLS-1$
-        String scopeStr = orDefault(JsonUtils.extractStringArgument(params, "scope"), //$NON-NLS-1$
-            "project"); //$NON-NLS-1$
+        String askedScope = JsonUtils.extractStringArgument(params, "scope"); //$NON-NLS-1$
         String formatStr = orDefault(JsonUtils.extractStringArgument(params, "format"), //$NON-NLS-1$
             "json"); //$NON-NLS-1$
         String directionStr = orDefault(JsonUtils.extractStringArgument(params, "direction"), //$NON-NLS-1$
@@ -162,11 +162,12 @@ public class DependencyGraphTool implements IMcpTool
             return ToolResult.error(TextSuggest.invalidValue("format", formatStr, //$NON-NLS-1$
                 java.util.Arrays.asList("json", "mermaid", "plantuml", "dot"))).toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         }
-        String scopeRefusal = scopeRefusal(scopeStr, params);
+        String scopeRefusal = scopeRefusal(askedScope, params);
         if (scopeRefusal != null)
         {
             return ToolResult.error(scopeRefusal).toJson();
         }
+        String scopeStr = scopeWord(askedScope, params);
 
         try
         {
@@ -218,6 +219,9 @@ public class DependencyGraphTool implements IMcpTool
         AtomicReference<BmReferencesHelper.BfsResult> bfsRef = new AtomicReference<>();
         AtomicReference<Exception> errRef = new AtomicReference<>();
         AtomicReference<String> notFoundRef = new AtomicReference<>();
+        AtomicReference<String> notBuiltRef = new AtomicReference<>();
+        List<String> modulesUnloaded = new ArrayList<>();
+        ModuleLookup lookup = pathModuleLookup(project);
         // Started outside the task: WatchForCancel reads the call scope, which belongs
         // to this thread, and the task body runs on the BM one.
         WatchForCancel watch = WatchForCancel.begin();
@@ -228,31 +232,58 @@ public class DependencyGraphTool implements IMcpTool
             {
                 try
                 {
-                    Collection<IBmObject> roots = resolveRoots(level, scopeStr, params,
-                        configuration, tx);
+                    Collection<IBmObject> roots = resolveScopeRoots(level, scopeStr, params,
+                        configuration, tx, lookup, modulesUnloaded);
                     if (roots == null)
                     {
-                        notFoundRef.set(rootNotFound(scopeStr, params, configuration));
-                        return null;
-                    }
-                    if (roots.isEmpty())
-                    {
-                        bfsRef.set(new BmReferencesHelper.BfsResult());
+                        if (modulesUnloaded.isEmpty())
+                        {
+                            notFoundRef.set(rootNotFound(scopeStr, params, configuration));
+                        }
+                        else
+                        {
+                            // A root whose module would not load is a refused call, not a missing
+                            // one: the address is in the project and the module behind it was not.
+                            notBuiltRef.set(moduleLevelNotBuilt(modulesUnloaded));
+                        }
                         return null;
                     }
                     BmReferencesHelper.BfsResult result;
                     if (level == Level.MODULES)
                     {
-                        result = buildModuleGraph(project, bmModel, tx, roots, direction, depth,
-                            maxNodes, maxEdges, monitor, watch);
+                        LinkedHashMap<String, Module> rootModules = asModules(roots, lookup,
+                            modulesUnloaded);
+                        if (rootModules.isEmpty())
+                        {
+                            if (!modulesUnloaded.isEmpty())
+                            {
+                                notBuiltRef.set(moduleLevelNotBuilt(modulesUnloaded));
+                                return null;
+                            }
+                            result = new BmReferencesHelper.BfsResult();
+                        }
+                        else
+                        {
+                            result = buildModuleGraph(project, bmModel, rootModules, lookup,
+                                modulesUnloaded, direction, depth, maxNodes, maxEdges, monitor,
+                                watch);
+                        }
                     }
                     else
                     {
-                        Set<String> keep = edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
-                        BmReferencesHelper.EdgePolicy policy = edgePolicy(level, keep);
-                        result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots, direction,
-                            maxNodes, maxEdges, depth,
-                            () -> monitor.isCanceled() || watch.stopHere(), policy);
+                        if (roots.isEmpty())
+                        {
+                            result = new BmReferencesHelper.BfsResult();
+                        }
+                        else
+                        {
+                            Set<String> keep =
+                                edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
+                            BmReferencesHelper.EdgePolicy policy = edgePolicy(level, keep);
+                            result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots,
+                                direction, maxNodes, maxEdges, depth,
+                                () -> monitor.isCanceled() || watch.stopHere(), policy);
+                        }
                     }
                     bfsRef.set(result);
                 }
@@ -272,6 +303,10 @@ public class DependencyGraphTool implements IMcpTool
         {
             return ToolResult.error(notFoundRef.get()).put("tag", ROOT_NOT_FOUND).toJson(); //$NON-NLS-1$
         }
+        if (notBuiltRef.get() != null)
+        {
+            return ToolResult.error(notBuiltRef.get()).toJson();
+        }
         BmReferencesHelper.BfsResult bfs = bfsRef.get();
         if (bfs == null)
         {
@@ -288,6 +323,10 @@ public class DependencyGraphTool implements IMcpTool
         tr.put("depth", depth); //$NON-NLS-1$
         for (Map.Entry<String, Object> extra : BmReferencesHelper.edgeKindFields(
             level.name().toLowerCase(java.util.Locale.ROOT), edgeKinds, bfs).entrySet())
+        {
+            tr.put(extra.getKey(), extra.getValue());
+        }
+        for (Map.Entry<String, Object> extra : moduleLevelFields(modulesUnloaded).entrySet())
         {
             tr.put(extra.getKey(), extra.getValue());
         }
@@ -351,29 +390,199 @@ public class DependencyGraphTool implements IMcpTool
         return understood;
     }
 
-    private BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
-        IBmTransaction tx, Collection<IBmObject> roots, BmReferencesHelper.Direction direction,
-        int depth, int maxNodes, int maxEdges, IProgressMonitor monitor, WatchForCancel watch)
+    /**
+     * What one module address lookup came to.
+     * <p>
+     * A module file that exists but whose model would not load is neither a node nor silence: the
+     * level that found it says it could not be walked, and the answer carries the address so the
+     * caller can tell a project whose modules are all absent from one whose model is not built.
+     * </p>
+     */
+    static final class ModuleResolution
+    {
+        /** The module's model, or <code>null</code> when it did not load. */
+        final Module module;
+
+        /** Whether the module's file exists where its address says. */
+        final boolean addressPresent;
+
+        private ModuleResolution(Module module, boolean addressPresent)
+        {
+            this.module = module;
+            this.addressPresent = addressPresent;
+        }
+
+        /**
+         * @param module the module that loaded
+         * @return a resolution that carries it
+         */
+        static ModuleResolution loaded(Module module)
+        {
+            return new ModuleResolution(module, true);
+        }
+
+        /**
+         * @return a resolution of an address nothing answers
+         */
+        static ModuleResolution absent()
+        {
+            return new ModuleResolution(null, false);
+        }
+
+        /**
+         * @return a resolution of a file that exists and a model that did not load
+         */
+        static ModuleResolution unloaded()
+        {
+            return new ModuleResolution(null, true);
+        }
+    }
+
+    /** Resolves a module FQN to its model, the route the module tools take. */
+    @FunctionalInterface
+    interface ModuleLookup
+    {
+        /**
+         * @param fqn a module FQN such as {@code CommonModule.Sales.Module}
+         * @return the resolution, never <code>null</code>
+         */
+        ModuleResolution byFqn(String fqn);
+    }
+
+    /**
+     * The module lookup of a live project: the FQN becomes a {@code src/} path the way
+     * {@code call_hierarchy} resolves one, and the module model is loaded from the project's
+     * resource set the way {@code read_method_source} loads it.
+     * <p>
+     * The BM top-object index was the first route tried here and answered nothing for a module
+     * FQN on a live stand: every module level came back empty and was reported as success. The
+     * file layout is the address the neighbouring tools already agree on, so it is the route this
+     * one takes as well.
+     * </p>
+     *
+     * @param project the project the modules belong to
+     * @return the lookup, never <code>null</code>
+     */
+    static ModuleLookup pathModuleLookup(IProject project)
+    {
+        return fqn -> {
+            BslModuleAccess.ModulePathResolution path = BslModuleAccess.resolveModulePath(project,
+                fqn);
+            if (path == null || !path.isResolved())
+            {
+                return ModuleResolution.absent();
+            }
+            Module module = BslModuleAccess.loadModule(project, path.getPath());
+            return module == null ? ModuleResolution.unloaded() : ModuleResolution.loaded(module);
+        };
+    }
+
+    /**
+     * The refusal a module level gets when none of its modules would load although their files
+     * are there: the level was not built, and an empty graph would have read as a project with no
+     * module dependencies.
+     *
+     * @param unloaded the module FQNs whose file exists and whose model did not load
+     * @return the refusal naming the first few addresses
+     */
+    static String moduleLevelNotBuilt(List<String> unloaded)
+    {
+        return "The module level could not be built: the module model is not available for " //$NON-NLS-1$
+            + unloaded.size() + " module(s): " + String.join(", ", firstFive(unloaded)) //$NON-NLS-1$ //$NON-NLS-2$
+            + ". The BSL model of the project is not built yet or could not be read;" //$NON-NLS-1$
+            + " the metadata level remains available."; //$NON-NLS-1$
+    }
+
+    /**
+     * The fields a module-level answer adds about modules it could not walk.
+     *
+     * @param unloaded the module FQNs whose file exists and whose model did not load
+     * @return the fields, empty when every module the level found was walked
+     */
+    static Map<String, Object> moduleLevelFields(List<String> unloaded)
+    {
+        Map<String, Object> fields = new LinkedHashMap<>();
+        if (unloaded == null || unloaded.isEmpty())
+        {
+            return fields;
+        }
+        fields.put("modulesUnloaded", Integer.valueOf(unloaded.size())); //$NON-NLS-1$
+        fields.put("modulesUnloadedNames", firstFive(unloaded)); //$NON-NLS-1$
+        return fields;
+    }
+
+    /** The first five entries of a list, for a field that must not repeat a thousand names. */
+    private static List<String> firstFive(List<String> names)
+    {
+        return names.size() <= 5 ? List.copyOf(names) : List.copyOf(names.subList(0, 5));
+    }
+
+    /**
+     * Walks the module level from the modules the roots resolved to.
+     *
+     * @param project the project the modules belong to
+     * @param bmModel the project's object model, which the caller lookup needs
+     * @param rootModules the root modules, keyed by the FQN their address names
+     * @param lookup the module lookup, which turns an edge's FQN back into a module to walk
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
+     * @param direction in (back) | out (forward) | both
+     * @param depth how many rings to expand past the roots
+     * @param maxNodes the node cap
+     * @param maxEdges the edge cap
+     * @param monitor the cancel signal of the BM task
+     * @param watch the cancel signal of the call
+     * @return the walk
+     */
+    static BmReferencesHelper.BfsResult buildModuleGraph(IProject project, IBmModel bmModel,
+        LinkedHashMap<String, Module> rootModules, ModuleLookup lookup, List<String> unloaded,
+        BmReferencesHelper.Direction direction, int depth, int maxNodes, int maxEdges,
+        IProgressMonitor monitor, WatchForCancel watch)
+    {
+        return buildModuleGraph(rootModules, lookup, unloaded, direction, depth, maxNodes, maxEdges,
+            monitor, watch, BslCallGraphHelper.ModuleCallSource.bslModel(project, bmModel));
+    }
+
+    /**
+     * The walk of the module level over a named source of call edges.
+     *
+     * @param rootModules the root modules, keyed by the FQN their address names
+     * @param lookup the module lookup, which turns an edge's FQN back into a module to walk
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
+     * @param direction in (back) | out (forward) | both
+     * @param depth how many rings to expand past the roots
+     * @param maxNodes the node cap
+     * @param maxEdges the edge cap
+     * @param monitor the cancel signal of the BM task
+     * @param watch the cancel signal of the call
+     * @param source where the two halves of the call graph come from
+     * @return the walk
+     */
+    static BmReferencesHelper.BfsResult buildModuleGraph(LinkedHashMap<String, Module> rootModules,
+        ModuleLookup lookup, List<String> unloaded, BmReferencesHelper.Direction direction,
+        int depth, int maxNodes, int maxEdges, IProgressMonitor monitor, WatchForCancel watch,
+        BslCallGraphHelper.ModuleCallSource source)
     {
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
-        java.util.Deque<IBmObject> queue = new java.util.ArrayDeque<>(roots);
+        java.util.Deque<QueuedModule> queue = new java.util.ArrayDeque<>();
         java.util.Set<String> visited = new java.util.LinkedHashSet<>();
-        for (IBmObject root : roots)
+        for (Map.Entry<String, Module> entry : rootModules.entrySet())
         {
-            if (root instanceof Module)
+            if (entry.getValue() == null)
             {
-                String fqn = BslCallGraphHelper.moduleFqnOf((Module) root);
-                if (fqn == null)
-                {
-                    // The module is its own top object on some builds, and then the lookup that
-                    // walks up to a container has nothing to walk to.
-                    fqn = fqnOf(root);
-                }
-                if (fqn != null)
-                {
-                    visited.add(fqn);
-                    result.nodes.put(fqn, root);
-                }
+                continue;
+            }
+            if (result.nodes.size() >= maxNodes)
+            {
+                // The seed obeys the cap it hands the walk: a project of five hundred modules used
+                // to enter the graph whole whatever maxNodes said, and the walk then ended on its
+                // first ring check without one edge.
+                result.truncated = true;
+                continue;
+            }
+            if (visited.add(entry.getKey()))
+            {
+                result.nodes.put(entry.getKey(), (IBmObject)entry.getValue());
+                queue.add(new QueuedModule(entry.getKey(), entry.getValue()));
             }
         }
         int currentDepth = 0;
@@ -387,19 +596,21 @@ public class DependencyGraphTool implements IMcpTool
                     result.truncated = true;
                     return result;
                 }
-                if (result.nodes.size() >= maxNodes || result.edges.size() >= maxEdges)
+                if (result.edges.size() >= maxEdges)
                 {
+                    // The node cap is not read here: it forbids new nodes, which the add step
+                    // refuses, and a module already in the graph is walked whatever the node count.
                     result.truncated = true;
                     return result;
                 }
-                IBmObject node = queue.poll();
-                if (!(node instanceof Module))
+                QueuedModule queued = queue.poll();
+                if (queued == null)
                 {
                     continue;
                 }
-                Module module = (Module) node;
-                String selfFqn = BslCallGraphHelper.moduleFqnOf(module);
-                BslCallGraphHelper.emitEdgesForModule(project, bmModel, module,
+                Module module = queued.module;
+                String selfFqn = queued.fqn;
+                BslCallGraphHelper.emitEdgesForModule(module, selfFqn, source,
                     direction == BmReferencesHelper.Direction.IN
                         || direction == BmReferencesHelper.Direction.BOTH,
                     direction == BmReferencesHelper.Direction.OUT
@@ -407,21 +618,75 @@ public class DependencyGraphTool implements IMcpTool
                     edge -> {
                         // Which half of the call graph reported this edge: the module being walked
                         // is the source of an outgoing one and the target of an incoming one.
-                        BmReferencesHelper.Side side = selfFqn != null
-                            && selfFqn.equals(edge.fromFqn)
-                                ? BmReferencesHelper.Side.FORWARD
-                                : BmReferencesHelper.Side.BACKWARD;
-                        if (!addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
+                        BmReferencesHelper.Side side = selfFqn.equals(edge.fromFqn)
+                            ? BmReferencesHelper.Side.FORWARD
+                            : BmReferencesHelper.Side.BACKWARD;
+                        if (!endpointsFitTheNodeCap(result, visited, edge.fromFqn, edge.toFqn,
+                            maxNodes)
+                            || !addModuleEdge(result, edge.fromFqn, edge.toFqn, side, maxEdges))
                         {
                             return;
                         }
-                        addModuleNodeIfNew(result, queue, visited, tx, edge.fromFqn, maxNodes);
-                        addModuleNodeIfNew(result, queue, visited, tx, edge.toFqn, maxNodes);
+                        addModuleNodeIfNew(result, queue, visited, lookup, edge.fromFqn, maxNodes,
+                            unloaded);
+                        addModuleNodeIfNew(result, queue, visited, lookup, edge.toFqn, maxNodes,
+                            unloaded);
                     });
             }
             currentDepth++;
         }
         return result;
+    }
+
+    /**
+     * A module the walk holds together with the FQN it is recorded under.
+     * <p>
+     * The walk names a node by its address, so the name travels with the module: an edge end is
+     * recorded under the name of the node it belongs to, and the object model does not name a
+     * module loaded by path.
+     * </p>
+     */
+    static final class QueuedModule
+    {
+        final String fqn;
+        final Module module;
+
+        QueuedModule(String fqn, Module module)
+        {
+            this.fqn = fqn;
+            this.module = module;
+        }
+    }
+
+    /**
+     * Says whether both ends of an edge are in the graph or can still be taken into it.
+     * <p>
+     * An edge is recorded before its ends are, so an end the node cap keeps out would leave an edge
+     * pointing at a node the answer does not list. Such an edge is left out and the answer is marked
+     * truncated; an edge between two modules already in the graph passes whatever the node count.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param visited the FQNs already recorded
+     * @param fromFqn the caller's FQN
+     * @param toFqn the callee's FQN
+     * @param maxNodes the node cap
+     * @return <code>true</code> when recording the edge leaves no end outside the node list
+     */
+    static boolean endpointsFitTheNodeCap(BmReferencesHelper.BfsResult result,
+        java.util.Set<String> visited, String fromFqn, String toFqn, int maxNodes)
+    {
+        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        {
+            return true; // not an edge at all; the add step refuses it
+        }
+        int missing = (visited.contains(fromFqn) ? 0 : 1) + (visited.contains(toFqn) ? 0 : 1);
+        if (missing > 0 && result.nodes.size() + missing > maxNodes)
+        {
+            result.truncated = true;
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -480,13 +745,14 @@ public class DependencyGraphTool implements IMcpTool
      * @param result the graph being built
      * @param queue the walk's queue
      * @param visited the FQNs already recorded
-     * @param tx the live transaction, which resolves the FQN back to the module
+     * @param lookup the module lookup, which turns the FQN into the module to walk
      * @param fqn the module's FQN as the edge names it
      * @param maxNodes the node cap
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
      */
-    private void addModuleNodeIfNew(BmReferencesHelper.BfsResult result,
-        java.util.Deque<IBmObject> queue, java.util.Set<String> visited, IBmTransaction tx,
-        String fqn, int maxNodes)
+    static void addModuleNodeIfNew(BmReferencesHelper.BfsResult result,
+        java.util.Deque<QueuedModule> queue, java.util.Set<String> visited, ModuleLookup lookup,
+        String fqn, int maxNodes, List<String> unloaded)
     {
         if (fqn == null || visited.contains(fqn))
         {
@@ -498,29 +764,20 @@ public class DependencyGraphTool implements IMcpTool
             return;
         }
         visited.add(fqn);
-        IBmObject module = moduleByFqn(tx, fqn);
-        result.nodes.put(fqn, module); // the renderer reads the key; the walk needs the object
+        ModuleResolution resolution = lookup.byFqn(fqn);
+        Module module = resolution.module;
+        result.nodes.put(fqn, (IBmObject)module); // the renderer reads the key; the walk needs the object
         if (module != null)
         {
-            queue.add(module);
+            queue.add(new QueuedModule(fqn, module));
         }
-    }
-
-    /**
-     * The module a FQN names, or <code>null</code> when it names something else.
-     *
-     * @param tx the live transaction
-     * @param fqn a module FQN such as {@code CommonModule.Sales.Module}
-     * @return the module, or <code>null</code>
-     */
-    private static IBmObject moduleByFqn(IBmTransaction tx, String fqn)
-    {
-        if (tx == null || fqn == null)
+        else if (resolution.addressPresent && !unloaded.contains(fqn))
         {
-            return null;
+            // The edge ends on an address whose file is there and whose model did not load: the
+            // walk stops at this neighbour, and an answer that stayed silent about it read as a
+            // module with no calls.
+            unloaded.add(fqn);
         }
-        Object top = tx.getTopObjectByFqn(fqn);
-        return top instanceof Module ? (IBmObject)top : null;
     }
 
     /**
@@ -554,23 +811,37 @@ public class DependencyGraphTool implements IMcpTool
      * empty. An owner is asked for each module name it can carry; a root that is already a module is
      * kept as it is.
      * </p>
+     * <p>
+     * A module is resolved through the lookup, which turns the FQN into a {@code src/} path and
+     * loads the model: the BM top-object index answered no module FQN on a live stand, and this
+     * level came back empty as success. An address whose file is there but whose model would not
+     * load is reported in {@code unloaded} rather than dropped in silence.
+     * </p>
      *
      * @param roots the roots as the scope resolved them
-     * @param tx the live transaction
-     * @return the modules, in the order the roots named them, each once
+     * @param lookup the module lookup
+     * @param unloaded the addresses whose file exists and whose model did not load, filled
+     * @return the modules keyed by the FQN their address names, in the order the roots named them
      */
-    private static Collection<IBmObject> asModules(Collection<IBmObject> roots, IBmTransaction tx)
+    static LinkedHashMap<String, Module> asModules(Collection<IBmObject> roots, ModuleLookup lookup,
+        List<String> unloaded)
     {
-        List<IBmObject> modules = new ArrayList<>();
-        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        LinkedHashMap<String, Module> modules = new LinkedHashMap<>();
         for (IBmObject root : roots)
         {
             if (root instanceof Module)
             {
-                String own = fqnOf(root);
-                if (own == null || seen.add(own))
+                Module module = (Module)root;
+                String own = BslCallGraphHelper.moduleFqn(module);
+                if (own == null)
                 {
-                    modules.add(root);
+                    // The module is its own top object on some builds, and then the lookup that
+                    // walks up to a container has nothing to walk to.
+                    own = fqnOf(root);
+                }
+                if (own != null)
+                {
+                    modules.putIfAbsent(own, module);
                 }
                 continue;
             }
@@ -582,10 +853,14 @@ public class DependencyGraphTool implements IMcpTool
             for (String segment : MODULE_SEGMENTS)
             {
                 String candidateFqn = ownerFqn + "." + segment; //$NON-NLS-1$
-                IBmObject module = moduleByFqn(tx, candidateFqn);
-                if (module != null && seen.add(candidateFqn))
+                ModuleResolution resolution = lookup.byFqn(candidateFqn);
+                if (resolution.module != null)
                 {
-                    modules.add(module);
+                    modules.putIfAbsent(candidateFqn, resolution.module);
+                }
+                else if (resolution.addressPresent)
+                {
+                    unloaded.add(candidateFqn);
                 }
             }
         }
@@ -598,30 +873,21 @@ public class DependencyGraphTool implements IMcpTool
         "ValueManagerModule", "CommandModule"); //$NON-NLS-1$ //$NON-NLS-2$
 
     /**
-     * The roots of the walk, in the form the level walks.
+     * The roots of the walk, as the scope names them.
      *
      * @param level the level asked for
-     * @param scopeStr the scope asked for
+     * @param scopeStr the scope asked for, already canonical
      * @param params the call arguments
      * @param configuration the project configuration
      * @param tx the live transaction
+     * @param lookup the module lookup, for the root a module FQN names
+     * @param unloaded the addresses whose file exists and whose model did not load, filled
      * @return the roots, possibly empty when the named root has no content, or <code>null</code>
      *         when the root the scope names is absent from the project
      */
-    private Collection<IBmObject> resolveRoots(Level level, String scopeStr,
-        Map<String, String> params, Configuration configuration, IBmTransaction tx)
-    {
-        Collection<IBmObject> roots = resolveScopeRoots(level, scopeStr, params, configuration, tx);
-        if (roots == null || level != Level.MODULES)
-        {
-            return roots;
-        }
-        return asModules(roots, tx);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Collection<IBmObject> resolveScopeRoots(Level level, String scopeStr,
-        Map<String, String> params, Configuration configuration, IBmTransaction tx)
+    static Collection<IBmObject> resolveScopeRoots(Level level, String scopeStr,
+        Map<String, String> params, Configuration configuration, IBmTransaction tx,
+        ModuleLookup lookup, List<String> unloaded)
     {
         List<IBmObject> roots = new ArrayList<>();
         switch (scopeStr.toLowerCase())
@@ -685,19 +951,32 @@ public class DependencyGraphTool implements IMcpTool
                     return null;
                 }
                 Object top = tx.getTopObjectByFqn(fqn);
-                if (!(top instanceof IBmObject))
+                if (top instanceof IBmObject)
                 {
-                    return null;
+                    roots.add((IBmObject) top);
+                    return roots;
                 }
-                roots.add((IBmObject) top);
-                return roots;
+                // A module FQN is not always answered by the top-object index; the loader is the
+                // route the module tools take, and the one this level resolves roots with.
+                ModuleResolution resolution = lookup.byFqn(fqn);
+                if (resolution.module != null)
+                {
+                    roots.add((IBmObject)resolution.module);
+                }
+                else if (resolution.addressPresent)
+                {
+                    // The address is in the project and the model behind it would not load: the
+                    // root is not missing, and the caller refuses with the loader's reason.
+                    unloaded.add(fqn);
+                }
+                return roots.isEmpty() ? null : roots;
             }
             default:
                 return null;
         }
     }
 
-    private void addAllTopMdObjects(Configuration configuration, List<IBmObject> roots)
+    private static void addAllTopMdObjects(Configuration configuration, List<IBmObject> roots)
     {
         for (Object item : configuration.eContents())
         {
@@ -762,7 +1041,7 @@ public class DependencyGraphTool implements IMcpTool
         }
     }
 
-    private void addAllCommonModuleRoots(Configuration configuration, List<IBmObject> roots)
+    private static void addAllCommonModuleRoots(Configuration configuration, List<IBmObject> roots)
     {
         try
         {
@@ -781,7 +1060,7 @@ public class DependencyGraphTool implements IMcpTool
         }
     }
 
-    private Subsystem findSubsystemByName(Configuration configuration, String name)
+    private static Subsystem findSubsystemByName(Configuration configuration, String name)
     {
         try
         {
@@ -802,35 +1081,134 @@ public class DependencyGraphTool implements IMcpTool
     }
 
     /**
-     * The refusal a call gets for its scope before any walk: an unknown scope, or a scope without
-     * the argument that names its root.
+     * The refusal a call gets for its scope and its selectors before any walk: an unknown scope
+     * word, a scope without the argument that names its root, a selector the scope does not
+     * accept, and - when no scope was asked - selectors that name more than one root.
      * <p>
+     * A selector used to be dropped in silence when {@code scope} stayed at its project default,
+     * so a call that named an object walked the whole project and read as a project with
+     * thousands of nodes and no edges. The selector now either drives the walk or is refused.
      * Does not look the root up; {@link #rootNotFound} answers for a root the project lacks.
      * </p>
      *
-     * @param scopeStr the scope asked for, never <code>null</code>
+     * @param asked the scope as the caller wrote it, or <code>null</code> when absent
      * @param params the call arguments
      * @return the refusal text, or <code>null</code> when the scope and its argument are given
      */
-    static String scopeRefusal(String scopeStr, Map<String, String> params)
+    static String scopeRefusal(String asked, Map<String, String> params)
     {
-        String scope = scopeStr.toLowerCase(Locale.ROOT);
-        if (!SCOPES.contains(scope))
+        String scope = asked == null ? null : asked.toLowerCase(Locale.ROOT);
+        if (scope != null && !SCOPES.contains(scope))
         {
-            return TextSuggest.invalidValue("scope", scopeStr, SCOPES); //$NON-NLS-1$
+            return TextSuggest.invalidValue("scope", asked, SCOPES); //$NON-NLS-1$
+        }
+        if (scope == null)
+        {
+            List<String> named = namedSelectors(params);
+            if (named.size() > 1)
+            {
+                return named.get(0) + " conflicts with " //$NON-NLS-1$
+                    + String.join(", ", named.subList(1, named.size())) //$NON-NLS-1$
+                    + ": they name different roots. Pass one of them."; //$NON-NLS-1$
+            }
+            return null;
         }
         String argument = rootArgument(scope);
-        if (argument == null)
+        if (argument != null)
         {
-            return null;
+            String value = present(params, argument);
+            if (value == null)
+            {
+                String example = "subsystemName".equals(argument) ? "'Sales'" : "'Catalog.Products'"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                return TextSuggest.missingParam(argument, example)
+                    + " It names the root when scope=" + scope + "."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
         }
+        List<String> stray = new ArrayList<>();
+        for (String named : namedSelectors(params))
+        {
+            // The scope's own argument names its root; every other selector names a different one.
+            if (argument == null || !named.startsWith(argument + " ")) //$NON-NLS-1$
+            {
+                stray.add(named);
+            }
+        }
+        if (!stray.isEmpty())
+        {
+            return "scope=" + scope + " does not accept " + String.join(", ", stray) + "."; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+        return null;
+    }
+
+    /**
+     * The scope a call walks, with the absent word decided by its selectors: {@code objectFqn}
+     * names an object, {@code moduleFqn} a module, {@code subsystemName} a subsystem, and nothing
+     * the whole project.
+     * <p>
+     * Called after {@link #scopeRefusal}, so the selectors never conflict by the time this runs.
+     * </p>
+     *
+     * @param asked the scope as the caller wrote it, or <code>null</code> when absent
+     * @param params the call arguments
+     * @return the scope word, lower case
+     */
+    static String scopeWord(String asked, Map<String, String> params)
+    {
+        if (asked != null && !asked.isBlank())
+        {
+            return asked.toLowerCase(Locale.ROOT);
+        }
+        if (present(params, "objectFqn") != null) //$NON-NLS-1$
+        {
+            return "object"; //$NON-NLS-1$
+        }
+        if (present(params, "moduleFqn") != null) //$NON-NLS-1$
+        {
+            return "module"; //$NON-NLS-1$
+        }
+        if (present(params, "subsystemName") != null) //$NON-NLS-1$
+        {
+            return "subsystem"; //$NON-NLS-1$
+        }
+        return "project"; //$NON-NLS-1$
+    }
+
+    /**
+     * The selectors a call names, each as {@code argument 'value'}.
+     *
+     * @param params the call arguments
+     * @return the named selectors, in a fixed order
+     */
+    private static List<String> namedSelectors(Map<String, String> params)
+    {
+        List<String> named = new ArrayList<>();
+        for (String argument : java.util.Arrays.asList("objectFqn", "moduleFqn", "subsystemName")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            String value = present(params, argument);
+            if (value != null)
+            {
+                named.add(argument + " '" + value + "'"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        return named;
+    }
+
+    /**
+     * The value of an argument as a non-blank string.
+     *
+     * @param params the call arguments
+     * @param argument the argument name
+     * @return the trimmed value, or <code>null</code> when absent or blank
+     */
+    private static String present(Map<String, String> params, String argument)
+    {
         String value = JsonUtils.extractStringArgument(params, argument);
-        if (value != null && !value.isBlank())
+        if (value == null)
         {
             return null;
         }
-        String example = "subsystemName".equals(argument) ? "'Sales'" : "'Catalog.Products'"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        return TextSuggest.missingParam(argument, example) + " It names the root when scope=" + scope + "."; //$NON-NLS-1$ //$NON-NLS-2$
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 
     /**
