@@ -73,10 +73,13 @@ It closes the workbench programmatically, so no "Exit 1C:EDT?" prompt appears - 
 window close would stall waiting for that prompt. The MCP connection drops as the server goes
 down with the IDE; that is expected, not a failure.
 
-On a first installation that tool does not exist yet, and there is no unattended way to close
-EDT: a window close raises the "Exit 1C:EDT?" prompt and waits for a human. Ask the person to
-close the session, then continue once the process is gone. If no session is running at all,
-skip to step 4.
+On a first installation that tool does not exist yet. Ask the main window of that one process
+to close, the way a click on its close button does - in PowerShell,
+`(Get-Process -Id <pid>).CloseMainWindow()` on the `javaw.exe` of the session. A session with
+nothing unsaved exits within seconds. One that raises the "Exit 1C:EDT?" prompt or a save
+prompt waits for a human: when the process is still alive after half a minute, ask the person
+to answer the prompt or close the session, then continue once the process is gone. If no
+session is running at all, skip to step 4.
 
 Never force-kill EDT. If the process does not exit, something is holding it (usually an open
 dialog) - report that and stop rather than killing it.
