@@ -160,6 +160,22 @@ public final class BslModuleAccess
     private static final List<String> RECORD_SET_MODULE_FILE = List.of("RecordSetModule.bsl"); //$NON-NLS-1$
 
     /**
+     * The {@code src/} folder of the kinds the catalog holds no directory name for.
+     * <p>
+     * A bot, an integration service and a web socket client each own one module file and no forms.
+     * The catalog leaves them without a directory because that one name answers for forms too, and a
+     * form path for these kinds is a path to a folder that never exists. Module addressing is the
+     * only caller that needs their folder, so the three names live here. They are the folder names
+     * the platform's XML support places the sources of those kinds by
+     * ({@code BaseXmlExportFileSystemSupport} of {@code com._1c.g5.v8.dt.export.xml}).
+     * </p>
+     */
+    private static final Map<MetadataTypeInfo, String> MODULE_FOLDERS_BESIDE_THE_CATALOG = Map.of(
+        MetadataTypeInfo.BOT, "Bots", //$NON-NLS-1$
+        MetadataTypeInfo.INTEGRATION_SERVICE, "IntegrationServices", //$NON-NLS-1$
+        MetadataTypeInfo.WEB_SOCKET_CLIENT, "WebSocketClients"); //$NON-NLS-1$
+
+    /**
      * The module files each kind of metadata owns, and the nested levels that kind has.
      * <p>
      * Taken from the {@code mdclass} model of the target platform ({@code com._1c.g5.v8.dt.metadata}):
@@ -423,12 +439,12 @@ public final class BslModuleAccess
             return null;
         }
         MetadataTypeCatalog.MetadataTypeInfo kind = MetadataTypeCatalog.resolve(segments.get(0));
-        if (kind == null || kind.getDirectoryName() == null
-            || kind.getDirectoryName().equals(segments.get(0)))
+        String folder = moduleFolderOf(kind);
+        if (folder == null || folder.equals(segments.get(0)))
         {
             return null;
         }
-        StringBuilder canonical = new StringBuilder(kind.getDirectoryName());
+        StringBuilder canonical = new StringBuilder(folder);
         for (int i = 1; i < segments.size(); i++)
         {
             canonical.append('/').append(segments.get(i));
@@ -458,8 +474,10 @@ public final class BslModuleAccess
      * </ul>
      * <p>
      * An existing file is a fact of the project: the folder and name checks guard what a write
-     * creates, so they step aside for a file that is already there. A module a provider holds is
-     * an address, not a file, and its caller never asks this question.
+     * creates, so they step aside for a file that is already there. That check stands before every
+     * refusal that judges the kind, and a path naming a file the project holds is written whatever
+     * folder it opens with. A module a provider holds is an address, not a file, and its caller
+     * never asks this question.
      * </p>
      *
      * @param project the project the path is written in; the folder checks are skipped for
@@ -496,6 +514,12 @@ public final class BslModuleAccess
             return "Error: modulePath has to name a module file under its kind folder, such as " //$NON-NLS-1$
                 + "'CommonModules/MyModule/Module.bsl' or 'Catalogs/MyCatalog/ObjectModule.bsl'."; //$NON-NLS-1$
         }
+        if (fileExists)
+        {
+            // The file is already in the project: writing it back creates no folder and puts no file
+            // where no object reads, so the kind questions below do not apply to it.
+            return null;
+        }
         String first = segments.get(0);
         MetadataTypeCatalog.MetadataTypeInfo kind = MetadataTypeCatalog.resolve(first);
         boolean configurationRoot =
@@ -512,18 +536,19 @@ public final class BslModuleAccess
             }
             return refusal.toString();
         }
-        if (kind != null && kind.getDirectoryName() == null)
+        String folder = moduleFolderOf(kind);
+        if (kind != null && folder == null)
         {
             return "Error: metadata kind '" + kind.getEnglishSingular() + "' owns no module files, " //$NON-NLS-1$ //$NON-NLS-2$
                 + "so '" + modulePath + "' names no module of the layout. A module write needs a " //$NON-NLS-1$ //$NON-NLS-2$
                 + "kind folder such as CommonModules or Catalogs."; //$NON-NLS-1$
         }
-        if (kind != null && !kind.getDirectoryName().equals(first))
+        if (kind != null && !folder.equals(first))
         {
             return "Error: '" + first + "' is not the folder this layout uses. The canonical path " //$NON-NLS-1$ //$NON-NLS-2$
                 + "is '" + canonicalModulePathOf(modulePath) + "'."; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        if (fileExists || project == null)
+        if (project == null)
         {
             return null;
         }
@@ -747,6 +772,27 @@ public final class BslModuleAccess
     }
 
     /**
+     * The folder under {@code src/} a kind's module files live in.
+     * <p>
+     * The catalog's own directory when it has one, otherwise the folder
+     * {@link #MODULE_FOLDERS_BESIDE_THE_CATALOG} records for the kind. A kind whose module folder
+     * nothing knows owns no module file a caller may address by path.
+     * </p>
+     *
+     * @param kind the kind, or <code>null</code> for the configuration root, which is no kind
+     * @return the folder name, or <code>null</code> when the kind owns no module files of the layout
+     */
+    static String moduleFolderOf(MetadataTypeInfo kind)
+    {
+        if (kind == null)
+        {
+            return null;
+        }
+        String fromCatalog = kind.getDirectoryName();
+        return fromCatalog != null ? fromCatalog : MODULE_FOLDERS_BESIDE_THE_CATALOG.get(kind);
+    }
+
+    /**
      * Builds the kind table.
      *
      * @return the kind to the module files and nested levels it owns, unmodifiable
@@ -781,6 +827,9 @@ public final class BslModuleAccess
         put(table, MetadataTypeInfo.SETTINGS_STORAGE, MANAGER_MODULE_FILE, true, false);
         put(table, MetadataTypeInfo.EXTERNAL_DATA_PROCESSOR, OBJECT_MODULE_FILE, true, false);
         put(table, MetadataTypeInfo.EXTERNAL_REPORT, OBJECT_MODULE_FILE, true, false);
+        put(table, MetadataTypeInfo.BOT, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.INTEGRATION_SERVICE, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.WEB_SOCKET_CLIENT, SINGLE_MODULE_FILE, false, false);
         return Collections.unmodifiableMap(table);
     }
 

@@ -61,8 +61,8 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
 
     /**
      * Creates a project holding one catalog with its object module, a common module, a register, a
-     * constant, an external data source, the common module's form folder, and the configuration root's
-     * folder.
+     * constant, an external data source, the common module's form folder, the configuration root's
+     * folder, a bot with its module, a second bot without one, and a role whose module is in place.
      *
      * @throws Exception when the project or its files cannot be created
      */
@@ -79,6 +79,13 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
         Files.createDirectories(projectDir.resolve("src/Constants/Counter")); //$NON-NLS-1$
         Files.createDirectories(projectDir.resolve("src/ExternalDataSources/Source")); //$NON-NLS-1$
         Files.createDirectories(projectDir.resolve("src/Configuration")); //$NON-NLS-1$
+        Path botModule = projectDir.resolve("src/Bots/\u041F\u0440\u043E\u0431\u0430/Module.bsl"); //$NON-NLS-1$
+        Files.createDirectories(botModule.getParent());
+        Files.write(botModule, OBJECT_MODULE_TEXT.getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(projectDir.resolve("src/Bots/\u0412\u0442\u043E\u0440\u043E\u0439")); //$NON-NLS-1$
+        Path roleModule = projectDir.resolve("src/Roles/\u0411\u0430\u0437\u043E\u0432\u044B\u0435/Module.bsl"); //$NON-NLS-1$
+        Files.createDirectories(roleModule.getParent());
+        Files.write(roleModule, OBJECT_MODULE_TEXT.getBytes(StandardCharsets.UTF_8));
         IWorkspace workspace = ResourcesPlugin.getWorkspace();
         project = workspace.getRoot().getProject(PROJECT);
         IProjectDescription description = workspace.newProjectDescription(PROJECT);
@@ -228,12 +235,12 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
     @Test
     public void aKindWithoutModulesIsRefused()
     {
-        String answer = write("append", "Roles/\u0411\u0430\u0437\u043E\u0432\u044B\u0435/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+        String answer = write("append", "Roles/\u041F\u0440\u043E\u0447\u0438\u0435/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
 
         assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
         assertTrue(answer, answer.contains("owns no module files")); //$NON-NLS-1$
         assertTrue("no folder appeared under a kind without modules", //$NON-NLS-1$
-            !projectDir.resolve("src/Roles").toFile().exists()); //$NON-NLS-1$
+            !projectDir.resolve("src/Roles/\u041F\u0440\u043E\u0447\u0438\u0435").toFile().exists()); //$NON-NLS-1$
     }
 
     /** A common module owns one module file, so the object module of another kind is refused. */
@@ -290,6 +297,61 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
             projectDir.resolve("src/Constants/Counter/ValueManagerModule.bsl").toFile().isFile()); //$NON-NLS-1$
     }
 
+    /**
+     * A module file the project already holds is written, whatever kind its folder belongs to: the
+     * folder and name questions guard what a write creates, and this write creates nothing.
+     */
+    @Test
+    public void anExistingFileIsWrittenThoughItsKindOwnsNoModule()
+    {
+        String answer = write("append", "Roles/Базовые/Module.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+    }
+
+    /** A kind the catalog holds no directory for keeps its own module file writeable. */
+    @Test
+    public void anExistingModuleOfAKindWithoutACatalogDirectoryIsWritten()
+    {
+        String answer = write("append", "Bots/Проба/Module.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        Path botModule = projectDir.resolve("src/Bots/Проба/Module.bsl"); //$NON-NLS-1$
+        try
+        {
+            assertTrue("the source reached the module the project holds", //$NON-NLS-1$
+                Files.readString(botModule, StandardCharsets.UTF_8)
+                    .contains("ПроверкаЗаписи")); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            throw new AssertionError("the written bot module could not be read back", e); //$NON-NLS-1$
+        }
+    }
+
+    /** A new module file of an existing object of such a kind is created. */
+    @Test
+    public void aNewModuleOfAKindWithoutACatalogDirectoryIsCreated()
+    {
+        String answer = write("append", "Bots/Второй/Module.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the bot module was created", //$NON-NLS-1$
+            projectDir.resolve("src/Bots/Второй/Module.bsl").toFile().isFile()); //$NON-NLS-1$
+    }
+
+    /** Such a kind owns one module file, so the object module of another kind is refused. */
+    @Test
+    public void aBotTakesItsSingleModuleAlone()
+    {
+        String answer = write("append", "Bots/Второй/ObjectModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("The module files here are: Module.bsl."));
+        assertTrue("no object module appeared beside a bot", //$NON-NLS-1$
+            !projectDir.resolve("src/Bots/Второй/ObjectModule.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
     /** A kind that owns no module file of its own is refused with that said. */
     @Test
     public void aKindThatOwnsNoModuleOfItsOwnIsRefused()
@@ -326,7 +388,7 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
         addressable.add("CommandModule.bsl"); //$NON-NLS-1$
         for (MetadataTypeCatalog.MetadataTypeInfo kind : MetadataTypeCatalog.MetadataTypeInfo.values())
         {
-            if (kind.getDirectoryName() == null)
+            if (BslModuleAccess.moduleFolderOf(kind) == null)
             {
                 // A kind with no folder of its own is refused before the table is consulted.
                 continue;
@@ -345,6 +407,26 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
                     addressable.contains(fileName));
             }
         }
+    }
+
+    /**
+     * A kind the catalog holds no directory for is addressed by the folder of its own modules, and a
+     * kind that owns none has no folder at all.
+     */
+    @Test
+    public void theKindsWithoutACatalogDirectoryNameTheirModuleFolder()
+    {
+        assertEquals("Bots", //$NON-NLS-1$
+            BslModuleAccess.moduleFolderOf(MetadataTypeCatalog.MetadataTypeInfo.BOT));
+        assertEquals("IntegrationServices", //$NON-NLS-1$
+            BslModuleAccess.moduleFolderOf(MetadataTypeCatalog.MetadataTypeInfo.INTEGRATION_SERVICE));
+        assertEquals("WebSocketClients", //$NON-NLS-1$
+            BslModuleAccess.moduleFolderOf(MetadataTypeCatalog.MetadataTypeInfo.WEB_SOCKET_CLIENT));
+        assertEquals("Catalogs", //$NON-NLS-1$
+            BslModuleAccess.moduleFolderOf(MetadataTypeCatalog.MetadataTypeInfo.CATALOG));
+        assertNull("a kind that owns no module file has no module folder", //$NON-NLS-1$
+            BslModuleAccess.moduleFolderOf(MetadataTypeCatalog.MetadataTypeInfo.ROLE));
+        assertNull("the configuration root is no kind", BslModuleAccess.moduleFolderOf(null)); //$NON-NLS-1$
     }
 
     /** Backslashes and absolute paths are refused for a write, whatever the rest says. */
