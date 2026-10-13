@@ -18,6 +18,7 @@ import java.util.Map;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
+import ru.aiedt.mcp.server.support.DiagnosticsBaselineStore;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -40,6 +41,9 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
  *       (delegates to {@link ValidateForExportTool})</li>
  *   <li>{@code get_check_description} - documentation for one EDT check
  *       (delegates to {@link CheckDocReader})</li>
+ *   <li>{@code save_baseline} - record the project's current findings as the baseline that
+ *       {@code get_project_errors} {@code sinceBaseline=true} subtracts from (handled here)</li>
+ *   <li>{@code clear_baseline} - remove the project's recorded baseline (handled here)</li>
  *   <li>{@code help} - built-in topic-driven help</li>
  * </ul>
  *
@@ -110,9 +114,10 @@ public class DiagnosticsFacadeTool implements IMcpTool
     public String getDescription()
     {
         return "Project validation and health - errors, problems, revalidation, cleaning, " //$NON-NLS-1$
-            + "export-readiness and check docs. Operations: get_project_errors, " //$NON-NLS-1$
-            + "get_problem_summary, revalidate_objects, clean_project, validate_for_export, " //$NON-NLS-1$
-            + "get_check_description, help. Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
+            + "export-readiness, check docs and the baseline of what already stood. Operations: " //$NON-NLS-1$
+            + "get_project_errors, get_problem_summary, revalidate_objects, clean_project, " //$NON-NLS-1$
+            + "validate_for_export, get_check_description, save_baseline, clear_baseline, help. " //$NON-NLS-1$
+            + "Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
             + "camelCase like getProjectErrors is also accepted); remaining parameters follow " //$NON-NLS-1$
             + "the per-operation contracts (call operation=help for the catalog). The standalone " //$NON-NLS-1$
             + "tools (get_project_errors, get_problem_summary, revalidate_objects, clean_project, " //$NON-NLS-1$
@@ -125,7 +130,8 @@ public class DiagnosticsFacadeTool implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
                 "get_project_errors / get_problem_summary / revalidate_objects / clean_project / " //$NON-NLS-1$
-                    + "validate_for_export / get_check_description / help (snake_case canonical; " //$NON-NLS-1$
+                    + "validate_for_export / get_check_description / save_baseline / " //$NON-NLS-1$
+                    + "clear_baseline / help (snake_case canonical; " //$NON-NLS-1$
                     + "camelCase like getProjectErrors is also accepted). Pass operation=help " //$NON-NLS-1$
                     + "without other params for the operation catalog.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
@@ -133,10 +139,10 @@ public class DiagnosticsFacadeTool implements IMcpTool
                     + "one-line summaries.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project name. Required for revalidate_objects and validate_for_export; " //$NON-NLS-1$
-                    + "optional for clean_project (omitted cleans every project), " //$NON-NLS-1$
-                    + "get_project_errors and get_problem_summary (both scope to the whole " //$NON-NLS-1$
-                    + "workspace when omitted).") //$NON-NLS-1$
+                "EDT project name. Required for revalidate_objects, validate_for_export, " //$NON-NLS-1$
+                    + "save_baseline and clear_baseline; optional for clean_project " //$NON-NLS-1$
+                    + "(omitted cleans every project), get_project_errors and get_problem_summary " //$NON-NLS-1$
+                    + "(omitted scopes them to the whole workspace).") //$NON-NLS-1$
             .stringProperty("checkId", //$NON-NLS-1$
                 "get_check_description: the check id (required, e.g. 'ql-temp-table-index'). " //$NON-NLS-1$
                     + "get_project_errors: keep only checks whose id contains this substring " //$NON-NLS-1$
@@ -154,10 +160,12 @@ public class DiagnosticsFacadeTool implements IMcpTool
                 "get_project_errors: fold the result into grouped per-check / per-location " //$NON-NLS-1$
                     + "counts instead of one row per marker.") //$NON-NLS-1$
             .booleanProperty("extraInfo", //$NON-NLS-1$
-                "get_project_errors: add an 'Extra' column with whatever the check attached " //$NON-NLS-1$
-                    + "to the marker beyond its position. Most findings carry nothing there; " //$NON-NLS-1$
-                    + "reach for it when the message alone does not say what the check " //$NON-NLS-1$
-                    + "objected to.") //$NON-NLS-1$
+                "get_project_errors: add an 'Extra' column with what the check attached to the " //$NON-NLS-1$
+                    + "marker beyond its position; reach for it when the message alone does not " //$NON-NLS-1$
+                    + "say what the check objected to.") //$NON-NLS-1$
+            .booleanProperty("sinceBaseline", //$NON-NLS-1$
+                "get_project_errors: answer only findings absent from this project's recorded " //$NON-NLS-1$
+                    + "baseline; adds resolvedSinceBaseline; needs projectName.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "get_project_errors: cap on results (default 100, max 1000). " //$NON-NLS-1$
                     + "validate_for_export: cap on findings (default 500).") //$NON-NLS-1$
@@ -172,7 +180,7 @@ public class DiagnosticsFacadeTool implements IMcpTool
                     + "applied on top of scope (e.g. 'CommonModule.Common').") //$NON-NLS-1$
             .booleanProperty("waitForRefresh", //$NON-NLS-1$
                 "get_project_errors: poll EDT up to 3x300ms for freshly-computed markers " //$NON-NLS-1$
-                    + "(default true). Disable when latency matters more than freshness.") //$NON-NLS-1$
+                    + "(default true); disable when latency matters more than freshness.") //$NON-NLS-1$
             .stringArrayProperty("objectFqns", //$NON-NLS-1$
                 "revalidate_objects: FQNs to revalidate - alias of `objects`. Empty/omitted = " //$NON-NLS-1$
                     + "whole project.") //$NON-NLS-1$
@@ -193,7 +201,8 @@ public class DiagnosticsFacadeTool implements IMcpTool
         {
             return ToolResult.error("operation is required. Allowed: get_project_errors / " //$NON-NLS-1$
                 + "get_problem_summary / revalidate_objects / clean_project / " //$NON-NLS-1$
-                + "validate_for_export / get_check_description / help.").toJson(); //$NON-NLS-1$
+                + "validate_for_export / get_check_description / save_baseline / clear_baseline / " //$NON-NLS-1$
+                + "help.").toJson(); //$NON-NLS-1$
         }
         operation = JsonUtils.normalizeOperationToken(operation);
         if ("help".equals(operation)) //$NON-NLS-1$
@@ -232,9 +241,161 @@ public class DiagnosticsFacadeTool implements IMcpTool
                 return new ValidateForExportTool().execute(params);
             case "get_check_description": //$NON-NLS-1$
                 return new CheckDocReader().execute(params);
+            case "save_baseline": //$NON-NLS-1$
+                return saveBaseline(params);
+            case "clear_baseline": //$NON-NLS-1$
+                return clearBaseline(params);
             default:
                 return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Records the baseline of one project: its findings at this moment, whole or narrowed to named
+     * objects, stored in the plugin's own state area - never inside the project.
+     * <p>
+     * Only the plugin's own state is written, so the operation stands under every preset: the
+     * state records the format of a dump and the run receipts the same way, and none of those has
+     * a gate of its own either. What writes into a project - the markers and clusters - is what a
+     * read-only preset switches off.
+     * </p>
+     *
+     * @param params the call's arguments
+     * @return the markdown answer naming the area, the moment and the recorded counts
+     */
+    private static String saveBaseline(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        if (projectName == null || projectName.isBlank())
+        {
+            return "# Request Failed\n\nsave_baseline records the baseline of one project - " //$NON-NLS-1$
+                + "pass projectName."; //$NON-NLS-1$
+        }
+        String objectsRaw = JsonUtils.extractStringArgument(params, "objects"); //$NON-NLS-1$
+        String objectsRefusal = ProjectProblemsReader.objectsNotArrayRefusal(objectsRaw);
+        if (objectsRefusal != null)
+        {
+            return objectsRefusal;
+        }
+        List<String> objects = ProjectProblemsReader.parseObjectsList(objectsRaw);
+        ProjectProblemsReader.BaselineSnapshot snapshot =
+            ProjectProblemsReader.collectBaselineSnapshot(projectName, objects);
+        if (snapshot.refusal != null)
+        {
+            return snapshot.refusal;
+        }
+        java.nio.file.Path dir = DiagnosticsBaselineStore.stateDir();
+        if (dir == null)
+        {
+            return "# Request Failed\n\nThe plugin state location is unavailable, " //$NON-NLS-1$
+                + "so no baseline can be written."; //$NON-NLS-1$
+        }
+        String unresolved = ProjectProblemsReader.unresolvedNotice(projectName, objects);
+        DiagnosticsBaselineStore.Baseline saved;
+        try
+        {
+            saved = DiagnosticsBaselineStore.save(dir, projectName, objects, snapshot.diagnostics);
+        }
+        catch (java.io.IOException failed)
+        {
+            return "# Request Failed\n\nCould not write the baseline: " //$NON-NLS-1$
+                + ProjectProblemsReader.failureText(failed);
+        }
+        StringBuilder builder = new StringBuilder("# Baseline Saved\n\n"); //$NON-NLS-1$
+        builder.append("**Project:** ").append(projectName).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.append("**Area:** "); //$NON-NLS-1$
+        if (saved.objects.isEmpty())
+        {
+            builder.append("the whole project\n"); //$NON-NLS-1$
+        }
+        else
+        {
+            builder.append("objects ").append(String.join(", ", saved.objects)).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        builder.append("**Saved at:** ").append(saved.savedAt).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.append("**Recorded:** ").append(describeBaselineCounts(saved.diagnostics)) //$NON-NLS-1$
+            .append("\n"); //$NON-NLS-1$
+        if (snapshot.capped)
+        {
+            builder.append("\n**Note:** the collection reached its cap; " //$NON-NLS-1$
+                + "the baseline may hold less than everything.\n"); //$NON-NLS-1$
+        }
+        builder.append("\nget_project_errors with sinceBaseline=true and projectName=") //$NON-NLS-1$
+            .append(projectName).append(" answers only what appears after this moment.\n"); //$NON-NLS-1$
+        return unresolved + builder.toString();
+    }
+
+    /**
+     * Removes the baseline of one project. A project with no baseline is an answer, not an error:
+     * the caller asked for absence and absence is what stands.
+     *
+     * @param params the call's arguments
+     * @return the markdown answer
+     */
+    private static String clearBaseline(Map<String, String> params)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        if (projectName == null || projectName.isBlank())
+        {
+            return "# Request Failed\n\nclear_baseline removes the baseline of one project - " //$NON-NLS-1$
+                + "pass projectName."; //$NON-NLS-1$
+        }
+        java.nio.file.Path dir = DiagnosticsBaselineStore.stateDir();
+        if (dir == null)
+        {
+            return "# Request Failed\n\nThe plugin state location is unavailable, " //$NON-NLS-1$
+                + "so no baseline can be removed."; //$NON-NLS-1$
+        }
+        boolean removed;
+        try
+        {
+            removed = DiagnosticsBaselineStore.clear(dir, projectName);
+        }
+        catch (java.io.IOException failed)
+        {
+            return "# Request Failed\n\nCould not remove the baseline: " //$NON-NLS-1$
+                + ProjectProblemsReader.failureText(failed);
+        }
+        if (!removed)
+        {
+            return "# No Baseline\n\nProject '" + projectName + "' has no baseline recorded. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "Nothing was removed."; //$NON-NLS-1$
+        }
+        return "# Baseline Cleared\n\n**Project:** " + projectName //$NON-NLS-1$
+            + " - the baseline has been removed.\n"; //$NON-NLS-1$
+    }
+
+    /**
+     * The counts a saved answer reports: the total and the split by severity.
+     *
+     * @param diagnostics the collapsed records of the baseline
+     * @return the sentence, never <code>null</code>
+     */
+    private static String describeBaselineCounts(
+        List<DiagnosticsBaselineStore.Diagnostic> diagnostics)
+    {
+        Map<String, Integer> counts = DiagnosticsBaselineStore.countBySeverity(diagnostics);
+        int total = 0;
+        for (Integer count : counts.values())
+        {
+            total += count.intValue();
+        }
+        StringBuilder text = new StringBuilder().append(total).append(" diagnostic(s)"); //$NON-NLS-1$
+        if (!counts.isEmpty())
+        {
+            text.append(" - "); //$NON-NLS-1$
+            boolean first = true;
+            for (Map.Entry<String, Integer> entry : counts.entrySet())
+            {
+                if (!first)
+                {
+                    text.append(", "); //$NON-NLS-1$
+                }
+                first = false;
+                text.append(entry.getKey()).append(": ").append(entry.getValue()); //$NON-NLS-1$
+            }
+        }
+        return text.toString();
     }
 
     /** Every help topic, in the order the catalog names them: operations, then named topics. */
@@ -274,6 +435,10 @@ public class DiagnosticsFacadeTool implements IMcpTool
                 + "source files for defects get_project_errors cannot see (it validates the " //$NON-NLS-1$
                 + "in-memory model, not the exported XDTO).\n"); //$NON-NLS-1$
             sb.append("- **get_check_description** - documentation for one EDT check id.\n"); //$NON-NLS-1$
+            sb.append("- **save_baseline** - record the project's current findings as the " //$NON-NLS-1$
+                + "baseline that sinceBaseline=true subtracts from; objects=[...] narrows the " //$NON-NLS-1$
+                + "record to those FQNs.\n"); //$NON-NLS-1$
+            sb.append("- **clear_baseline** - remove the project's recorded baseline.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the operation-picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
             return sb.toString();
@@ -291,6 +456,9 @@ public class DiagnosticsFacadeTool implements IMcpTool
             sb.append("| Will update_database crash on a hand-edited .mdo/.form | " //$NON-NLS-1$
                 + "validate_for_export |\n"); //$NON-NLS-1$
             sb.append("| What does check X mean | get_check_description |\n"); //$NON-NLS-1$
+            sb.append("| Only what appeared since my last check | save_baseline, edit, then " //$NON-NLS-1$
+                + "get_project_errors sinceBaseline=true |\n"); //$NON-NLS-1$
+            sb.append("| Drop that recorded \"before\" | clear_baseline |\n"); //$NON-NLS-1$
             return sb.toString();
         }
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),
@@ -303,7 +471,8 @@ public class DiagnosticsFacadeTool implements IMcpTool
         for (String op : Arrays.asList(
             "get_project_errors", "get_problem_summary", //$NON-NLS-1$ //$NON-NLS-2$
             "revalidate_objects", "clean_project", //$NON-NLS-1$ //$NON-NLS-2$
-            "validate_for_export", "get_check_description")) //$NON-NLS-1$ //$NON-NLS-2$
+            "validate_for_export", "get_check_description", //$NON-NLS-1$ //$NON-NLS-2$
+            "save_baseline", "clear_baseline")) //$NON-NLS-1$ //$NON-NLS-2$
         {
             m.put(op, op);
         }
