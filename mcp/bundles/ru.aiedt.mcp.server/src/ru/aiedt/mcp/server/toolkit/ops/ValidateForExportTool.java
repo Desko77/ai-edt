@@ -9,11 +9,16 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -677,6 +682,64 @@ public class ValidateForExportTool implements IMcpTool
     private static final Pattern MDO_FORM_NAME =
         Pattern.compile("<forms\\b[^>]*>\\s*<name>([^<]+)</name>"); //$NON-NLS-1$
 
+    /** A {@code <type>} block of an .mdo element - attribute, register field, defined type. */
+    private static final Pattern MDO_TYPE_BLOCK =
+        Pattern.compile("<type>([\\s\\S]*?)</type>"); //$NON-NLS-1$
+
+    /** Any .mdo start, end or self-closing tag, with the element name it carries. */
+    private static final Pattern XML_TAG =
+        Pattern.compile("<(/?)([A-Za-z_][\\w:.-]*)[^>]*?(/?)>"); //$NON-NLS-1$
+
+    /**
+     * The .mdo list elements whose items are stored in a database table, named as EDT writes the
+     * EMF features that hold them: object and tabular-section attributes, standard attributes,
+     * register dimensions, resources and attributes, accounting flags and task addressing
+     * attributes.
+     */
+    private static final Set<String> MDO_STORED_TYPE_CONTAINERS = new HashSet<>(Arrays.asList(
+        "attributes", "standardAttributes", "dimensions", "resources", "accountingFlags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "extDimensionAccountingFlags", "addressingAttributes")); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * The .mdo root objects whose own {@code <type>} is stored in a database table: the constant
+     * value, the common attribute and the defined type, whose composition applies to the stored
+     * attributes that borrow it.
+     */
+    private static final Set<String> MDO_STORED_TYPE_ROOTS = new HashSet<>(Arrays.asList(
+        "Constant", "CommonAttribute", "DefinedType")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /**
+     * The .mdo root objects that keep every feature in memory, named as EDT writes them: a report,
+     * a data processor and the two external kinds.
+     * <p>
+     * They write their attributes and the attributes of their tabular sections into the same
+     * {@code <attributes>} and {@code <tabularSections>} elements a database object does, so the
+     * carrier element alone does not tell whether a column is built. The root element of the file
+     * does.
+     * </p>
+     */
+    private static final Set<String> MDO_IN_MEMORY_ROOTS = new HashSet<>(Arrays.asList(
+        "Report", "DataProcessor", "ExternalReport", "ExternalDataProcessor", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        // An external data source reads another system: its tables, cubes and dimension tables
+        // write <dimensions> and <resources> as a register does and own no table in the infobase.
+        "ExternalDataSource", "Table", "Cube", "DimensionTable")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
+    /** One {@code <types>} entry inside an .mdo {@code <type>} block. */
+    private static final Pattern MDO_TYPE_ENTRY =
+        Pattern.compile("<types>\\s*([^<]*?)\\s*</types>"); //$NON-NLS-1$
+
+    /** The {@code <stringQualifiers>} element of a type block, empty or carrying children. */
+    private static final Pattern MDO_STRING_QUALIFIERS =
+        Pattern.compile("<stringQualifiers\\s*/>|<stringQualifiers\\s*>([\\s\\S]*?)</stringQualifiers>"); //$NON-NLS-1$
+
+    /** The declared {@code <length>} of a string qualifier. */
+    private static final Pattern MDO_QUALIFIER_LENGTH =
+        Pattern.compile("<length>\\s*(\\d+)\\s*</length>"); //$NON-NLS-1$
+
+    /** The {@code <name>} of an .mdo element, nearest before a type block. */
+    private static final Pattern MDO_ELEMENT_NAME =
+        Pattern.compile("<name>([^<]*)</name>"); //$NON-NLS-1$
+
     private void scanMdo(String content, String relPath, String fqn, String checkFilterLower,
         List<Map<String, Object>> findings, IFile file)
     {
@@ -756,6 +819,8 @@ public class ValidateForExportTool implements IMcpTool
                 + "it a <value> (e.g. 0001-01-01T00:00:00)."); //$NON-NLS-1$
         }
 
+        scanCompositeString(content, relPath, fqn, checkFilterLower, findings);
+
         // Object-level <help> declares one help page per language; each <lang> must
         // have a sibling Help/<lang>.html file or EDT's configuration .cf export
         // crashes on the empty page (the EDT editor does not flag this - a known
@@ -786,6 +851,219 @@ public class ValidateForExportTool implements IMcpTool
                 }
             }
         }
+    }
+
+    /**
+     * Reports every .mdo element whose type composition carries a String with no length.
+     * <p>
+     * The platform loads such a description and refuses the database update with
+     * "Ошибка SDBL: Строка без спецификации длины недопустима". A lone String with no length is
+     * valid - the platform reads it as an unlimited string of its own - so only a composition is
+     * judged. The refusal holds for a type that becomes a table column, and this scan reads the
+     * element that carries the block to tell one from the other: a type written to a form
+     * attribute, a DCS field or parameter, a command parameter type or an external data source
+     * field is not stored and is not this check's business. See
+     * {@code BmDefinedTypeHelper.typeIsStoredInDatabase}, which applies the same distinction on
+     * the write path.
+     * </p>
+     *
+     * @param content the .mdo text
+     * @param relPath the file path the finding names
+     * @param fqn the object FQN, or <code>null</code>
+     * @param checkFilterLower optional lowercase check-id substring, or <code>null</code>
+     * @param findings the list the findings are added to
+     */
+    private void scanCompositeString(String content, String relPath, String fqn,
+        String checkFilterLower, List<Map<String, Object>> findings)
+    {
+        if (content == null || content.isEmpty())
+        {
+            return;
+        }
+        Deque<String> open = new ArrayDeque<>();
+        int scannedTo = 0;
+        Matcher block = MDO_TYPE_BLOCK.matcher(content);
+        while (block.find())
+        {
+            scannedTo = walkTags(content, scannedTo, block.start(), open);
+            if (!carriesStoredType(open))
+            {
+                continue;
+            }
+            String body = block.group(1);
+            List<String> types = new ArrayList<>();
+            Matcher entry = MDO_TYPE_ENTRY.matcher(body);
+            while (entry.find())
+            {
+                types.add(entry.group(1));
+            }
+            if (types.size() < 2 || !types.contains("String") || stringLengthIn(body) > 0) //$NON-NLS-1$
+            {
+                continue;
+            }
+            String element = elementNameBefore(content, block.start());
+            add(findings, checkFilterLower, relPath, fqn,
+                "mdo-composite-string-without-length", "ERROR", lineOf(content, block.start()), //$NON-NLS-1$ //$NON-NLS-2$
+                (element.isEmpty() ? "an element" : "element '" + element + "'") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " of " + (fqn == null || fqn.isEmpty() ? "the configuration" : fqn) //$NON-NLS-1$ //$NON-NLS-2$
+                + " is typed as a composition that includes String without a length - the " //$NON-NLS-1$
+                + "platform refuses the database update with \"Ошибка SDBL: Строка без " //$NON-NLS-1$
+                + "спецификации длины недопустима\". Give the composition a length (the length " //$NON-NLS-1$
+                + "argument of the operation that wrote it), or drop String from it."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Walks the .mdo tags up to an offset, keeping the stack of the elements left open.
+     * <p>
+     * The tags are read once, in document order: each call resumes at the offset the previous one
+     * reached, so a file with many type blocks is still walked once.
+     * </p>
+     *
+     * @param content the whole .mdo text
+     * @param from the offset to resume at
+     * @param to the offset to stop before - an element starting at it stays unread
+     * @param open the stack to push start tags onto and pop end tags off
+     * @return the offset reached, which the next call resumes at
+     */
+    private static int walkTags(String content, int from, int to, Deque<String> open)
+    {
+        Matcher tag = XML_TAG.matcher(content);
+        tag.region(from, to);
+        while (tag.find())
+        {
+            String name = tag.group(2);
+            if (!tag.group(1).isEmpty())
+            {
+                // An end tag closes the nearest matching start tag. A stray one closes nothing.
+                while (!open.isEmpty() && !open.peek().equals(name))
+                {
+                    open.pop();
+                }
+                if (!open.isEmpty())
+                {
+                    open.pop();
+                }
+            }
+            else if (tag.group(3).isEmpty())
+            {
+                open.push(name);
+            }
+        }
+        return to;
+    }
+
+    /**
+     * Tells whether the element left open by {@link #walkTags} is one whose type is stored in a
+     * database table.
+     * <p>
+     * A type block directly under the root object belongs to the object itself, so it is stored
+     * only for the root kinds whose single type description becomes a column - a constant, a
+     * common attribute, a defined type. A type block under a list element is stored when that
+     * element holds attributes or register fields; a block under any other element - a form
+     * attribute, a schema field or parameter, a command parameter type - is not.
+     * </p>
+     * <p>
+     * The file as a whole is judged first: a report, a data processor and the external kinds build
+     * no table for their features, so no type block inside them is stored, whatever element holds
+     * it.
+     * </p>
+     *
+     * @param open the stack of elements open at the type block, the innermost on top
+     * @return <code>true</code> when the type becomes a table column
+     */
+    private static boolean carriesStoredType(Deque<String> open)
+    {
+        String carrier = open.peek();
+        if (carrier == null)
+        {
+            return false;
+        }
+        String root = open.peekLast();
+        if (root != null && MDO_IN_MEMORY_ROOTS.contains(localName(root)))
+        {
+            return false;
+        }
+        if (MDO_STORED_TYPE_CONTAINERS.contains(carrier))
+        {
+            return true;
+        }
+        return open.size() == 1 && MDO_STORED_TYPE_ROOTS.contains(localName(carrier));
+    }
+
+    /**
+     * The element name without its namespace prefix.
+     *
+     * @param tagName the name as written in the tag, e.g. {@code mdclass:Constant}
+     * @return the part after the last colon, or the whole name when it carries none
+     */
+    private static String localName(String tagName)
+    {
+        int colon = tagName.lastIndexOf(':');
+        return colon < 0 ? tagName : tagName.substring(colon + 1);
+    }
+
+    /**
+     * The length declared by the {@code <stringQualifiers>} of a type block.
+     *
+     * @param typeBlock one {@code <type>} element body
+     * @return the declared length, or 0 when the qualifier declares none or is absent - which
+     *     the platform reads as an unlimited string
+     */
+    private static int stringLengthIn(String typeBlock)
+    {
+        Matcher qualifiers = MDO_STRING_QUALIFIERS.matcher(typeBlock);
+        if (!qualifiers.find() || qualifiers.group(1) == null)
+        {
+            return 0;
+        }
+        Matcher length = MDO_QUALIFIER_LENGTH.matcher(qualifiers.group(1));
+        if (!length.find())
+        {
+            return 0;
+        }
+        try
+        {
+            return Integer.parseInt(length.group(1));
+        }
+        catch (NumberFormatException e)
+        {
+            return 0;
+        }
+    }
+
+    /**
+     * The {@code <name>} nearest before an offset - the element a type block belongs to.
+     *
+     * @param content the .mdo text
+     * @param offset the offset of the type block
+     * @return the trimmed name, or an empty string when the file declares none before it
+     */
+    private static String elementNameBefore(String content, int offset)
+    {
+        Matcher names = MDO_ELEMENT_NAME.matcher(content);
+        String name = ""; //$NON-NLS-1$
+        while (names.find() && names.start() < offset)
+        {
+            name = names.group(1).trim();
+        }
+        return name;
+    }
+
+    /**
+     * The .mdo findings {@link #scanMdo} reports for one file. Tests and the export scan share
+     * this scan.
+     *
+     * @param content the .mdo text
+     * @param relPath the file path the finding names
+     * @param fqn the object FQN, or <code>null</code>
+     * @return the findings, in scan order
+     */
+    static List<Map<String, Object>> mdoFindings(String content, String relPath, String fqn)
+    {
+        List<Map<String, Object>> findings = new ArrayList<>();
+        new ValidateForExportTool().scanMdo(content, relPath, fqn, null, findings, null);
+        return findings;
     }
 
     // ---- .dcs -----------------------------------------------------------

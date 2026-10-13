@@ -269,4 +269,52 @@ public class BmDefinedTypeHelperTest
         assertEquals("CatalogRef.Валюты", //$NON-NLS-1$
             BmDefinedTypeHelper.normalizePrimitiveFqn("CatalogRef.Валюты")); //$NON-NLS-1$
     }
+    /**
+     * A composition that includes String is refused without a length.
+     * <p>
+     * The platform loads an unbounded String inside a composition and then refuses the database
+     * update, so the refusal comes from the shared type builder. A String of its own is a
+     * different type and stays valid.
+     * </p>
+     */
+    @Test
+    public void aCompositionThatIncludesStringIsRefusedWithoutALength()
+    {
+        BmDefinedTypeHelper.QualifierOptions bare = new BmDefinedTypeHelper.QualifierOptions();
+        String refusal = BmDefinedTypeHelper.compositeStringLengthRefusal(
+            Arrays.asList("String", "CatalogRef.Goods"), bare); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(refusal, refusal != null);
+        // The caller has to be told which argument to pass, and why the platform will not take it.
+        assertTrue(refusal, refusal.contains("'length'")); //$NON-NLS-1$
+        assertTrue(refusal, refusal.contains("composition")); //$NON-NLS-1$
+        // A zero length is the unlimited string under another name.
+        BmDefinedTypeHelper.QualifierOptions zero = new BmDefinedTypeHelper.QualifierOptions();
+        zero.length = Integer.valueOf(0);
+        assertTrue(BmDefinedTypeHelper.compositeStringLengthRefusal(
+            Arrays.asList("String", "CatalogRef.Goods"), zero) != null); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The shapes the refusal must leave alone.
+     */
+    @Test
+    public void aBoundedCompositionAndALoneStringAreAccepted()
+    {
+        BmDefinedTypeHelper.QualifierOptions bounded = new BmDefinedTypeHelper.QualifierOptions();
+        bounded.length = Integer.valueOf(20);
+        assertEquals(null, BmDefinedTypeHelper.compositeStringLengthRefusal(
+            Arrays.asList("String", "CatalogRef.Goods"), bounded)); //$NON-NLS-1$ //$NON-NLS-2$
+        // A lone String without a length is an unlimited string of its own - the shape the
+        // platform accepts.
+        assertEquals(null, BmDefinedTypeHelper.compositeStringLengthRefusal(
+            Arrays.asList("String"), new BmDefinedTypeHelper.QualifierOptions())); //$NON-NLS-1$
+        assertEquals(null, BmDefinedTypeHelper.compositeStringLengthRefusal(
+            Arrays.asList("String"), null)); //$NON-NLS-1$
+        // No String in the composition, nothing to bound.
+        assertEquals(null, BmDefinedTypeHelper.compositeStringLengthRefusal(
+            Arrays.asList("Number", "CatalogRef.Goods"), //$NON-NLS-1$ //$NON-NLS-2$
+            new BmDefinedTypeHelper.QualifierOptions()));
+        assertEquals(null, BmDefinedTypeHelper.compositeStringLengthRefusal(null, null));
+    }
 }

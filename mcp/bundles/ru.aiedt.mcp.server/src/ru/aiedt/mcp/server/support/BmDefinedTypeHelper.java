@@ -25,8 +25,16 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicFeature;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.Constant;
+import com._1c.g5.v8.dt.metadata.mdclass.DataProcessor;
+import com._1c.g5.v8.dt.metadata.mdclass.DefinedType;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalDataProcessor;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalReport;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.Report;
+import com._1c.g5.v8.dt.metadata.mdclass.SequenceDimension;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -249,6 +257,130 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * Tells whether a type written on this owner is stored in a database table.
+     * <p>
+     * A type description of a stored carrier becomes a table column, and only such a carrier meets
+     * the platform's refusal of an unlimited String inside a composition. A carrier whose type
+     * never reaches a table - a form attribute, a DCS field or parameter, a command parameter
+     * type, an external data source field or function, a session parameter - takes the same
+     * composition and works.
+     * </p>
+     * <p>
+     * The classes are the model's own, read from the mdclass jar of the target platform
+     * (com._1c.g5.v8.dt.metadata 19.0.0): {@code BasicFeature} is the base of every attribute of a
+     * database object and of a tabular section, of a register dimension, resource and attribute,
+     * of an addressing attribute and of an accounting flag - 34 interfaces in all. The remaining
+     * stored carriers are the top-level objects whose one type description is stored as well: the
+     * constant value, the sequence dimension, and the defined type, whose composition applies to
+     * the stored attributes that borrow it.
+     * </p>
+     * <p>
+     * The carrier class alone does not answer the question. A report and a data processor compute
+     * their attributes and the attributes of their tabular sections at run time and store none of
+     * them, and the external kinds do the same - yet those attributes are {@code BasicFeature}
+     * objects like any other. The root object of the containment chain decides: a feature of one of
+     * those four is not stored, wherever in the object it sits.
+     * </p>
+     *
+     * @param owner the EObject the type description belongs to, possibly <code>null</code>
+     * @return <code>true</code> when the type becomes a table column
+     */
+    public static boolean typeIsStoredInDatabase(Object owner)
+    {
+        if (!(owner instanceof BasicFeature
+            || owner instanceof Constant
+            || owner instanceof DefinedType
+            || owner instanceof SequenceDimension))
+        {
+            return false;
+        }
+        if (owner instanceof EObject)
+        {
+            return !belongsToAnObjectThatKeepsItsFeaturesInMemory((EObject)owner);
+        }
+        return true;
+    }
+
+    /**
+     * Tells whether the containment chain above a feature reaches an object that stores none of
+     * them.
+     * <p>
+     * The walk starts at the owner of the feature, not at the feature itself: a detached feature
+     * carries no chain and keeps its answer, and a feature sitting directly in a configuration
+     * keeps it too. The four classes are unrelated in the model - each of them extends
+     * {@code MdObject} on its own - so every one of them is named.
+     * </p>
+     *
+     * @param feature the feature whose chain to walk, not <code>null</code>
+     * @return <code>true</code> when a report, a data processor or one of the external kinds holds
+     *         the feature above it
+     */
+    private static boolean belongsToAnObjectThatKeepsItsFeaturesInMemory(EObject feature)
+    {
+        for (EObject owner = feature.eContainer(); owner != null; owner = owner.eContainer())
+        {
+            if (owner instanceof Report
+                || owner instanceof DataProcessor
+                || owner instanceof ExternalReport
+                || owner instanceof ExternalDataProcessor)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Refuses a type composition that carries a String without a length.
+     * <p>
+     * The platform loads such a description and then refuses the database update with
+     * "Ошибка SDBL: Строка без спецификации длины недопустима". A String with no length is a
+     * type of its own, and a composition names bounded types only; a lone String without a
+     * length is valid and is not refused.
+     * </p>
+     * <p>
+     * The refusal holds for a carrier whose type is stored in a database table - see
+     * {@link #typeIsStoredInDatabase}. A type that goes no further than the form or the schema it
+     * was written on is not judged here.
+     * </p>
+     *
+     * @param typeFqns the resolved types the caller asked for
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable
+     */
+    public static String compositeStringLengthRefusal(List<String> typeFqns,
+        QualifierOptions qualifierOptions)
+    {
+        if (typeFqns == null || typeFqns.size() < 2)
+        {
+            return null;
+        }
+        boolean hasString = false;
+        for (String fqn : typeFqns)
+        {
+            if (fqn != null && "String".equalsIgnoreCase(fqn.trim())) //$NON-NLS-1$
+            {
+                hasString = true;
+                break;
+            }
+        }
+        if (!hasString)
+        {
+            return null;
+        }
+        Integer length = qualifierOptions == null ? null : qualifierOptions.length;
+        if (length != null && length.intValue() > 0)
+        {
+            return null;
+        }
+        return "A composition of more than one type that includes String requires the 'length' " //$NON-NLS-1$
+            + "argument: a String without a length is a type of its own, and the platform " //$NON-NLS-1$
+            + "refuses the database update for an unlimited String inside a composition " //$NON-NLS-1$
+            + "(Ошибка SDBL: Строка без спецификации длины недопустима). Pass length=<characters>, " //$NON-NLS-1$
+            + "or drop String from the composition."; //$NON-NLS-1$
+    }
+
+    /**
      * Description-level core of {@link #setTypes}: validates the requested
      * FQNs, builds fresh TypeItems, replaces the TypeDescription's types
      * list, deep-resolves the proxies against {@code contextObject}'s
@@ -328,6 +460,33 @@ public final class BmDefinedTypeHelper
                 + "ValueTable, StandardPeriod and the rest); for a reference type, check that the "
                 + "object it names exists in this configuration";
             return r;
+        }
+
+        // 1a. A composition carrying String needs the length where the type is stored: the platform
+        // builds a table column out of the type description of such a carrier and refuses the
+        // update otherwise. Every type write passes through here, so the carrier decides - a
+        // composition written to a form attribute or a schema field is kept as it stands.
+        //
+        // What is judged is the length the model carries after the call, not the one the arguments
+        // spell out. A caller repeating the composition already written names no length, and the
+        // write path leaves the stored qualifiers alone, so the length standing in the model is the
+        // one that applies. A caller naming length=0 asks for an unlimited String and is refused,
+        // and so is a composition the caller is changing.
+        if (typeIsStoredInDatabase(contextObject))
+        {
+            QualifierOptions effective = qualifierOptions;
+            if ((effective == null || effective.length == null)
+                && readCurrentTypeNames(typesList).equals(new HashSet<>(requested)))
+            {
+                effective = new QualifierOptions();
+                effective.length = Integer.valueOf(declaredStringLengthOf(typeDesc));
+            }
+            String compositionRefusal = compositeStringLengthRefusal(requested, effective);
+            if (compositionRefusal != null)
+            {
+                r.error = compositionRefusal;
+                return r;
+            }
         }
 
         // 2. Idempotency check.
@@ -1893,6 +2052,24 @@ public final class BmDefinedTypeHelper
     private static int declaredStringLength(EObject target)
     {
         Object typeDesc = target instanceof MdObject ? readTypeDescription((MdObject) target) : null;
+        Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
+        Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
+        return length instanceof Integer ? ((Integer)length).intValue() : 0;
+    }
+
+    /**
+     * Reads the declared length of a type description from its own string
+     * qualifiers.
+     * <p>
+     * Zero means unlimited, and is what the model answers for a description that
+     * carries no string qualifiers at all.
+     * </p>
+     *
+     * @param typeDesc the type description, possibly <code>null</code>
+     * @return the declared length, or zero when there is none
+     */
+    private static int declaredStringLengthOf(Object typeDesc)
+    {
         Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
         Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
         return length instanceof Integer ? ((Integer)length).intValue() : 0;
