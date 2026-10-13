@@ -94,6 +94,34 @@ public class AReportKeepsItsCompositionOnExportTest
     }
 
     /**
+     * An external data source cube writes dimensions and resources under the element names a
+     * register uses, and none of them becomes a column of the infobase.
+     */
+    @Test
+    public void anExternalDataSourceCubeKeepsTheComposition()
+    {
+        for (String root : new String[] { "Cube", "Table", "DimensionTable", "ExternalDataSource" }) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {
+            String content = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+                + "<mdclass:" + root + " xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$ //$NON-NLS-2$
+                + "uuid=\"11111111-1111-1111-1111-111111111111\">\n" //$NON-NLS-1$
+                + "  <name>Sales</name>\n" //$NON-NLS-1$
+                + "  <dimensions uuid=\"22222222-2222-2222-2222-222222222222\">\n" //$NON-NLS-1$
+                + "    <name>Kind</name>\n" //$NON-NLS-1$
+                + UNBOUNDED_ATTRIBUTE
+                + "  </dimensions>\n" //$NON-NLS-1$
+                + "  <resources uuid=\"33333333-3333-3333-3333-333333333333\">\n" //$NON-NLS-1$
+                + "    <name>Amount</name>\n" //$NON-NLS-1$
+                + UNBOUNDED_ATTRIBUTE
+                + "  </resources>\n" //$NON-NLS-1$
+                + "</mdclass:" + root + ">\n"; //$NON-NLS-1$ //$NON-NLS-2$
+            List<Map<String, Object>> findings = ValidateForExportTool.mdoFindings(content,
+                "src/ExternalDataSources/Source/Cubes/Sales/Sales.mdo", "ExternalDataSource.Source"); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(root + ": " + findings, findings.isEmpty()); //$NON-NLS-1$
+        }
+    }
+
+    /**
      * A database object with the same elements is still judged: the composition becomes a column
      * for its attribute and for its tabular section's.
      */

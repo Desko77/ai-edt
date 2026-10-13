@@ -719,7 +719,10 @@ public class ValidateForExportTool implements IMcpTool
      * </p>
      */
     private static final Set<String> MDO_IN_MEMORY_ROOTS = new HashSet<>(Arrays.asList(
-        "Report", "DataProcessor", "ExternalReport", "ExternalDataProcessor")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        "Report", "DataProcessor", "ExternalReport", "ExternalDataProcessor", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        // An external data source reads another system: its tables, cubes and dimension tables
+        // write <dimensions> and <resources> as a register does and own no table in the infobase.
+        "ExternalDataSource", "Table", "Cube", "DimensionTable")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
 
     /** One {@code <types>} entry inside an .mdo {@code <type>} block. */
     private static final Pattern MDO_TYPE_ENTRY =
