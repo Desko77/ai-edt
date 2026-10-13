@@ -28,8 +28,12 @@ import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.metadata.mdclass.BasicFeature;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.Constant;
+import com._1c.g5.v8.dt.metadata.mdclass.DataProcessor;
 import com._1c.g5.v8.dt.metadata.mdclass.DefinedType;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalDataProcessor;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalReport;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.Report;
 import com._1c.g5.v8.dt.metadata.mdclass.SequenceDimension;
 
 import ru.aiedt.mcp.server.Activator;
@@ -270,16 +274,60 @@ public final class BmDefinedTypeHelper
      * constant value, the sequence dimension, and the defined type, whose composition applies to
      * the stored attributes that borrow it.
      * </p>
+     * <p>
+     * The carrier class alone does not answer the question. A report and a data processor compute
+     * their attributes and the attributes of their tabular sections at run time and store none of
+     * them, and the external kinds do the same - yet those attributes are {@code BasicFeature}
+     * objects like any other. The root object of the containment chain decides: a feature of one of
+     * those four is not stored, wherever in the object it sits.
+     * </p>
      *
      * @param owner the EObject the type description belongs to, possibly <code>null</code>
      * @return <code>true</code> when the type becomes a table column
      */
     public static boolean typeIsStoredInDatabase(Object owner)
     {
-        return owner instanceof BasicFeature
+        if (!(owner instanceof BasicFeature
             || owner instanceof Constant
             || owner instanceof DefinedType
-            || owner instanceof SequenceDimension;
+            || owner instanceof SequenceDimension))
+        {
+            return false;
+        }
+        if (owner instanceof EObject)
+        {
+            return !belongsToAnObjectThatKeepsItsFeaturesInMemory((EObject)owner);
+        }
+        return true;
+    }
+
+    /**
+     * Tells whether the containment chain above a feature reaches an object that stores none of
+     * them.
+     * <p>
+     * The walk starts at the owner of the feature, not at the feature itself: a detached feature
+     * carries no chain and keeps its answer, and a feature sitting directly in a configuration
+     * keeps it too. The four classes are unrelated in the model - each of them extends
+     * {@code MdObject} on its own - so every one of them is named.
+     * </p>
+     *
+     * @param feature the feature whose chain to walk, not <code>null</code>
+     * @return <code>true</code> when a report, a data processor or one of the external kinds holds
+     *         the feature above it
+     */
+    private static boolean belongsToAnObjectThatKeepsItsFeaturesInMemory(EObject feature)
+    {
+        for (EObject owner = feature.eContainer(); owner != null; owner = owner.eContainer())
+        {
+            if (owner instanceof Report
+                || owner instanceof DataProcessor
+                || owner instanceof ExternalReport
+                || owner instanceof ExternalDataProcessor)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
