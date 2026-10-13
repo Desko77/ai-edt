@@ -8,14 +8,18 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IProjectDescription;
@@ -26,6 +30,8 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 
 /**
  * A write whose modulePath sits outside the project's layout is refused, and a write inside it
@@ -54,8 +60,9 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
     private static Path projectDir;
 
     /**
-     * Creates a project holding one catalog with its object module, an empty common-modules kind
-     * folder, and the configuration root's folder.
+     * Creates a project holding one catalog with its object module, a common module, a register, a
+     * constant, an external data source, the common module's form folder, and the configuration root's
+     * folder.
      *
      * @throws Exception when the project or its files cannot be created
      */
@@ -67,7 +74,10 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
         Path objectModule = projectDir.resolve("src/Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl"); //$NON-NLS-1$
         Files.createDirectories(objectModule.getParent());
         Files.write(objectModule, OBJECT_MODULE_TEXT.getBytes(StandardCharsets.UTF_8));
-        Files.createDirectories(projectDir.resolve("src/CommonModules")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/CommonModules/\u041F\u0440\u043E\u0431\u0430/Forms/AnyForm")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/InformationRegisters/Ledger")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/Constants/Counter")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/ExternalDataSources/Source")); //$NON-NLS-1$
         Files.createDirectories(projectDir.resolve("src/Configuration")); //$NON-NLS-1$
         IWorkspace workspace = ResourcesPlugin.getWorkspace();
         project = workspace.getRoot().getProject(PROJECT);
@@ -224,6 +234,117 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
         assertTrue(answer, answer.contains("owns no module files")); //$NON-NLS-1$
         assertTrue("no folder appeared under a kind without modules", //$NON-NLS-1$
             !projectDir.resolve("src/Roles").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A common module owns one module file, so the object module of another kind is refused. */
+    @Test
+    public void aCommonModuleTakesItsSingleModuleAlone()
+    {
+        String answer = write("append", "CommonModules/\u041F\u0440\u043E\u0431\u0430/ObjectModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:"));
+        assertTrue(answer, answer.contains("The module files here are: Module.bsl."));
+        assertTrue("no object module appeared beside a common module", //$NON-NLS-1$
+            !projectDir.resolve("src/CommonModules/\u041F\u0440\u043E\u0431\u0430/ObjectModule.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A catalog takes its object module and its manager module, and not the record set of a register. */
+    @Test
+    public void aCatalogDoesNotTakeARecordSetModule()
+    {
+        String answer = write("append", "Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/RecordSetModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:"));
+        assertTrue(answer, answer.contains("ObjectModule.bsl"));
+        assertTrue(answer, answer.contains("ManagerModule.bsl"));
+        assertTrue("no record set module appeared beside a catalog", //$NON-NLS-1$
+            !projectDir.resolve("src/Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/RecordSetModule.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A register takes its record set module and refuses the object module of a catalog-like object. */
+    @Test
+    public void aRegisterTakesItsRecordSetModuleAndNoObjectModule()
+    {
+        String refused = write("append", "InformationRegisters/Ledger/ObjectModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(refused, refused.startsWith("Error:"));
+        assertTrue(refused, refused.contains("RecordSetModule.bsl"));
+        assertTrue("no object module appeared beside a register", //$NON-NLS-1$
+            !projectDir.resolve("src/InformationRegisters/Ledger/ObjectModule.bsl").toFile().exists()); //$NON-NLS-1$
+
+        String written = write("append", "InformationRegisters/Ledger/RecordSetModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(written, written.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the record set module was created", //$NON-NLS-1$
+            projectDir.resolve("src/InformationRegisters/Ledger/RecordSetModule.bsl").toFile().isFile()); //$NON-NLS-1$
+    }
+
+    /** A constant takes its value manager module. */
+    @Test
+    public void aConstantTakesItsValueManagerModule()
+    {
+        String answer = write("append", "Constants/Counter/ValueManagerModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the value manager module was created", //$NON-NLS-1$
+            projectDir.resolve("src/Constants/Counter/ValueManagerModule.bsl").toFile().isFile()); //$NON-NLS-1$
+    }
+
+    /** A kind that owns no module file of its own is refused with that said. */
+    @Test
+    public void aKindThatOwnsNoModuleOfItsOwnIsRefused()
+    {
+        String answer = write("append", "ExternalDataSources/Source/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:"));
+        assertTrue(answer, answer.contains("owns no module files of its own")); //$NON-NLS-1$
+        assertTrue("no module file appeared under a kind that owns none", //$NON-NLS-1$
+            !projectDir.resolve("src/ExternalDataSources/Source/Module.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A form level under a kind that holds no forms is refused with that said. */
+    @Test
+    public void aFormLevelUnderAKindWithoutFormsIsRefused()
+    {
+        String answer = write("append", "CommonModules/\u041F\u0440\u043E\u0431\u0430/Forms/AnyForm/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:"));
+        assertTrue(answer, answer.contains("holds no forms")); //$NON-NLS-1$
+        assertTrue("no file appeared under a form level the kind does not have", //$NON-NLS-1$
+            !projectDir.resolve("src/CommonModules/\u041F\u0440\u043E\u0431\u0430/Forms/AnyForm/Module.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /**
+     * The kind table names only module files the addressing knows, and holds a row for every kind with
+     * a folder under {@code src/} except the one kind that owns no module at all.
+     */
+    @Test
+    public void theKindTableNamesOnlyFilesTheAddressingKnows()
+    {
+        Set<String> addressable = new HashSet<>(Arrays.asList(BslModuleAccess.OBJECT_MODULE_FILE_NAMES));
+        addressable.add("Module.bsl"); //$NON-NLS-1$
+        addressable.add("CommandModule.bsl"); //$NON-NLS-1$
+        for (MetadataTypeCatalog.MetadataTypeInfo kind : MetadataTypeCatalog.MetadataTypeInfo.values())
+        {
+            if (kind.getDirectoryName() == null)
+            {
+                // A kind with no folder of its own is refused before the table is consulted.
+                continue;
+            }
+            if (kind == MetadataTypeCatalog.MetadataTypeInfo.EXTERNAL_DATA_SOURCE)
+            {
+                // The one kind with a folder and no module file of its own.
+                assertNull("an external data source owns no module", BslModuleAccess.kindModules(kind)); //$NON-NLS-1$
+                continue;
+            }
+            BslModuleAccess.KindModules modules = BslModuleAccess.kindModules(kind);
+            assertNotNull(kind + " has a folder under src/ but no row in the kind table", modules); //$NON-NLS-1$
+            for (String fileName : modules.objectModules())
+            {
+                assertTrue(kind + " names " + fileName + ", which the module addressing does not know", //$NON-NLS-1$ //$NON-NLS-2$
+                    addressable.contains(fileName));
+            }
+        }
     }
 
     /** Backslashes and absolute paths are refused for a write, whatever the rest says. */

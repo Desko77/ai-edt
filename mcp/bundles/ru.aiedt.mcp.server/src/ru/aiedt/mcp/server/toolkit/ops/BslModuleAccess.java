@@ -13,7 +13,10 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Pattern;
 
 import org.eclipse.core.resources.IFile;
@@ -39,6 +42,7 @@ import com._1c.g5.v8.dt.bsl.model.Module;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
+import ru.aiedt.mcp.server.support.MetadataTypeCatalog.MetadataTypeInfo;
 import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.ToolCallScope;
 
@@ -100,9 +104,10 @@ public final class BslModuleAccess
 
     /**
      * The module files probed, in order, for a two-part FQN {@code Type.Name}. The first that exists on
-     * disk wins; more than one existing is an ambiguity the caller is told to disambiguate.
+     * disk wins; more than one existing is an ambiguity the caller is told to disambiguate. This is the
+     * set of names the addressing knows, and the kind table below adds no name outside it.
      */
-    private static final String[] OBJECT_MODULE_FILE_NAMES = {
+    static final String[] OBJECT_MODULE_FILE_NAMES = {
         "Module.bsl", //$NON-NLS-1$
         "ManagerModule.bsl", //$NON-NLS-1$
         "ObjectModule.bsl", //$NON-NLS-1$
@@ -126,6 +131,45 @@ public final class BslModuleAccess
 
     /** The directory the configuration root's own modules live in, outside every kind directory. */
     private static final String CONFIGURATION_ROOT_DIRECTORY = "Configuration"; //$NON-NLS-1$
+
+    /** The module files of an object that owns both its own module and a manager module. */
+    private static final List<String> OBJECT_AND_MANAGER_MODULE_FILES =
+        List.of("ObjectModule.bsl", "ManagerModule.bsl"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** The module files of a register: its record set and its manager. */
+    private static final List<String> RECORD_SET_AND_MANAGER_MODULE_FILES =
+        List.of("RecordSetModule.bsl", "ManagerModule.bsl"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** The module files of a constant: its value manager and its manager. */
+    private static final List<String> VALUE_MANAGER_AND_MANAGER_MODULE_FILES =
+        List.of("ValueManagerModule.bsl", "ManagerModule.bsl"); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** The one module file of an object that owns a manager module only. */
+    private static final List<String> MANAGER_MODULE_FILE = List.of("ManagerModule.bsl"); //$NON-NLS-1$
+
+    /** The one module file of an object that owns a single module. */
+    private static final List<String> SINGLE_MODULE_FILE = List.of("Module.bsl"); //$NON-NLS-1$
+
+    /** The one module file of an object that owns its own module only. */
+    private static final List<String> OBJECT_MODULE_FILE = List.of("ObjectModule.bsl"); //$NON-NLS-1$
+
+    /** The one module file of a command. */
+    private static final List<String> COMMAND_MODULE_FILE = List.of("CommandModule.bsl"); //$NON-NLS-1$
+
+    /** The one module file of a sequence. */
+    private static final List<String> RECORD_SET_MODULE_FILE = List.of("RecordSetModule.bsl"); //$NON-NLS-1$
+
+    /**
+     * The module files each kind of metadata owns, and the nested levels that kind has.
+     * <p>
+     * Taken from the {@code mdclass} model of the target platform ({@code com._1c.g5.v8.dt.metadata}):
+     * a kind's row holds one file per {@code get*Module()} property its class declares, and its nested
+     * levels are the {@code getForms()} and {@code getCommands()} collections the model gives it. A
+     * kind that owns a folder under {@code src/} but has no row here - an external data source, for
+     * one - owns no module of its own, so no new module file is created for it.
+     * </p>
+     */
+    private static final Map<MetadataTypeInfo, KindModules> KIND_MODULES = kindModuleTable();
 
     /** How many characters long the {@code /src/} marker is. */
     private static final int SRC_MARKER_LENGTH = 5;
@@ -407,7 +451,10 @@ public final class BslModuleAccess
      * canonical path in full, and a kind that owns no modules at all is refused with that said;</li>
      * <li>when the file is new, every folder of the path already exists - a module is written only
      * for an object, a form or a command the configuration already holds - and the file name is a
-     * module name of its place.</li>
+     * module name that kind of object owns: a common module takes {@code Module.bsl} alone, a
+     * catalog takes {@code ObjectModule.bsl} and {@code ManagerModule.bsl}, a register takes
+     * {@code RecordSetModule.bsl} with its manager module, and a kind that owns no module of its own,
+     * or no forms where the path reaches one, is refused.</li>
      * </ul>
      * <p>
      * An existing file is a fact of the project: the folder and name checks guard what a write
@@ -489,7 +536,17 @@ public final class BslModuleAccess
                 + "use list_modules to find the exact path."; //$NON-NLS-1$
         }
         String fileName = segments.get(segments.size() - 1);
-        List<String> allowed = allowedModuleFileNames(segments);
+        String nestedRefusal = nestedLevelRefusal(kind, segments, modulePath);
+        if (nestedRefusal != null)
+        {
+            return nestedRefusal;
+        }
+        List<String> allowed = allowedModuleFileNames(kind, segments);
+        if (allowed.isEmpty())
+        {
+            return "Error: metadata kind '" + kind.getEnglishSingular() + "' owns no module files of " //$NON-NLS-1$ //$NON-NLS-2$
+                + "its own, so '" + modulePath + "' names no module of the layout."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (!allowed.contains(fileName))
         {
             return "Error: '" + fileName + "' is not a module file of this place. " //$NON-NLS-1$ //$NON-NLS-2$
@@ -604,41 +661,186 @@ public final class BslModuleAccess
 
     /**
      * The module file names a place in the layout accepts: the configuration root's own four, the
-     * single module of a form or of a command, and the object-level names everywhere else.
+     * single module of a form or of a command, and the names of the kind the path opens with
+     * everywhere else.
      *
+     * @param kind the kind the path opens with, or <code>null</code> for the configuration root
      * @param segments the path segments, a kind folder first and a file name last
-     * @return the allowed file names of the place the path names
+     * @return the allowed file names of the place the path names, empty when the kind owns no module
+     *         files at all
      */
-    private static List<String> allowedModuleFileNames(List<String> segments)
+    private static List<String> allowedModuleFileNames(MetadataTypeInfo kind, List<String> segments)
     {
-        List<String> allowed = new ArrayList<>();
         if (segments.size() == 2 && CONFIGURATION_ROOT_DIRECTORY.equalsIgnoreCase(segments.get(0)))
         {
-            for (String fileName : ROOT_MODULE_FILE_NAMES)
-            {
-                allowed.add(fileName);
-            }
-            return allowed;
+            return List.of(ROOT_MODULE_FILE_NAMES);
         }
         if (segments.size() >= 3)
         {
             String holder = segments.get(segments.size() - 3);
             if ("forms".equalsIgnoreCase(holder)) //$NON-NLS-1$
             {
-                allowed.add("Module.bsl"); //$NON-NLS-1$
-                return allowed;
+                return List.of("Module.bsl"); //$NON-NLS-1$
             }
             if ("commands".equalsIgnoreCase(holder)) //$NON-NLS-1$
             {
-                allowed.add("CommandModule.bsl"); //$NON-NLS-1$
-                return allowed;
+                return List.of("CommandModule.bsl"); //$NON-NLS-1$
             }
         }
-        for (String fileName : OBJECT_MODULE_FILE_NAMES)
+        KindModules modules = kindModules(kind);
+        if (modules != null)
         {
-            allowed.add(fileName);
+            return modules.objectModules();
         }
-        return allowed;
+        if (kind == null)
+        {
+            // A deeper path below the configuration root's own files: there is no kind to consult, so
+            // the whole addressing list applies, as it did before the kind table existed.
+            return List.of(OBJECT_MODULE_FILE_NAMES);
+        }
+        return List.of();
+    }
+
+    /**
+     * Refuses a path that reaches a form or a command of a kind that holds none.
+     *
+     * @param kind the kind the path opens with, or <code>null</code> for the configuration root
+     * @param segments the path segments, a kind folder first and a file name last
+     * @param modulePath the caller's path, for the refusal text
+     * @return the refusal, or <code>null</code> when the place the path names exists for this kind
+     */
+    private static String nestedLevelRefusal(MetadataTypeInfo kind, List<String> segments,
+        String modulePath)
+    {
+        if (kind == null || segments.size() < 3)
+        {
+            return null;
+        }
+        String holder = segments.get(segments.size() - 3);
+        KindModules modules = kindModules(kind);
+        if (modules == null)
+        {
+            return null;
+        }
+        if ("forms".equalsIgnoreCase(holder) && !modules.forms()) //$NON-NLS-1$
+        {
+            return "Error: metadata kind '" + kind.getEnglishSingular() + "' holds no forms, " //$NON-NLS-1$ //$NON-NLS-2$
+                + "so '" + modulePath + "' names no module of the layout."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if ("commands".equalsIgnoreCase(holder) && !modules.commands()) //$NON-NLS-1$
+        {
+            return "Error: metadata kind '" + kind.getEnglishSingular() + "' holds no commands, " //$NON-NLS-1$ //$NON-NLS-2$
+                + "so '" + modulePath + "' names no module of the layout."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return null;
+    }
+
+    /**
+     * The module files and nested levels a kind of metadata owns.
+     *
+     * @param kind the kind, or <code>null</code> for the configuration root, which is no kind
+     * @return the kind's row, or <code>null</code> when the table has none for it
+     */
+    static KindModules kindModules(MetadataTypeInfo kind)
+    {
+        return kind == null ? null : KIND_MODULES.get(kind);
+    }
+
+    /**
+     * Builds the kind table.
+     *
+     * @return the kind to the module files and nested levels it owns, unmodifiable
+     */
+    private static Map<MetadataTypeInfo, KindModules> kindModuleTable()
+    {
+        Map<MetadataTypeInfo, KindModules> table = new EnumMap<>(MetadataTypeInfo.class);
+        put(table, MetadataTypeInfo.CATALOG, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.DOCUMENT, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.COMMON_MODULE, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.INFORMATION_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.ACCUMULATION_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.ENUM, MANAGER_MODULE_FILE, true, true);
+        put(table, MetadataTypeInfo.REPORT, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.DATA_PROCESSOR, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.EXCHANGE_PLAN, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.BUSINESS_PROCESS, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.TASK, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.COMMON_COMMAND, COMMAND_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.COMMON_FORM, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.WEB_SERVICE, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.HTTP_SERVICE, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.CONSTANT, VALUE_MANAGER_AND_MANAGER_MODULE_FILES, false, false);
+        put(table, MetadataTypeInfo.CHART_OF_CHARACTERISTIC_TYPES, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.CHART_OF_ACCOUNTS, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.CHART_OF_CALCULATION_TYPES, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.ACCOUNTING_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.CALCULATION_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.DOCUMENT_JOURNAL, MANAGER_MODULE_FILE, true, true);
+        put(table, MetadataTypeInfo.SEQUENCE, RECORD_SET_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.FILTER_CRITERION, MANAGER_MODULE_FILE, true, true);
+        put(table, MetadataTypeInfo.SETTINGS_STORAGE, MANAGER_MODULE_FILE, true, false);
+        put(table, MetadataTypeInfo.EXTERNAL_DATA_PROCESSOR, OBJECT_MODULE_FILE, true, false);
+        put(table, MetadataTypeInfo.EXTERNAL_REPORT, OBJECT_MODULE_FILE, true, false);
+        return Collections.unmodifiableMap(table);
+    }
+
+    /**
+     * Adds one row to the kind table.
+     *
+     * @param table the table being built
+     * @param kind the kind
+     * @param objectModules the kind's own module files
+     * @param forms whether the kind holds forms
+     * @param commands whether the kind holds commands
+     */
+    private static void put(Map<MetadataTypeInfo, KindModules> table, MetadataTypeInfo kind,
+        List<String> objectModules, boolean forms, boolean commands)
+    {
+        table.put(kind, new KindModules(objectModules, forms, commands));
+    }
+
+    /**
+     * The module files a kind of metadata owns of its own, and the nested levels it has.
+     */
+    static final class KindModules
+    {
+        private final List<String> objectModules;
+
+        private final boolean forms;
+
+        private final boolean commands;
+
+        /**
+         * @param objectModules the file names of the kind's own modules
+         * @param forms whether the kind holds forms, each with its module under
+         *            {@code Forms/<form name>/}
+         * @param commands whether the kind holds commands, each with its module under
+         *            {@code Commands/<command name>/}
+         */
+        KindModules(List<String> objectModules, boolean forms, boolean commands)
+        {
+            this.objectModules = objectModules;
+            this.forms = forms;
+            this.commands = commands;
+        }
+
+        /** @return the file names of the kind's own modules, empty when it owns none */
+        List<String> objectModules()
+        {
+            return objectModules;
+        }
+
+        /** @return whether the kind holds forms */
+        boolean forms()
+        {
+            return forms;
+        }
+
+        /** @return whether the kind holds commands */
+        boolean commands()
+        {
+            return commands;
+        }
     }
 
     /** A folder of a module path the project does not hold, and why it matters. */
