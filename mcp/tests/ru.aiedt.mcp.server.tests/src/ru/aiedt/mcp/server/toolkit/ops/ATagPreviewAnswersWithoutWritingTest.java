@@ -484,6 +484,96 @@ public class ATagPreviewAnswersWithoutWritingTest
     }
 
     /**
+     * A preview of an assign and of an unassign repeats the object's tags in the order the file
+     * keeps them, and answers the order a write over the same file leaves behind.
+     * <p>
+     * The file lists a name no tag answers, in the middle of the object's list. The previews read
+     * the object's own assignment list, so that name keeps its place instead of travelling to the
+     * end, and the after-state they answer is read back from a write over a copy of the same file.
+     * </p>
+     *
+     * @throws Exception when the markers file cannot be edited or read
+     */
+    @Test
+    public void aPreviewRepeatsTheObjectTagsInTheOrderTheFileKeepsThem() throws Exception
+    {
+        succeeded(call("create_tag", "tag", "First")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        succeeded(call("create_tag", "tag", "Third")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        succeeded(call("create_tag", "tag", "Fourth")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        succeeded(call("assign_tag", "objectFqn", OBJECT, "tags", "[\"First\", \"Third\"]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        String withADanglingName = aDanglingNameInTheMiddleOfTheList();
+
+        JsonObject assign = succeeded(call("assign_tag", "objectFqn", OBJECT, "tags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "[\"Fourth\"]", "dryRun", "true")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals(java.util.List.of("First", "Ghost", "Third"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            names(assign.getAsJsonArray("tagsBefore"))); //$NON-NLS-1$
+        assertEquals(java.util.List.of("First", "Ghost", "Third", "Fourth"), //$NON-NLS-1$ //$NON-NLS-2$
+            names(assign.getAsJsonArray("tagsAfter"))); //$NON-NLS-1$
+        assertEquals("the preview wrote nothing", withADanglingName, //$NON-NLS-1$
+            Files.readString(markerFile()));
+
+        // The write over a copy of the same file leaves the list the preview answered.
+        writeMarkerFile(withADanglingName);
+        succeeded(call("assign_tag", "objectFqn", OBJECT, "tags", "[\"Fourth\"]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertEquals(java.util.List.of("First", "Ghost", "Third", "Fourth"), storedNames()); //$NON-NLS-1$
+
+        JsonObject unassign = succeeded(call("unassign_tag", "objectFqn", OBJECT, "tags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "[\"Third\"]", "dryRun", "true")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        assertEquals(java.util.List.of("First", "Ghost", "Third", "Fourth"), //$NON-NLS-1$ //$NON-NLS-2$
+            names(unassign.getAsJsonArray("tagsBefore"))); //$NON-NLS-1$
+        assertEquals(java.util.List.of("First", "Ghost", "Fourth"), //$NON-NLS-1$ //$NON-NLS-2$
+            names(unassign.getAsJsonArray("tagsAfter"))); //$NON-NLS-1$
+
+        succeeded(call("unassign_tag", "objectFqn", OBJECT, "tags", "[\"Third\"]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        assertEquals(java.util.List.of("First", "Ghost", "Fourth"), storedNames()); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts an assignment to a name no tag answers in the middle of the object's list in the
+     * markers file, and answers the file's text as it now stands.
+     *
+     * @return the text of the edited file
+     * @throws Exception when the file cannot be read or written
+     */
+    private String aDanglingNameInTheMiddleOfTheList() throws Exception
+    {
+        String text = Files.readString(markerFile());
+        String eol = text.contains("\r\n") ? "\r\n" : "\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        java.util.regex.Matcher first = java.util.regex.Pattern.compile("(?m)^([ \\t]*)- First$") //$NON-NLS-1$
+            .matcher(text);
+        assertTrue("the file lists the object's first tag: " + text, first.find()); //$NON-NLS-1$
+        String edited = text.substring(0, first.end()) + eol + first.group(1) + "- Ghost" //$NON-NLS-1$
+            + text.substring(first.end());
+        writeMarkerFile(edited);
+        return edited;
+    }
+
+    /**
+     * Writes the markers file with the given text, as a change from outside the workspace.
+     *
+     * @param text the file's content
+     * @throws Exception when the file cannot be written or the project refreshed
+     */
+    private void writeMarkerFile(String text) throws Exception
+    {
+        Files.writeString(markerFile(), text, java.nio.charset.StandardCharsets.UTF_8);
+        project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+    }
+
+    /**
+     * The object's tags as a fresh read of the markers file records them.
+     *
+     * @return the names, in file order
+     */
+    private java.util.List<String> storedNames()
+    {
+        MarkerManager.dispose();
+        java.util.List<String> names = MarkerManager.getInstance().getMarkerStorage(project)
+            .getAssignments().get(OBJECT);
+        return names == null ? new java.util.ArrayList<>() : new java.util.ArrayList<>(names);
+    }
+
+    /**
      * The argument refusals are the same with and without {@code dryRun}: a malformed call is not
      * previewed, it is refused.
      */

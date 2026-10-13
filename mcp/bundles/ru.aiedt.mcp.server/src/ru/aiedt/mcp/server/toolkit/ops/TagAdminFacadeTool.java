@@ -1237,9 +1237,10 @@ public class TagAdminFacadeTool
     /**
      * The tags an object carries, in the order the file records them.
      * <p>
-     * A name the file lists while no definition matches it is kept: a preview reads the assignments
-     * the way the write itself sees them, and the write counts such a name as one the object
-     * already carries.
+     * The object's own assignment list, not the defined tags resolved from it: a name the file
+     * lists while no definition matches it keeps the place the file gave it, and the names that do
+     * resolve keep theirs. The list is copied, so a caller building the after-state cannot reach
+     * the store through it.
      * </p>
      *
      * @param storage the marker storage
@@ -1248,19 +1249,8 @@ public class TagAdminFacadeTool
      */
     private static List<String> tagsOn(MarkerStore storage, String objectFqn)
     {
-        List<String> names = new ArrayList<>();
-        for (Marker marker : storage.getObjectMarkers(objectFqn))
-        {
-            names.add(marker.getName());
-        }
-        for (String name : storage.getMarkerNames(objectFqn))
-        {
-            if (!names.contains(name))
-            {
-                names.add(name);
-            }
-        }
-        return names;
+        List<String> names = storage.getAssignments().get(objectFqn);
+        return names == null || names.isEmpty() ? new ArrayList<>() : new ArrayList<>(names);
     }
 
     /**
