@@ -53,8 +53,12 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class DiagnosticsBaselineStore
 {
-    /** The version of the file format this build writes and reads. */
-    public static final int FORMAT_VERSION = 1;
+    /**
+     * The version of the file format this build writes and reads. Version 2 added the short check
+     * code beside the symbolic id a record carries; a file of another version is refused rather
+     * than read partially.
+     */
+    public static final int FORMAT_VERSION = 2;
 
     /** The subdirectory of the plugin state area the baselines live in. */
     public static final String STATE_SUBDIR = "diagnostics-baseline"; //$NON-NLS-1$
@@ -72,7 +76,8 @@ public final class DiagnosticsBaselineStore
 
     /**
      * One recorded finding. Carries the identity triple and nothing positional: the line an error
-     * sits on moves with the code, and a finding that moved is not a new finding.
+     * sits on moves with the code, and a finding that moved is not a new finding. The check lives
+     * in the record under both of its spellings, because a query may name either one.
      */
     public static final class Diagnostic
     {
@@ -81,6 +86,13 @@ public final class DiagnosticsBaselineStore
 
         /** The check identity - the symbolic id, or the short code when there is no symbolic one. */
         public final String checkId;
+
+        /**
+         * The marker's short check code, carried beside a symbolic {@code checkId} so that a
+         * query naming either spelling meets the record; <code>null</code> when there is none or
+         * when {@code checkId} already is the short code. Part of no identity.
+         */
+        public final String checkCode;
 
         /** The finding's message text; never <code>null</code>. */
         public final String message;
@@ -119,8 +131,40 @@ public final class DiagnosticsBaselineStore
         public Diagnostic(String objectRef, String checkId, String message, String severity,
             int count)
         {
+            this(objectRef, checkId, null, message, severity, count);
+        }
+
+        /**
+         * A record for one finding carrying the check under both of its spellings.
+         *
+         * @param objectRef the object presentation or file path
+         * @param checkId the check identity
+         * @param checkCode the marker's short check code; may be <code>null</code>
+         * @param message the message text
+         * @param severity the native severity name; may be <code>null</code>
+         */
+        public Diagnostic(String objectRef, String checkId, String checkCode, String message,
+            String severity)
+        {
+            this(objectRef, checkId, checkCode, message, severity, 1);
+        }
+
+        /**
+         * A record carrying the check under both of its spellings.
+         *
+         * @param objectRef the object presentation or file path
+         * @param checkId the check identity
+         * @param checkCode the marker's short check code; may be <code>null</code>
+         * @param message the message text
+         * @param severity the native severity name; may be <code>null</code>
+         * @param count how many identical findings; at least one
+         */
+        public Diagnostic(String objectRef, String checkId, String checkCode, String message,
+            String severity, int count)
+        {
             this.objectRef = Objects.requireNonNull(objectRef);
             this.checkId = Objects.requireNonNull(checkId);
+            this.checkCode = checkCode;
             this.message = Objects.requireNonNull(message);
             this.severity = severity;
             this.count = Math.max(1, count);
@@ -145,7 +189,7 @@ public final class DiagnosticsBaselineStore
          */
         public Diagnostic withCount(int newCount)
         {
-            return new Diagnostic(objectRef, checkId, message, severity, newCount);
+            return new Diagnostic(objectRef, checkId, checkCode, message, severity, newCount);
         }
 
         @Override
@@ -616,7 +660,10 @@ public final class DiagnosticsBaselineStore
             {
                 continue;
             }
-            if (needle != null && !containsLower(diagnostic.checkId, needle))
+            // Both spellings of the check, the way the reader's own check filter matches a row:
+            // a caller may name the short code a report once printed beside the symbolic id.
+            if (needle != null && !containsLower(diagnostic.checkId, needle)
+                && !containsLower(diagnostic.checkCode, needle))
             {
                 continue;
             }
@@ -762,6 +809,10 @@ public final class DiagnosticsBaselineStore
             JsonObject record = new JsonObject();
             record.addProperty("object", diagnostic.objectRef); //$NON-NLS-1$
             record.addProperty("check", diagnostic.checkId); //$NON-NLS-1$
+            if (diagnostic.checkCode != null)
+            {
+                record.addProperty("checkCode", diagnostic.checkCode); //$NON-NLS-1$
+            }
             record.addProperty("message", diagnostic.message); //$NON-NLS-1$
             if (diagnostic.severity != null)
             {
@@ -836,6 +887,7 @@ public final class DiagnosticsBaselineStore
                 diagnostics.add(new Diagnostic(
                     record.get("object").getAsString(), //$NON-NLS-1$
                     record.get("check").getAsString(), //$NON-NLS-1$
+                    record.has("checkCode") ? record.get("checkCode").getAsString() : null, //$NON-NLS-1$
                     record.get("message").getAsString(), //$NON-NLS-1$
                     record.has("severity") ? record.get("severity").getAsString() : null, //$NON-NLS-1$ //$NON-NLS-2$
                     record.has("count") ? Math.max(1, record.get("count").getAsInt()) : 1)); //$NON-NLS-1$ //$NON-NLS-2$

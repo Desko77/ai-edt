@@ -914,6 +914,8 @@ public class ProjectProblemsReader
 
     /**
      * Maps the collected rows to the records a baseline is made of, collapsing identical triples.
+     * Each record carries the marker's short check code beside its identity, so a later query
+     * naming either spelling of the check meets the record.
      *
      * @param errors the collected rows
      * @return the collapsed records, one per identical triple
@@ -925,7 +927,8 @@ public class ProjectProblemsReader
         {
             findings.add(new DiagnosticsBaselineStore.Diagnostic(
                 error.objectPresentation == null ? "" : error.objectPresentation, //$NON-NLS-1$
-                checkIdentityOf(error), error.message == null ? "" : error.message, //$NON-NLS-1$
+                checkIdentityOf(error), error.checkCode,
+                error.message == null ? "" : error.message, //$NON-NLS-1$
                 error.severityNative));
         }
         return DiagnosticsBaselineStore.collapse(findings);
