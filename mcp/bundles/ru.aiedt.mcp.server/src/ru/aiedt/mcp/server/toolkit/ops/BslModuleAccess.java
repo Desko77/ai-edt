@@ -15,6 +15,7 @@ import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -159,6 +160,28 @@ public final class BslModuleAccess
     /** The one module file of a sequence. */
     private static final List<String> RECORD_SET_MODULE_FILE = List.of("RecordSetModule.bsl"); //$NON-NLS-1$
 
+    /** The module files of a table of an external data source. */
+    private static final List<String> TABLE_MODULE_FILES =
+        List.of("ObjectModule.bsl", "RecordSetModule.bsl", "ManagerModule.bsl"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /** The folder under an object's own folder where the object's forms live. */
+    private static final String FORMS_FOLDER = "Forms"; //$NON-NLS-1$
+
+    /** The folder under an object's own folder where the object's commands live. */
+    private static final String COMMANDS_FOLDER = "Commands"; //$NON-NLS-1$
+
+    /** The folder under an external data source where its tables live. */
+    private static final String TABLES_FOLDER = "Tables"; //$NON-NLS-1$
+
+    /** The folder under an external data source where its cubes live. */
+    private static final String CUBES_FOLDER = "Cubes"; //$NON-NLS-1$
+
+    /** The folder under a cube where its dimension tables live. */
+    private static final String DIMENSION_TABLES_FOLDER = "DimensionTables"; //$NON-NLS-1$
+
+    /** The folder under a calculation register where its recalculations live. */
+    private static final String RECALCULATIONS_FOLDER = "Recalculations"; //$NON-NLS-1$
+
     /**
      * The {@code src/} folder of the kinds the catalog holds no directory name for.
      * <p>
@@ -176,16 +199,32 @@ public final class BslModuleAccess
         MetadataTypeInfo.WEB_SOCKET_CLIENT, "WebSocketClients"); //$NON-NLS-1$
 
     /**
-     * The module files each kind of metadata owns, and the nested levels that kind has.
+     * The module files each kind of metadata owns, and the levels that kind holds below its objects.
      * <p>
      * Taken from the {@code mdclass} model of the target platform ({@code com._1c.g5.v8.dt.metadata}):
-     * a kind's row holds one file per {@code get*Module()} property its class declares, and its nested
-     * levels are the {@code getForms()} and {@code getCommands()} collections the model gives it. A
-     * kind that owns a folder under {@code src/} but has no row here - an external data source, for
-     * one - owns no module of its own, so no new module file is created for it.
+     * a kind's row holds one file per {@code get*Module()} property its class declares, and its levels
+     * are the collections the model gives it - the forms and commands of most kinds, the tables and
+     * cubes of an external data source, the recalculations of a calculation register. A kind with a
+     * row whose files are empty owns no module of its own, so no new module file is created for it,
+     * while its levels stay reachable.
      * </p>
      */
     private static final Map<MetadataTypeInfo, KindModules> KIND_MODULES = kindModuleTable();
+
+    /**
+     * The levels of the layout below an object: the folder a path spells below the object's own
+     * folder, the name that folder stands for and the module files the level owns.
+     * <p>
+     * Taken from the same {@code mdclass} model: a table of an external data source owns an object, a
+     * record set and a manager module and holds forms and commands; a dimension table of a cube owns
+     * an object and a manager module and holds forms and commands; a cube owns a record set and a
+     * manager module and holds forms, commands and dimension tables; a recalculation of a calculation
+     * register owns a record set module alone. The folders are the ones the platform writes those
+     * sources under ({@code BaseXmlExportFileSystemSupport} of
+     * {@code com._1c.g5.v8.dt.export.xml}).
+     * </p>
+     */
+    private static final Map<String, Level> NESTED_LEVELS = nestedLevelTable();
 
     /** How many characters long the {@code /src/} marker is. */
     private static final int SRC_MARKER_LENGTH = 5;
@@ -465,12 +504,19 @@ public final class BslModuleAccess
      * <li>the first segment is a kind folder of {@link MetadataTypeCatalog} or the configuration
      * root's own folder; a segment that names the kind rather than the folder is refused with the
      * canonical path in full, and a kind that owns no modules at all is refused with that said;</li>
+     * <li>the place is found by walking the path: what sits between the kind folder and the file is a
+     * level of the layout below an object - {@code Forms}, {@code Commands}, and the nested objects
+     * of the kinds that have them, such as the tables and cubes of an external data source - and each
+     * level is judged against the one above it. A folder the level above does not hold, a level under
+     * a place that holds none, and a kind that owns no module of its own, are refused with the levels
+     * that place holds, and so is a path of even length, which puts the file where the layout has an
+     * object folder;</li>
      * <li>when the file is new, every folder of the path already exists - a module is written only
      * for an object, a form or a command the configuration already holds - and the file name is a
-     * module name that kind of object owns: a common module takes {@code Module.bsl} alone, a
-     * catalog takes {@code ObjectModule.bsl} and {@code ManagerModule.bsl}, a register takes
-     * {@code RecordSetModule.bsl} with its manager module, and a kind that owns no module of its own,
-     * or no forms where the path reaches one, is refused.</li>
+     * module name that the place the path reaches owns: a common module takes {@code Module.bsl}
+     * alone, a catalog takes {@code ObjectModule.bsl} and {@code ManagerModule.bsl}, a register takes
+     * {@code RecordSetModule.bsl} with its manager module, and a table of an external data source
+     * takes its object, record set and manager modules.</li>
      * </ul>
      * <p>
      * An existing file is a fact of the project: the folder and name checks guard what a write
@@ -548,6 +594,11 @@ public final class BslModuleAccess
             return "Error: '" + first + "' is not the folder this layout uses. The canonical path " //$NON-NLS-1$ //$NON-NLS-2$
                 + "is '" + canonicalModulePathOf(modulePath) + "'."; //$NON-NLS-1$ //$NON-NLS-2$
         }
+        Ownership owner = ownershipOf(kind, segments, modulePath);
+        if (owner.refusal() != null)
+        {
+            return owner.refusal();
+        }
         if (project == null)
         {
             return null;
@@ -561,12 +612,7 @@ public final class BslModuleAccess
                 + "use list_modules to find the exact path."; //$NON-NLS-1$
         }
         String fileName = segments.get(segments.size() - 1);
-        String nestedRefusal = nestedLevelRefusal(kind, segments, modulePath);
-        if (nestedRefusal != null)
-        {
-            return nestedRefusal;
-        }
-        List<String> allowed = allowedModuleFileNames(kind, segments);
+        List<String> allowed = owner.modules().objectModules();
         if (allowed.isEmpty())
         {
             return "Error: metadata kind '" + kind.getEnglishSingular() + "' owns no module files of " //$NON-NLS-1$ //$NON-NLS-2$
@@ -638,7 +684,8 @@ public final class BslModuleAccess
 
     /**
      * Says what a missing path folder stands for, from the segment ahead of it: the object folder
-     * of a kind, a form or a command an object holds, or nothing the layout knows.
+     * of a kind, an object a level holds such as a form, a command or a table, or nothing the layout
+     * knows.
      *
      * @param segments the path segments
      * @param missingAt the index of the first missing folder's own segment
@@ -650,13 +697,14 @@ public final class BslModuleAccess
         {
             return "the project has no object '" + segments.get(1) + "' of this kind;"; //$NON-NLS-1$ //$NON-NLS-2$
         }
-        if (missingAt >= 2 && "forms".equalsIgnoreCase(segments.get(missingAt - 1))) //$NON-NLS-1$
+        if (missingAt >= 2)
         {
-            return "the object holds no form '" + segments.get(missingAt) + "';"; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        if (missingAt >= 2 && "commands".equalsIgnoreCase(segments.get(missingAt - 1))) //$NON-NLS-1$
-        {
-            return "the object holds no command '" + segments.get(missingAt) + "';"; //$NON-NLS-1$ //$NON-NLS-2$
+            Level level = nestedLevel(segments.get(missingAt - 1));
+            if (level != null)
+            {
+                return "the object holds no " + level.singular() + " '" + segments.get(missingAt) //$NON-NLS-1$ //$NON-NLS-2$
+                    + "';"; //$NON-NLS-1$
+            }
         }
         return "the folder is not part of this project's layout;"; //$NON-NLS-1$
     }
@@ -685,79 +733,165 @@ public final class BslModuleAccess
     }
 
     /**
-     * The module file names a place in the layout accepts: the configuration root's own four, the
-     * single module of a form or of a command, and the names of the kind the path opens with
-     * everywhere else.
-     *
-     * @param kind the kind the path opens with, or <code>null</code> for the configuration root
-     * @param segments the path segments, a kind folder first and a file name last
-     * @return the allowed file names of the place the path names, empty when the kind owns no module
-     *         files at all
+     * The place a module path reaches and the file names it owns.
      */
-    private static List<String> allowedModuleFileNames(MetadataTypeInfo kind, List<String> segments)
+    private static final class Ownership
     {
-        if (segments.size() == 2 && CONFIGURATION_ROOT_DIRECTORY.equalsIgnoreCase(segments.get(0)))
+        private final KindModules modules;
+
+        private final String refusal;
+
+        private Ownership(KindModules modules, String refusal)
         {
-            return List.of(ROOT_MODULE_FILE_NAMES);
+            this.modules = modules;
+            this.refusal = refusal;
         }
-        if (segments.size() >= 3)
+
+        /**
+         * @param modules the module files and levels the place owns
+         * @return a path that reached a place
+         */
+        static Ownership of(KindModules modules)
         {
-            String holder = segments.get(segments.size() - 3);
-            if ("forms".equalsIgnoreCase(holder)) //$NON-NLS-1$
-            {
-                return List.of("Module.bsl"); //$NON-NLS-1$
-            }
-            if ("commands".equalsIgnoreCase(holder)) //$NON-NLS-1$
-            {
-                return List.of("CommandModule.bsl"); //$NON-NLS-1$
-            }
+            return new Ownership(modules, null);
         }
-        KindModules modules = kindModules(kind);
-        if (modules != null)
+
+        /**
+         * @param refusal the reason the path reaches no place of the layout
+         * @return a path that is refused
+         */
+        static Ownership refused(String refusal)
         {
-            return modules.objectModules();
+            return new Ownership(null, refusal);
         }
-        if (kind == null)
+
+        /** @return what the place owns; <code>null</code> when the path is refused */
+        KindModules modules()
         {
-            // A deeper path below the configuration root's own files: there is no kind to consult, so
-            // the whole addressing list applies, as it did before the kind table existed.
-            return List.of(OBJECT_MODULE_FILE_NAMES);
+            return modules;
         }
-        return List.of();
+
+        /** @return the refusal, or <code>null</code> when the path reaches a place */
+        String refusal()
+        {
+            return refusal;
+        }
     }
 
     /**
-     * Refuses a path that reaches a form or a command of a kind that holds none.
+     * Walks a module path from its kind folder down to the file and answers what owns that file.
+     * <p>
+     * Below an object's own folder the layout alternates: a level folder, then the name of the object
+     * that level holds, then another level folder. Every segment in that part is therefore judged
+     * against the levels the level above it holds, and the file name at the end against the level the
+     * path reaches - not against the kind it opened with.
+     * </p>
      *
      * @param kind the kind the path opens with, or <code>null</code> for the configuration root
      * @param segments the path segments, a kind folder first and a file name last
      * @param modulePath the caller's path, for the refusal text
-     * @return the refusal, or <code>null</code> when the place the path names exists for this kind
+     * @return the place the path reaches, or the refusal
      */
-    private static String nestedLevelRefusal(MetadataTypeInfo kind, List<String> segments,
+    private static Ownership ownershipOf(MetadataTypeInfo kind, List<String> segments,
         String modulePath)
     {
-        if (kind == null || segments.size() < 3)
+        if (kind == null)
         {
-            return null;
+            // The configuration root is no kind, so nothing below its own folder can be judged
+            // against a kind: the addressing list applies there as it did before the kind table.
+            List<String> rootFiles =
+                segments.size() == 2 && CONFIGURATION_ROOT_DIRECTORY.equalsIgnoreCase(segments.get(0))
+                    ? List.of(ROOT_MODULE_FILE_NAMES) : List.of(OBJECT_MODULE_FILE_NAMES);
+            return Ownership.of(new KindModules(rootFiles, List.of()));
         }
-        String holder = segments.get(segments.size() - 3);
+        String holder = kind.getEnglishSingular();
         KindModules modules = kindModules(kind);
-        if (modules == null)
+        if (segments.size() % 2 == 0)
+        {
+            // Every level folder below a kind comes with the name of the object it holds, and the path
+            // ends in a module file, so a path of even length puts the file where the layout has an
+            // object folder and names no module.
+            return Ownership.refused("Error: '" + modulePath //$NON-NLS-1$
+                + "' names no module of the layout: below a kind folder a path alternates a level " //$NON-NLS-1$
+                + "folder and the name of the object it holds, and ends in a module file."); //$NON-NLS-1$
+        }
+        // The loop steps over the name of an object that belongs to the current holder, and judges the
+        // level folder the path spells after it. Its own file's folder is the segment before the file.
+        for (int i = 3; i < segments.size(); i += 2)
+        {
+            String segment = segments.get(i - 1);
+            Level level = nestedLevel(segment);
+            if (level == null || modules == null || !modules.holds(segment))
+            {
+                return Ownership.refused(
+                    nestedFolderRefusal(segment, level, holder, modules, modulePath));
+            }
+            holder = level.name();
+            modules = level.modules();
+        }
+        return Ownership.of(modules == null ? new KindModules(List.of(), List.of()) : modules);
+    }
+
+    /**
+     * The levels of the layout below an object.
+     *
+     * @return the folder a path spells to the level it stands for, unmodifiable
+     */
+    static Map<String, Level> nestedLevels()
+    {
+        return NESTED_LEVELS;
+    }
+
+    /**
+     * The level a folder name stands for.
+     *
+     * @param segment the folder a path spells; may be <code>null</code>
+     * @return the level, or <code>null</code> when the layout knows no level under that name
+     */
+    static Level nestedLevel(String segment)
+    {
+        if (segment == null)
         {
             return null;
         }
-        if ("forms".equalsIgnoreCase(holder) && !modules.forms()) //$NON-NLS-1$
+        for (Map.Entry<String, Level> entry : NESTED_LEVELS.entrySet())
         {
-            return "Error: metadata kind '" + kind.getEnglishSingular() + "' holds no forms, " //$NON-NLS-1$ //$NON-NLS-2$
-                + "so '" + modulePath + "' names no module of the layout."; //$NON-NLS-1$ //$NON-NLS-2$
-        }
-        if ("commands".equalsIgnoreCase(holder) && !modules.commands()) //$NON-NLS-1$
-        {
-            return "Error: metadata kind '" + kind.getEnglishSingular() + "' holds no commands, " //$NON-NLS-1$ //$NON-NLS-2$
-                + "so '" + modulePath + "' names no module of the layout."; //$NON-NLS-1$ //$NON-NLS-2$
+            if (entry.getKey().equalsIgnoreCase(segment))
+            {
+                return entry.getValue();
+            }
         }
         return null;
+    }
+
+    /**
+     * Refuses a path whose folder is not a level the place above it holds.
+     *
+     * @param segment the folder the path spells
+     * @param level the level that folder name stands for, or <code>null</code> when no level is
+     *            spelled that way
+     * @param holder the name of the place the path reached
+     * @param modules what that place holds; may be <code>null</code>
+     * @param modulePath the caller's path, for the refusal text
+     * @return the refusal
+     */
+    private static String nestedFolderRefusal(String segment, Level level, String holder,
+        KindModules modules, String modulePath)
+    {
+        StringBuilder refusal = new StringBuilder("Error: '" + segment //$NON-NLS-1$
+            + "' is not a level of " + holder); //$NON-NLS-1$
+        List<String> levels = modules == null ? List.of() : modules.nestedFolders();
+        if (levels.isEmpty())
+        {
+            refusal.append(", which holds no "); //$NON-NLS-1$
+            refusal.append(level == null ? "level of its own" : level.plural()); //$NON-NLS-1$
+            refusal.append(", so '").append(modulePath).append("' names no module of the layout."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else
+        {
+            refusal.append(". The levels here are: ").append(String.join(", ", levels)).append('.'); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return refusal.toString();
     }
 
     /**
@@ -820,7 +954,8 @@ public final class BslModuleAccess
         put(table, MetadataTypeInfo.CHART_OF_ACCOUNTS, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
         put(table, MetadataTypeInfo.CHART_OF_CALCULATION_TYPES, OBJECT_AND_MANAGER_MODULE_FILES, true, true);
         put(table, MetadataTypeInfo.ACCOUNTING_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES, true, true);
-        put(table, MetadataTypeInfo.CALCULATION_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES, true, true);
+        put(table, MetadataTypeInfo.CALCULATION_REGISTER, RECORD_SET_AND_MANAGER_MODULE_FILES,
+            List.of(FORMS_FOLDER, COMMANDS_FOLDER, RECALCULATIONS_FOLDER));
         put(table, MetadataTypeInfo.DOCUMENT_JOURNAL, MANAGER_MODULE_FILE, true, true);
         put(table, MetadataTypeInfo.SEQUENCE, RECORD_SET_MODULE_FILE, false, false);
         put(table, MetadataTypeInfo.FILTER_CRITERION, MANAGER_MODULE_FILE, true, true);
@@ -830,6 +965,33 @@ public final class BslModuleAccess
         put(table, MetadataTypeInfo.BOT, SINGLE_MODULE_FILE, false, false);
         put(table, MetadataTypeInfo.INTEGRATION_SERVICE, SINGLE_MODULE_FILE, false, false);
         put(table, MetadataTypeInfo.WEB_SOCKET_CLIENT, SINGLE_MODULE_FILE, false, false);
+        put(table, MetadataTypeInfo.EXTERNAL_DATA_SOURCE, List.of(),
+            List.of(TABLES_FOLDER, CUBES_FOLDER));
+        return Collections.unmodifiableMap(table);
+    }
+
+    /**
+     * Builds the table of the levels below an object.
+     *
+     * @return the folder a path spells to the level it stands for, unmodifiable
+     */
+    private static Map<String, Level> nestedLevelTable()
+    {
+        Map<String, Level> table = new LinkedHashMap<>();
+        table.put(FORMS_FOLDER,
+            new Level("Form", "form", "forms", new KindModules(SINGLE_MODULE_FILE, List.of()))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        table.put(COMMANDS_FOLDER,
+            new Level("Command", "command", "commands", new KindModules(COMMAND_MODULE_FILE, List.of()))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        table.put(TABLES_FOLDER, new Level("Table", "table", "tables", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            new KindModules(TABLE_MODULE_FILES, List.of(FORMS_FOLDER, COMMANDS_FOLDER))));
+        table.put(CUBES_FOLDER, new Level("Cube", "cube", "cubes", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            new KindModules(RECORD_SET_AND_MANAGER_MODULE_FILES,
+                List.of(FORMS_FOLDER, COMMANDS_FOLDER, DIMENSION_TABLES_FOLDER))));
+        table.put(DIMENSION_TABLES_FOLDER, new Level("DimensionTable", "dimension table", //$NON-NLS-1$ //$NON-NLS-2$
+            "dimension tables", //$NON-NLS-1$
+            new KindModules(OBJECT_AND_MANAGER_MODULE_FILES, List.of(FORMS_FOLDER, COMMANDS_FOLDER))));
+        table.put(RECALCULATIONS_FOLDER, new Level("Recalculation", "recalculation", //$NON-NLS-1$ //$NON-NLS-2$
+            "recalculations", new KindModules(RECORD_SET_MODULE_FILE, List.of()))); //$NON-NLS-1$
         return Collections.unmodifiableMap(table);
     }
 
@@ -845,50 +1007,131 @@ public final class BslModuleAccess
     private static void put(Map<MetadataTypeInfo, KindModules> table, MetadataTypeInfo kind,
         List<String> objectModules, boolean forms, boolean commands)
     {
-        table.put(kind, new KindModules(objectModules, forms, commands));
+        List<String> levels = new ArrayList<>();
+        if (forms)
+        {
+            levels.add(FORMS_FOLDER);
+        }
+        if (commands)
+        {
+            levels.add(COMMANDS_FOLDER);
+        }
+        put(table, kind, objectModules, levels);
     }
 
     /**
-     * The module files a kind of metadata owns of its own, and the nested levels it has.
+     * Adds one row to the kind table.
+     *
+     * @param table the table being built
+     * @param kind the kind
+     * @param objectModules the kind's own module files
+     * @param nestedFolders the folders of the levels the kind holds below its objects
+     */
+    private static void put(Map<MetadataTypeInfo, KindModules> table, MetadataTypeInfo kind,
+        List<String> objectModules, List<String> nestedFolders)
+    {
+        table.put(kind, new KindModules(objectModules, nestedFolders));
+    }
+
+    /**
+     * The module files a place owns of its own, and the levels it holds below its objects.
      */
     static final class KindModules
     {
         private final List<String> objectModules;
 
-        private final boolean forms;
-
-        private final boolean commands;
+        private final List<String> nestedFolders;
 
         /**
-         * @param objectModules the file names of the kind's own modules
-         * @param forms whether the kind holds forms, each with its module under
-         *            {@code Forms/<form name>/}
-         * @param commands whether the kind holds commands, each with its module under
-         *            {@code Commands/<command name>/}
+         * @param objectModules the file names of the place's own modules
+         * @param nestedFolders the folders of the levels the place holds below its objects
          */
-        KindModules(List<String> objectModules, boolean forms, boolean commands)
+        KindModules(List<String> objectModules, List<String> nestedFolders)
         {
             this.objectModules = objectModules;
-            this.forms = forms;
-            this.commands = commands;
+            this.nestedFolders = nestedFolders;
         }
 
-        /** @return the file names of the kind's own modules, empty when it owns none */
+        /** @return the file names of the place's own modules, empty when it owns none */
         List<String> objectModules()
         {
             return objectModules;
         }
 
-        /** @return whether the kind holds forms */
-        boolean forms()
+        /** @return the folders of the levels the place holds, in the order a refusal names them */
+        List<String> nestedFolders()
         {
-            return forms;
+            return nestedFolders;
         }
 
-        /** @return whether the kind holds commands */
-        boolean commands()
+        /**
+         * Tells whether this place holds a level under one folder name.
+         *
+         * @param folder the folder a path spells
+         * @return <code>true</code> when the place holds such a level
+         */
+        boolean holds(String folder)
         {
-            return commands;
+            for (String held : nestedFolders)
+            {
+                if (held.equalsIgnoreCase(folder))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
+     * A level of the layout below an object.
+     */
+    static final class Level
+    {
+        private final String name;
+
+        private final String singular;
+
+        private final String plural;
+
+        private final KindModules modules;
+
+        /**
+         * @param name the name the folder stands for, for refusal texts
+         * @param singular the name in running text, for the reason a folder is missing
+         * @param plural the name in the plural, for refusal texts
+         * @param modules the module files and levels the level owns
+         */
+        Level(String name, String singular, String plural, KindModules modules)
+        {
+            this.name = name;
+            this.singular = singular;
+            this.plural = plural;
+            this.modules = modules;
+        }
+
+        /** @return the name the folder stands for */
+        String name()
+        {
+            return name;
+        }
+
+        /** @return the name of one object of the level, in running text */
+        String singular()
+        {
+            return singular;
+        }
+
+        /** @return the plural of that name */
+        String plural()
+        {
+            return plural;
+        }
+
+        /** @return the module files and levels the level owns */
+        KindModules modules()
+        {
+            return modules;
         }
     }
 

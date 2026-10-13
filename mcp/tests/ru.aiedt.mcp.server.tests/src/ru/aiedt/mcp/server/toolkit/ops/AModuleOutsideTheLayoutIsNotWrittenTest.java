@@ -44,6 +44,12 @@ import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
  * configuration root's own modules keep their place, and a read that misses the file names the
  * canonical path beside the refusal it already gave.
  * </p>
+ * <p>
+ * The module file name is judged against the place the path reaches, not against the kind it opens
+ * with: a form of a catalog takes its module, a table of an external data source takes its object,
+ * record set and manager modules, and a recalculation of a calculation register takes its record set
+ * module alone.
+ * </p>
  */
 public class AModuleOutsideTheLayoutIsNotWrittenTest
 {
@@ -60,9 +66,11 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
     private static Path projectDir;
 
     /**
-     * Creates a project holding one catalog with its object module, a common module, a register, a
-     * constant, an external data source, the common module's form folder, the configuration root's
-     * folder, a bot with its module, a second bot without one, and a role whose module is in place.
+     * Creates a project holding one catalog with its object module and one form, a common module, a
+     * register, a constant, an external data source with a table, a cube and a dimension table, a
+     * calculation register with a recalculation, the common module's form folder, the configuration
+     * root's folder, a bot with its module, a second bot without one, and a role whose module is in
+     * place.
      *
      * @throws Exception when the project or its files cannot be created
      */
@@ -78,6 +86,12 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
         Files.createDirectories(projectDir.resolve("src/InformationRegisters/Ledger")); //$NON-NLS-1$
         Files.createDirectories(projectDir.resolve("src/Constants/Counter")); //$NON-NLS-1$
         Files.createDirectories(projectDir.resolve("src/ExternalDataSources/Source")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/ExternalDataSources/Source/Tables/Таблица")); //$NON-NLS-1$
+        Files.createDirectories(
+            projectDir.resolve("src/ExternalDataSources/Source/Cubes/Куб/DimensionTables/ТаблицаИзмерения")); //$NON-NLS-1$
+        Files.createDirectories(
+            projectDir.resolve("src/CalculationRegisters/РегистрРасчета/Recalculations/Перерасчет")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/Catalogs/Товары/Forms/ФормаТовара")); //$NON-NLS-1$
         Files.createDirectories(projectDir.resolve("src/Configuration")); //$NON-NLS-1$
         Path botModule = projectDir.resolve("src/Bots/\u041F\u0440\u043E\u0431\u0430/Module.bsl"); //$NON-NLS-1$
         Files.createDirectories(botModule.getParent());
@@ -376,16 +390,134 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
             !projectDir.resolve("src/CommonModules/\u041F\u0440\u043E\u0431\u0430/Forms/AnyForm/Module.bsl").toFile().exists()); //$NON-NLS-1$
     }
 
+    /** A form of a catalog is a level that catalog holds, so the form's module is written. */
+    @Test
+    public void aFormOfACatalogTakesItsModule()
+    {
+        String answer = write("append", "Catalogs/Товары/Forms/ФормаТовара/Module.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the form's module was created", //$NON-NLS-1$
+            projectDir.resolve("src/Catalogs/Товары/Forms/ФормаТовара/Module.bsl").toFile().isFile()); //$NON-NLS-1$
+    }
+
     /**
-     * The kind table names only module files the addressing knows, and holds a row for every kind with
-     * a folder under {@code src/} except the one kind that owns no module at all.
+     * A folder below an object that is no level of the layout is refused, and the refusal names the
+     * levels that place holds.
+     */
+    @Test
+    public void aFolderThatIsNoLevelOfTheObjectIsRefusedWithTheLevels()
+    {
+        String answer = write("append", "Catalogs/Товары/Чужое/Чужое2/Module.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("The levels here are: Forms, Commands.")); //$NON-NLS-1$
+        assertTrue("no folder appeared under a name the layout does not know", //$NON-NLS-1$
+            !projectDir.resolve("src/Catalogs/Товары/Чужое").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /**
+     * A path that puts the file where the layout has an object folder is refused: below a kind every
+     * level folder comes with the name of the object it holds.
+     */
+    @Test
+    public void aFileWhereTheLayoutHasAnObjectFolderIsRefused()
+    {
+        String answer = write("append", "Catalogs/Товары/Forms/Module.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("names no module of the layout")); //$NON-NLS-1$
+        assertTrue("no file appeared inside a level folder", //$NON-NLS-1$
+            !projectDir.resolve("src/Catalogs/Товары/Forms/Module.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A table of an external data source takes its object module. */
+    @Test
+    public void aTableOfAnExternalDataSourceTakesItsObjectModule()
+    {
+        String answer =
+            write("append", "ExternalDataSources/Source/Tables/Таблица/ObjectModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the table's object module was created", //$NON-NLS-1$
+            projectDir.resolve("src/ExternalDataSources/Source/Tables/Таблица/ObjectModule.bsl").toFile() //$NON-NLS-1$
+                .isFile());
+    }
+
+    /** A table refuses a file name no table of an external data source takes. */
+    @Test
+    public void aTableRefusesTheModuleFileOfAnotherPlace()
+    {
+        String answer =
+            write("append", "ExternalDataSources/Source/Tables/Таблица/ValueManagerModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("ObjectModule.bsl")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("RecordSetModule.bsl")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("ManagerModule.bsl")); //$NON-NLS-1$
+        assertTrue("no file appeared under a name a table does not take", //$NON-NLS-1$
+            !projectDir.resolve("src/ExternalDataSources/Source/Tables/Таблица/ValueManagerModule.bsl").toFile() //$NON-NLS-1$
+                .exists());
+    }
+
+    /**
+     * A cube of an external data source holds its dimension tables, and a dimension table takes its
+     * manager module while the cube itself does not.
+     */
+    @Test
+    public void aDimensionTableOfACubeTakesItsManagerModule()
+    {
+        String answer = write("append",
+            "ExternalDataSources/Source/Cubes/Куб/DimensionTables/ТаблицаИзмерения/ManagerModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the dimension table's manager module was created", //$NON-NLS-1$
+            projectDir
+                .resolve("src/ExternalDataSources/Source/Cubes/Куб/DimensionTables/ТаблицаИзмерения/ManagerModule.bsl") //$NON-NLS-1$
+                .toFile().isFile());
+
+        String refused =
+            write("append", "ExternalDataSources/Source/Cubes/Куб/ObjectModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(refused, refused.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("RecordSetModule.bsl")); //$NON-NLS-1$
+        assertTrue("no object module appeared beside a cube", //$NON-NLS-1$
+            !projectDir.resolve("src/ExternalDataSources/Source/Cubes/Куб/ObjectModule.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A recalculation of a calculation register takes its record set module alone. */
+    @Test
+    public void aRecalculationTakesItsRecordSetModuleAlone()
+    {
+        String written = write("append",
+            "CalculationRegisters/РегистрРасчета/Recalculations/Перерасчет/RecordSetModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(written, written.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the recalculation's record set module was created", //$NON-NLS-1$
+            projectDir
+                .resolve("src/CalculationRegisters/РегистрРасчета/Recalculations/Перерасчет/RecordSetModule.bsl") //$NON-NLS-1$
+                .toFile().isFile());
+
+        String refused = write("append",
+            "CalculationRegisters/РегистрРасчета/Recalculations/Перерасчет/ManagerModule.bsl", null); //$NON-NLS-1$
+
+        assertTrue(refused, refused.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("The module files here are: RecordSetModule.bsl."));
+        assertTrue("no manager module appeared beside a recalculation", //$NON-NLS-1$
+            !projectDir
+                .resolve("src/CalculationRegisters/РегистрРасчета/Recalculations/Перерасчет/ManagerModule.bsl") //$NON-NLS-1$
+                .toFile().exists());
+    }
+
+    /**
+     * The kind table and the level table name only module files the addressing knows, hold a row for
+     * every kind with a folder under {@code src/}, and hold no level under a folder no level table row
+     * names.
      */
     @Test
     public void theKindTableNamesOnlyFilesTheAddressingKnows()
     {
         Set<String> addressable = new HashSet<>(Arrays.asList(BslModuleAccess.OBJECT_MODULE_FILE_NAMES));
-        addressable.add("Module.bsl"); //$NON-NLS-1$
-        addressable.add("CommandModule.bsl"); //$NON-NLS-1$
         for (MetadataTypeCatalog.MetadataTypeInfo kind : MetadataTypeCatalog.MetadataTypeInfo.values())
         {
             if (BslModuleAccess.moduleFolderOf(kind) == null)
@@ -393,19 +525,51 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
                 // A kind with no folder of its own is refused before the table is consulted.
                 continue;
             }
-            if (kind == MetadataTypeCatalog.MetadataTypeInfo.EXTERNAL_DATA_SOURCE)
-            {
-                // The one kind with a folder and no module file of its own.
-                assertNull("an external data source owns no module", BslModuleAccess.kindModules(kind)); //$NON-NLS-1$
-                continue;
-            }
             BslModuleAccess.KindModules modules = BslModuleAccess.kindModules(kind);
             assertNotNull(kind + " has a folder under src/ but no row in the kind table", modules); //$NON-NLS-1$
-            for (String fileName : modules.objectModules())
-            {
-                assertTrue(kind + " names " + fileName + ", which the module addressing does not know", //$NON-NLS-1$ //$NON-NLS-2$
-                    addressable.contains(fileName));
-            }
+            assertFilesAreAddressable(kind.toString(), modules, addressable);
+            assertHeldLevelsAreNamed(kind.toString(), modules);
+        }
+        for (Map.Entry<String, BslModuleAccess.Level> entry : BslModuleAccess.nestedLevels().entrySet())
+        {
+            BslModuleAccess.KindModules modules = entry.getValue().modules();
+            assertFilesAreAddressable(entry.getKey(), modules, addressable);
+            assertHeldLevelsAreNamed(entry.getKey(), modules);
+        }
+        assertTrue("an external data source owns no module file of its own", //$NON-NLS-1$
+            BslModuleAccess.kindModules(MetadataTypeCatalog.MetadataTypeInfo.EXTERNAL_DATA_SOURCE)
+                .objectModules().isEmpty());
+    }
+
+    /**
+     * Asserts every module file of a place is a name the module addressing probes.
+     *
+     * @param place the place, named for the failure message
+     * @param modules what the place holds
+     * @param addressable the file names the addressing knows
+     */
+    private static void assertFilesAreAddressable(String place, BslModuleAccess.KindModules modules,
+        Set<String> addressable)
+    {
+        for (String fileName : modules.objectModules())
+        {
+            assertTrue(place + " names " + fileName + ", which the module addressing does not know", //$NON-NLS-1$ //$NON-NLS-2$
+                addressable.contains(fileName));
+        }
+    }
+
+    /**
+     * Asserts every level a place holds is spelled by a folder the level table has a row for.
+     *
+     * @param place the place, named for the failure message
+     * @param modules what the place holds
+     */
+    private static void assertHeldLevelsAreNamed(String place, BslModuleAccess.KindModules modules)
+    {
+        for (String folder : modules.nestedFolders())
+        {
+            assertNotNull(place + " holds a level under '" + folder + "', which no level row names", //$NON-NLS-1$ //$NON-NLS-2$
+                BslModuleAccess.nestedLevel(folder));
         }
     }
 
