@@ -466,9 +466,22 @@ public final class BmDefinedTypeHelper
         // builds a table column out of the type description of such a carrier and refuses the
         // update otherwise. Every type write passes through here, so the carrier decides - a
         // composition written to a form attribute or a schema field is kept as it stands.
+        //
+        // What is judged is the length the model carries after the call, not the one the arguments
+        // spell out. A caller repeating the composition already written names no length, and the
+        // write path leaves the stored qualifiers alone, so the length standing in the model is the
+        // one that applies. A caller naming length=0 asks for an unlimited String and is refused,
+        // and so is a composition the caller is changing.
         if (typeIsStoredInDatabase(contextObject))
         {
-            String compositionRefusal = compositeStringLengthRefusal(requested, qualifierOptions);
+            QualifierOptions effective = qualifierOptions;
+            if ((effective == null || effective.length == null)
+                && readCurrentTypeNames(typesList).equals(new HashSet<>(requested)))
+            {
+                effective = new QualifierOptions();
+                effective.length = Integer.valueOf(declaredStringLengthOf(typeDesc));
+            }
+            String compositionRefusal = compositeStringLengthRefusal(requested, effective);
             if (compositionRefusal != null)
             {
                 r.error = compositionRefusal;
@@ -2039,6 +2052,24 @@ public final class BmDefinedTypeHelper
     private static int declaredStringLength(EObject target)
     {
         Object typeDesc = target instanceof MdObject ? readTypeDescription((MdObject) target) : null;
+        Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
+        Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
+        return length instanceof Integer ? ((Integer)length).intValue() : 0;
+    }
+
+    /**
+     * Reads the declared length of a type description from its own string
+     * qualifiers.
+     * <p>
+     * Zero means unlimited, and is what the model answers for a description that
+     * carries no string qualifiers at all.
+     * </p>
+     *
+     * @param typeDesc the type description, possibly <code>null</code>
+     * @return the declared length, or zero when there is none
+     */
+    private static int declaredStringLengthOf(Object typeDesc)
+    {
         Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
         Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
         return length instanceof Integer ? ((Integer)length).intValue() : 0;
