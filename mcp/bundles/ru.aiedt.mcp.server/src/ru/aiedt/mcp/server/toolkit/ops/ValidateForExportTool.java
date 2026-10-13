@@ -708,6 +708,19 @@ public class ValidateForExportTool implements IMcpTool
     private static final Set<String> MDO_STORED_TYPE_ROOTS = new HashSet<>(Arrays.asList(
         "Constant", "CommonAttribute", "DefinedType")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 
+    /**
+     * The .mdo root objects that keep every feature in memory, named as EDT writes them: a report,
+     * a data processor and the two external kinds.
+     * <p>
+     * They write their attributes and the attributes of their tabular sections into the same
+     * {@code <attributes>} and {@code <tabularSections>} elements a database object does, so the
+     * carrier element alone does not tell whether a column is built. The root element of the file
+     * does.
+     * </p>
+     */
+    private static final Set<String> MDO_IN_MEMORY_ROOTS = new HashSet<>(Arrays.asList(
+        "Report", "DataProcessor", "ExternalReport", "ExternalDataProcessor")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+
     /** One {@code <types>} entry inside an .mdo {@code <type>} block. */
     private static final Pattern MDO_TYPE_ENTRY =
         Pattern.compile("<types>\\s*([^<]*?)\\s*</types>"); //$NON-NLS-1$
@@ -947,6 +960,11 @@ public class ValidateForExportTool implements IMcpTool
      * element holds attributes or register fields; a block under any other element - a form
      * attribute, a schema field or parameter, a command parameter type - is not.
      * </p>
+     * <p>
+     * The file as a whole is judged first: a report, a data processor and the external kinds build
+     * no table for their features, so no type block inside them is stored, whatever element holds
+     * it.
+     * </p>
      *
      * @param open the stack of elements open at the type block, the innermost on top
      * @return <code>true</code> when the type becomes a table column
@@ -955,6 +973,11 @@ public class ValidateForExportTool implements IMcpTool
     {
         String carrier = open.peek();
         if (carrier == null)
+        {
+            return false;
+        }
+        String root = open.peekLast();
+        if (root != null && MDO_IN_MEMORY_ROOTS.contains(localName(root)))
         {
             return false;
         }
