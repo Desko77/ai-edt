@@ -63,8 +63,10 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * nothing: no byte of the markers file, no cached storage, no change notification. The preview runs
  * the same checks the write runs and refuses for the same reasons, so a caller that reads a
  * successful preview and repeats the call without {@code dryRun} gets the change it was shown. A
- * preview writes nothing, so a write-blocking preset lets it through while it still refuses the
- * writes themselves - the way {@code edit_metadata} treats its own previews.</p>
+ * preview writes nothing, so a write-blocking preset lets it through when the call is made as
+ * {@code tag_admin operation=...}; the standalone names of the five writes are switched off by such
+ * a preset with and without {@code dryRun}, because that switch is answered before the call reaches
+ * this facade.</p>
  */
 public class TagAdminFacadeTool
     implements IMcpTool
@@ -126,15 +128,14 @@ public class TagAdminFacadeTool
     @Override
     public String getDescription()
     {
-        return "Tags - the named, colored labels a user attaches to metadata objects, stored per " //$NON-NLS-1$
-            + "project in .settings/aiedt-markers.yaml; reading them stays in workspace_marks. " //$NON-NLS-1$
-            + "Operations: create_tag (tag, optional color #RRGGBB and description), update_tag " //$NON-NLS-1$
-            + "(newName, color, description; a rename carries the assignments), delete_tag (takes " //$NON-NLS-1$
-            + "the tag off every object), assign_tag (objectFqn checked against the model, tags " //$NON-NLS-1$
-            + "array; one write for the whole list), unassign_tag (tags array; answers removed and " //$NON-NLS-1$
-            + "skipped). dryRun=true previews any write and changes nothing. The five writes are " //$NON-NLS-1$
-            + "gated by their own names, so a write-blocking preset refuses them before the file " //$NON-NLS-1$
-            + "is read."; //$NON-NLS-1$
+        return "Tags - named, colored labels a user attaches to metadata objects, stored per project " //$NON-NLS-1$
+            + "in .settings/aiedt-markers.yaml; reads stay in workspace_marks. Operations: " //$NON-NLS-1$
+            + "create_tag (tag, optional color #RRGGBB and description), update_tag (newName, " //$NON-NLS-1$
+            + "color, description; a rename keeps the assignments), delete_tag (takes the tag off " //$NON-NLS-1$
+            + "every object), assign_tag (objectFqn, tags array; one write for the list), " //$NON-NLS-1$
+            + "unassign_tag (tags array; answers removed and skipped). dryRun=true previews any " //$NON-NLS-1$
+            + "write and changes nothing, and passes a write-blocking preset when the call goes " //$NON-NLS-1$
+            + "through operation=; the standalone write names stay refused there either way."; //$NON-NLS-1$
     }
 
     @Override
@@ -154,36 +155,35 @@ public class TagAdminFacadeTool
     {
         return SchemaComposer.object()
             .stringProperty("operation",
-                KNOWN + " (required; snake_case canonical, camelCase like createTag is also " //$NON-NLS-1$
-                    + "accepted). Pass operation=help without other params for the operation " //$NON-NLS-1$
-                    + "catalog.") //$NON-NLS-1$
+                KNOWN + " (required; snake_case canonical, camelCase like createTag accepted). " //$NON-NLS-1$
+                    + "Pass operation=help alone for the operation catalog.") //$NON-NLS-1$
             .stringProperty("projectName",
                 "Name of the EDT project (required for every operation but help).") //$NON-NLS-1$
             .stringProperty("tag",
                 "create_tag, update_tag, delete_tag: the tag name (required). Must not be empty " //$NON-NLS-1$
-                    + "once trimmed; names that differ only in case name different tags.") //$NON-NLS-1$
+                    + "once trimmed; names differing only in case are different tags.") //$NON-NLS-1$
             .stringProperty("color",
                 "create_tag, update_tag: the tag color as #RRGGBB (optional; create keeps the " //$NON-NLS-1$
-                    + "default gray when omitted).") //$NON-NLS-1$
+                    + "default gray).") //$NON-NLS-1$
             .stringProperty("description",
-                "create_tag, update_tag: the tag description (optional; omitted leaves it as it " //$NON-NLS-1$
-                    + "is, an empty string clears it).") //$NON-NLS-1$
+                "create_tag, update_tag: the tag description (optional; omitted leaves it, an " //$NON-NLS-1$
+                    + "empty string clears it).") //$NON-NLS-1$
             .stringProperty("newName",
                 "update_tag: the new tag name (optional; omitted keeps the name). A rename " //$NON-NLS-1$
-                    + "carries every assignment to the new name.") //$NON-NLS-1$
+                    + "carries the assignments.") //$NON-NLS-1$
             .booleanProperty("dryRun",
-                "true answers what the call would write and changes nothing; delete_tag answers " //$NON-NLS-1$
-                    + "the number of assignments it would take off. A preview passes a " //$NON-NLS-1$
-                    + "write-blocking preset (default false).") //$NON-NLS-1$
+                "true answers what the write would do and changes nothing; delete_tag answers the " //$NON-NLS-1$
+                    + "assignment count it would drop. Passed as operation=, a preview also runs " //$NON-NLS-1$
+                    + "under a write-blocking preset; the standalone write names stay off there " //$NON-NLS-1$
+                    + "(default false).") //$NON-NLS-1$
             .stringProperty("objectFqn",
-                "assign_tag, unassign_tag: the fully qualified name of the object, e.g. " //$NON-NLS-1$
+                "assign_tag, unassign_tag: the object's fully qualified name, e.g. " //$NON-NLS-1$
                     + "'Catalog.Products' or 'Catalog.Products.Attribute.Code'. assign_tag " //$NON-NLS-1$
-                    + "checks it against the configuration and refuses an object the model does " //$NON-NLS-1$
-                    + "not hold.") //$NON-NLS-1$
+                    + "checks it against the model and refuses an object it does not hold.") //$NON-NLS-1$
             .stringArrayProperty("tags",
-                "assign_tag, unassign_tag: tag names the call works with (required). One unknown " //$NON-NLS-1$
-                    + "tag refuses the whole call; a tag the object already carries - or does " //$NON-NLS-1$
-                    + "not carry - is reported in skipped.") //$NON-NLS-1$
+                "assign_tag, unassign_tag: the tag names (required). One unknown tag refuses " //$NON-NLS-1$
+                    + "the whole call; a tag the object already - or does not - carries is " //$NON-NLS-1$
+                    + "reported in skipped.") //$NON-NLS-1$
             .stringProperty("topic",
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -1347,8 +1347,9 @@ public class TagAdminFacadeTool
             sb.append("- **dryRun=true** - accepted by every operation: it answers what the call " //$NON-NLS-1$
                 + "would write (create_tag the tag it would define, update_tag the tag before and " //$NON-NLS-1$
                 + "after, delete_tag the assignment count, assign_tag and unassign_tag the " //$NON-NLS-1$
-                + "object's tags before and after), changes nothing and passes a write-blocking " //$NON-NLS-1$
-                + "preset.\n"); //$NON-NLS-1$
+                + "object's tags before and after) and changes nothing. It runs under a write-" //$NON-NLS-1$
+                + "blocking preset when the call is passed as operation= of tag_admin; the " //$NON-NLS-1$
+                + "standalone names of the five writes are switched off there either way.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the operation-picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
             return sb.toString();

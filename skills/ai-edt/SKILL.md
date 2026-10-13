@@ -140,7 +140,7 @@ parameter (`action` for the debugger). Most facades carry their own catalogue - 
 | `docs_lookup` | Platform documentation and an object's built-in help. |
 | `workspace_marks` | Tags, objects by tag, bookmarks, task markers. |
 | `cluster_admin` | The Navigator's custom folders: read the cluster tree of a collection, create, rename, describe and delete clusters, move objects in and out. Five writes, each gated by its own door. |
-| `tag_admin` | The project's metadata tags, written: create, rename or recolor, delete, assign to and unassign from an object. Reads stay in `workspace_marks`. Five writes, each gated by its own door; `dryRun=true` answers what the write would do, writes nothing and passes a write-blocking preset. |
+| `tag_admin` | The project's metadata tags, written: create, rename or recolor, delete, assign to and unassign from an object. Reads stay in `workspace_marks`. Five writes, each gated by its own door; `dryRun=true` answers what the write would do and writes nothing, and passes a write-blocking preset when the call goes through `tag_admin operation=...` - the standalone write names that preset switches off stay refused with and without `dryRun`. |
 | `git` | The project's repository inside the IDE: status, branches, log, a commit of named paths, a switch of branch, what changed in a file, putting one file back, and a restore point taken before a merge. |
 | `yaxunit_tests` | YAxUnit unit tests; `installYaxunit=true` installs the engine and confirms both safety flags off unless `yaxunitUnsafeMode=false`. |
 

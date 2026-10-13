@@ -40,7 +40,9 @@ import ru.aiedt.mcp.server.labels.MarkerManager;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.support.ToolGate;
+import ru.aiedt.mcp.server.support.ToolRoad;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
 
 /**
  * Every write-blocking preset refuses each tag write by its door, before the markers file is
@@ -318,6 +320,38 @@ public class ATagWriteDoorRefusesUnderWriteBlockingPresetsTest
                 .startsWith(ToolGate.disabledMessage("delete_tag"))); //$NON-NLS-1$
         }
         assertTrue("these presets wrote through a preview: " + leaks, leaks.isEmpty()); //$NON-NLS-1$
+    }
+
+    /**
+     * A standalone write name stays switched off under a write-blocking preset even when the call
+     * asks for a preview: that switch is answered on the road, before the facade is reached, so
+     * {@code dryRun} never gets a say. The preview such a preset lets through is the facade's own
+     * {@code operation=} entry, which the neighbouring tests cover.
+     */
+    @Test
+    public void everyStandaloneWriteNameIsRefusedWithDryRunToo()
+    {
+        ToolRoad road = new ToolRoad(new java.util.concurrent.Semaphore(2));
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("projectName", PROJECT); //$NON-NLS-1$
+        arguments.put("dryRun", Boolean.TRUE); //$NON-NLS-1$
+        List<String> doors = Arrays.asList(TagAdminFacadeTool.DOOR_CREATE,
+            TagAdminFacadeTool.DOOR_UPDATE, TagAdminFacadeTool.DOOR_DELETE,
+            TagAdminFacadeTool.DOOR_ASSIGN, TagAdminFacadeTool.DOOR_UNASSIGN);
+        for (String preset : Arrays.asList(ToolProfile.READ_ONLY.name(),
+            ToolProfile.DEBUG_AND_TEST.name(), ToolProfile.CODE_REVIEW.name()))
+        {
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, preset);
+            for (String door : doors)
+            {
+                assertFalse(preset + " left " + door + " callable", //$NON-NLS-1$ //$NON-NLS-2$
+                    McpToolCatalog.getInstance().isToolEnabled(door));
+                ToolRoadOutcome outcome = road.call(door, arguments, "tag-door"); //$NON-NLS-1$
+                assertTrue(preset + " ran " + door + " with dryRun=true: " + outcome.text(), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                    outcome.refused());
+                assertEquals(ToolGate.disabledMessage(door), outcome.refusal());
+            }
+        }
     }
 
     /** Every write answers under the all-tools preset again once it is put back. */

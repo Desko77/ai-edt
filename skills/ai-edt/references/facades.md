@@ -162,7 +162,10 @@ of text.
 
 The five writes each pass their own door, so a write-blocking preset refuses them before the file is
 read; a call with `dryRun=true` writes nothing and passes the door the way the `edit_metadata`
-previews do. `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a
+previews do. A preset that blocks writes is answered for the standalone name of a write before the
+call reaches the facade, so under such a preset the preview is reached as `tag_admin
+operation=create_tag` (and the other four) and the standalone names stay refused with and without
+`dryRun`. `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a
 color the default gray), `update_tag` (`newName`, `color`, `description`; an omitted argument keeps
 the field, an empty `description` clears it; a rename carries the assignments and the answer names
 `movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`),
