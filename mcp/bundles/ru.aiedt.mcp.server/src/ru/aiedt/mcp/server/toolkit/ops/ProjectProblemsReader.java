@@ -508,27 +508,10 @@ public class ProjectProblemsReader
             // already scans.
             int collectLimit = compact || sinceBaseline ? Math.max(limit, COMPACT_SCAN_CAP) : limit;
 
-            List<ErrorInfo> collected = collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
-            if (collected.isEmpty() && waitForRefresh)
-            {
-                for (int attempt = 0; attempt < REFRESH_ATTEMPTS; attempt++)
-                {
-                    try
-                    {
-                        Thread.sleep(REFRESH_SLEEP_MS);
-                    }
-                    catch (InterruptedException e)
-                    {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                    collected = collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
-                    if (!collected.isEmpty())
-                    {
-                        break;
-                    }
-                }
-            }
+            List<ErrorInfo> collected = waitForRefresh
+                ? retryEmptyRead(
+                    () -> collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo))
+                : collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
 
             if (collected.size() < collectLimit)
             {
@@ -1040,8 +1023,12 @@ public class ProjectProblemsReader
             }
             Filter filter =
                 new Filter(projectName, null, null, objectFqns, new HashSet<>(), false, null);
-            List<ErrorInfo> collected =
-                collectMarkers(markerManager, checkRepository, filter, BASELINE_COLLECT_CAP, false);
+            // The same retry the error report makes: right after a validation or a build the
+            // markers are still on their way, and a single empty read here would record an empty
+            // baseline that names every standing finding new.
+            List<ErrorInfo> collected = retryEmptyRead(
+                () -> collectMarkers(markerManager, checkRepository, filter, BASELINE_COLLECT_CAP,
+                    false));
             if (collected.size() < BASELINE_COLLECT_CAP)
             {
                 collectEclipseMarkers(collected, targetProjects(projectName), filter,
@@ -1317,6 +1304,49 @@ public class ProjectProblemsReader
             fqns.addAll(MetadataTypeCatalog.getAllFqnVariants(type + "." + parts[srcIndex + 2])); //$NON-NLS-1$
         }
         return fqns;
+    }
+
+    /**
+     * Reads until the reader answers non-empty, retrying an empty first read a few times.
+     * <p>
+     * A validation that has just been asked for publishes its markers with a delay, and a single
+     * read right after a build meets none of them - which reads as a clean project, and for a
+     * baseline record would mean an empty "before" that names every standing finding new. One
+     * helper serves the report and the baseline record so the two cannot drift apart.
+     * </p>
+     * <p>
+     * Package-visible so a plain test drives the retry without a marker manager behind it.
+     * </p>
+     *
+     * @param <T> the row type
+     * @param read the read to repeat; must never answer <code>null</code>
+     * @return the first non-empty answer, or the empty last answer when every retry stays empty
+     */
+    static <T> List<T> retryEmptyRead(java.util.function.Supplier<List<T>> read)
+    {
+        List<T> collected = read.get();
+        if (!collected.isEmpty())
+        {
+            return collected;
+        }
+        for (int attempt = 0; attempt < REFRESH_ATTEMPTS; attempt++)
+        {
+            try
+            {
+                Thread.sleep(REFRESH_SLEEP_MS);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            collected = read.get();
+            if (!collected.isEmpty())
+            {
+                return collected;
+            }
+        }
+        return collected;
     }
 
     /**
