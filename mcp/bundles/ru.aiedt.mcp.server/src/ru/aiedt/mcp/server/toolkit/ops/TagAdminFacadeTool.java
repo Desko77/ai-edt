@@ -752,12 +752,12 @@ public class TagAdminFacadeTool
         String description = JsonUtils.extractStringArgument(params, "description"); //$NON-NLS-1$
         if (dryRun)
         {
-            ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-            if (fileRefusal != null)
+            MarkersInView view = markersInView(context.service, context.project, dryRun);
+            if (view.refusal != null)
             {
-                return fileRefusal.toJson();
+                return view.refusal.toJson();
             }
-            if (context.service.getMarkerStorage(context.project).getMarkerByName(tag) != null)
+            if (view.storage.getMarkerByName(tag) != null)
             {
                 return tagExists(tag, "create_tag").toJson(); //$NON-NLS-1$
             }
@@ -832,12 +832,12 @@ public class TagAdminFacadeTool
             return colorRefusal(color).toJson();
         }
         String description = JsonUtils.extractStringArgument(params, "description"); //$NON-NLS-1$
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
-        MarkerStore storage = context.service.getMarkerStorage(context.project);
+        MarkerStore storage = view.storage;
         Marker existing = storage.getMarkerByName(tag);
         if (existing == null)
         {
@@ -906,17 +906,16 @@ public class TagAdminFacadeTool
             return nameRefusal("tag").toJson(); //$NON-NLS-1$
         }
         tag = tag.trim();
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
-        if (context.service.getMarkerStorage(context.project).getMarkerByName(tag) == null)
+        if (view.storage.getMarkerByName(tag) == null)
         {
             return tagNotFound(tag);
         }
-        int assignments = context.service.getMarkerStorage(context.project)
-            .getObjectsByMarker(tag).size();
+        int assignments = view.storage.getObjectsByMarker(tag).size();
         if (dryRun)
         {
             ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
@@ -976,10 +975,10 @@ public class TagAdminFacadeTool
             return ToolResult.error("objectFqn must be provided. Example: 'Catalog.Products'.") //$NON-NLS-1$
                 .toJson();
         }
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
         ObjectCheck check = checkObject(context.project, objectFqn);
         if (check.refusal != null)
@@ -991,7 +990,7 @@ public class TagAdminFacadeTool
         // the whole call and nothing is assigned. The check reads a snapshot outside the write
         // lock, so a definition racing it still meets the operation's own refusal under the lock.
         Set<String> defined = new LinkedHashSet<>();
-        for (Marker marker : context.service.getMarkers(context.project))
+        for (Marker marker : view.storage.getTags())
         {
             defined.add(marker.getName());
         }
@@ -1004,24 +1003,11 @@ public class TagAdminFacadeTool
         }
         if (dryRun)
         {
-            List<String> before = tagsOn(context.service.getMarkerStorage(context.project),
-                objectFqn);
-            List<String> assigned = new ArrayList<>();
-            Map<String, String> skipped = new LinkedHashMap<>();
-            for (String tag : tags)
-            {
-                if (before.contains(tag))
-                {
-                    skipped.put(tag, "alreadyAssigned"); //$NON-NLS-1$
-                }
-                else
-                {
-                    assigned.add(tag);
-                }
-            }
-            List<String> after = new ArrayList<>(before);
-            after.addAll(assigned);
-            if (!assigned.isEmpty())
+            MarkerStore preview = view.storage.copy();
+            List<String> before = tagsOn(preview, objectFqn);
+            MarkerStore.AssignmentEdit edit = preview.assignAll(objectFqn, tags);
+            List<String> after = tagsOn(preview, objectFqn);
+            if (!edit.applied().isEmpty())
             {
                 ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
                     "assign_tag", "no marker was assigned to \"" + objectFqn + "\""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -1034,8 +1020,8 @@ public class TagAdminFacadeTool
                 .put("objectFqn", objectFqn) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
                 .put("tagsBefore", before) //$NON-NLS-1$
-                .put("assigned", assigned) //$NON-NLS-1$
-                .put("skipped", skippedNodes(skipped)) //$NON-NLS-1$
+                .put("assigned", edit.applied()) //$NON-NLS-1$
+                .put("skipped", skippedNodes(edit.skipped())) //$NON-NLS-1$
                 .put("tagsAfter", after) //$NON-NLS-1$
                 .toJson();
         }
@@ -1082,13 +1068,13 @@ public class TagAdminFacadeTool
                 return nameRefusal("tags").toJson(); //$NON-NLS-1$
             }
         }
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
         Set<String> defined = new LinkedHashSet<>();
-        for (Marker marker : context.service.getMarkers(context.project))
+        for (Marker marker : view.storage.getTags())
         {
             defined.add(marker.getName());
         }
@@ -1108,22 +1094,11 @@ public class TagAdminFacadeTool
         objectFqn = objectFqn.trim();
         if (dryRun)
         {
-            List<String> before = tagsOn(context.service.getMarkerStorage(context.project),
-                objectFqn);
-            List<String> removed = new ArrayList<>();
-            Map<String, String> skipped = new LinkedHashMap<>();
-            for (String tag : tags)
-            {
-                if (before.contains(tag))
-                {
-                    removed.add(tag);
-                }
-                else
-                {
-                    skipped.put(tag, "notAssigned"); //$NON-NLS-1$
-                }
-            }
-            if (removed.isEmpty())
+            MarkerStore preview = view.storage.copy();
+            List<String> before = tagsOn(preview, objectFqn);
+            MarkerStore.AssignmentEdit edit = preview.unassignAll(objectFqn, tags);
+            List<String> after = tagsOn(preview, objectFqn);
+            if (edit.applied().isEmpty())
             {
                 // A preview of a removal that would remove nothing reads the refusal the write
                 // itself answers with, and still says nothing was written.
@@ -1132,8 +1107,8 @@ public class TagAdminFacadeTool
                         .put("reason", REASON_NOT_ASSIGNED) //$NON-NLS-1$
                         .put("dryRun", true) //$NON-NLS-1$
                         .put("tagsBefore", before) //$NON-NLS-1$
-                        .put("removed", removed) //$NON-NLS-1$
-                        .put("skipped", skippedNodes(skipped)) //$NON-NLS-1$
+                        .put("removed", edit.applied()) //$NON-NLS-1$
+                        .put("skipped", skippedNodes(edit.skipped())) //$NON-NLS-1$
                         .toJson();
             }
             ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
@@ -1142,14 +1117,12 @@ public class TagAdminFacadeTool
             {
                 return writeRefusal.toJson();
             }
-            List<String> after = new ArrayList<>(before);
-            after.removeAll(removed);
             return ToolResult.success()
                 .put("objectFqn", objectFqn) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
                 .put("tagsBefore", before) //$NON-NLS-1$
-                .put("removed", removed) //$NON-NLS-1$
-                .put("skipped", skippedNodes(skipped)) //$NON-NLS-1$
+                .put("removed", edit.applied()) //$NON-NLS-1$
+                .put("skipped", skippedNodes(edit.skipped())) //$NON-NLS-1$
                 .put("tagsAfter", after) //$NON-NLS-1$
                 .toJson();
         }
@@ -1266,13 +1239,47 @@ public class TagAdminFacadeTool
      */
     private static ToolResult fileRefusalOf(MarkerManager service, IProject project)
     {
-        String refusal = service.markerFileRefusal(project);
-        if (refusal != null)
+        return unreadableMarkerFileRefusal(service.markerFileRefusal(project),
+            service.markerFileReadFailed(project), project);
+    }
+
+    /**
+     * The refusal one preview read of the marker file answers with.
+     * <p>
+     * A preview keeps no sign of what it read, so the two ways a read can fail come from that read
+     * itself instead of being asked of the service afterwards, which would have to touch the file
+     * a second time to answer.
+     * </p>
+     *
+     * @param read what the preview read answered
+     * @param project the project
+     * @return the refusal, or {@code null} when the file was read
+     */
+    private static ToolResult previewFileRefusalOf(MarkerManager.PreviewRead read, IProject project)
+    {
+        return unreadableMarkerFileRefusal(
+            read.unreadable() ? MarkerManager.UNREADABLE_MARKER_FILE : null, read.readFailed(),
+            project);
+    }
+
+    /**
+     * The refusal a marker file that is there and does not parse, or that could not be read at
+     * all, answers with.
+     *
+     * @param unreadable the sentence about a file that does not parse, or {@code null}
+     * @param readFailed whether the file could not be read at all
+     * @param project the project
+     * @return the refusal, or {@code null} when neither holds
+     */
+    private static ToolResult unreadableMarkerFileRefusal(String unreadable, boolean readFailed,
+        IProject project)
+    {
+        if (unreadable != null)
         {
-            return ToolResult.error(refusal + " No tag was written.") //$NON-NLS-1$
+            return ToolResult.error(unreadable + " No tag was written.") //$NON-NLS-1$
                 .put("reason", MarkerWriteOutcome.UNREADABLE_FILE); //$NON-NLS-1$
         }
-        if (service.markerFileReadFailed(project))
+        if (readFailed)
         {
             return ToolResult.error("The marker file of project " + project.getName() //$NON-NLS-1$
                 + " could not be read, so its tags cannot be checked. No tag was written.") //$NON-NLS-1$
@@ -1282,11 +1289,61 @@ public class TagAdminFacadeTool
     }
 
     /**
-     * The refusal a write would answer with before it touches the marker file, or {@code null}
-     * when nothing refuses it yet.
+     * The markers one call reads, together with the refusal that stops it before it reads them.
      * <p>
-     * The service asks the file the same question its save routes ask, so a preview refuses with
-     * the code and the sentence the write itself refuses with.
+     * A call that writes reads the markers the ordinary way, which carries a marker file an
+     * earlier version wrote over to the name this version uses. A call that writes nothing reads
+     * the file as it stands and remembers nothing, so it leaves both files exactly where they are.
+     * </p>
+     */
+    private static final class MarkersInView
+    {
+        private final MarkerStore storage;
+
+        private final ToolResult refusal;
+
+        /**
+         * Holds the markers one call works from.
+         *
+         * @param storage the markers, or {@code null} when the call is refused
+         * @param refusal the refusal, or {@code null} when there is none
+         */
+        MarkersInView(MarkerStore storage, ToolResult refusal)
+        {
+            this.storage = storage;
+            this.refusal = refusal;
+        }
+    }
+
+    /**
+     * Reads the markers a call works from, the way that call reads them.
+     *
+     * @param service the marker service
+     * @param project the project
+     * @param dryRun whether the call writes nothing
+     * @return the markers and the refusal, exactly one of which is set
+     */
+    private static MarkersInView markersInView(MarkerManager service, IProject project,
+        boolean dryRun)
+    {
+        if (!dryRun)
+        {
+            ToolResult refusal = fileRefusalOf(service, project);
+            return refusal != null ? new MarkersInView(null, refusal)
+                : new MarkersInView(service.getMarkerStorage(project), null);
+        }
+        MarkerManager.PreviewRead read = service.readMarkersForPreview(project);
+        ToolResult refusal = previewFileRefusalOf(read, project);
+        return refusal != null ? new MarkersInView(null, refusal)
+            : new MarkersInView(read.storage(), null);
+    }
+
+    /**
+     * The refusal the write a preview describes would answer with, or {@code null} when nothing
+     * refuses it yet.
+     * <p>
+     * The service asks the file a preview reads, so a preview refuses with the code and the
+     * sentence the write itself refuses with.
      * </p>
      *
      * @param service the marker service
@@ -1299,7 +1356,7 @@ public class TagAdminFacadeTool
     private static ToolResult writeRefusalOf(MarkerManager service, IProject project, String what,
         String subject)
     {
-        MarkerWriteOutcome refusal = service.fileWriteRefusal(project, subject);
+        MarkerWriteOutcome refusal = service.fileWriteRefusalForPreview(project, subject);
         return refusal != null ? refusalOf(refusal, what) : null;
     }
 

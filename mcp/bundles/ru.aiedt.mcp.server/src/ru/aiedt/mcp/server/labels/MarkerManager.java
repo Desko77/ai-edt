@@ -100,6 +100,7 @@ import ru.aiedt.mcp.server.support.LegacyStorageMigration;
 import ru.aiedt.mcp.server.labels.model.Marker;
 
 import ru.aiedt.mcp.server.labels.model.MarkerStore;
+import ru.aiedt.mcp.server.labels.model.MarkerStore.AssignmentEdit;
 
 
 
@@ -1199,21 +1200,9 @@ public class MarkerManager
                 else
                 {
                     MarkerStore before = storage.copy();
-                    List<String> applied = new ArrayList<>();
-                    Map<String, String> skipped = new LinkedHashMap<>();
-                    for (String markerName : markerNames)
-                    {
-                        if (storage.assignMarker(objectFqn, markerName))
-                        {
-                            applied.add(markerName);
-                        }
-                        else
-                        {
-                            // An undefined name was already refused above, so this names a marker
-                            // the object carried when the edit itself looked.
-                            skipped.put(markerName, "alreadyAssigned"); //$NON-NLS-1$
-                        }
-                    }
+                    AssignmentEdit edit = storage.assignAll(objectFqn, markerNames);
+                    List<String> applied = edit.applied();
+                    Map<String, String> skipped = edit.skipped();
                     if (applied.isEmpty())
                     {
                         outcome = MarkerWriteOutcome.storedPerName(applied, skipped, 0);
@@ -1312,21 +1301,9 @@ public class MarkerManager
                 else
                 {
                     MarkerStore before = storage.copy();
-                    List<String> applied = new ArrayList<>();
-                    Map<String, String> skipped = new LinkedHashMap<>();
-                    for (String markerName : markerNames)
-                    {
-                        if (storage.unassignMarker(objectFqn, markerName))
-                        {
-                            applied.add(markerName);
-                        }
-                        else
-                        {
-                            // An undefined name was already refused above, so this names a marker
-                            // the object did not carry when the edit itself looked.
-                            skipped.put(markerName, "notAssigned"); //$NON-NLS-1$
-                        }
-                    }
+                    AssignmentEdit edit = storage.unassignAll(objectFqn, markerNames);
+                    List<String> applied = edit.applied();
+                    Map<String, String> skipped = edit.skipped();
                     if (applied.isEmpty())
                     {
                         outcome = MarkerWriteOutcome.storedPerName(applied, skipped, 0);
@@ -2321,7 +2298,7 @@ public class MarkerManager
 
     /**
 
-     * Tells whether an existing marker file may be replaced.
+     * Tells whether a marker file may be replaced.
 
      * <p>
 
@@ -2329,13 +2306,15 @@ public class MarkerManager
 
      * told the markers were saved. A file the operating system will not open for writing is refused
 
-     * here, before that write.
+     * here, before that write. The file on disk decides whenever the resource tree knows nothing
+
+     * of it, so a file another program wrote is judged exactly as one the workspace has.
 
      * </p>
 
      *
 
-     * @param file the marker file, which exists
+     * @param file the marker file
 
      * @return <code>false</code> when the file is read-only
 
@@ -2345,7 +2324,7 @@ public class MarkerManager
 
     {
 
-        if (file.isReadOnly())
+        if (file.exists() && file.isReadOnly())
 
         {
 
@@ -2681,26 +2660,191 @@ public class MarkerManager
      */
     private static String fileWriteRefusalCode(IFile file)
     {
-        return file.exists() && !canOverwrite(file) ? MarkerWriteOutcome.READ_ONLY_FILE : null;
+        return canOverwrite(file) ? null : MarkerWriteOutcome.READ_ONLY_FILE;
     }
 
     /**
-     * The refusal an edit answers with before it touches the marker file, or {@code null} when
-     * nothing stands in the way of a write.
+     * The refusal an edit that writes nothing answers with, or {@code null} when nothing stands in
+     * the way of the write it previews.
      * <p>
-     * Nothing here writes, creates, locks or deletes: the question is asked of the file as it
-     * stands.
+     * The question is asked of the file such an edit reads - the current one when it is there,
+     * otherwise the file an earlier build wrote - and asking it moves neither. A write asks its
+     * own question inside the save route that is about to replace the file.
      * </p>
      *
      * @param project the project
      * @param subject what the edit was about, as the sentence that precedes the file reason
      * @return the refusal, or {@code null}
      */
-    public MarkerWriteOutcome fileWriteRefusal(IProject project, String subject)
+    public MarkerWriteOutcome fileWriteRefusalForPreview(IProject project, String subject)
     {
-        String code = fileWriteRefusalCode(getMarkersFile(project));
+        return refusalOfTheFile(fileWriteRefusalCode(markersFileAsItStands(project)), subject);
+    }
+
+    /**
+     * A file's own refusal, as the sentence a caller reads.
+     *
+     * @param code the refusal the file answers with, or {@code null} when it refuses nothing
+     * @param subject what the edit was about, as the sentence that precedes the file reason
+     * @return the refusal, or {@code null}
+     */
+    private static MarkerWriteOutcome refusalOfTheFile(String code, String subject)
+    {
         return code == null ? null
             : MarkerWriteOutcome.refused(code, subject + ": " + refusalText(code)); //$NON-NLS-1$
+    }
+
+    /**
+     * Reads a project's markers the way a preview reads them: from the file as it stands, and
+     * without remembering anything.
+     * <p>
+     * The file is the current one when it is there and otherwise the file an earlier build wrote.
+     * Neither is created, copied, renamed or refreshed, so an edit that writes nothing leaves the
+     * project's settings folder byte for byte as it found it. Nothing of this read is kept: the
+     * bytes are not remembered as the current file's fingerprint, a parse failure is not recorded
+     * and no storage is cached, so the answer is what the file holds at this moment and the next
+     * ordinary read judges the file itself.
+     * </p>
+     *
+     * @param project the project; may be {@code null}
+     * @return the markers one read found, with the refusal that same read answered with
+     */
+    public PreviewRead readMarkersForPreview(IProject project)
+    {
+        beforeReadingTheMarkerFile(project);
+        if (project == null || !project.isAccessible())
+        {
+            return new PreviewRead(new MarkerStore(), false, false);
+        }
+        byte[] bytes;
+        try
+        {
+            bytes = readMarkersBytes(markersFileAsItStands(project));
+        }
+        catch (CoreException | IOException e)
+        {
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return new PreviewRead(null, false, true);
+        }
+        if (bytes == null)
+        {
+            return new PreviewRead(new MarkerStore(), false, false);
+        }
+        try (Reader reader = new InputStreamReader(new ByteArrayInputStream(bytes),
+            StandardCharsets.UTF_8))
+        {
+            MarkerStore storage = createLoadYaml().load(reader);
+            return new PreviewRead(storage != null ? storage : new MarkerStore(), false, false);
+        }
+        catch (IOException e)
+        {
+            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return new PreviewRead(null, false, true);
+        }
+        catch (YAMLException e)
+        {
+            Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
+            return new PreviewRead(null, true, false);
+        }
+    }
+
+    /**
+     * What one preview read of a project's marker file answered.
+     * <p>
+     * Three outcomes are told apart: the markers the read found, a file that is there and does not
+     * parse, and a file that could not be read at all. A caller has to refuse the way the write
+     * refuses, and it cannot ask the service for those signs afterwards the way a caller of an
+     * ordinary read can - a preview leaves no sign of what it read behind.
+     * </p>
+     */
+    public static final class PreviewRead
+    {
+        private final MarkerStore storage;
+
+        private final boolean unreadable;
+
+        private final boolean readFailed;
+
+        /**
+         * Holds what one preview read answered.
+         *
+         * @param storage the markers the read found; {@code null} when it refused
+         * @param unreadable whether a file is there and does not parse
+         * @param readFailed whether the file could not be read at all
+         */
+        PreviewRead(MarkerStore storage, boolean unreadable, boolean readFailed)
+        {
+            this.storage = storage;
+            this.unreadable = unreadable;
+            this.readFailed = readFailed;
+        }
+
+        /**
+         * The markers the read found, which no other caller holds.
+         *
+         * @return the markers; {@code null} when the read refused
+         */
+        public MarkerStore storage()
+        {
+            return storage;
+        }
+
+        /**
+         * Whether a marker file is there and does not parse.
+         *
+         * @return {@code true} when the file is unreadable
+         */
+        public boolean unreadable()
+        {
+            return unreadable;
+        }
+
+        /**
+         * Whether the marker file could not be read at all.
+         *
+         * @return {@code true} when the read failed
+         */
+        public boolean readFailed()
+        {
+            return readFailed;
+        }
+    }
+
+    /**
+     * The marker file a preview reads: the current one when it is there, and otherwise the file an
+     * earlier build wrote, as it stands.
+     * <p>
+     * Resolved without the carry-over an ordinary read performs, which copies the old file onto the
+     * current name and renames the old one away: an edit that promises to write nothing must leave
+     * both files where they are.
+     * </p>
+     *
+     * @param project the project
+     * @return the file a preview reads, which may not exist
+     */
+    private static IFile markersFileAsItStands(IProject project)
+    {
+        IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
+        IFile current = settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
+        IFile earlier = settingsFolder.getFile(MarkerKeys.LEGACY_MARKERS_FILE);
+        return holdsAFile(current) || !holdsAFile(earlier) ? current : earlier;
+    }
+
+    /**
+     * Tells whether a file resource stands for a file that is there.
+     * <p>
+     * The disk decides where it can be asked: a file another process wrote belongs to the project
+     * even while the workspace has not been told about it. A resource with no location to name is
+     * asked through the workspace instead.
+     * </p>
+     *
+     * @param file the file resource
+     * @return {@code true} when a file is there
+     */
+    private static boolean holdsAFile(IFile file)
+    {
+        IPath location = file.getLocation();
+        return location == null ? file.exists() : Files.exists(location.toFile().toPath());
     }
 
     /**

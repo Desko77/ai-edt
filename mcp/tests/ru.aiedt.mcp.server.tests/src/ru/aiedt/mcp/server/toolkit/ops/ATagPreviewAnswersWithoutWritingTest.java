@@ -549,6 +549,69 @@ public class ATagPreviewAnswersWithoutWritingTest
     }
 
     /**
+     * A preview of an unassign over a name the object carries twice answers what one removal
+     * leaves, and answers it the way the write does.
+     * <p>
+     * The file's list holds the same name in two neighbouring places. A removal takes one
+     * occurrence off, so the after-state the preview answers is read back from a real unassign over
+     * a copy of the same file rather than derived from the names the call was given.
+     * </p>
+     *
+     * @throws Exception when the markers file cannot be edited or read
+     */
+    @Test
+    public void aPreviewOfAnUnassignOverARepeatedNameAnswersWhatOneRemovalLeaves() throws Exception
+    {
+        succeeded(call("create_tag", "tag", "Twice")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        succeeded(call("create_tag", "tag", "Other")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        succeeded(call("assign_tag", "objectFqn", OBJECT, "tags", "[\"Twice\", \"Other\"]")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        String repeated = aRepeatedTagInTheList();
+
+        JsonObject preview = succeeded(call("unassign_tag", "objectFqn", OBJECT, "tags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "[\"Twice\"]", "dryRun", "true")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertEquals(java.util.List.of("Twice", "Twice", "Other"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            names(preview.getAsJsonArray("tagsBefore"))); //$NON-NLS-1$
+        assertEquals(java.util.List.of("Twice"), names(preview.getAsJsonArray("removed"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the preview answers what one removal leaves", //$NON-NLS-1$
+            java.util.List.of("Twice", "Other"), names(preview.getAsJsonArray("tagsAfter"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("the preview wrote nothing", repeated, Files.readString(markerFile())); //$NON-NLS-1$
+
+        // The same state written for real: the file is put back the way the preview found it.
+        writeMarkerFile(repeated);
+        JsonObject write = succeeded(call("unassign_tag", "objectFqn", OBJECT, "tags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "[\"Twice\"]")); //$NON-NLS-1$
+        assertEquals(names(preview.getAsJsonArray("removed")), //$NON-NLS-1$
+            names(write.getAsJsonArray("removed"))); //$NON-NLS-1$
+        assertEquals("the write left what the preview answered", //$NON-NLS-1$
+            names(preview.getAsJsonArray("tagsAfter")), storedNames()); //$NON-NLS-1$
+    }
+
+    /**
+     * Puts a second copy of a name the object carries right after the first one in the markers
+     * file, and answers the file's text as it now stands.
+     * <p>
+     * A list that holds the same name twice is what tells apart a removal that takes one occurrence
+     * off from one that takes the name out wherever it stands.
+     * </p>
+     *
+     * @return the text of the edited file
+     * @throws Exception when the file cannot be read or written
+     */
+    private String aRepeatedTagInTheList() throws Exception
+    {
+        String text = Files.readString(markerFile());
+        String eol = text.contains("\r\n") ? "\r\n" : "\n"; //$NON-NLS-1$ //$NON-NLS-2$
+        java.util.regex.Matcher first = java.util.regex.Pattern.compile("(?m)^([ \\t]*)- Twice$") //$NON-NLS-1$
+            .matcher(text);
+        assertTrue("the file lists the object's tag: " + text, first.find()); //$NON-NLS-1$
+        String edited = text.substring(0, first.end()) + eol + first.group(1) + "- Twice" //$NON-NLS-1$
+            + text.substring(first.end());
+        writeMarkerFile(edited);
+        return edited;
+    }
+
+    /**
      * Writes the markers file with the given text, as a change from outside the workspace.
      *
      * @param text the file's content
