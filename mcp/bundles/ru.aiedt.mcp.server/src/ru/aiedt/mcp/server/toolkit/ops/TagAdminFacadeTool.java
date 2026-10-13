@@ -132,10 +132,9 @@ public class TagAdminFacadeTool
             + "(newName, color, description; a rename carries the assignments), delete_tag (takes " //$NON-NLS-1$
             + "the tag off every object), assign_tag (objectFqn checked against the model, tags " //$NON-NLS-1$
             + "array; one write for the whole list), unassign_tag (tags array; answers removed and " //$NON-NLS-1$
-            + "skipped). Every write takes dryRun=true, which answers what it would write - the tag " //$NON-NLS-1$
-            + "before and after, the object's tags before and after - and changes nothing, including " //$NON-NLS-1$
-            + "under a write-blocking preset. The five writes are gated by their own names, so such " //$NON-NLS-1$
-            + "a preset refuses them before the file is read."; //$NON-NLS-1$
+            + "skipped). dryRun=true previews any write and changes nothing. The five writes are " //$NON-NLS-1$
+            + "gated by their own names, so a write-blocking preset refuses them before the file " //$NON-NLS-1$
+            + "is read."; //$NON-NLS-1$
     }
 
     @Override
@@ -173,11 +172,9 @@ public class TagAdminFacadeTool
                 "update_tag: the new tag name (optional; omitted keeps the name). A rename " //$NON-NLS-1$
                     + "carries every assignment to the new name.") //$NON-NLS-1$
             .booleanProperty("dryRun",
-                "every operation: true answers what the call would write - create_tag the tag it " //$NON-NLS-1$
-                    + "would define, update_tag the tag before and after, delete_tag the number of " //$NON-NLS-1$
-                    + "assignments it would take off, assign_tag and unassign_tag the object's tags " //$NON-NLS-1$
-                    + "before and after - and changes nothing (default false). A preview passes " //$NON-NLS-1$
-                    + "a write-blocking preset; the call without dryRun does not.") //$NON-NLS-1$
+                "true answers what the call would write and changes nothing; delete_tag answers " //$NON-NLS-1$
+                    + "the number of assignments it would take off. A preview passes a " //$NON-NLS-1$
+                    + "write-blocking preset (default false).") //$NON-NLS-1$
             .stringProperty("objectFqn",
                 "assign_tag, unassign_tag: the fully qualified name of the object, e.g. " //$NON-NLS-1$
                     + "'Catalog.Products' or 'Catalog.Products.Attribute.Code'. assign_tag " //$NON-NLS-1$
