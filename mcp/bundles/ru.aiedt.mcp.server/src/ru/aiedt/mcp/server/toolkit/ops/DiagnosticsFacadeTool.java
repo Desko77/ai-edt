@@ -284,6 +284,10 @@ public class DiagnosticsFacadeTool implements IMcpTool
         {
             return snapshot.refusal;
         }
+        if (snapshot.capped)
+        {
+            return ProjectProblemsReader.cappedBaselineRefusal(ProjectProblemsReader.BASELINE_COLLECT_CAP);
+        }
         java.nio.file.Path dir = DiagnosticsBaselineStore.stateDir();
         if (dir == null)
         {
@@ -315,11 +319,6 @@ public class DiagnosticsFacadeTool implements IMcpTool
         builder.append("**Saved at:** ").append(saved.savedAt).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         builder.append("**Recorded:** ").append(describeBaselineCounts(saved.diagnostics)) //$NON-NLS-1$
             .append("\n"); //$NON-NLS-1$
-        if (snapshot.capped)
-        {
-            builder.append("\n**Note:** the collection reached its cap; " //$NON-NLS-1$
-                + "the baseline may hold less than everything.\n"); //$NON-NLS-1$
-        }
         builder.append("\nget_project_errors with sinceBaseline=true and projectName=") //$NON-NLS-1$
             .append(projectName).append(" answers only what appears after this moment.\n"); //$NON-NLS-1$
         return unresolved + builder.toString();

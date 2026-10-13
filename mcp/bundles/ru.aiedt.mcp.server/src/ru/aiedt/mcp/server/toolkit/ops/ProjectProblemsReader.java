@@ -537,7 +537,8 @@ public class ProjectProblemsReader
 
             if (sinceBaseline)
             {
-                return renderSinceBaseline(projectName, collected, severityFilter, checkId, fileFilter,
+                return renderSinceBaseline(DiagnosticsBaselineStore.stateDir(), projectName,
+                    collapseErrors(collected), collected.size(), severityFilter, checkId, fileFilter,
                     objectFqns, sessionScope, sessionFqns, limit, collectLimit);
             }
 
@@ -741,6 +742,26 @@ public class ProjectProblemsReader
     }
 
     /**
+     * The refusal a baseline save gets when the collection reached its cap.
+     * <p>
+     * A baseline over a truncated read would hold less than everything, and the comparison after
+     * it would name resolved the findings the save never saw. Reading without the cap is not the
+     * remedy either: the cap is what keeps one call's rows bounded, and a whole-project baseline
+     * is exactly the call that would otherwise hold every marker of a large configuration.
+     * </p>
+     *
+     * @param cap the cap the collection reached
+     * @return the refusal markdown, naming the narrowing that fits under the cap
+     */
+    static String cappedBaselineRefusal(int cap)
+    {
+        return "# Request Failed\n\nThe collection reached its cap of " + cap //$NON-NLS-1$
+            + " markers, so a baseline written now would hold less than everything - " //$NON-NLS-1$
+            + "it was not written. Narrow the area: pass objects=[...] to record the baseline " //$NON-NLS-1$
+            + "of named objects only."; //$NON-NLS-1$
+    }
+
+    /**
      * Renders the findings that stand now and did not stand at the recorded baseline.
      * <p>
      * The subtraction happens inside the frame of the query - severity, check id, file filter and
@@ -748,9 +769,23 @@ public class ProjectProblemsReader
      * question. A baseline scoped to named objects is compared over those objects alone; the
      * findings of anything else are named as not compared rather than left to read as new.
      * </p>
+     * <p>
+     * A read that reached its collection cap saw only part of what stands, and every baseline
+     * record the unseen part holds would count as resolved. So a truncated read answers with its
+     * new findings - counted among the markers it did read, and says so - and carries no resolved
+     * count at all, which is what separates "not determined" from zero.
+     * </p>
+     * <p>
+     * Package-visible with its inputs already mapped, so a plain test drives the comparison
+     * without a workspace: the current findings arrive as records and the baseline directory as
+     * a path.
+     * </p>
      *
+     * @param baselineDir the directory the baseline lives in; <code>null</code> answers a refusal
      * @param projectName the project whose baseline is subtracted
-     * @param collected the findings standing now, through the query's own filters
+     * @param current the findings standing now, already collapsed and already filtered by the
+     *            query's own filters
+     * @param collectedCount how many markers the current findings were collected from
      * @param severityFilter the severity set the query kept, or <code>null</code> for every level
      * @param checkId the check-id substring of the query, or <code>null</code>/empty for any
      * @param fileFilter the presentation substring of the query, or <code>null</code>/empty for any
@@ -761,7 +796,8 @@ public class ProjectProblemsReader
      * @param collectLimit the cap the current findings were collected under
      * @return the markdown report
      */
-    private static String renderSinceBaseline(String projectName, List<ErrorInfo> collected,
+    static String renderSinceBaseline(java.nio.file.Path baselineDir, String projectName,
+        List<DiagnosticsBaselineStore.Diagnostic> current, int collectedCount,
         Set<MarkerSeverity> severityFilter, String checkId, String fileFilter, Set<String> objectFqns,
         boolean sessionScope, Set<String> sessionFqns, int limit, int collectLimit)
     {
@@ -769,7 +805,7 @@ public class ProjectProblemsReader
         {
             return baselineNeedsProjectRefusal();
         }
-        java.nio.file.Path dir = DiagnosticsBaselineStore.stateDir();
+        java.nio.file.Path dir = baselineDir;
         if (dir == null)
         {
             return "# Request Failed\n\nThe plugin state location is unavailable, " //$NON-NLS-1$
@@ -794,7 +830,6 @@ public class ProjectProblemsReader
             return baselineAbsentRefusal(projectName);
         }
 
-        List<DiagnosticsBaselineStore.Diagnostic> current = collapseErrors(collected);
         Set<String> frameVariants = new HashSet<>(objectFqns);
         if (sessionScope)
         {
@@ -818,6 +853,7 @@ public class ProjectProblemsReader
 
         DiagnosticsBaselineStore.Diff diff = DiagnosticsBaselineStore.compare(framed, compared);
 
+        boolean truncated = collectedCount >= collectLimit;
         StringBuilder builder = new StringBuilder();
         if (diff.appeared.isEmpty())
         {
@@ -829,17 +865,22 @@ public class ProjectProblemsReader
         }
         builder.append("**Baseline saved at:** ").append(baseline.savedAt).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
         builder.append("**New since baseline:** ").append(diff.appearedCount()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        builder.append("**resolvedSinceBaseline:** ").append(diff.resolvedCount).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (truncated)
+        {
+            builder.append("**Scan truncated:** the scan reached its cap of ").append(collectLimit) //$NON-NLS-1$
+                .append(" markers; findings past the cap were neither listed nor compared, " //$NON-NLS-1$
+                    + "the number of resolved findings is not determined, and new findings are " //$NON-NLS-1$
+                    + "counted among the read markers only.\n"); //$NON-NLS-1$
+        }
+        else
+        {
+            builder.append("**resolvedSinceBaseline:** ").append(diff.resolvedCount).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
         if (notCompared > 0)
         {
             builder.append("**Not compared:** the baseline covers only ") //$NON-NLS-1$
                 .append(String.join(", ", baseline.objects)).append("; ").append(notCompared) //$NON-NLS-1$
                 .append(" finding(s) of other objects stand outside the comparison.\n"); //$NON-NLS-1$
-        }
-        if (collected.size() >= collectLimit)
-        {
-            builder.append("**Note:** the scan reached its cap of ").append(collectLimit) //$NON-NLS-1$
-                .append(" markers; findings past the cap were neither listed nor compared.\n"); //$NON-NLS-1$
         }
         builder.append("\n"); //$NON-NLS-1$
         if (diff.appeared.isEmpty())
