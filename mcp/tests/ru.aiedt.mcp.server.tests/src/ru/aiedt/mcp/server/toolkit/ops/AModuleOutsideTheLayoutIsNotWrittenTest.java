@@ -245,6 +245,21 @@ public class AModuleOutsideTheLayoutIsNotWrittenTest
             !projectDir.resolve("src/Configuration/\u0427\u0443\u0436\u043E\u0435.bsl").toFile().exists()); //$NON-NLS-1$
     }
 
+    /** A folder below the configuration root holds no module of the root, even when it exists. */
+    @Test
+    public void aFolderBelowTheConfigurationRootTakesNoModule()
+    {
+        assertTrue("the folder is there before the call", //$NON-NLS-1$
+            projectDir.resolve("src/Configuration/Extra").toFile().mkdirs()); //$NON-NLS-1$
+
+        String refused = write("append", "Configuration/Extra/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(refused, refused.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("configuration root")); //$NON-NLS-1$
+        assertTrue("no file appeared below the root", //$NON-NLS-1$
+            !projectDir.resolve("src/Configuration/Extra/Module.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
     /** A kind that owns no module files at all is refused with that said. */
     @Test
     public void aKindWithoutModulesIsRefused()

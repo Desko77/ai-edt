@@ -797,12 +797,16 @@ public final class BslModuleAccess
     {
         if (kind == null)
         {
-            // The configuration root is no kind, so nothing below its own folder can be judged
-            // against a kind: the addressing list applies there as it did before the kind table.
-            List<String> rootFiles =
-                segments.size() == 2 && CONFIGURATION_ROOT_DIRECTORY.equalsIgnoreCase(segments.get(0))
-                    ? List.of(ROOT_MODULE_FILE_NAMES) : List.of(OBJECT_MODULE_FILE_NAMES);
-            return Ownership.of(new KindModules(rootFiles, List.of()));
+            // The configuration root is no kind and owns its four modules directly in its own
+            // folder: a file one level deeper is read by no element of the model.
+            if (segments.size() != 2)
+            {
+                return Ownership.refused("Error: '" + modulePath //$NON-NLS-1$
+                    + "' is not a module of the configuration root. The root owns only " //$NON-NLS-1$
+                    + String.join(", ", ROOT_MODULE_FILE_NAMES) //$NON-NLS-1$
+                    + ", directly in " + CONFIGURATION_ROOT_DIRECTORY + "/. Nothing was written."); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return Ownership.of(new KindModules(List.of(ROOT_MODULE_FILE_NAMES), List.of()));
         }
         String holder = kind.getEnglishSingular();
         KindModules modules = kindModules(kind);
