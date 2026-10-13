@@ -926,7 +926,7 @@ public class ProjectProblemsReader
         for (ErrorInfo error : errors)
         {
             findings.add(new DiagnosticsBaselineStore.Diagnostic(
-                error.objectPresentation == null ? "" : error.objectPresentation, //$NON-NLS-1$
+                error.objectKey == null ? "" : error.objectKey, //$NON-NLS-1$
                 checkIdentityOf(error), error.checkCode,
                 error.message == null ? "" : error.message, //$NON-NLS-1$
                 error.severityNative));
@@ -1552,6 +1552,9 @@ public class ProjectProblemsReader
                     continue;
                 }
                 boolean hasDocumentation = CheckDocReader.hasCheckDocumentation(sourceId);
+                String identityRef = eclipseIdentityRef(
+                    marker.getAttribute(IMarker.LOCATION, ""), //$NON-NLS-1$
+                    marker.getResource().getFullPath().toString());
                 // An Eclipse marker keeps its position in the standard attributes rather than in
                 // extra info; -1 is what getAttribute answers when the attribute is absent, which
                 // is the same "no position" the EDT path reports.
@@ -1561,7 +1564,10 @@ public class ProjectProblemsReader
                     marker.getAttribute(IMarker.CHAR_END, -1),
                     // A plain Eclipse problem marker carries no EDT extra info: the map
                     // belongs to the validation model, and these come from under it.
-                    null));
+                    null,
+                    // The identity keeps the line off the reference: a finding that moved is
+                    // the same finding, not one new and one resolved.
+                    identityRef));
             }
         }
     }
@@ -1603,6 +1609,28 @@ public class ProjectProblemsReader
         if (line >= 0)
         {
             return resourcePath + ":" + line; //$NON-NLS-1$
+        }
+        return resourcePath;
+    }
+
+    /**
+     * The identity reference of a plain Eclipse marker: its location when it carries one, else
+     * its path alone - never the line.
+     * <p>
+     * The presentation the report shows names the place precisely, and the line belongs there.
+     * The identity is a different question: a finding one line lower is the same finding, and a
+     * key that carried the line read every code shift as one new and one resolved finding.
+     * </p>
+     *
+     * @param location the marker's location attribute, or an empty string
+     * @param resourcePath the marker's resource path
+     * @return the reference, never <code>null</code>
+     */
+    static String eclipseIdentityRef(String location, String resourcePath)
+    {
+        if (location != null && !location.isEmpty())
+        {
+            return location;
         }
         return resourcePath;
     }
@@ -2013,6 +2041,14 @@ public class ProjectProblemsReader
 
         private final String objectPresentation;
 
+        /**
+         * The presentation the finding is identified by. The object presentation for a model
+         * marker; for a plain Eclipse marker its location or path with the line taken off - the
+         * line moves with the code, and a finding that moved must not read as one new and one
+         * resolved.
+         */
+        private final String objectKey;
+
         private final String severityNative;
 
         /**
@@ -2050,12 +2086,21 @@ public class ProjectProblemsReader
             String objectPresentation, String severityNative, int line, int charStart, int charEnd,
             String extra)
         {
+            this(checkCode, checkId, hasDocumentation, message, objectPresentation, severityNative,
+                line, charStart, charEnd, extra, objectPresentation);
+        }
+
+        ErrorInfo(String checkCode, String checkId, boolean hasDocumentation, String message,
+            String objectPresentation, String severityNative, int line, int charStart, int charEnd,
+            String extra, String objectKey)
+        {
             this.extra = extra;
             this.checkCode = checkCode;
             this.checkId = checkId;
             this.hasDocumentation = hasDocumentation;
             this.message = message;
             this.objectPresentation = objectPresentation;
+            this.objectKey = objectKey;
             this.severityNative = severityNative;
             this.line = line;
             this.charStart = charStart;
