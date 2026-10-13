@@ -187,12 +187,14 @@ away.
 
 | Operation | Notes |
 |---|---|
-| `get_project_errors` | Problems for a project, filterable by object, severity and check. Each finding carries the line it sits on where the check reports one. `objects` is a JSON array, matched by whole FQN segments; anything else is refused rather than read as one name. |
+| `get_project_errors` | Problems for a project, filterable by object, severity and check. Each finding carries the line it sits on where the check reports one. `objects` is a JSON array, matched by whole FQN segments; anything else is refused rather than read as one name. `sinceBaseline=true` (needs `projectName`) answers only findings absent from the baseline `save_baseline` recorded for that project and adds `resolvedSinceBaseline` and the baseline's recording moment; without a recorded baseline the call refuses and names `save_baseline`. |
 | `get_problem_summary` | Aggregated counts instead of a full listing. |
 | `revalidate_objects` | Recomputes problems for the given objects. Run this after edits, before reading errors. |
 | `clean_project` | Full rebuild of derived state. The remedy when validation results look stale rather than wrong. |
 | `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. A `Template.mxlx` picture reference `ref="v8ui:/"` is finding `mxlx-empty-picture-ref`: one finding names the file and the count. The platform refuses to load a picture reference with an empty name. |
 | `get_check_description` | What a specific validation check means. |
+| `save_baseline` | Records the project's findings - every severity - as the baseline `sinceBaseline=true` subtracts from. `objects=[...]` narrows the record to those FQNs; a baseline so scoped leaves findings of other objects named as not compared. The baseline lives in the plugin's state area, never in the project. A finding is identified by object, check and message with a count of identical ones; the line is not part of the identity, so a line shift does not make a finding new. |
+| `clear_baseline` | Removes the project's recorded baseline. A project with no baseline is an answer, not an error. |
 
 ## Changing the model
 
