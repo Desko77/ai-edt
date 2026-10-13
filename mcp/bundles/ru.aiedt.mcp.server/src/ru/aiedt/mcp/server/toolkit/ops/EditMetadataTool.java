@@ -613,9 +613,10 @@ public class EditMetadataTool implements IMcpTool
                 "create_web_service Operation.Transactional flag. Default false.") //$NON-NLS-1$
             // 1.43.x audit A6: typed web-service operation parameters + return type.
             .stringProperty("returningValueType", //$NON-NLS-1$
-                "add_web_service_operation: XDTO return value type as a QName - either " //$NON-NLS-1$
-                + "'{nsUri}localName' or a bare local name (e.g. 'string') combined with " //$NON-NLS-1$
-                + "returningValueTypeNs (default XSD namespace). HTTP services are untyped. Optional.") //$NON-NLS-1$
+                "add_web_service_operation: XDTO return value type as QName: " //$NON-NLS-1$
+                + "'{nsUri}localName' or a bare local name with returningValueTypeNs " //$NON-NLS-1$
+                + "(default XSD namespace). Given none, the XSD string type. HTTP services " //$NON-NLS-1$
+                + "are untyped.") //$NON-NLS-1$
             .stringProperty("returningValueTypeNs", //$NON-NLS-1$
                 "add_web_service_operation: namespace URI for returningValueType when " //$NON-NLS-1$
                     + "given as a bare local name.") //$NON-NLS-1$
@@ -3230,6 +3231,8 @@ public class EditMetadataTool implements IMcpTool
         sb.append("create_http_service: reuse HTTP sessions across requests. Maps to the " //$NON-NLS-1$
             + "platform SessionReuseMode enum - true -> Use, false -> DontUse; omitted " //$NON-NLS-1$
             + "leaves the platform default (AutoUse is not exposed by this boolean).\n\n"); //$NON-NLS-1$
+        sb.append("### returningValueType\n\n"); //$NON-NLS-1$
+        sb.append("add_web_service_operation: the XDTO return value type of the operation, as '{nsUri}localName' or as a bare local name combined with returningValueTypeNs. Given no type, the operation is written returning the XSD string type ({http://www.w3.org/2001/XMLSchema}string), and the answer says so under returningValueType (nsUri, localName, applied). The platform refuses to load a configuration whose WebService operation carries an empty return value type. create_web_service writes that same XSD string type on the operation it starts the service with. add_operation_parameter is not affected by the default: a parameter's valueType keeps its own meaning.\n\n"); //$NON-NLS-1$
         sb.append("### returningValueTypeNs\n\n"); //$NON-NLS-1$
         sb.append("add_web_service_operation: namespace URI for returningValueType when " //$NON-NLS-1$
             + "given as a bare local name. Default 'http://www.w3.org/2001/XMLSchema'. " //$NON-NLS-1$
