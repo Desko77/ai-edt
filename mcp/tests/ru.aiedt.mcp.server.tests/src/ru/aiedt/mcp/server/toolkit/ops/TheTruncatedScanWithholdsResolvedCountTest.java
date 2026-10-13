@@ -79,7 +79,7 @@ public class TheTruncatedScanWithholdsResolvedCountTest
             Collections.singletonList(standing));
 
         String answer = ProjectProblemsReader.renderSinceBaseline(root, "Project", //$NON-NLS-1$ //$NON-NLS-2$
-            Collections.singletonList(standing), 5000, null, null, null, new HashSet<>(),
+            Collections.singletonList(standing), 5000, "", null, null, null, new HashSet<>(), //$NON-NLS-1$
             false, new HashSet<>(), 100, 5000);
 
         assertFalse(answer, answer.contains("resolvedSinceBaseline")); //$NON-NLS-1$
@@ -98,7 +98,7 @@ public class TheTruncatedScanWithholdsResolvedCountTest
             Collections.singletonList(fixed));
 
         String answer = ProjectProblemsReader.renderSinceBaseline(root, "Project", //$NON-NLS-1$ //$NON-NLS-2$
-            Collections.emptyList(), 0, null, null, null, new HashSet<>(), false,
+            Collections.emptyList(), 0, "", null, null, null, new HashSet<>(), false, //$NON-NLS-1$
             new HashSet<>(), 100, 5000);
 
         assertTrue(answer, answer.contains("**resolvedSinceBaseline:** 1")); //$NON-NLS-1$

@@ -538,8 +538,8 @@ public class ProjectProblemsReader
             if (sinceBaseline)
             {
                 return renderSinceBaseline(DiagnosticsBaselineStore.stateDir(), projectName,
-                    collapseErrors(collected), collected.size(), severityFilter, checkId, fileFilter,
-                    objectFqns, sessionScope, sessionFqns, limit, collectLimit);
+                    collapseErrors(collected), collected.size(), unresolved, severityFilter, checkId,
+                    fileFilter, objectFqns, sessionScope, sessionFqns, limit, collectLimit);
             }
 
             if (compact)
@@ -767,7 +767,10 @@ public class ProjectProblemsReader
      * The subtraction happens inside the frame of the query - severity, check id, file filter and
      * the object or session scope the caller asked with - so the two sides answer the same
      * question. A baseline scoped to named objects is compared over those objects alone; the
-     * findings of anything else are named as not compared rather than left to read as new.
+     * findings of anything else are named as not compared rather than left to read as new. The
+     * answer opens with the same notice about requested addresses the model does not hold that
+     * the plain report opens with: without it, a mistyped FQN reads as an empty diff - the
+     * opposite of what happened.
      * </p>
      * <p>
      * A read that reached its collection cap saw only part of what stands, and every baseline
@@ -786,6 +789,8 @@ public class ProjectProblemsReader
      * @param current the findings standing now, already collapsed and already filtered by the
      *            query's own filters
      * @param collectedCount how many markers the current findings were collected from
+     * @param unresolved the notice naming requested addresses the model does not hold, prefixed
+     *            to the answer exactly as the plain report prefixes it; may be empty
      * @param severityFilter the severity set the query kept, or <code>null</code> for every level
      * @param checkId the check-id substring of the query, or <code>null</code>/empty for any
      * @param fileFilter the presentation substring of the query, or <code>null</code>/empty for any
@@ -797,7 +802,7 @@ public class ProjectProblemsReader
      * @return the markdown report
      */
     static String renderSinceBaseline(java.nio.file.Path baselineDir, String projectName,
-        List<DiagnosticsBaselineStore.Diagnostic> current, int collectedCount,
+        List<DiagnosticsBaselineStore.Diagnostic> current, int collectedCount, String unresolved,
         Set<MarkerSeverity> severityFilter, String checkId, String fileFilter, Set<String> objectFqns,
         boolean sessionScope, Set<String> sessionFqns, int limit, int collectLimit)
     {
@@ -885,7 +890,7 @@ public class ProjectProblemsReader
         builder.append("\n"); //$NON-NLS-1$
         if (diff.appeared.isEmpty())
         {
-            return builder.toString();
+            return unresolved + builder.toString();
         }
         int shown = Math.min(diff.appeared.size(), limit);
         builder.append("| Message | Where | Severity | Check | Count |\n"); //$NON-NLS-1$
@@ -905,7 +910,7 @@ public class ProjectProblemsReader
             builder.append("\n_Showing ").append(limit).append(" of ") //$NON-NLS-1$ //$NON-NLS-2$
                 .append(diff.appeared.size()).append(" new finding(s) - raise limit to see the rest._\n"); //$NON-NLS-1$
         }
-        return builder.toString();
+        return unresolved + builder.toString();
     }
 
     /**
