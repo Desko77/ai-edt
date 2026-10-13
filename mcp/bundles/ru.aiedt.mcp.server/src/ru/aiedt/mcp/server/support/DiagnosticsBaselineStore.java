@@ -502,17 +502,37 @@ public final class DiagnosticsBaselineStore
         }
         for (Diagnostic diagnostic : diagnostics)
         {
-            String presentation = diagnostic.objectRef.toLowerCase(Locale.ROOT);
-            for (String fqn : fqnVariantsLower)
+            if (underAnyVariant(diagnostic, fqnVariantsLower))
             {
-                if (FileMarkers.matchesAtSegmentBoundary(presentation, fqn))
-                {
-                    kept.add(diagnostic);
-                    break;
-                }
+                kept.add(diagnostic);
             }
         }
         return kept;
+    }
+
+    /**
+     * Whether a finding's object stands under one of the FQN variants, on segment boundaries.
+     *
+     * @param diagnostic the finding
+     * @param fqnVariantsLower the lowercased FQN variants; an empty set matches nothing, the way
+     *            the reader's own session filter matches no marker when it holds no FQN
+     * @return <code>true</code> when the object stands under any of the variants
+     */
+    private static boolean underAnyVariant(Diagnostic diagnostic, Set<String> fqnVariantsLower)
+    {
+        if (fqnVariantsLower == null)
+        {
+            return false;
+        }
+        String presentation = diagnostic.objectRef.toLowerCase(Locale.ROOT);
+        for (String fqn : fqnVariantsLower)
+        {
+            if (FileMarkers.matchesAtSegmentBoundary(presentation, fqn))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -539,6 +559,39 @@ public final class DiagnosticsBaselineStore
     public static List<Diagnostic> frame(List<Diagnostic> diagnostics, Set<String> severityNames,
         String checkIdNeedle, String fileFilterNeedle, Set<String> objectVariantsLower)
     {
+        return frame(diagnostics, severityNames, checkIdNeedle, fileFilterNeedle, objectVariantsLower,
+            false, null);
+    }
+
+    /**
+     * Narrows a baseline to the frame of a query whose scope is a session, so the subtraction
+     * happens between two answers to the same question.
+     * <p>
+     * The object set and the session set are applied together the way the reader's own marker
+     * predicate applies them - a marker has to match both - and not as one merged pool: a
+     * baseline record that fits only one of the two was never in the question, and counting it
+     * resolved reads a narrowing as a cure. Under {@code sessionScope} an empty session set
+     * keeps nothing, exactly as the reader's session filter keeps no marker then.
+     * </p>
+     *
+     * @param diagnostics the baseline records
+     * @param severityNames the native severity names the query keeps; <code>null</code> or empty
+     *            for no severity filter
+     * @param checkIdNeedle the substring a check identity must contain; <code>null</code> or
+     *            blank for any
+     * @param fileFilterNeedle the substring the object presentation must contain;
+     *            <code>null</code> or blank for any
+     * @param objectVariantsLower the lowercased FQN variants of the query's object filter;
+     *            <code>null</code> or empty for no object restriction
+     * @param sessionScope whether the query is scoped to the session's objects
+     * @param sessionVariantsLower the lowercased FQN variants of the session scope; read only
+     *            under {@code sessionScope}
+     * @return the records that pass every filter, in order
+     */
+    public static List<Diagnostic> frame(List<Diagnostic> diagnostics, Set<String> severityNames,
+        String checkIdNeedle, String fileFilterNeedle, Set<String> objectVariantsLower,
+        boolean sessionScope, Set<String> sessionVariantsLower)
+    {
         List<Diagnostic> framed = new ArrayList<>();
         if (diagnostics == null)
         {
@@ -546,8 +599,17 @@ public final class DiagnosticsBaselineStore
         }
         String needle = blankToNull(checkIdNeedle);
         String fileNeedle = blankToNull(fileFilterNeedle);
-        for (Diagnostic diagnostic : withinObjects(diagnostics, objectVariantsLower))
+        for (Diagnostic diagnostic : diagnostics)
         {
+            if (objectVariantsLower != null && !objectVariantsLower.isEmpty()
+                && !underAnyVariant(diagnostic, objectVariantsLower))
+            {
+                continue;
+            }
+            if (sessionScope && !underAnyVariant(diagnostic, sessionVariantsLower))
+            {
+                continue;
+            }
             if (severityNames != null && !severityNames.isEmpty()
                 && (diagnostic.severity == null
                     || !severityNames.contains(diagnostic.severity.toUpperCase(Locale.ROOT))))

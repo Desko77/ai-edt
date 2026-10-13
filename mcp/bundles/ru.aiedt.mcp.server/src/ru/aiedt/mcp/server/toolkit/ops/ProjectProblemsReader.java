@@ -835,13 +835,12 @@ public class ProjectProblemsReader
             return baselineAbsentRefusal(projectName);
         }
 
-        Set<String> frameVariants = new HashSet<>(objectFqns);
-        if (sessionScope)
-        {
-            frameVariants.addAll(sessionFqns);
-        }
+        // The frame applies the object set and the session set together, the way the marker
+        // filter applied them to the rows above: a record that fits only one of the two was
+        // never in the question, and counting it resolved would read a narrowing as a cure.
         List<DiagnosticsBaselineStore.Diagnostic> framed = DiagnosticsBaselineStore.frame(
-            baseline.diagnostics, severityNamesOf(severityFilter), checkId, fileFilter, frameVariants);
+            baseline.diagnostics, severityNamesOf(severityFilter), checkId, fileFilter, objectFqns,
+            sessionScope, sessionFqns);
 
         List<DiagnosticsBaselineStore.Diagnostic> compared = current;
         int notCompared = 0;
