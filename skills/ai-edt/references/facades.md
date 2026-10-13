@@ -191,7 +191,7 @@ away.
 | `get_problem_summary` | Aggregated counts instead of a full listing. |
 | `revalidate_objects` | Recomputes problems for the given objects. Run this after edits, before reading errors. |
 | `clean_project` | Full rebuild of derived state. The remedy when validation results look stale rather than wrong. |
-| `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. A `Template.mxlx` picture reference `ref="v8ui:/"` is finding `mxlx-empty-picture-ref`: one finding names the file and the count. The platform refuses to load a picture reference with an empty name. A type in an `.mdo` that composes `String` with another type and carries no length is finding `mdo-composite-string-without-length`, one per element, naming the element and the object. The finding covers the carriers whose type becomes a table column: an attribute of a database object or of its tabular section, a register dimension or resource, a constant, a common attribute, a defined type; a command parameter type, a session parameter, a form attribute, a data set field and a schema parameter are not scanned. |
+| `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. A `Template.mxlx` picture reference `ref="v8ui:/"` is finding `mxlx-empty-picture-ref`: one finding names the file and the count. The platform refuses to load a picture reference with an empty name. A type in an `.mdo` that composes `String` with another type and carries no length is finding `mdo-composite-string-without-length`, one per element, naming the element and the object. The finding covers the carriers whose type becomes a table column: an attribute of a database object or of its tabular section, a register dimension or resource, a constant, a common attribute, a defined type; an attribute of a report or of a data processor, in their tabular sections too, and of an external report or an external data processor are not scanned, and neither are a command parameter type, a session parameter, a form attribute, a data set field and a schema parameter. |
 | `get_check_description` | What a specific validation check means. |
 
 ## Changing the model
@@ -357,8 +357,13 @@ command's path as the form file writes it: `Form.Command.X`, `Form.StandardComma
   carrier whose type becomes a table column unless `length` names a character count above zero: the
   platform loads such a description and then refuses the database update. The refusal holds for an
   attribute of a database object or of its tabular section, a register dimension or resource, a
-  constant, a common attribute and a defined type. A form attribute, a data composition schema field
-  or parameter, a command parameter type and a session parameter take the composition. A lone
+  constant, a common attribute and a defined type. An attribute of a report or of a data processor,
+  in their tabular sections too, and of an external report or an external data processor is not
+  refused - no table is built for them. A form attribute, a data composition schema field
+  or parameter, a command parameter type and a session parameter take the composition. Repeating
+  the composition the model already holds, naming no `length`, is not refused either: the stored
+  length stands and the answer keeps its idempotent skip. `length=0` and a composition the caller
+  changes are refused. A lone
   `String` without a length is a type of its own and is written. Under `dryRun` the first two do not borrow the reference types' targets and
   list them in `autoBorrowSkipped` (`targetFqn`, `reason: dryRun`) and do not borrow the owner either;
   outside a dry run a failed borrow of the owner is listed there as `ownerFqn` with the borrow's own
