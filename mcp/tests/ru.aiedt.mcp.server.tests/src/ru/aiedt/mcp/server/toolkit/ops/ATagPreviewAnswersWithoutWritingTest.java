@@ -6,16 +6,20 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeFalse;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.DosFileAttributeView;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
@@ -250,6 +254,28 @@ public class ATagPreviewAnswersWithoutWritingTest
             .resolve(".settings").resolve("aiedt-markers.yaml"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * Turns a file's write permission on or off.
+     * <p>
+     * The permission bit is what makes the file read-only on every system; the DOS attribute is
+     * changed on Windows only, although Linux offers a DOS view as well.
+     * </p>
+     *
+     * @param file the file to change
+     * @param readOnly true to make the file read-only
+     * @throws Exception when the attribute cannot be set
+     */
+    private static void readOnly(Path file, boolean readOnly) throws Exception
+    {
+        file.toFile().setWritable(!readOnly);
+        DosFileAttributeView dos = Files.getFileAttributeView(file, DosFileAttributeView.class);
+        if (dos != null && System.getProperty("os.name", "").toLowerCase(Locale.ROOT) //$NON-NLS-1$ //$NON-NLS-2$
+            .startsWith("windows")) //$NON-NLS-1$
+        {
+            dos.setReadOnly(readOnly);
+        }
+    }
+
     /** A preview of a create answers the tag it would define and leaves no file behind. */
     @Test
     public void aPreviewOfACreateAnswersTheTagAndWritesNothing()
@@ -292,6 +318,45 @@ public class ATagPreviewAnswersWithoutWritingTest
         assertEquals("neither call wrote", before, markersFileBytes()); //$NON-NLS-1$
         assertEquals("the stored color is still the default", "#808080", //$NON-NLS-1$ //$NON-NLS-2$
             service.getMarkerStorage(project).getMarkerByName("Important").getColor()); //$NON-NLS-1$
+    }
+
+    /**
+     * A preview of a create the write would refuse for a read-only markers file refuses exactly
+     * the same way, and neither call touches the bytes.
+     * <p>
+     * The promise of a preview is that it passed the checks the write passes. A file the system
+     * will not open for writing is one of them, and it is the one a preview could miss: it reads
+     * the file, finds it parseable, and answers a tag the write would never store.
+     * </p>
+     *
+     * @throws Exception when the file cannot be made read-only or read back
+     */
+    @Test
+    public void aPreviewOfACreateOnAReadOnlyFileRefusesExactlyLikeTheWrite() throws Exception
+    {
+        succeeded(call("create_tag", "tag", "Important")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        Path file = markerFile();
+        byte[] before = Files.readAllBytes(file);
+        readOnly(file, true);
+        try
+        {
+            assumeFalse("the file system lets this user write a read-only file", //$NON-NLS-1$
+                Files.isWritable(file));
+
+            JsonObject preview = call("create_tag", "tag", "Rack", "dryRun", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            JsonObject write = call("create_tag", "tag", "Rack"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+            assertFalse(preview.toString(), preview.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals(write.toString(), preview.toString());
+            assertEquals("readOnlyFile", preview.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertArrayEquals("the file kept its bytes", before, Files.readAllBytes(file)); //$NON-NLS-1$
+            assertEquals("and no tag was defined", 1, //$NON-NLS-1$
+                service.getMarkerStorage(project).getTags().size());
+        }
+        finally
+        {
+            readOnly(file, false);
+        }
     }
 
     /** A preview of an update answers the tag as it is and as it would be. */

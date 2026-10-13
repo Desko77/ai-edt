@@ -2573,11 +2573,12 @@ public class MarkerManager
         }
         IFile file = getMarkersFile(project);
         byte[] bytes = dumpToString(storage).getBytes(StandardCharsets.UTF_8);
-        if (file.exists() && !canOverwrite(file))
+        String fileRefusal = fileWriteRefusalCode(file);
+        if (fileRefusal != null)
         {
             Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
                 + ": the file is read-only", null); //$NON-NLS-1$
-            return MarkerWriteOutcome.READ_ONLY_FILE;
+            return fileRefusal;
         }
         String expected = fingerprints.get(project);
         IPath location = file.getLocation();
@@ -2640,7 +2641,7 @@ public class MarkerManager
             {
                 settingsFolder.create(true, true, null);
             }
-            if (file.exists() && !canOverwrite(file))
+            if (fileWriteRefusalCode(file) != null)
             {
                 Activator.logError("Could not save the marker file for project " + project.getName() //$NON-NLS-1$
                     + ": the file is read-only", null); //$NON-NLS-1$
@@ -2664,6 +2665,42 @@ public class MarkerManager
             Activator.logError("Could not save the marker file for project " + project.getName(), e); //$NON-NLS-1$
             return false;
         }
+    }
+
+    /**
+     * The refusal code the marker file itself answers a write with, or {@code null} when the file
+     * can be written.
+     * <p>
+     * Both save routes ask this one question before they touch the file, and an edit that only
+     * reports what it would write asks it as well, so a preview carries the code and the sentence
+     * the write itself carries.
+     * </p>
+     *
+     * @param file the marker file handle
+     * @return {@link MarkerWriteOutcome#READ_ONLY_FILE}, or {@code null}
+     */
+    private static String fileWriteRefusalCode(IFile file)
+    {
+        return file.exists() && !canOverwrite(file) ? MarkerWriteOutcome.READ_ONLY_FILE : null;
+    }
+
+    /**
+     * The refusal an edit answers with before it touches the marker file, or {@code null} when
+     * nothing stands in the way of a write.
+     * <p>
+     * Nothing here writes, creates, locks or deletes: the question is asked of the file as it
+     * stands.
+     * </p>
+     *
+     * @param project the project
+     * @param subject what the edit was about, as the sentence that precedes the file reason
+     * @return the refusal, or {@code null}
+     */
+    public MarkerWriteOutcome fileWriteRefusal(IProject project, String subject)
+    {
+        String code = fileWriteRefusalCode(getMarkersFile(project));
+        return code == null ? null
+            : MarkerWriteOutcome.refused(code, subject + ": " + refusalText(code)); //$NON-NLS-1$
     }
 
     /**

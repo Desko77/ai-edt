@@ -761,6 +761,12 @@ public class TagAdminFacadeTool
             {
                 return tagExists(tag, "create_tag").toJson(); //$NON-NLS-1$
             }
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "create_tag", "the marker \"" + tag + "\" was not created"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
             return ToolResult.success()
                 .put("created", false) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
@@ -844,6 +850,12 @@ public class TagAdminFacadeTool
             {
                 return nameTaken(newName).toJson();
             }
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "update_tag", "the marker \"" + tag + "\" was not updated"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
             Marker after = new Marker(renaming ? newName : existing.getName(),
                 color != null ? color : existing.getColor(),
                 description != null ? description : existing.getDescription());
@@ -907,6 +919,12 @@ public class TagAdminFacadeTool
             .getObjectsByMarker(tag).size();
         if (dryRun)
         {
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "delete_tag", "the marker \"" + tag + "\" was not deleted"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
             return ToolResult.success()
                 .put("deleted", false) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
@@ -1003,6 +1021,15 @@ public class TagAdminFacadeTool
             }
             List<String> after = new ArrayList<>(before);
             after.addAll(assigned);
+            if (!assigned.isEmpty())
+            {
+                ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                    "assign_tag", "no marker was assigned to \"" + objectFqn + "\""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                if (writeRefusal != null)
+                {
+                    return writeRefusal.toJson();
+                }
+            }
             return ToolResult.success()
                 .put("objectFqn", objectFqn) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
@@ -1108,6 +1135,12 @@ public class TagAdminFacadeTool
                         .put("removed", removed) //$NON-NLS-1$
                         .put("skipped", skippedNodes(skipped)) //$NON-NLS-1$
                         .toJson();
+            }
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "unassign_tag", "no marker was removed from \"" + objectFqn + "\""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
             }
             List<String> after = new ArrayList<>(before);
             after.removeAll(removed);
@@ -1256,6 +1289,28 @@ public class TagAdminFacadeTool
                     .put("reason", MarkerWriteOutcome.SAVE_FAILED); //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * The refusal a write would answer with before it touches the marker file, or {@code null}
+     * when nothing refuses it yet.
+     * <p>
+     * The service asks the file the same question its save routes ask, so a preview refuses with
+     * the code and the sentence the write itself refuses with.
+     * </p>
+     *
+     * @param service the marker service
+     * @param project the project
+     * @param what what the call wanted to do, for the sentence
+     * @param subject what the write was about, as the sentence the refusal carries before the
+     *            file reason
+     * @return the refusal, or {@code null}
+     */
+    private static ToolResult writeRefusalOf(MarkerManager service, IProject project, String what,
+        String subject)
+    {
+        MarkerWriteOutcome refusal = service.fileWriteRefusal(project, subject);
+        return refusal != null ? refusalOf(refusal, what) : null;
     }
 
     /**
