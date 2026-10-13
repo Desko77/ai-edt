@@ -164,6 +164,76 @@ public class TheBaselineFileSurvivesItsWritersTest
     }
 
     /**
+     * A file with no objects array refuses rather than reading as a whole-project baseline: a
+     * missing scope is damage, and reading it as "everything" would compare findings the record
+     * never meant to hold.
+     */
+    @Test
+    public void aFileWithNoObjectsArrayRefuses() throws IOException
+    {
+        Files.writeString(DiagnosticsBaselineStore.fileFor(root, "Project"), //$NON-NLS-1$
+            "{\"formatVersion\":" + DiagnosticsBaselineStore.FORMAT_VERSION //$NON-NLS-1$
+                + ",\"savedAt\":\"2026-01-01T00:00:00Z\",\"diagnostics\":[]}", //$NON-NLS-1$
+            StandardCharsets.UTF_8);
+
+        try
+        {
+            DiagnosticsBaselineStore.load(root, "Project"); //$NON-NLS-1$
+            fail("a file with no objects array must refuse"); //$NON-NLS-1$
+        }
+        catch (UnreadableBaselineException refused)
+        {
+            assertTrue(refused.getMessage(), refused.getMessage().contains("objects")); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * An objects field that is not an array refuses too, for the same reason: the scope decides
+     * what a comparison may subtract from, and a scope nobody can read is a file nobody can use.
+     */
+    @Test
+    public void anObjectsFieldThatIsNotAnArrayRefuses() throws IOException
+    {
+        Files.writeString(DiagnosticsBaselineStore.fileFor(root, "Project"), //$NON-NLS-1$
+            "{\"formatVersion\":" + DiagnosticsBaselineStore.FORMAT_VERSION //$NON-NLS-1$
+                + ",\"savedAt\":\"2026-01-01T00:00:00Z\",\"objects\":\"all\",\"diagnostics\":[]}", //$NON-NLS-1$
+            StandardCharsets.UTF_8);
+
+        try
+        {
+            DiagnosticsBaselineStore.load(root, "Project"); //$NON-NLS-1$
+            fail("an objects field that is not an array must refuse"); //$NON-NLS-1$
+        }
+        catch (UnreadableBaselineException refused)
+        {
+            assertTrue(refused.getMessage(), refused.getMessage().contains("objects")); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * An object entry that is not a string refuses: half a scope is a scope that answers
+     * questions its own file cannot have meant.
+     */
+    @Test
+    public void anObjectEntryThatIsNotAStringRefuses() throws IOException
+    {
+        Files.writeString(DiagnosticsBaselineStore.fileFor(root, "Project"), //$NON-NLS-1$
+            "{\"formatVersion\":" + DiagnosticsBaselineStore.FORMAT_VERSION //$NON-NLS-1$
+                + ",\"savedAt\":\"2026-01-01T00:00:00Z\",\"objects\":[7],\"diagnostics\":[]}", //$NON-NLS-1$
+            StandardCharsets.UTF_8);
+
+        try
+        {
+            DiagnosticsBaselineStore.load(root, "Project"); //$NON-NLS-1$
+            fail("an object entry that is not a string must refuse"); //$NON-NLS-1$
+        }
+        catch (UnreadableBaselineException refused)
+        {
+            assertNotNull(refused.getMessage());
+        }
+    }
+
+    /**
      * Two projects whose names differ only in characters a file name cannot hold keep two files.
      */
     @Test

@@ -863,15 +863,17 @@ public final class DiagnosticsBaselineStore
         }
         List<String> scope = new ArrayList<>();
         JsonElement objects = object.get("objects"); //$NON-NLS-1$
-        if (objects != null && objects.isJsonArray())
+        if (objects == null || !objects.isJsonArray())
         {
-            for (JsonElement element : objects.getAsJsonArray())
+            throw new UnreadableBaselineException("the file carries no objects array"); //$NON-NLS-1$
+        }
+        for (JsonElement element : objects.getAsJsonArray())
+        {
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString())
             {
-                if (element.isJsonPrimitive())
-                {
-                    scope.add(element.getAsString());
-                }
+                throw new UnreadableBaselineException("an object in the file is not a string"); //$NON-NLS-1$
             }
+            scope.add(element.getAsString());
         }
         List<Diagnostic> diagnostics = new ArrayList<>();
         JsonElement records = object.get("diagnostics"); //$NON-NLS-1$
