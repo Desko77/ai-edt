@@ -249,6 +249,51 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * Refuses a type composition that carries a String without a length.
+     * <p>
+     * The platform loads such a description and then refuses the database update with
+     * "Ошибка SDBL: Строка без спецификации длины недопустима". A String with no length is a
+     * type of its own, and a composition names bounded types only; a lone String without a
+     * length is valid and is not refused.
+     * </p>
+     *
+     * @param typeFqns the resolved types the caller asked for
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable
+     */
+    public static String compositeStringLengthRefusal(List<String> typeFqns,
+        QualifierOptions qualifierOptions)
+    {
+        if (typeFqns == null || typeFqns.size() < 2)
+        {
+            return null;
+        }
+        boolean hasString = false;
+        for (String fqn : typeFqns)
+        {
+            if (fqn != null && "String".equalsIgnoreCase(fqn.trim())) //$NON-NLS-1$
+            {
+                hasString = true;
+                break;
+            }
+        }
+        if (!hasString)
+        {
+            return null;
+        }
+        Integer length = qualifierOptions == null ? null : qualifierOptions.length;
+        if (length != null && length.intValue() > 0)
+        {
+            return null;
+        }
+        return "A composition of more than one type that includes String requires the 'length' " //$NON-NLS-1$
+            + "argument: a String without a length is a type of its own, and the platform " //$NON-NLS-1$
+            + "refuses the database update for an unlimited String inside a composition " //$NON-NLS-1$
+            + "(Ошибка SDBL: Строка без спецификации длины недопустима). Pass length=<characters>, " //$NON-NLS-1$
+            + "or drop String from the composition."; //$NON-NLS-1$
+    }
+
+    /**
      * Description-level core of {@link #setTypes}: validates the requested
      * FQNs, builds fresh TypeItems, replaces the TypeDescription's types
      * list, deep-resolves the proxies against {@code contextObject}'s
@@ -327,6 +372,16 @@ public final class BmDefinedTypeHelper
                 + ". Check the spelling against the platform's own type names (String, Number, "
                 + "ValueTable, StandardPeriod and the rest); for a reference type, check that the "
                 + "object it names exists in this configuration";
+            return r;
+        }
+
+        // 1a. A composition carrying String needs the length. Checked here rather than in
+        // each caller so every carrier - object attribute, tabular-section attribute,
+        // register field, form attribute, schema parameter - is covered by one rule.
+        String compositionRefusal = compositeStringLengthRefusal(requested, qualifierOptions);
+        if (compositionRefusal != null)
+        {
+            r.error = compositionRefusal;
             return r;
         }
 
