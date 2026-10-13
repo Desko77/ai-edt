@@ -11,6 +11,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -400,7 +401,7 @@ public class ExportConfigurationSafetyTest
         Path temp = file("temp.part", "binary");
         Path out = dir.resolve("out.epf");
 
-        DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(temp, out,
+        DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(temp, null, out,
             Instant.now().minusSeconds(10));
 
         assertTrue(placed.error, placed.ok);
@@ -420,7 +421,7 @@ public class ExportConfigurationSafetyTest
             java.nio.file.attribute.FileTime.from(Instant.now().minusSeconds(3600)));
         Path out = file("out.epf", "previous");
 
-        DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(temp, out,
+        DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(temp, null, out,
             Instant.now());
 
         assertFalse(placed.ok);
@@ -433,7 +434,7 @@ public class ExportConfigurationSafetyTest
     public void aMissingDumpFileIsRefused()
     {
         DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(
-            dir.resolve("absent.part"), dir.resolve("out.epf"), Instant.now());
+            dir.resolve("absent.part"), null, dir.resolve("out.epf"), Instant.now());
 
         assertFalse(placed.ok);
         assertEquals("outputMissing", placed.failureKind);
@@ -444,10 +445,210 @@ public class ExportConfigurationSafetyTest
     {
         Path temp = file("temp.part", "");
 
-        DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(temp,
+        DumpInvocation placed = BmExternalObjectDumpHelper.placeDumpResult(temp, null,
             dir.resolve("out.epf"), Instant.now().minusSeconds(10));
 
         assertFalse(placed.ok);
         assertEquals("outputMissing", placed.failureKind);
+    }
+
+    // -- the dump flow: the name the build writes under --
+
+    /**
+     * The scratch directory holds nothing but the files the test names - every temporary
+     * file this call created has to be gone for this to hold.
+     */
+    private void onlyTheseFilesRemain(Path... expected) throws IOException
+    {
+        java.util.Set<Path> wanted = new java.util.HashSet<>(java.util.Arrays.asList(expected));
+        try (java.util.stream.Stream<Path> list = Files.list(dir))
+        {
+            java.util.List<Path> rest = list.filter(p -> !wanted.contains(p))
+                .collect(java.util.stream.Collectors.toList());
+            assertTrue("unexpected leftover files: " + rest, rest.isEmpty());
+        }
+    }
+
+    @Test
+    public void aBuildIntoTheGivenFilePlacesItAndLeavesNoTemporary() throws Throwable
+    {
+        Path out = dir.resolve("out.epf");
+
+        DumpInvocation inv = BmExternalObjectDumpHelper.runDump(
+            target -> Files.write(target, "binary".getBytes(StandardCharsets.UTF_8)),
+            ".epf", out.toString());
+
+        assertTrue(inv.error, inv.ok);
+        assertEquals("binary", content(out));
+        onlyTheseFilesRemain(out);
+    }
+
+    /**
+     * The temporary name carries the kind extension, because the platform writes under
+     * the name it is given only when that name ends with the extension of the kind it
+     * builds; a processor and a report each get their own.
+     */
+    @Test
+    public void theNameGivenToTheBuildEndsWithTheKindExtension() throws Throwable
+    {
+        java.util.List<String> given = new java.util.ArrayList<>();
+        for (String ext : new String[]{".epf", ".erf"})
+        {
+            Path out = dir.resolve("out" + ext);
+            BmExternalObjectDumpHelper.runDump(target -> {
+                given.add(target.getFileName().toString());
+                Files.write(target, new byte[]{1});
+            }, ext, out.toString());
+        }
+        assertEquals(2, given.size());
+        assertTrue(given.get(0), given.get(0).startsWith(".aiedt-dump-"));
+        assertTrue(given.get(0), given.get(0).endsWith(".part.epf"));
+        assertTrue(given.get(1), given.get(1).endsWith(".part.erf"));
+    }
+
+    /** An object of a kind this helper does not know gets the plain temporary name. */
+    @Test
+    public void theNameGivenToTheBuildOfAnUnknownKindCarriesNoExtension() throws Throwable
+    {
+        java.util.List<String> given = new java.util.ArrayList<>();
+        Path out = dir.resolve("out.bin");
+
+        BmExternalObjectDumpHelper.runDump(target -> {
+            given.add(target.getFileName().toString());
+            Files.write(target, new byte[]{1});
+        }, null, out.toString());
+
+        assertTrue(given.get(0), given.get(0).startsWith(".aiedt-dump-"));
+        assertTrue(given.get(0), given.get(0).endsWith(".part"));
+        assertFalse(given.get(0) + " carries no kind extension",
+            given.get(0).endsWith(".part.epf") || given.get(0).endsWith(".part.erf"));
+    }
+
+    /**
+     * The kind extension is decided by the object's EClass name: a data processor maps
+     * to .epf, a report to .erf, anything else to no extension at all.
+     */
+    @Test
+    public void theKindExtensionComesFromTheObjectEClass()
+    {
+        assertEquals(".epf", BmExternalObjectDumpHelper.extensionForEClass("ExternalDataProcessor"));
+        assertEquals(".erf", BmExternalObjectDumpHelper.extensionForEClass("ExternalReport"));
+        assertNull(BmExternalObjectDumpHelper.extensionForEClass("Catalog"));
+        assertNull(BmExternalObjectDumpHelper.extensionForEClass(null));
+    }
+
+    /**
+     * A fresh temporary file another run left in the directory is never read as this
+     * build's product: a build that wrote nothing is refused and the foreign file stays
+     * where it is, byte for byte.
+     */
+    @Test
+    public void aForeignFreshDumpFileIsNotTakenForThisCallProduct() throws Throwable
+    {
+        Path foreign = file(".aiedt-dump-old.part.epf", "foreign");
+        Path out = dir.resolve("out.epf");
+
+        DumpInvocation inv = BmExternalObjectDumpHelper.runDump(target -> {
+            // the build wrote nothing
+        }, ".epf", out.toString());
+
+        assertFalse(inv.ok);
+        assertEquals("outputMissing", inv.failureKind);
+        assertTrue(inv.error, inv.error.contains("did not materialize"));
+        assertEquals("the foreign file stays untouched", "foreign", content(foreign));
+        assertFalse("nothing was placed", Files.exists(out));
+        onlyTheseFilesRemain(foreign);
+    }
+
+    /** A build that throws leaves neither its temporary file nor anything placed. */
+    @Test
+    public void aFailingBuildLeavesNoTemporaryFile() throws Throwable
+    {
+        Path out = dir.resolve("out.epf");
+
+        try
+        {
+            BmExternalObjectDumpHelper.runDump(target -> {
+                throw new IllegalStateException("boom");
+            }, ".epf", out.toString());
+            fail("the build's failure reaches the caller");
+        }
+        catch (IllegalStateException expected)
+        {
+            assertEquals("boom", expected.getMessage());
+        }
+        assertFalse("nothing was placed", Files.exists(out));
+        onlyTheseFilesRemain();
+    }
+
+    /**
+     * The platform appending the kind extension to the name it was given produces this
+     * call's file too: it is judged and placed, and the empty file under the given name
+     * goes.
+     */
+    @Test
+    public void aFileNamedByThePlatformItselfIsTakenToo() throws Throwable
+    {
+        Path out = dir.resolve("out.epf");
+
+        DumpInvocation inv = BmExternalObjectDumpHelper.runDump(target -> {
+            Path selfNamed = BmExternalObjectDumpHelper.appendedCandidate(target, ".epf");
+            Files.write(selfNamed, "appended".getBytes(StandardCharsets.UTF_8));
+        }, ".epf", out.toString());
+
+        assertTrue(inv.error, inv.ok);
+        assertEquals("appended", content(out));
+        onlyTheseFilesRemain(out);
+    }
+
+    /** The platform-named file is removed when it does not pass the judgement. */
+    @Test
+    public void aStaleFileNamedByThePlatformIsRemovedOnRefusal() throws Throwable
+    {
+        Path out = dir.resolve("out.epf");
+
+        DumpInvocation inv = BmExternalObjectDumpHelper.runDump(target -> {
+            Path selfNamed = BmExternalObjectDumpHelper.appendedCandidate(target, ".epf");
+            Files.write(selfNamed, "stale".getBytes(StandardCharsets.UTF_8));
+            Files.setLastModifiedTime(selfNamed, java.nio.file.attribute.FileTime
+                .from(Instant.now().minusSeconds(3600)));
+        }, ".epf", out.toString());
+
+        assertFalse(inv.ok);
+        assertEquals("outputMissing", inv.failureKind);
+        assertFalse("nothing was placed", Files.exists(out));
+        onlyTheseFilesRemain();
+    }
+
+    /**
+     * A missing output directory refuses the call before the build is asked for
+     * anything, and the refusal names the directory; a plain file where the directory
+     * should be is refused the same way.
+     */
+    @Test
+    public void aMissingOutputDirectoryRefusesBeforeTheBuildStarts() throws Throwable
+    {
+        Path absentDir = dir.resolve("absent-dir");
+        Path out = absentDir.resolve("out.epf");
+        java.util.List<Path> given = new java.util.ArrayList<>();
+
+        DumpInvocation inv = BmExternalObjectDumpHelper.runDump(
+            target -> given.add(target), ".epf", out.toString());
+
+        assertFalse(inv.ok);
+        assertEquals("invalidOutputPath", inv.failureKind);
+        assertTrue(inv.error, inv.error.contains(absentDir.toString()));
+        assertTrue(inv.error, inv.error.contains("Create the directory"));
+        assertTrue("the build was never invoked", given.isEmpty());
+
+        Path blocker = file("not-a-dir", "blocker");
+        DumpInvocation blocked = BmExternalObjectDumpHelper.runDump(
+            target -> given.add(target), ".epf",
+            blocker.getParent().resolve(blocker.getFileName()).resolve("out.epf").toString());
+
+        assertFalse(blocked.ok);
+        assertEquals("invalidOutputPath", blocked.failureKind);
+        assertTrue(blocked.error, blocked.error.contains(blocker.toString()));
+        assertTrue("the build was still never invoked", given.isEmpty());
     }
 }
