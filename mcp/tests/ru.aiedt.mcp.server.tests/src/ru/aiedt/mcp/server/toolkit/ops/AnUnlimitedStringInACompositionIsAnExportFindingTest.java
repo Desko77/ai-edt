@@ -128,6 +128,141 @@ public class AnUnlimitedStringInACompositionIsAnExportFindingTest
     }
 
     /**
+     * A type that is not stored is not this check's business.
+     * <p>
+     * A command names its parameter type at {@code <commandParameterType>}, a session parameter
+     * and an external data source table field carry a {@code <type>} that never becomes a
+     * configuration column; a form attribute and a DCS field carry theirs in another file. The
+     * platform loads all of them as they stand, so an unbounded String inside a composition there
+     * is not a finding.
+     * </p>
+     */
+    @Test
+    public void aTypeThatIsNotStoredIsNotAFinding()
+    {
+        // The command spells the composition under its own element, with no <type> block at all.
+        String command = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+            + "<mdclass:Catalog xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$
+            + "uuid=\"11111111-1111-1111-1111-111111111111\">\n" //$NON-NLS-1$
+            + "  <commands uuid=\"55555555-5555-5555-5555-555555555555\">\n" //$NON-NLS-1$
+            + "    <name>FillKind</name>\n" //$NON-NLS-1$
+            + "    <commandParameterType>\n" //$NON-NLS-1$
+            + "      <types>String</types>\n" //$NON-NLS-1$
+            + "      <types>CatalogRef.Kinds</types>\n" //$NON-NLS-1$
+            + "      <stringQualifiers/>\n" //$NON-NLS-1$
+            + "    </commandParameterType>\n" //$NON-NLS-1$
+            + "  </commands>\n" //$NON-NLS-1$
+            + "</mdclass:Catalog>\n"; //$NON-NLS-1$
+        assertTrue(ValidateForExportTool.mdoFindings(command, FILE, FQN).toString(),
+            ValidateForExportTool.mdoFindings(command, FILE, FQN).isEmpty());
+
+        // A session parameter carries its type under its own root, and is stored nowhere.
+        String sessionParameter = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+            + "<mdclass:SessionParameter xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$
+            + "uuid=\"66666666-6666-6666-6666-666666666666\">\n" //$NON-NLS-1$
+            + "  <name>Kind</name>\n" //$NON-NLS-1$
+            + "  <type>\n" //$NON-NLS-1$
+            + "    <types>String</types>\n" //$NON-NLS-1$
+            + "    <types>CatalogRef.Kinds</types>\n" //$NON-NLS-1$
+            + "    <stringQualifiers/>\n" //$NON-NLS-1$
+            + "  </type>\n" //$NON-NLS-1$
+            + "</mdclass:SessionParameter>\n"; //$NON-NLS-1$
+        assertTrue(ValidateForExportTool.mdoFindings(sessionParameter,
+            "src/SessionParameters/Kind/Kind.mdo", "SessionParameter.Kind").isEmpty()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // An external data source table field holds the type of the source's own table.
+        String tableField = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+            + "<mdclass:ExternalDataSource xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$
+            + "uuid=\"77777777-7777-7777-7777-777777777777\">\n" //$NON-NLS-1$
+            + "  <name>Source</name>\n" //$NON-NLS-1$
+            + "  <tables uuid=\"88888888-8888-8888-8888-888888888888\">\n" //$NON-NLS-1$
+            + "    <name>Goods</name>\n" //$NON-NLS-1$
+            + "    <tableFields uuid=\"99999999-9999-9999-9999-999999999999\">\n" //$NON-NLS-1$
+            + "      <name>Kind</name>\n" //$NON-NLS-1$
+            + "      <type>\n" //$NON-NLS-1$
+            + "        <types>String</types>\n" //$NON-NLS-1$
+            + "        <types>CatalogRef.Kinds</types>\n" //$NON-NLS-1$
+            + "        <stringQualifiers/>\n" //$NON-NLS-1$
+            + "      </type>\n" //$NON-NLS-1$
+            + "    </tableFields>\n" //$NON-NLS-1$
+            + "  </tables>\n" //$NON-NLS-1$
+            + "</mdclass:ExternalDataSource>\n"; //$NON-NLS-1$
+        assertTrue(ValidateForExportTool.mdoFindings(tableField,
+            "src/ExternalDataSources/Source/Source.mdo", "ExternalDataSource.Source").isEmpty()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A stored container is judged wherever it sits in the file.
+     */
+    @Test
+    public void aStoredContainerIsJudgedUnderItsObject()
+    {
+        // A register keeps its dimensions and resources beside its attributes, and all three are
+        // table columns.
+        String register = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+            + "<mdclass:InformationRegister xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$
+            + "uuid=\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\">\n" //$NON-NLS-1$
+            + "  <name>Facts</name>\n" //$NON-NLS-1$
+            + "  <resources uuid=\"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\">\n" //$NON-NLS-1$
+            + "    <name>Kind</name>\n" //$NON-NLS-1$
+            + "    <type>\n" //$NON-NLS-1$
+            + "      <types>String</types>\n" //$NON-NLS-1$
+            + "      <types>CatalogRef.Kinds</types>\n" //$NON-NLS-1$
+            + "      <stringQualifiers/>\n" //$NON-NLS-1$
+            + "    </type>\n" //$NON-NLS-1$
+            + "  </resources>\n" //$NON-NLS-1$
+            + "  <dimensions uuid=\"cccccccc-cccc-cccc-cccc-cccccccccccc\">\n" //$NON-NLS-1$
+            + "    <name>Source</name>\n" //$NON-NLS-1$
+            + "    <type>\n" //$NON-NLS-1$
+            + "      <types>String</types>\n" //$NON-NLS-1$
+            + "      <types>CatalogRef.Sources</types>\n" //$NON-NLS-1$
+            + "      <stringQualifiers/>\n" //$NON-NLS-1$
+            + "    </type>\n" //$NON-NLS-1$
+            + "  </dimensions>\n" //$NON-NLS-1$
+            + "</mdclass:InformationRegister>\n"; //$NON-NLS-1$
+        List<Map<String, Object>> findings = ValidateForExportTool.mdoFindings(register,
+            "src/InformationRegisters/Facts/Facts.mdo", "InformationRegister.Facts"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(findings.toString(), 2, findings.size());
+        assertTrue(String.valueOf(findings.get(0).get("message")), //$NON-NLS-1$
+            String.valueOf(findings.get(0).get("message")).contains("'Kind'")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(String.valueOf(findings.get(1).get("message")), //$NON-NLS-1$
+            String.valueOf(findings.get(1).get("message")).contains("'Source'")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // A constant stores its one value in a table of its own.
+        String constant = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+            + "<mdclass:Constant xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$
+            + "uuid=\"dddddddd-dddd-dddd-dddd-dddddddddddd\">\n" //$NON-NLS-1$
+            + "  <name>Kind</name>\n" //$NON-NLS-1$
+            + "  <type>\n" //$NON-NLS-1$
+            + "    <types>String</types>\n" //$NON-NLS-1$
+            + "    <types>CatalogRef.Kinds</types>\n" //$NON-NLS-1$
+            + "    <stringQualifiers/>\n" //$NON-NLS-1$
+            + "  </type>\n" //$NON-NLS-1$
+            + "</mdclass:Constant>\n"; //$NON-NLS-1$
+        assertEquals(1, ValidateForExportTool.mdoFindings(constant,
+            "src/Constants/Kind/Kind.mdo", "Constant.Kind").size()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        // And a tabular section's attribute sits one level deeper than the object's own.
+        String tabular = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" //$NON-NLS-1$
+            + "<mdclass:Catalog xmlns:mdclass=\"http://g5.1c.ru/v8/dt/metadata/mdclass\" " //$NON-NLS-1$
+            + "uuid=\"11111111-1111-1111-1111-111111111111\">\n" //$NON-NLS-1$
+            + "  <name>Goods</name>\n" //$NON-NLS-1$
+            + "  <tabularSections uuid=\"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee\">\n" //$NON-NLS-1$
+            + "    <name>Prices</name>\n" //$NON-NLS-1$
+            + "    <attributes uuid=\"ffffffff-ffff-ffff-ffff-ffffffffffff\">\n" //$NON-NLS-1$
+            + "      <name>Kind</name>\n" //$NON-NLS-1$
+            + "      <type>\n" //$NON-NLS-1$
+            + "        <types>String</types>\n" //$NON-NLS-1$
+            + "        <types>CatalogRef.Kinds</types>\n" //$NON-NLS-1$
+            + "        <stringQualifiers/>\n" //$NON-NLS-1$
+            + "      </type>\n" //$NON-NLS-1$
+            + "    </attributes>\n" //$NON-NLS-1$
+            + "  </tabularSections>\n" //$NON-NLS-1$
+            + "</mdclass:Catalog>\n"; //$NON-NLS-1$
+        assertEquals(1, ValidateForExportTool.mdoFindings(tabular, FILE, FQN).size());
+    }
+
+    /**
      * Every carrier of a type block is judged, and each is reported on its own.
      */
     @Test

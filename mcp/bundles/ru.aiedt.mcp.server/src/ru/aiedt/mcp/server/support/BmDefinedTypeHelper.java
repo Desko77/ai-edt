@@ -25,8 +25,12 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicFeature;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.Constant;
+import com._1c.g5.v8.dt.metadata.mdclass.DefinedType;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.SequenceDimension;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -249,12 +253,47 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * Tells whether a type written on this owner is stored in a database table.
+     * <p>
+     * A type description of a stored carrier becomes a table column, and only such a carrier meets
+     * the platform's refusal of an unlimited String inside a composition. A carrier whose type
+     * never reaches a table - a form attribute, a DCS field or parameter, a command parameter
+     * type, an external data source field or function, a session parameter - takes the same
+     * composition and works.
+     * </p>
+     * <p>
+     * The classes are the model's own, read from the mdclass jar of the target platform
+     * (com._1c.g5.v8.dt.metadata 19.0.0): {@code BasicFeature} is the base of every attribute of a
+     * database object and of a tabular section, of a register dimension, resource and attribute,
+     * of an addressing attribute and of an accounting flag - 34 interfaces in all. The remaining
+     * stored carriers are the top-level objects whose one type description is stored as well: the
+     * constant value, the sequence dimension, and the defined type, whose composition applies to
+     * the stored attributes that borrow it.
+     * </p>
+     *
+     * @param owner the EObject the type description belongs to, possibly <code>null</code>
+     * @return <code>true</code> when the type becomes a table column
+     */
+    public static boolean typeIsStoredInDatabase(Object owner)
+    {
+        return owner instanceof BasicFeature
+            || owner instanceof Constant
+            || owner instanceof DefinedType
+            || owner instanceof SequenceDimension;
+    }
+
+    /**
      * Refuses a type composition that carries a String without a length.
      * <p>
      * The platform loads such a description and then refuses the database update with
      * "Ошибка SDBL: Строка без спецификации длины недопустима". A String with no length is a
      * type of its own, and a composition names bounded types only; a lone String without a
      * length is valid and is not refused.
+     * </p>
+     * <p>
+     * The refusal holds for a carrier whose type is stored in a database table - see
+     * {@link #typeIsStoredInDatabase}. A type that goes no further than the form or the schema it
+     * was written on is not judged here.
      * </p>
      *
      * @param typeFqns the resolved types the caller asked for
@@ -375,14 +414,18 @@ public final class BmDefinedTypeHelper
             return r;
         }
 
-        // 1a. A composition carrying String needs the length. Checked here rather than in
-        // each caller so every carrier - object attribute, tabular-section attribute,
-        // register field, form attribute, schema parameter - is covered by one rule.
-        String compositionRefusal = compositeStringLengthRefusal(requested, qualifierOptions);
-        if (compositionRefusal != null)
+        // 1a. A composition carrying String needs the length where the type is stored: the platform
+        // builds a table column out of the type description of such a carrier and refuses the
+        // update otherwise. Every type write passes through here, so the carrier decides - a
+        // composition written to a form attribute or a schema field is kept as it stands.
+        if (typeIsStoredInDatabase(contextObject))
         {
-            r.error = compositionRefusal;
-            return r;
+            String compositionRefusal = compositeStringLengthRefusal(requested, qualifierOptions);
+            if (compositionRefusal != null)
+            {
+                r.error = compositionRefusal;
+                return r;
+            }
         }
 
         // 2. Idempotency check.

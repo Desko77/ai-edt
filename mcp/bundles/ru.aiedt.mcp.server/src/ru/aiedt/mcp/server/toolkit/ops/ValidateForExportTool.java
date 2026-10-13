@@ -9,11 +9,16 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -681,6 +686,28 @@ public class ValidateForExportTool implements IMcpTool
     private static final Pattern MDO_TYPE_BLOCK =
         Pattern.compile("<type>([\\s\\S]*?)</type>"); //$NON-NLS-1$
 
+    /** Any .mdo start, end or self-closing tag, with the element name it carries. */
+    private static final Pattern XML_TAG =
+        Pattern.compile("<(/?)([A-Za-z_][\\w:.-]*)[^>]*?(/?)>"); //$NON-NLS-1$
+
+    /**
+     * The .mdo list elements whose items are stored in a database table, named as EDT writes the
+     * EMF features that hold them: object and tabular-section attributes, standard attributes,
+     * register dimensions, resources and attributes, accounting flags and task addressing
+     * attributes.
+     */
+    private static final Set<String> MDO_STORED_TYPE_CONTAINERS = new HashSet<>(Arrays.asList(
+        "attributes", "standardAttributes", "dimensions", "resources", "accountingFlags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "extDimensionAccountingFlags", "addressingAttributes")); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * The .mdo root objects whose own {@code <type>} is stored in a database table: the constant
+     * value, the common attribute and the defined type, whose composition applies to the stored
+     * attributes that borrow it.
+     */
+    private static final Set<String> MDO_STORED_TYPE_ROOTS = new HashSet<>(Arrays.asList(
+        "Constant", "CommonAttribute", "DefinedType")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
     /** One {@code <types>} entry inside an .mdo {@code <type>} block. */
     private static final Pattern MDO_TYPE_ENTRY =
         Pattern.compile("<types>\\s*([^<]*?)\\s*</types>"); //$NON-NLS-1$
@@ -816,8 +843,12 @@ public class ValidateForExportTool implements IMcpTool
      * The platform loads such a description and refuses the database update with
      * "Ошибка SDBL: Строка без спецификации длины недопустима". A lone String with no length is
      * valid - the platform reads it as an unlimited string of its own - so only a composition is
-     * judged. Attributes, tabular-section attributes, register fields and defined types all
-     * carry the same {@code <type>} shape and this one scan covers them.
+     * judged. The refusal holds for a type that becomes a table column, and this scan reads the
+     * element that carries the block to tell one from the other: a type written to a form
+     * attribute, a DCS field or parameter, a command parameter type or an external data source
+     * field is not stored and is not this check's business. See
+     * {@code BmDefinedTypeHelper.typeIsStoredInDatabase}, which applies the same distinction on
+     * the write path.
      * </p>
      *
      * @param content the .mdo text
@@ -833,9 +864,16 @@ public class ValidateForExportTool implements IMcpTool
         {
             return;
         }
+        Deque<String> open = new ArrayDeque<>();
+        int scannedTo = 0;
         Matcher block = MDO_TYPE_BLOCK.matcher(content);
         while (block.find())
         {
+            scannedTo = walkTags(content, scannedTo, block.start(), open);
+            if (!carriesStoredType(open))
+            {
+                continue;
+            }
             String body = block.group(1);
             List<String> types = new ArrayList<>();
             Matcher entry = MDO_TYPE_ENTRY.matcher(body);
@@ -857,6 +895,86 @@ public class ValidateForExportTool implements IMcpTool
                 + "спецификации длины недопустима\". Give the composition a length (the length " //$NON-NLS-1$
                 + "argument of the operation that wrote it), or drop String from it."); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Walks the .mdo tags up to an offset, keeping the stack of the elements left open.
+     * <p>
+     * The tags are read once, in document order: each call resumes at the offset the previous one
+     * reached, so a file with many type blocks is still walked once.
+     * </p>
+     *
+     * @param content the whole .mdo text
+     * @param from the offset to resume at
+     * @param to the offset to stop before - an element starting at it stays unread
+     * @param open the stack to push start tags onto and pop end tags off
+     * @return the offset reached, which the next call resumes at
+     */
+    private static int walkTags(String content, int from, int to, Deque<String> open)
+    {
+        Matcher tag = XML_TAG.matcher(content);
+        tag.region(from, to);
+        while (tag.find())
+        {
+            String name = tag.group(2);
+            if (!tag.group(1).isEmpty())
+            {
+                // An end tag closes the nearest matching start tag. A stray one closes nothing.
+                while (!open.isEmpty() && !open.peek().equals(name))
+                {
+                    open.pop();
+                }
+                if (!open.isEmpty())
+                {
+                    open.pop();
+                }
+            }
+            else if (tag.group(3).isEmpty())
+            {
+                open.push(name);
+            }
+        }
+        return to;
+    }
+
+    /**
+     * Tells whether the element left open by {@link #walkTags} is one whose type is stored in a
+     * database table.
+     * <p>
+     * A type block directly under the root object belongs to the object itself, so it is stored
+     * only for the root kinds whose single type description becomes a column - a constant, a
+     * common attribute, a defined type. A type block under a list element is stored when that
+     * element holds attributes or register fields; a block under any other element - a form
+     * attribute, a schema field or parameter, a command parameter type - is not.
+     * </p>
+     *
+     * @param open the stack of elements open at the type block, the innermost on top
+     * @return <code>true</code> when the type becomes a table column
+     */
+    private static boolean carriesStoredType(Deque<String> open)
+    {
+        String carrier = open.peek();
+        if (carrier == null)
+        {
+            return false;
+        }
+        if (MDO_STORED_TYPE_CONTAINERS.contains(carrier))
+        {
+            return true;
+        }
+        return open.size() == 1 && MDO_STORED_TYPE_ROOTS.contains(localName(carrier));
+    }
+
+    /**
+     * The element name without its namespace prefix.
+     *
+     * @param tagName the name as written in the tag, e.g. {@code mdclass:Constant}
+     * @return the part after the last colon, or the whole name when it carries none
+     */
+    private static String localName(String tagName)
+    {
+        int colon = tagName.lastIndexOf(':');
+        return colon < 0 ? tagName : tagName.substring(colon + 1);
     }
 
     /**
