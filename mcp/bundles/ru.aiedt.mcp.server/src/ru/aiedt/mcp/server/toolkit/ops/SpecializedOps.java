@@ -15,11 +15,13 @@ import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 
 import com._1c.g5.v8.bm.core.IBmObject;
+import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.metadata.mdclass.AddressingAttribute;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicCommand;
 import com._1c.g5.v8.dt.metadata.mdclass.BusinessProcess;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.InformationRegister;
@@ -27,10 +29,12 @@ import com._1c.g5.v8.dt.metadata.mdclass.InformationRegisterDimension;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.metadata.mdclass.SessionParameter;
 import com._1c.g5.v8.dt.metadata.mdclass.Task;
+import com._1c.g5.v8.dt.mcore.CommandGroup;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.BmCommandInterfaceHelper;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
@@ -72,6 +76,13 @@ final class SpecializedOps
      * by EDT itself when the {@code .mdo} is exported - the agent fills the
      * body afterwards via {@code write_module_source}.
      *
+     * <p>The command carries a command-interface group: the {@code group}
+     * argument (friendly name, platform token, or {@code CommandGroup.<name>}
+     * for a custom group), or {@code FormCommandBarImportant} when none is
+     * given. The platform refuses to load a configuration whose command has no
+     * group, so the resolved group is always written. An argument matching no
+     * known group is refused before the project is touched.
+     *
      * <p>For {@link com._1c.g5.v8.dt.metadata.mdclass.CommonCommand} use
      * {@code createObject objectName=CommonCommand.X} - that path already
      * exists.
@@ -85,6 +96,7 @@ final class SpecializedOps
         String commandParameterType = JsonUtils.extractStringArgument(params, "commandParameterType"); //$NON-NLS-1$
         String picture = JsonUtils.extractStringArgument(params, "picture"); //$NON-NLS-1$
         String tooltip = JsonUtils.extractStringArgument(params, "tooltip"); //$NON-NLS-1$
+        String group = JsonUtils.extractStringArgument(params, "group"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
@@ -93,6 +105,20 @@ final class SpecializedOps
         if (!err.isEmpty())
         {
             return ToolResult.error(err.trim()).toJson();
+        }
+        // The group is resolved before anything else is touched: an unusable name is refused
+        // here, so no project lookup and no write happen for it. A null result means the
+        // argument names a custom group, resolved against the model inside the transaction.
+        final boolean customGroupWanted;
+        final String standardGroup;
+        try
+        {
+            standardGroup = BmCommandInterfaceHelper.resolveObjectCommandGroupName(group);
+            customGroupWanted = standardGroup == null;
+        }
+        catch (RuntimeException groupError)
+        {
+            return ToolResult.error(groupError.getMessage()).toJson();
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -147,6 +173,10 @@ final class SpecializedOps
                         + "MdClassPackage EClass lookup)."); //$NON-NLS-1$
                 }
                 command.setName(name);
+                Object customGroup = customGroupWanted
+                    ? resolveCustomObjectCommandGroup(tx, group)
+                    : null;
+                applyObjectCommandGroup(command, standardGroup, customGroup);
                 commands.add(command);
                 // Auto-generate a synonym from the name when no title was supplied, via the same
                 // path createObject uses: applyMdObjectSynonym resolves the configuration's default
@@ -192,6 +222,63 @@ final class SpecializedOps
                     + " propertyName=picture propertyValue=" + picture); //$NON-NLS-1$
         }
         return EditMetadataTool.formatResult(r, "create_object_command"); //$NON-NLS-1$
+    }
+
+    /**
+     * Resolves a {@code CommandGroup.<name>} argument of an object command
+     * against the model of the transaction's project.
+     *
+     * @return the resolved command group, never null
+     * @throws RuntimeException when the address resolves to no command group
+     */
+    private static Object resolveCustomObjectCommandGroup(IBmTransaction tx, String group)
+    {
+        String normGroupFqn = MetadataTypeCatalog.normalizeFqn(group.trim());
+        Object resolved = EditMetadataTool.resolveReferenceTarget(tx, normGroupFqn);
+        if (!(resolved instanceof CommandGroup))
+        {
+            throw new RuntimeException("Command group not found: " + normGroupFqn //$NON-NLS-1$
+                + " (group=" + group + ")."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return resolved;
+    }
+
+    /**
+     * Writes the command-interface group of an object command: the standard
+     * platform group named by {@code standardGroup} (a canonical name from
+     * {@link BmCommandInterfaceHelper#resolveObjectCommandGroupName}), or the
+     * custom group {@code customGroup} already resolved from the model. A null
+     * {@code standardGroup} alongside a null {@code customGroup} writes
+     * {@link BmCommandInterfaceHelper#DEFAULT_OBJECT_COMMAND_GROUP}, which is
+     * what an unnamed group argument resolves to.
+     *
+     * @throws RuntimeException when {@code command} is not a command, or
+     *         {@code customGroup} is not a command group
+     */
+    static void applyObjectCommandGroup(MdObject command, String standardGroup, Object customGroup)
+    {
+        if (!(command instanceof BasicCommand))
+        {
+            throw new RuntimeException("Not a command: " + command.eClass().getName() //$NON-NLS-1$
+                + ". A command group is written only on a command."); //$NON-NLS-1$
+        }
+        CommandGroup target;
+        if (customGroup != null)
+        {
+            if (!(customGroup instanceof CommandGroup))
+            {
+                throw new RuntimeException("Not a command group: " + customGroup); //$NON-NLS-1$
+            }
+            target = (CommandGroup) customGroup;
+        }
+        else
+        {
+            String canonical = standardGroup == null || standardGroup.trim().isEmpty()
+                ? BmCommandInterfaceHelper.DEFAULT_OBJECT_COMMAND_GROUP
+                : standardGroup.trim();
+            target = BmCommandInterfaceHelper.createObjectCommandGroup(canonical);
+        }
+        ((BasicCommand) command).setGroup(target);
     }
 
     /**

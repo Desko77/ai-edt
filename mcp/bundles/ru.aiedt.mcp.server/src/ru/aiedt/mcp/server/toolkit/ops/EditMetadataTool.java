@@ -419,8 +419,9 @@ public class EditMetadataTool implements IMcpTool
                 "The command to place or show: CommonCommand.X or an object command such " //$NON-NLS-1$
                     + "as Catalog.X.Command.Y.") //$NON-NLS-1$
             .stringProperty("group", //$NON-NLS-1$
-                "set_command_placement / set_command_order: the command-interface group - a friendly name, a " //$NON-NLS-1$
-                + "platform token, or CommandGroup.<name>. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "create_object_command / set_command_placement / set_command_order: the command group - a " //$NON-NLS-1$
+                + "friendly name, a platform token, or CommandGroup.<name>. Full text: " //$NON-NLS-1$
+                + "operation=help topic=parameters.") //$NON-NLS-1$
             .stringProperty("commands", //$NON-NLS-1$
                 "set_command_order: JSON array of command FQNs in the wanted leading order. " //$NON-NLS-1$
                 + "set_excluded_commands: JSON array of standard command names, " //$NON-NLS-1$
@@ -2965,7 +2966,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_role_restriction", "Specialized", "", p -> roleOps.opRoleRestriction(p, true));
         reg(m, "add_event_subscription_handler", "Specialized", "BSL stub", p -> specializedOps.opAddEventHandler(p));
         reg(m, "set_event_subscription", "Specialized", "source + event + handler", p -> specializedOps.opSetEventSubscription(p));
-        reg(m, "create_object_command", "Specialized", "", p -> specializedOps.opCreateObjectCommand(p));
+        reg(m, "create_object_command", "Specialized", "+group", p -> specializedOps.opCreateObjectCommand(p));
         reg(m, "remove_command", "Specialized", "", p -> specializedOps.opRemoveCommand(p));
         reg(m, "add_exchange_plan_content", "Specialized", "+autoRecord", p -> contentOps.opAddExchangePlanContent(p));
         reg(m, "remove_exchange_plan_content", "Specialized", "", p -> contentOps.opRemoveExchangePlanContent(p));
@@ -3158,7 +3159,7 @@ public class EditMetadataTool implements IMcpTool
             + "CommonForm.X.Form). Used by add_form_attribute / add_form_parameter / " //$NON-NLS-1$
             + "add_field / ...\n\n"); //$NON-NLS-1$
         sb.append("### group\n\n"); //$NON-NLS-1$
-        sb.append("set_command_placement: the target command-interface group. Either a friendly name - Important / Normal / SeeAlso / Create / Reports / Service - a bare or StandardCommandGroup.-prefixed platform token (NavigationPanelImportant / NavigationPanelOrdinary / NavigationPanelSeeAlso / ActionsPanelCreate / ActionsPanelReports / ActionsPanelTools), or a custom group FQN CommandGroup.<name>. set_command_order: same group selection (one group, reordered).\n\n"); //$NON-NLS-1$
+        sb.append("set_command_placement: the target command-interface group. Either a friendly name - Important / Normal / SeeAlso / Create / Reports / Service - a bare or StandardCommandGroup.-prefixed platform token (NavigationPanelImportant / NavigationPanelOrdinary / NavigationPanelSeeAlso / ActionsPanelCreate / ActionsPanelReports / ActionsPanelTools), or a custom group FQN CommandGroup.<name>. set_command_order: same group selection (one group, reordered). create_object_command: the command-interface group of the command it creates. The platform refuses to load a configuration whose command carries no group, so a call naming none writes FormCommandBarImportant. An object command accepts those same names plus the five Form* groups - FormCommandBarImportant / FormCommandBarCreateBasedOn / FormNavigationPanelGoTo / FormNavigationPanelImportant / FormNavigationPanelSeeAlso, friendly aliases CommandBar / BasedOn / GoTo / FormImportant / FormSeeAlso - and a custom group FQN CommandGroup.<name>. A name matching none of them is refused with the accepted names before the project is read, so nothing is written.\n\n"); //$NON-NLS-1$
         sb.append("### namespace\n\n"); //$NON-NLS-1$
         sb.append("create_web_service: XML URI namespace (e.g. " //$NON-NLS-1$
             + "'http://example.com/myservice'). Required - platform rejects empty " //$NON-NLS-1$
