@@ -228,9 +228,6 @@ public class ATagWriteDoorRefusesUnderWriteBlockingPresetsTest
         List<String[]> writes = Arrays.asList(
             new String[] {"create_tag", "tag", "Rack"}, //$NON-NLS-1$ //$NON-NLS-2$
             new String[] {"update_tag", "tag", "Important", "newName", "Case"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-            // A dry run passes the same door: the operation is a write even when it writes
-            // nothing, and a preset that blocks writes is asked about it too.
-            new String[] {"delete_tag", "tag", "Important", "dryRun", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             new String[] {"delete_tag", "tag", "Important"}, //$NON-NLS-1$ //$NON-NLS-2$
             new String[] {"assign_tag", "objectFqn", "Catalog.Products", //$NON-NLS-1$ //$NON-NLS-2$
                 "tags", "[\"Important\"]"}, //$NON-NLS-1$
@@ -264,6 +261,63 @@ public class ATagWriteDoorRefusesUnderWriteBlockingPresetsTest
         }
         assertTrue("these presets wrote through a door they had switched off: " + leaks, //$NON-NLS-1$
             leaks.isEmpty());
+    }
+
+    /**
+     * Under each write-blocking preset every preview still runs, answers with the preview flag and
+     * leaves the file as it was.
+     * <p>
+     * A preview writes nothing, so a preset that blocks writes has nothing to refuse - the same
+     * rule {@code edit_metadata} follows for its own previews. The answer is checked for the
+     * preview flag and for the gate's wording, and the file for its bytes: a gate that let a
+     * preview through and then wrote anyway is a diff here.
+     * </p>
+     */
+    @Test
+    public void everyPreviewRunsUnderAWriteBlockingPresetAndWritesNothing()
+    {
+        List<String> presets = Arrays.asList(ToolProfile.READ_ONLY.name(),
+            ToolProfile.DEBUG_AND_TEST.name(), ToolProfile.CODE_REVIEW.name());
+        List<String[]> previews = Arrays.asList(
+            new String[] {"create_tag", "tag", "Rack", "dryRun", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            new String[] {"update_tag", "tag", "Important", "newName", "Case", "dryRun", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
+            new String[] {"delete_tag", "tag", "Important", "dryRun", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+            new String[] {"assign_tag", "objectFqn", "Catalog.Products", "tags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "[\"Important\"]", "dryRun", "true"}, //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            new String[] {"unassign_tag", "objectFqn", "Catalog.Products", "tags", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                "[\"Important\"]", "dryRun", "true"}); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        List<String> leaks = new java.util.ArrayList<>();
+        for (String preset : presets)
+        {
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, preset);
+            for (String[] preview : previews)
+            {
+                String before = markersFileBytes();
+                String door = preview[0];
+                JsonObject answer = call(door, Arrays.copyOfRange(preview, 1, preview.length));
+                assertTrue(preset + " refused the preview of " + door + ": " + answer, //$NON-NLS-1$ //$NON-NLS-2$
+                    answer.get("dryRun") != null && answer.get("dryRun").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+                if (answer.get("error") != null)
+                {
+                    assertFalse(preset + " answered the preview of " + door //$NON-NLS-1$ //$NON-NLS-2$
+                        + " with the gate's wording: " + answer, //$NON-NLS-1$
+                        answer.get("error").getAsString() //$NON-NLS-1$
+                            .startsWith(ToolGate.disabledMessage(door)));
+                }
+                if (!before.equals(markersFileBytes()))
+                {
+                    leaks.add(preset + " wrote the markers file on the preview of " + door); //$NON-NLS-1$
+                }
+                assertEquals(1, MarkerManager.getInstance().getMarkerStorage(project).getTags()
+                    .size());
+            }
+            // The same door without dryRun is still the gate's business under this preset.
+            JsonObject write = call("delete_tag", "tag", "Important"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            assertFalse(preset + " let the write through", write.get("success").getAsBoolean()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(write.get("error").getAsString() //$NON-NLS-1$
+                .startsWith(ToolGate.disabledMessage("delete_tag"))); //$NON-NLS-1$
+        }
+        assertTrue("these presets wrote through a preview: " + leaks, leaks.isEmpty()); //$NON-NLS-1$
     }
 
     /** Every write answers under the all-tools preset again once it is put back. */
