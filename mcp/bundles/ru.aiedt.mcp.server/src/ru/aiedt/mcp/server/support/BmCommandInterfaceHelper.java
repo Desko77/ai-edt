@@ -1423,6 +1423,20 @@ public class BmCommandInterfaceHelper
     }
 
     /**
+     * Tells whether a standard object-command group belongs to a form: the form command bar or the
+     * form navigation panel. A command that takes a parameter is placed only in those.
+     *
+     * @param canonicalName the canonical platform name of the group
+     * @return {@code true} for the five Form* groups, {@code false} for any other name
+     */
+    public static boolean isFormObjectCommandGroup(String canonicalName)
+    {
+        CommandGroupCategory category = OBJECT_COMMAND_GROUP_CATEGORIES.get(canonicalName);
+        return category == CommandGroupCategory.FORM_COMMAND_BAR
+            || category == CommandGroupCategory.FORM_NAVIGATION_PANEL;
+    }
+
+    /**
      * Creates a detached StandardCommandGroup for an object command's group from
      * its canonical platform name and that name's category.
      *

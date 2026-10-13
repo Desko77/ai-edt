@@ -139,6 +139,36 @@ public class ACommandIsCreatedInACommandGroupTest
     }
 
     @Test
+    public void aCommandWithAParameterIsRefusedOutsideAFormGroup()
+    {
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("projectName", "НетТакогоПроекта"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("ownerFqn", "Catalog.Товары"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("name", "Печать"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("group", "Reports"); //$NON-NLS-1$ //$NON-NLS-2$
+        params.put("commandParameterType", "CatalogRef.Товары"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        String answer = new SpecializedOps().opCreateObjectCommand(params);
+
+        assertTrue(answer, answer.contains("commandParameterType")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("FormCommandBarImportant")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("Nothing was changed")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void onlyTheFiveFormGroupsTakeACommandWithAParameter()
+    {
+        assertTrue(BmCommandInterfaceHelper.isFormObjectCommandGroup("FormCommandBarImportant")); //$NON-NLS-1$
+        assertTrue(BmCommandInterfaceHelper.isFormObjectCommandGroup("FormCommandBarCreateBasedOn")); //$NON-NLS-1$
+        assertTrue(BmCommandInterfaceHelper.isFormObjectCommandGroup("FormNavigationPanelGoTo")); //$NON-NLS-1$
+        assertTrue(BmCommandInterfaceHelper.isFormObjectCommandGroup("FormNavigationPanelImportant")); //$NON-NLS-1$
+        assertTrue(BmCommandInterfaceHelper.isFormObjectCommandGroup("FormNavigationPanelSeeAlso")); //$NON-NLS-1$
+        String reports = BmCommandInterfaceHelper.resolveObjectCommandGroupName("Reports"); //$NON-NLS-1$
+        assertTrue(reports, !BmCommandInterfaceHelper.isFormObjectCommandGroup(reports));
+        assertTrue(!BmCommandInterfaceHelper.isFormObjectCommandGroup("Bogus")); //$NON-NLS-1$
+    }
+
+    @Test
     public void theCustomGroupObjectIsTheOneWritten()
     {
         CatalogCommand command = command("Печать"); //$NON-NLS-1$

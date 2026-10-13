@@ -120,6 +120,17 @@ final class SpecializedOps
         {
             return ToolResult.error(groupError.getMessage()).toJson();
         }
+        // A command that takes a parameter is shown on the form of the object it is given, so the
+        // platform accepts it only in a form group; the model validation rejects any other pairing.
+        if (commandParameterType != null && !commandParameterType.isEmpty() && standardGroup != null
+            && !BmCommandInterfaceHelper.isFormObjectCommandGroup(standardGroup))
+        {
+            return ToolResult.error("group '" + standardGroup + "' does not take a command with " //$NON-NLS-1$ //$NON-NLS-2$
+                + "commandParameterType. A command with a parameter goes into a form group: " //$NON-NLS-1$
+                + "FormCommandBarImportant, FormCommandBarCreateBasedOn, FormNavigationPanelGoTo, " //$NON-NLS-1$
+                + "FormNavigationPanelImportant, FormNavigationPanelSeeAlso, or CommandGroup.<name>. " //$NON-NLS-1$
+                + "Nothing was changed.").toJson(); //$NON-NLS-1$
+        }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
