@@ -677,6 +677,26 @@ public class ValidateForExportTool implements IMcpTool
     private static final Pattern MDO_FORM_NAME =
         Pattern.compile("<forms\\b[^>]*>\\s*<name>([^<]+)</name>"); //$NON-NLS-1$
 
+    /** A {@code <type>} block of an .mdo element - attribute, register field, defined type. */
+    private static final Pattern MDO_TYPE_BLOCK =
+        Pattern.compile("<type>([\\s\\S]*?)</type>"); //$NON-NLS-1$
+
+    /** One {@code <types>} entry inside an .mdo {@code <type>} block. */
+    private static final Pattern MDO_TYPE_ENTRY =
+        Pattern.compile("<types>\\s*([^<]*?)\\s*</types>"); //$NON-NLS-1$
+
+    /** The {@code <stringQualifiers>} element of a type block, empty or carrying children. */
+    private static final Pattern MDO_STRING_QUALIFIERS =
+        Pattern.compile("<stringQualifiers\\s*/>|<stringQualifiers\\s*>([\\s\\S]*?)</stringQualifiers>"); //$NON-NLS-1$
+
+    /** The declared {@code <length>} of a string qualifier. */
+    private static final Pattern MDO_QUALIFIER_LENGTH =
+        Pattern.compile("<length>\\s*(\\d+)\\s*</length>"); //$NON-NLS-1$
+
+    /** The {@code <name>} of an .mdo element, nearest before a type block. */
+    private static final Pattern MDO_ELEMENT_NAME =
+        Pattern.compile("<name>([^<]*)</name>"); //$NON-NLS-1$
+
     private void scanMdo(String content, String relPath, String fqn, String checkFilterLower,
         List<Map<String, Object>> findings, IFile file)
     {
@@ -756,6 +776,8 @@ public class ValidateForExportTool implements IMcpTool
                 + "it a <value> (e.g. 0001-01-01T00:00:00)."); //$NON-NLS-1$
         }
 
+        scanCompositeString(content, relPath, fqn, checkFilterLower, findings);
+
         // Object-level <help> declares one help page per language; each <lang> must
         // have a sibling Help/<lang>.html file or EDT's configuration .cf export
         // crashes on the empty page (the EDT editor does not flag this - a known
@@ -786,6 +808,118 @@ public class ValidateForExportTool implements IMcpTool
                 }
             }
         }
+    }
+
+    /**
+     * Reports every .mdo element whose type composition carries a String with no length.
+     * <p>
+     * The platform loads such a description and refuses the database update with
+     * "Ошибка SDBL: Строка без спецификации длины недопустима". A lone String with no length is
+     * valid - the platform reads it as an unlimited string of its own - so only a composition is
+     * judged. Attributes, tabular-section attributes, register fields and defined types all
+     * carry the same {@code <type>} shape and this one scan covers them.
+     * </p>
+     *
+     * @param content the .mdo text
+     * @param relPath the file path the finding names
+     * @param fqn the object FQN, or <code>null</code>
+     * @param checkFilterLower optional lowercase check-id substring, or <code>null</code>
+     * @param findings the list the findings are added to
+     */
+    private void scanCompositeString(String content, String relPath, String fqn,
+        String checkFilterLower, List<Map<String, Object>> findings)
+    {
+        if (content == null || content.isEmpty())
+        {
+            return;
+        }
+        Matcher block = MDO_TYPE_BLOCK.matcher(content);
+        while (block.find())
+        {
+            String body = block.group(1);
+            List<String> types = new ArrayList<>();
+            Matcher entry = MDO_TYPE_ENTRY.matcher(body);
+            while (entry.find())
+            {
+                types.add(entry.group(1));
+            }
+            if (types.size() < 2 || !types.contains("String") || stringLengthIn(body) > 0) //$NON-NLS-1$
+            {
+                continue;
+            }
+            String element = elementNameBefore(content, block.start());
+            add(findings, checkFilterLower, relPath, fqn,
+                "mdo-composite-string-without-length", "ERROR", lineOf(content, block.start()), //$NON-NLS-1$ //$NON-NLS-2$
+                (element.isEmpty() ? "an element" : "element '" + element + "'") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " of " + (fqn == null || fqn.isEmpty() ? "the configuration" : fqn) //$NON-NLS-1$ //$NON-NLS-2$
+                + " is typed as a composition that includes String without a length - the " //$NON-NLS-1$
+                + "platform refuses the database update with \"Ошибка SDBL: Строка без " //$NON-NLS-1$
+                + "спецификации длины недопустима\". Give the composition a length (the length " //$NON-NLS-1$
+                + "argument of the operation that wrote it), or drop String from it."); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The length declared by the {@code <stringQualifiers>} of a type block.
+     *
+     * @param typeBlock one {@code <type>} element body
+     * @return the declared length, or 0 when the qualifier declares none or is absent - which
+     *     the platform reads as an unlimited string
+     */
+    private static int stringLengthIn(String typeBlock)
+    {
+        Matcher qualifiers = MDO_STRING_QUALIFIERS.matcher(typeBlock);
+        if (!qualifiers.find() || qualifiers.group(1) == null)
+        {
+            return 0;
+        }
+        Matcher length = MDO_QUALIFIER_LENGTH.matcher(qualifiers.group(1));
+        if (!length.find())
+        {
+            return 0;
+        }
+        try
+        {
+            return Integer.parseInt(length.group(1));
+        }
+        catch (NumberFormatException e)
+        {
+            return 0;
+        }
+    }
+
+    /**
+     * The {@code <name>} nearest before an offset - the element a type block belongs to.
+     *
+     * @param content the .mdo text
+     * @param offset the offset of the type block
+     * @return the trimmed name, or an empty string when the file declares none before it
+     */
+    private static String elementNameBefore(String content, int offset)
+    {
+        Matcher names = MDO_ELEMENT_NAME.matcher(content);
+        String name = ""; //$NON-NLS-1$
+        while (names.find() && names.start() < offset)
+        {
+            name = names.group(1).trim();
+        }
+        return name;
+    }
+
+    /**
+     * The .mdo findings {@link #scanMdo} reports for one file. Tests and the export scan share
+     * this scan.
+     *
+     * @param content the .mdo text
+     * @param relPath the file path the finding names
+     * @param fqn the object FQN, or <code>null</code>
+     * @return the findings, in scan order
+     */
+    static List<Map<String, Object>> mdoFindings(String content, String relPath, String fqn)
+    {
+        List<Map<String, Object>> findings = new ArrayList<>();
+        new ValidateForExportTool().scanMdo(content, relPath, fqn, null, findings, null);
+        return findings;
     }
 
     // ---- .dcs -----------------------------------------------------------
