@@ -112,9 +112,14 @@ public class ModuleSourceReader
         IModuleSource provided = file.exists() ? null : ModuleSources.locate(project, modulePath);
         if (!file.exists() && provided == null)
         {
+            // A path that spells the kind rather than its folder is the common near-miss, and the
+            // miss is told where the kind's module actually lives.
+            String canonical = BslModuleAccess.canonicalModulePathOf(modulePath);
             return "Error: no such file: src/" + modulePath //$NON-NLS-1$
                 + ". Expected a path like 'CommonModules/ModuleName/Module.bsl' or " //$NON-NLS-1$
-                + "'Documents/DocName/ObjectModule.bsl'"; //$NON-NLS-1$
+                + "'Documents/DocName/ObjectModule.bsl'" //$NON-NLS-1$
+                + (canonical == null //$NON-NLS-1$
+                    ? "." : ". The canonical path of this kind is 'src/" + canonical + "'."); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
 
         // What an open editor holds, when it holds something the file does not. A read that

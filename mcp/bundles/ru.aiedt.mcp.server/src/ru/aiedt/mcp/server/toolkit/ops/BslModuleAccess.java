@@ -111,6 +111,22 @@ public final class BslModuleAccess
         "CommandModule.bsl" //$NON-NLS-1$
     };
 
+    /**
+     * The module files the configuration root owns, read off the {@code Configuration} model: the
+     * session module, the external-connection module, the managed-application module and the
+     * ordinary-application module. The root is no kind in {@link MetadataTypeCatalog}, so this list
+     * is the root's own.
+     */
+    private static final String[] ROOT_MODULE_FILE_NAMES = {
+        "SessionModule.bsl", //$NON-NLS-1$
+        "ExternalConnectionModule.bsl", //$NON-NLS-1$
+        "ManagedApplicationModule.bsl", //$NON-NLS-1$
+        "OrdinaryApplicationModule.bsl" //$NON-NLS-1$
+    };
+
+    /** The directory the configuration root's own modules live in, outside every kind directory. */
+    private static final String CONFIGURATION_ROOT_DIRECTORY = "Configuration"; //$NON-NLS-1$
+
     /** How many characters long the {@code /src/} marker is. */
     private static final int SRC_MARKER_LENGTH = 5;
 
@@ -316,9 +332,10 @@ public final class BslModuleAccess
      * Turns a module reference into a {@code src/}-relative path.
      * <p>
      * A reference that already carries a path separator is taken verbatim, with no existence and no
-     * traversal check - callers that accept untrusted input reject {@code ..} themselves before calling
-     * here. A reference with no separator is treated as a dot-separated module FQN and resolved against
-     * the project.
+     * traversal check - a reading caller then finds the file missing and says so, and a writing
+     * caller runs {@link #checkModulePathForWrite} over the path before anything is read or written,
+     * which is where a path outside the layout is refused. A reference with no separator is treated
+     * as a dot-separated module FQN and resolved against the project.
      * </p>
      *
      * @param project the project to resolve an FQN against; may be <code>null</code>, in which case an
@@ -335,10 +352,319 @@ public final class BslModuleAccess
         }
         if (input.indexOf('/') >= 0 || input.indexOf('\\') >= 0)
         {
-            // Already a real path. Historic contract: no checking here.
+            // Already a real path. Reads take it verbatim; writes validate it separately.
             return ModulePathResolution.resolved(input);
         }
         return resolveFqnToModulePath(project, input);
+    }
+
+    /**
+     * The canonical form of a module path whose first segment spells a metadata kind by any of its
+     * names but the folder name.
+     * <p>
+     * {@code CommonModule/X/Module.bsl} answers {@code CommonModules/X/Module.bsl}, and so do
+     * {@code catalogs/X/Module.bsl} and the Russian spelling of a kind; the rest of the path is
+     * object names and is copied through untouched. A path that already opens with its kind folder,
+     * or that names no kind, answers <code>null</code>.
+     * </p>
+     *
+     * @param modulePath the path to canonicalize; may be <code>null</code>
+     * @return the canonical path, or <code>null</code> when the path needs no correction
+     */
+    public static String canonicalModulePathOf(String modulePath)
+    {
+        List<String> segments = pathSegments(modulePath);
+        if (segments.isEmpty())
+        {
+            return null;
+        }
+        MetadataTypeCatalog.MetadataTypeInfo kind = MetadataTypeCatalog.resolve(segments.get(0));
+        if (kind == null || kind.getDirectoryName() == null
+            || kind.getDirectoryName().equals(segments.get(0)))
+        {
+            return null;
+        }
+        StringBuilder canonical = new StringBuilder(kind.getDirectoryName());
+        for (int i = 1; i < segments.size(); i++)
+        {
+            canonical.append('/').append(segments.get(i));
+        }
+        return canonical.toString();
+    }
+
+    /**
+     * Whether a module path may be written, and what stands in the way when it may not.
+     * <p>
+     * A write used to answer success with a path whose first segment was not the object's own
+     * folder - {@code CommonModule/Name/Module.bsl} instead of {@code CommonModules/Name/Module.bsl} -
+     * and leave a file in a folder no object reads. The path is now judged against the layout
+     * before anything is read or written, a dry run included:
+     * </p>
+     * <ul>
+     * <li>the separators are forward slashes, the path is relative and climbs no parent;</li>
+     * <li>the first segment is a kind folder of {@link MetadataTypeCatalog} or the configuration
+     * root's own folder; a segment that names the kind rather than the folder is refused with the
+     * canonical path in full, and a kind that owns no modules at all is refused with that said;</li>
+     * <li>when the file is new, every folder of the path already exists - a module is written only
+     * for an object, a form or a command the configuration already holds - and the file name is a
+     * module name of its place.</li>
+     * </ul>
+     * <p>
+     * An existing file is a fact of the project: the folder and name checks guard what a write
+     * creates, so they step aside for a file that is already there. A module a provider holds is
+     * an address, not a file, and its caller never asks this question.
+     * </p>
+     *
+     * @param project the project the path is written in; the folder checks are skipped for
+     *            <code>null</code>
+     * @param modulePath the path under {@code src/}, with or without a leading {@code src/}
+     * @param fileExists whether the file the path names is already in the project
+     * @return <code>null</code> when the path may be written, or the {@code Error: ...} refusal
+     */
+    public static String checkModulePathForWrite(IProject project, String modulePath,
+        boolean fileExists)
+    {
+        if (modulePath == null || modulePath.isEmpty())
+        {
+            return null;
+        }
+        if (modulePath.indexOf('\\') >= 0)
+        {
+            return "Error: modulePath for a write has to use forward slashes. " //$NON-NLS-1$
+                + "The same path is '" + modulePath.replace('\\', '/') + "'."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (modulePath.startsWith("/") //$NON-NLS-1$
+            || modulePath.length() > 1 && modulePath.charAt(1) == ':')
+        {
+            return "Error: modulePath has to be a path under the project's src/ folder, " //$NON-NLS-1$
+                + "not an absolute path: '" + modulePath + "'."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (modulePath.contains("..")) //$NON-NLS-1$
+        {
+            return "Error: modulePath is not allowed to contain '..'"; //$NON-NLS-1$
+        }
+        List<String> segments = pathSegments(modulePath);
+        if (segments.size() < 2)
+        {
+            return "Error: modulePath has to name a module file under its kind folder, such as " //$NON-NLS-1$
+                + "'CommonModules/MyModule/Module.bsl' or 'Catalogs/MyCatalog/ObjectModule.bsl'."; //$NON-NLS-1$
+        }
+        String first = segments.get(0);
+        MetadataTypeCatalog.MetadataTypeInfo kind = MetadataTypeCatalog.resolve(first);
+        boolean configurationRoot =
+            kind == null && CONFIGURATION_ROOT_DIRECTORY.equalsIgnoreCase(first);
+        if (kind == null && !configurationRoot)
+        {
+            StringBuilder refusal = new StringBuilder("Error: '" + first //$NON-NLS-1$
+                + "' is not a metadata kind folder under src/. Module files live in a kind folder: " //$NON-NLS-1$
+                + "'CommonModules/<name>/Module.bsl', 'Catalogs/<name>/ObjectModule.bsl'."); //$NON-NLS-1$
+            List<String> near = MetadataTypeCatalog.findSimilarDirectoryNames(first, 3);
+            if (!near.isEmpty())
+            {
+                refusal.append(" Closest kind folders: ").append(String.join(", ", near)).append('.'); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            return refusal.toString();
+        }
+        if (kind != null && kind.getDirectoryName() == null)
+        {
+            return "Error: metadata kind '" + kind.getEnglishSingular() + "' owns no module files, " //$NON-NLS-1$ //$NON-NLS-2$
+                + "so '" + modulePath + "' names no module of the layout. A module write needs a " //$NON-NLS-1$ //$NON-NLS-2$
+                + "kind folder such as CommonModules or Catalogs."; //$NON-NLS-1$
+        }
+        if (kind != null && !kind.getDirectoryName().equals(first))
+        {
+            return "Error: '" + first + "' is not the folder this layout uses. The canonical path " //$NON-NLS-1$ //$NON-NLS-2$
+                + "is '" + canonicalModulePathOf(modulePath) + "'."; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (fileExists || project == null)
+        {
+            return null;
+        }
+        MissingFolder missingFolder = firstMissingFolder(project, segments);
+        if (missingFolder != null)
+        {
+            return "Error: src/" + missingFolder.folder() + " does not exist: " //$NON-NLS-1$ //$NON-NLS-2$
+                + missingFolder.reason()
+                + " A module is written only where the object it belongs to already exists; " //$NON-NLS-1$
+                + "use list_modules to find the exact path."; //$NON-NLS-1$
+        }
+        String fileName = segments.get(segments.size() - 1);
+        List<String> allowed = allowedModuleFileNames(segments);
+        if (!allowed.contains(fileName))
+        {
+            return "Error: '" + fileName + "' is not a module file of this place. " //$NON-NLS-1$ //$NON-NLS-2$
+                + "The module files here are: " + String.join(", ", allowed) + '.'; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return null;
+    }
+
+    /**
+     * Splits a module path into its segments: both slashes separate, a leading {@code src/} is
+     * dropped, and empty or current-directory segments are dropped rather than refused.
+     *
+     * @param modulePath the path; may be <code>null</code>
+     * @return the segments, at least the file name; empty for a <code>null</code> or blank path
+     */
+    private static List<String> pathSegments(String modulePath)
+    {
+        List<String> segments = new ArrayList<>();
+        if (modulePath == null || modulePath.isEmpty())
+        {
+            return segments;
+        }
+        for (String token : modulePath.replace('\\', '/').split("/")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            if (token.isEmpty() || token.equals(".")) //$NON-NLS-1$
+            {
+                continue;
+            }
+            segments.add(token);
+        }
+        if (segments.size() > 1 && "src".equalsIgnoreCase(segments.get(0))) //$NON-NLS-1$
+        {
+            segments.remove(0);
+        }
+        return segments;
+    }
+
+    /**
+     * The first folder of a module path the project does not hold, with a reason naming what is
+     * missing: an object, a form or a command of the configuration.
+     *
+     * @param project the project
+     * @param segments the path segments, a kind folder first and a file name last
+     * @return the missing folder with its reason, or <code>null</code> when every folder is there
+     */
+    private static MissingFolder firstMissingFolder(IProject project, List<String> segments)
+    {
+        StringBuilder cumulative = new StringBuilder();
+        for (int i = 0; i < segments.size() - 1; i++)
+        {
+            if (i > 0)
+            {
+                cumulative.append('/');
+            }
+            cumulative.append(segments.get(i));
+            if (!folderExistsInProject(project, cumulative.toString()))
+            {
+                return new MissingFolder(cumulative.toString(),
+                    missingFolderReason(segments, i));
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Says what a missing path folder stands for, from the segment ahead of it: the object folder
+     * of a kind, a form or a command an object holds, or nothing the layout knows.
+     *
+     * @param segments the path segments
+     * @param missingAt the index of the first missing folder's own segment
+     * @return the reason phrase, closed with a semicolon
+     */
+    private static String missingFolderReason(List<String> segments, int missingAt)
+    {
+        if (missingAt == 1)
+        {
+            return "the project has no object '" + segments.get(1) + "' of this kind;"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (missingAt >= 2 && "forms".equalsIgnoreCase(segments.get(missingAt - 1))) //$NON-NLS-1$
+        {
+            return "the object holds no form '" + segments.get(missingAt) + "';"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (missingAt >= 2 && "commands".equalsIgnoreCase(segments.get(missingAt - 1))) //$NON-NLS-1$
+        {
+            return "the object holds no command '" + segments.get(missingAt) + "';"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return "the folder is not part of this project's layout;"; //$NON-NLS-1$
+    }
+
+    /**
+     * Tells whether a {@code src/}-relative folder is in the project.
+     *
+     * @param project the project; may be <code>null</code>
+     * @param relativePath the folder under {@code src/}
+     * @return <code>true</code> when the workspace holds the folder; <code>false</code> on any error
+     */
+    private static boolean folderExistsInProject(IProject project, String relativePath)
+    {
+        if (project == null)
+        {
+            return false;
+        }
+        try
+        {
+            return project.getFolder(new Path("src").append(relativePath)).exists(); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+    }
+
+    /**
+     * The module file names a place in the layout accepts: the configuration root's own four, the
+     * single module of a form or of a command, and the object-level names everywhere else.
+     *
+     * @param segments the path segments, a kind folder first and a file name last
+     * @return the allowed file names of the place the path names
+     */
+    private static List<String> allowedModuleFileNames(List<String> segments)
+    {
+        List<String> allowed = new ArrayList<>();
+        if (segments.size() == 2 && CONFIGURATION_ROOT_DIRECTORY.equalsIgnoreCase(segments.get(0)))
+        {
+            for (String fileName : ROOT_MODULE_FILE_NAMES)
+            {
+                allowed.add(fileName);
+            }
+            return allowed;
+        }
+        if (segments.size() >= 3)
+        {
+            String holder = segments.get(segments.size() - 3);
+            if ("forms".equalsIgnoreCase(holder)) //$NON-NLS-1$
+            {
+                allowed.add("Module.bsl"); //$NON-NLS-1$
+                return allowed;
+            }
+            if ("commands".equalsIgnoreCase(holder)) //$NON-NLS-1$
+            {
+                allowed.add("CommandModule.bsl"); //$NON-NLS-1$
+                return allowed;
+            }
+        }
+        for (String fileName : OBJECT_MODULE_FILE_NAMES)
+        {
+            allowed.add(fileName);
+        }
+        return allowed;
+    }
+
+    /** A folder of a module path the project does not hold, and why it matters. */
+    private static final class MissingFolder
+    {
+        private final String folder;
+
+        private final String reason;
+
+        MissingFolder(String folder, String reason)
+        {
+            this.folder = folder;
+            this.reason = reason;
+        }
+
+        /** @return the {@code src/}-relative folder that is not there */
+        String folder()
+        {
+            return folder;
+        }
+
+        /** @return the phrase naming what is missing */
+        String reason()
+        {
+            return reason;
+        }
     }
 
     /**

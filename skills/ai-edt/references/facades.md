@@ -773,6 +773,8 @@ separate question the platform only answers when asked.
 
 **An open editor outranks the file.** `read_module_source` returns the editor's unsaved text and marks it in the answer; `write_module_source` refuses while such an editor holds the file. What is read and what is written then describe one state rather than two.
 
+**A write goes only where the layout has a place for it.** `write_module_source` judges `modulePath` against the layout before anything is read or written, `dryRun=true` included: the first segment has to be the kind folder as the layout spells it (`CommonModules`, not `CommonModule` - the refusal names the canonical path in full), every folder of the path has to exist, because a module is not created for an object, a form or a command the configuration does not hold (the module file itself may be new, `ManagerModule.bsl` included), and the file name has to be a module name of its place, which the refusal lists when it is not. The configuration root's own modules (`Configuration/SessionModule.bsl` and its three kin) keep their place beside the kind folders. Reading is unchanged apart from the wording: when the file is missing and the first segment spells the kind rather than its folder, the refusal names the canonical path.
+
 `dcs_workshop` in detail. `add_field` writes `title`, `type` and one `property`/`value` pair, reading
 `property=type` as the type; an unknown property or a type the field cannot take is refused before
 the field is added. `add_parameter` and `set_parameter` apply `length`, `precision`, `fractionDigits`,

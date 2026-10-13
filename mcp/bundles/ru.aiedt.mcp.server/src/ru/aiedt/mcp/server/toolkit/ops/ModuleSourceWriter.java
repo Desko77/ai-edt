@@ -132,10 +132,10 @@ public class ModuleSourceWriter implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modulePath", //$NON-NLS-1$
-                "Path to the module, measured from the src/ folder - for instance 'Documents/MyDoc/ObjectModule.bsl' " //$NON-NLS-1$
-                    + "or 'CommonModules/MyModule/Module.bsl'. A leading 'src/' is fine too and gets stripped " //$NON-NLS-1$
-                    + "automatically, so 'src/CommonModules/MyModule/Module.bsl' also works. " //$NON-NLS-1$
-                    + "Or skip this and supply objectName + moduleType instead.") //$NON-NLS-1$
+                "Path to the module from the src/ folder, e.g. 'CommonModules/MyModule/Module.bsl' " //$NON-NLS-1$
+                    + "or 'Documents/MyDoc/ObjectModule.bsl'; a leading 'src/' is stripped. " //$NON-NLS-1$
+                    + "A write refuses a misspelled kind folder or an object the configuration does " //$NON-NLS-1$
+                    + "not hold, naming the canonical path. Or supply objectName + moduleType instead.") //$NON-NLS-1$
             .stringProperty("objectName", //$NON-NLS-1$
                 "The object's fully-qualified name, e.g. 'Document.MyDoc' or 'DataProcessor.MyProcessor'. " //$NON-NLS-1$
                     + "Metadata names in Russian work too (e.g. 'Документ.МойДок'). " //$NON-NLS-1$
@@ -378,6 +378,21 @@ public class ModuleSourceWriter implements IMcpTool
             return refused.wrapContent("Error: " + notEditable.error //$NON-NLS-1$
                 + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
                     ? "" : " - " + notEditable.hint)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        // --- step 6b: the layout a path would be written into ---
+        // A path whose first segment is not the object's own folder used to answer success and
+        // leave a file no object reads. The path is judged before anything is read or written, so
+        // a preview is refused exactly as a real call is. A module a provider holds is an
+        // address, not a file, and is exempt.
+        if (provided == null)
+        {
+            String layoutRefusal = BslModuleAccess.checkModulePathForWrite(project, modulePath,
+                fileExists);
+            if (layoutRefusal != null)
+            {
+                return layoutRefusal;
+            }
         }
 
         // -- outer try: steps 7-17 --

@@ -767,6 +767,80 @@ public final class MetadataTypeCatalog
     }
 
     /**
+     * Suggests kind directories whose names are close to one that matched no kind.
+     * <p>
+     * The same two passes {@link #findSimilarObjects} runs over the objects of a type, run here over
+     * the directory names: a name that contains the query or is contained by it first, and edit
+     * distance after that, with the tolerance that grows with the length of the query. A caller that
+     * has to refuse a path whose first segment names no kind answers with what the segment probably
+     * meant to spell.
+     * </p>
+     *
+     * @param name the directory-name candidate that matched nothing; may be <code>null</code>
+     * @param maxResults how many suggestions to return at most
+     * @return the directory names, closest first when they came from the second pass; never
+     *         <code>null</code>, possibly empty
+     */
+    public static List<String> findSimilarDirectoryNames(String name, int maxResults)
+    {
+        List<String> matches = new ArrayList<>();
+        if (name == null || name.isEmpty())
+        {
+            return matches;
+        }
+        String query = name.toLowerCase();
+
+        for (MetadataTypeInfo type : MetadataTypeInfo.values())
+        {
+            String directory = type.getDirectoryName();
+            if (directory == null)
+            {
+                continue;
+            }
+            if (matches.size() >= maxResults)
+            {
+                break;
+            }
+            String candidate = directory.toLowerCase();
+            if (candidate.contains(query) || query.contains(candidate))
+            {
+                matches.add(directory);
+            }
+        }
+        if (!matches.isEmpty())
+        {
+            return matches;
+        }
+
+        int threshold = Math.max(2, name.length() / 5);
+        List<ScoredName> scored = new ArrayList<>();
+        for (MetadataTypeInfo type : MetadataTypeInfo.values())
+        {
+            String directory = type.getDirectoryName();
+            if (directory == null)
+            {
+                continue;
+            }
+            int distance = levenshtein(directory.toLowerCase(), query);
+            if (distance <= threshold)
+            {
+                scored.add(new ScoredName(directory, distance));
+            }
+        }
+        // A stable sort, so equally close directories stay in the declaration order.
+        scored.sort(Comparator.comparingInt(candidate -> candidate.distance));
+        for (ScoredName candidate : scored)
+        {
+            if (matches.size() >= maxResults)
+            {
+                break;
+            }
+            matches.add(candidate.name);
+        }
+        return matches;
+    }
+
+    /**
      * Returns the edit distance between two strings: how many single-character insertions, deletions or
      * substitutions turn one into the other.
      * <p>

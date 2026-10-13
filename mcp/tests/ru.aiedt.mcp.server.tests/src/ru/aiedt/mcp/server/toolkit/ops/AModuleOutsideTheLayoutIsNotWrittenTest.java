@@ -1,0 +1,319 @@
+/**
+ * AI-EDT - 1C AI tools for EDT - Tests
+ * Copyright (C) 2026 Desko77 (https://github.com/Desko77)
+ * Licensed under AGPL-3.0-or-later
+ */
+
+package ru.aiedt.mcp.server.toolkit.ops;
+
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+
+import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IProjectDescription;
+import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IWorkspace;
+import org.eclipse.core.resources.ResourcesPlugin;
+import org.eclipse.core.runtime.NullProgressMonitor;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
+import org.junit.Test;
+
+/**
+ * A write whose modulePath sits outside the project's layout is refused, and a write inside it
+ * behaves as before.
+ * <p>
+ * A path that spelled the kind rather than its folder - {@code CommonModule} for
+ * {@code CommonModules} - used to answer success and leave a file no object reads. The write now
+ * judges the path before anything is read or written, a dry run included, and names the canonical
+ * path or the missing object. A new module file of an existing object stays allowed, the
+ * configuration root's own modules keep their place, and a read that misses the file names the
+ * canonical path beside the refusal it already gave.
+ * </p>
+ */
+public class AModuleOutsideTheLayoutIsNotWrittenTest
+{
+    private static final String PROJECT = "AiEdtLayoutProbe"; //$NON-NLS-1$
+
+    private static final String OBJECT_MODULE_TEXT = "\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0430 \u041F\u0435\u0440\u0435\u0434\u0417\u0430\u043F\u0438\u0441\u044C\u044E(\u041E\u0442\u043A\u0430\u0437)\r\n" //$NON-NLS-1$
+        + "\t\u0412\u043E\u0437\u0432\u0440\u0430\u0442;\r\n" //$NON-NLS-1$
+        + "\u041A\u043E\u043D\u0435\u0446\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u044B\r\n"; //$NON-NLS-1$
+
+    private static Path root;
+
+    private static IProject project;
+
+    private static Path projectDir;
+
+    /**
+     * Creates a project holding one catalog with its object module, an empty common-modules kind
+     * folder, and the configuration root's folder.
+     *
+     * @throws Exception when the project or its files cannot be created
+     */
+    @BeforeClass
+    public static void aProjectWithOneCatalog() throws Exception
+    {
+        root = Files.createTempDirectory("aiedt-layout-probe"); //$NON-NLS-1$
+        projectDir = root.resolve(PROJECT);
+        Path objectModule = projectDir.resolve("src/Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl"); //$NON-NLS-1$
+        Files.createDirectories(objectModule.getParent());
+        Files.write(objectModule, OBJECT_MODULE_TEXT.getBytes(StandardCharsets.UTF_8));
+        Files.createDirectories(projectDir.resolve("src/CommonModules")); //$NON-NLS-1$
+        Files.createDirectories(projectDir.resolve("src/Configuration")); //$NON-NLS-1$
+        IWorkspace workspace = ResourcesPlugin.getWorkspace();
+        project = workspace.getRoot().getProject(PROJECT);
+        IProjectDescription description = workspace.newProjectDescription(PROJECT);
+        description.setLocation(new org.eclipse.core.runtime.Path(projectDir.toString()));
+        project.create(description, new NullProgressMonitor());
+        project.open(new NullProgressMonitor());
+        project.refreshLocal(IResource.DEPTH_INFINITE, new NullProgressMonitor());
+    }
+
+    /**
+     * Removes the project and its directory.
+     *
+     * @throws Exception when the project cannot be removed
+     */
+    @AfterClass
+    public static void theProjectGoes() throws Exception
+    {
+        if (project != null && project.exists())
+        {
+            project.delete(false, true, new NullProgressMonitor());
+        }
+        if (root != null)
+        {
+            try (var walk = Files.walk(root))
+            {
+                walk.sorted(java.util.Comparator.reverseOrder()).map(Path::toFile)
+                    .forEach(java.io.File::delete);
+            }
+        }
+    }
+
+    /** A kind spelled by its name instead of its folder is refused with the canonical path. */
+    @Test
+    public void aSingularKindFolderIsRefusedWithTheCanonicalPath()
+    {
+        String answer = write("append", "CommonModule/\u041F\u0440\u043E\u0431\u0430/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("CommonModules/\u041F\u0440\u043E\u0431\u0430/Module.bsl")); //$NON-NLS-1$
+        assertTrue("no folder appeared outside the layout", //$NON-NLS-1$
+            !projectDir.resolve("src/CommonModule").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A leading src/ is stripped before the layout is judged, and the refusal is the same. */
+    @Test
+    public void aLeadingSrcIsStrippedBeforeTheLayoutIsJudged()
+    {
+        String answer = write("append", "src/CommonModule/\u041F\u0440\u043E\u0431\u0430/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("CommonModules/\u041F\u0440\u043E\u0431\u0430/Module.bsl")); //$NON-NLS-1$
+        assertTrue("no folder appeared outside the layout", //$NON-NLS-1$
+            !projectDir.resolve("src/CommonModule").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A dry run answers the refusal a real write would get, not a preview. */
+    @Test
+    public void aPreviewIsRefusedAsTheWriteWouldBe()
+    {
+        String answer = write("append", "CommonModule/\u041F\u0440\u043E\u0431\u0430/Module.bsl", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("CommonModules/\u041F\u0440\u043E\u0431\u0430/Module.bsl")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("status: preview")); //$NON-NLS-1$
+        assertTrue("no folder appeared outside the layout", //$NON-NLS-1$
+            !projectDir.resolve("src/CommonModule").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A module of an object the configuration does not hold is refused, and no folder appears. */
+    @Test
+    public void anObjectThatIsNotInTheConfigurationIsNotCreated()
+    {
+        String answer = write("append", "CommonModules/\u041D\u0435\u0442\u0422\u0430\u043A\u043E\u0433\u043E/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("CommonModules/\u041D\u0435\u0442\u0422\u0430\u043A\u043E\u0433\u043E")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("no object")); //$NON-NLS-1$
+        assertTrue("no folder appeared for an absent object", //$NON-NLS-1$
+            !projectDir.resolve("src/CommonModules/\u041D\u0435\u0442\u0422\u0430\u043A\u043E\u0433\u043E").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A new module file of an existing object is written, the folders staying as they were. */
+    @Test
+    public void aNewModuleFileOfAnExistingObjectIsWritten()
+    {
+        String answer = write("append", "Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ManagerModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        Path manager = projectDir.resolve("src/Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ManagerModule.bsl"); //$NON-NLS-1$
+        assertTrue("the manager module was created", manager.toFile().isFile()); //$NON-NLS-1$
+        try
+        {
+            assertTrue(Files.readString(manager, StandardCharsets.UTF_8)
+                .contains("\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430\u0417\u0430\u043F\u0438\u0441\u0438")); //$NON-NLS-1$
+        }
+        catch (Exception e)
+        {
+            throw new AssertionError("the written manager module could not be read back", e); //$NON-NLS-1$
+        }
+    }
+
+    /** A file name no place in the layout accepts is refused with the names it accepts. */
+    @Test
+    public void aFileThatIsNoModuleNameIsRefusedWithTheAllowedNames()
+    {
+        String answer = write("append", "Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/\u0427\u0443\u0436\u043E\u0435.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("Module.bsl")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("ManagerModule.bsl")); //$NON-NLS-1$
+        assertTrue("no file appeared under a name of its own", //$NON-NLS-1$
+            !projectDir.resolve("src/Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/\u0427\u0443\u0436\u043E\u0435.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A canonical path of an existing module keeps writing as before. */
+    @Test
+    public void aCanonicalPathOfAnExistingModuleWritesAsBefore()
+    {
+        Map<String, String> args = args("projectName", PROJECT, //$NON-NLS-1$
+            "modulePath", "Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl", //$NON-NLS-1$ //$NON-NLS-2$
+            "mode", "searchReplace", //$NON-NLS-1$ //$NON-NLS-2$
+            "oldSource", "\u0412\u043E\u0437\u0432\u0440\u0430\u0442;", //$NON-NLS-1$ //$NON-NLS-2$
+            "source", "\u0415\u0441\u043B\u0438 \u0418\u0441\u0442\u0438\u043D\u0430 \u0422\u043E\u0433\u0434\u0430\r\n\t\u0412\u043E\u0437\u0432\u0440\u0430\u0442;\r\n\u041A\u043E\u043D\u0435\u0446\u0415\u0441\u043B\u0438;"); //$NON-NLS-1$ //$NON-NLS-2$
+        String answer = new ModuleSourceWriter().execute(args);
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+    }
+
+    /** The configuration root's own module names keep their place beside the kind folders. */
+    @Test
+    public void theConfigurationRootModulesKeepTheirPlace()
+    {
+        String answer = write("append", "Configuration/SessionModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertTrue("the session module was created", //$NON-NLS-1$
+            projectDir.resolve("src/Configuration/SessionModule.bsl").toFile().isFile()); //$NON-NLS-1$
+
+        String refused = write("append", "Configuration/\u0427\u0443\u0436\u043E\u0435.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(refused, refused.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(refused, refused.contains("SessionModule.bsl")); //$NON-NLS-1$
+        assertTrue("no file appeared beside the root's own modules", //$NON-NLS-1$
+            !projectDir.resolve("src/Configuration/\u0427\u0443\u0436\u043E\u0435.bsl").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** A kind that owns no module files at all is refused with that said. */
+    @Test
+    public void aKindWithoutModulesIsRefused()
+    {
+        String answer = write("append", "Roles/\u0411\u0430\u0437\u043E\u0432\u044B\u0435/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("owns no module files")); //$NON-NLS-1$
+        assertTrue("no folder appeared under a kind without modules", //$NON-NLS-1$
+            !projectDir.resolve("src/Roles").toFile().exists()); //$NON-NLS-1$
+    }
+
+    /** Backslashes and absolute paths are refused for a write, whatever the rest says. */
+    @Test
+    public void backslashesAndAbsolutePathsAreRefused()
+    {
+        String backslashes = write("append", "Catalogs\\\u0422\u043E\u0432\u0430\u0440\u044B\\ManagerModule.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(backslashes, backslashes.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(backslashes, backslashes.contains("forward slashes")); //$NON-NLS-1$
+
+        String absolute = write("append", "C:/Temp/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(absolute, absolute.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(absolute, absolute.contains("src/")); //$NON-NLS-1$
+
+        String rooted = write("append", "/etc/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(rooted, rooted.startsWith("Error:")); //$NON-NLS-1$
+    }
+
+    /** A path that climbs a parent keeps the refusal it already had. */
+    @Test
+    public void parentTraversalKeepsItsRefusal()
+    {
+        String answer = write("append", "../\u0421\u043E\u0441\u0435\u0434\u043D\u0438\u0439/Module.bsl", null); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("'..'")); //$NON-NLS-1$
+    }
+
+    /** A read that misses the file names the canonical path beside the refusal it already gave. */
+    @Test
+    public void theReaderNamesTheCanonicalPathWhenTheFileIsMissing()
+    {
+        String answer = new ModuleSourceReader().execute(args("projectName", PROJECT, //$NON-NLS-1$
+            "modulePath", "CommonModule/\u041F\u0440\u043E\u0431\u0430/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(answer, answer.startsWith("Error:")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("no such file")); //$NON-NLS-1$
+        assertTrue(answer, answer.contains("src/CommonModules/\u041F\u0440\u043E\u0431\u0430/Module.bsl")); //$NON-NLS-1$
+    }
+
+    /** The canonical form is built from the kind the first segment names, the rest untouched. */
+    @Test
+    public void theCanonicalFormFollowsTheKindOfTheFirstSegment()
+    {
+        assertEquals("CommonModules/X/Module.bsl", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("CommonModule/X/Module.bsl")); //$NON-NLS-1$
+        assertEquals("Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("Catalog/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl")); //$NON-NLS-1$
+        assertEquals("Catalogs/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("\u0421\u043F\u0440\u0430\u0432\u043E\u0447\u043D\u0438\u043A\u0438/\u0422\u043E\u0432\u0430\u0440\u044B/ObjectModule.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("CommonModules/X/Module.bsl", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("src/CommonModule/X/Module.bsl")); //$NON-NLS-1$
+        assertNull("a path that already opens with its kind folder needs no correction", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("CommonModules/X/Module.bsl")); //$NON-NLS-1$
+        assertNull("a kind that owns no folder has no canonical path", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("Roles/X/Module.bsl")); //$NON-NLS-1$
+        assertNull("a segment that names no kind has no canonical path", //$NON-NLS-1$
+            BslModuleAccess.canonicalModulePathOf("Martian/X/Module.bsl")); //$NON-NLS-1$
+    }
+
+    /**
+     * Runs a write into the probe project.
+     *
+     * @param mode the write mode
+     * @param modulePath the module path to write to
+     * @param dryRun {@code "true"} for a preview, {@code null} for a real write
+     * @return the tool's answer
+     */
+    private static String write(String mode, String modulePath, String dryRun)
+    {
+        Map<String, String> args = args("projectName", PROJECT, //$NON-NLS-1$
+            "modulePath", modulePath, //$NON-NLS-1$
+            "mode", mode, //$NON-NLS-1$
+            "source", "\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u0430 \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430\u0417\u0430\u043F\u0438\u0441\u0438(\u041E\u0442\u043A\u0430\u0437)\r\n" //$NON-NLS-1$ //$NON-NLS-2$
+                + "\t\u0412\u043E\u0437\u0432\u0440\u0430\u0442;\r\n" //$NON-NLS-1$
+                + "\u041A\u043E\u043D\u0435\u0446\u041F\u0440\u043E\u0446\u0435\u0434\u0443\u0440\u044B"); //$NON-NLS-1$
+        if (dryRun != null)
+        {
+            args.put("dryRun", dryRun); //$NON-NLS-1$
+        }
+        return new ModuleSourceWriter().execute(args);
+    }
+
+    private static Map<String, String> args(String... pairs)
+    {
+        Map<String, String> map = new HashMap<>();
+        for (int i = 0; i < pairs.length; i += 2)
+        {
+            map.put(pairs[i], pairs[i + 1]);
+        }
+        return map;
+    }
+}
