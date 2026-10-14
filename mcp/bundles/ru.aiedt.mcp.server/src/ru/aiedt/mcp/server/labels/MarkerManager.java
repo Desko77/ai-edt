@@ -2698,6 +2698,11 @@ public class MarkerManager
      * Reads a project's markers the way a preview reads them: from the file as it stands, and
      * without remembering anything.
      * <p>
+     * The read and the parse run under the same hold of the lock an ordinary read takes, so a
+     * carry-over such a read performs, or a save, cannot take the file out from under this one: a
+     * preview that judged half a document, or an empty file, would refuse an edit the write allows.
+     * </p>
+     * <p>
      * The file is the current one when it is there and otherwise the file an earlier build wrote.
      * Neither is created, copied, renamed or refreshed, so an edit that writes nothing leaves the
      * project's settings folder byte for byte as it found it. Nothing of this read is kept: the
@@ -2711,40 +2716,56 @@ public class MarkerManager
      */
     public PreviewRead readMarkersForPreview(IProject project)
     {
-        beforeReadingTheMarkerFile(project);
-        if (project == null || !project.isAccessible())
+        if (project == null)
         {
             return new PreviewRead(new MarkerStore(), false, false);
         }
-        byte[] bytes;
+        // The hold of the lock an ordinary read takes, over the read and the parse together: the
+        // carry-over such a read performs, or a save, must not take the file out from under this
+        // one, or the preview would judge half a document or an empty file and refuse an edit the
+        // write allows.
+        lock.readLock().lock();
         try
         {
-            bytes = readMarkersBytes(markersFileAsItStands(project));
+            beforeReadingTheMarkerFile(project);
+            if (!project.isAccessible())
+            {
+                return new PreviewRead(new MarkerStore(), false, false);
+            }
+            byte[] bytes;
+            try
+            {
+                bytes = readMarkersBytes(markersFileAsItStands(project));
+            }
+            catch (CoreException | IOException e)
+            {
+                Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+                return new PreviewRead(null, false, true);
+            }
+            if (bytes == null)
+            {
+                return new PreviewRead(new MarkerStore(), false, false);
+            }
+            try (Reader reader = new InputStreamReader(new ByteArrayInputStream(bytes),
+                StandardCharsets.UTF_8))
+            {
+                MarkerStore storage = createLoadYaml().load(reader);
+                return new PreviewRead(storage != null ? storage : new MarkerStore(), false, false);
+            }
+            catch (IOException e)
+            {
+                Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
+                return new PreviewRead(null, false, true);
+            }
+            catch (YAMLException e)
+            {
+                Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
+                return new PreviewRead(null, true, false);
+            }
         }
-        catch (CoreException | IOException e)
+        finally
         {
-            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
-            return new PreviewRead(null, false, true);
-        }
-        if (bytes == null)
-        {
-            return new PreviewRead(new MarkerStore(), false, false);
-        }
-        try (Reader reader = new InputStreamReader(new ByteArrayInputStream(bytes),
-            StandardCharsets.UTF_8))
-        {
-            MarkerStore storage = createLoadYaml().load(reader);
-            return new PreviewRead(storage != null ? storage : new MarkerStore(), false, false);
-        }
-        catch (IOException e)
-        {
-            Activator.logError("Could not read the marker file for project " + project.getName(), e); //$NON-NLS-1$
-            return new PreviewRead(null, false, true);
-        }
-        catch (YAMLException e)
-        {
-            Activator.logError("Could not parse the marker file for project " + project.getName(), e); //$NON-NLS-1$
-            return new PreviewRead(null, true, false);
+            lock.readLock().unlock();
         }
     }
 
