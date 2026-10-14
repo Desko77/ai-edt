@@ -91,31 +91,23 @@ public class TheFeaturePathRefusalNamesCandidatesTest
     }
 
     /**
-     * A relative path - what a call without a project resolves to - is looked up from the working
-     * directory, the one the refusal names.
+     * A relative path into a directory that does not exist - what a call without a project
+     * resolves to - is answered from the working directory, the nearest one that does.
+     * <p>
+     * The relative parent chain of such a path ends before any directory that exists, so it has
+     * to be made absolute before it is walked.
+     * </p>
      */
     @Test
-    public void aRelativePathIsAnsweredFromTheWorkingDirectory() throws Exception
+    public void aRelativePathIntoAMissingDirectoryIsAnsweredFromTheWorkingDirectory()
     {
-        String sub = "vanessa-relative-" + System.nanoTime(); //$NON-NLS-1$
-        Path under = new File(sub).getAbsoluteFile().toPath();
-        Files.createDirectories(under);
-        try
-        {
-            Files.write(under.resolve("smoke.feature"), new byte[] {1}); //$NON-NLS-1$
+        File named = new File("missing-" + System.nanoTime(), "smokee.feature"); //$NON-NLS-1$ //$NON-NLS-2$
 
-            String refusal = refusalFor(new File(sub, "smokee.feature")); //$NON-NLS-1$
+        String refusal = refusalFor(named);
 
-            assertTrue("the directory the relative path points into must be searched: " + refusal, //$NON-NLS-1$
-                refusal.contains("Nearest .feature files: smoke.feature")); //$NON-NLS-1$
-        }
-        finally
-        {
-            try (Stream<Path> entries = Files.walk(under))
-            {
-                entries.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
-            }
-        }
+        assertTrue("the working directory must be the one searched: " + refusal, //$NON-NLS-1$
+            refusal.contains("the nearest one that does is " //$NON-NLS-1$
+                + new File("").getAbsolutePath())); //$NON-NLS-1$
     }
 
     /** A directory with nothing to run says so, rather than listing nothing without a word. */
