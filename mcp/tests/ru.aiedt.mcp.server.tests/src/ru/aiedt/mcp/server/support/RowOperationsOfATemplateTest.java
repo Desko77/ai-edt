@@ -1225,4 +1225,67 @@ public class RowOperationsOfATemplateTest
         assertEquals("keeping its offset, so the begin is not below the end", 2, //$NON-NLS-1$
             doc.getDrawings().get(0).getPosition().getEnd().getOffset().getY());
     }
+
+    /** An empty template answers no last row, and declares no height to go with it. */
+    @Test
+    public void anEmptyTemplateAnswersNoLastRow()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, 1, 1, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertEquals("a table that carries nothing has no last row", 0, outcome.lastRow); //$NON-NLS-1$
+        assertEquals("and no height declared", 0, outcome.declaredRows); //$NON-NLS-1$
+    }
+
+    /**
+     * A row a write created and left empty does not hold the end of the table: the answer names the
+     * last row that carries content, and the declared height is answered beside it.
+     */
+    @Test
+    public void aRowCreatedEmptyDoesNotHoldTheEndOfTheTable()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.setCellText(doc, 3, 1, "Товар", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.setCellText(doc, 7, 1, "", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, 8, 1, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertEquals("the table ends at the row that carries the text", 3, outcome.lastRow); //$NON-NLS-1$
+        assertEquals("and the file declares the three rows it holds", 3, outcome.declaredRows); //$NON-NLS-1$
+    }
+
+    /** A row whose own format declares a height is a row of the table. */
+    @Test
+    public void aRowWithAHeightOfItsOwnHoldsTheEndOfTheTable()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.setCellText(doc, 3, 1, "Товар", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.setCellText(doc, 7, 1, "", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.applyCellFormat(doc, 7, 1, 7, 1, null, null, Integer.valueOf(30), null, null, //$NON-NLS-1$
+            null);
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, 8, 1, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertEquals("the row the file made taller is the end of the table", 7, outcome.lastRow); //$NON-NLS-1$
+        assertEquals("while the declared height still counts what the file holds", 3, //$NON-NLS-1$
+            outcome.declaredRows);
+    }
+
+    /** A row only a named area reaches is a row of the table. */
+    @Test
+    public void aRowInsideANamedAreaHoldsTheEndOfTheTable()
+    {
+        SpreadsheetDocument doc = emptyDocument();
+        BmTemplateHelper.setCellText(doc, 3, 1, "Товар", "ru"); //$NON-NLS-1$ //$NON-NLS-2$
+        BmTemplateHelper.addNamedArea(doc, "Итог", "rows", 6, 0, 7, 0); //$NON-NLS-1$ //$NON-NLS-2$
+
+        BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, 8, 1, "none"); //$NON-NLS-1$
+
+        assertNull(outcome.error);
+        assertEquals("the area reaches row seven, so the table does", 7, outcome.lastRow); //$NON-NLS-1$
+    }
 }

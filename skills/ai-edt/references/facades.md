@@ -873,10 +873,11 @@ kept. `set_cell` refuses text together with `parameter`, and a parameter name wi
 take fractional numbers.
 
 `insert_rows`, `delete_rows` and `copy_rows` work in whole rows. `insert_rows` puts `count` rows
-before `row` (the last row + 1 appends) and shifts everything from that row down - the rows with
-their cells and notes, the merges and whole-row merges, the named areas, the row groups, the
-drawings, the print and repeat areas, the declared height and the saved view rows; a merge, an area,
-a group or a drawing the point falls inside grows instead of moving. `formatFrom` says where the new
+before `row` (the first row past the end of the table appends) and shifts everything from that row
+down - the rows with their cells and notes, the merges and whole-row merges, the named areas, the
+row groups, the drawings, the print and repeat areas, the declared height and the saved view rows; a
+merge, an area, a group or a drawing the point falls inside grows instead of moving. `formatFrom`
+says where the new
 rows take the row format and the cell formats from - above (the default, and none at row 1), below
 or none - and text, parameters and details are never copied. `delete_rows` removes `count` rows from
 `row`; merges, named areas and drawings lying entirely inside the range go with them and are named in
@@ -886,8 +887,12 @@ merges fully inside the source repeated over the target while the merges fully i
 target come off first. There is no shift, an overlap of the two ranges is refused, named areas are
 neither copied nor moved, and the target may run past the current end. The answer carries
 `shiftedRows`, `resizedMerges`, `removedMerges`, `resizedNamedAreas`, `removedNamedAreas`,
-`removedDrawings`, `removedDataSources` and `lastRow`; a drawing that goes takes its data source
-with it and the count is in `removedDataSources`.
+`removedDrawings`, `removedDataSources`, `lastRow` - the last row that carries content after the
+operation, where content is a text, a parameter, a detail, a picture, a note, a row height set on the
+row, and every holder of a row number (merges, named areas, row groups, drawings with the areas they
+read from, the print and repeat areas); a row a write created and left empty is not it - and
+`declaredRows`, the height the file declares in rows; a drawing that goes takes its data source with
+it and the count is in `removedDataSources`.
 
 `insert_columns`, `delete_columns` and `copy_columns` work in whole columns. `insert_columns` puts
 `count` columns before `col` (the last column + 1 appends) and shifts everything from that column
