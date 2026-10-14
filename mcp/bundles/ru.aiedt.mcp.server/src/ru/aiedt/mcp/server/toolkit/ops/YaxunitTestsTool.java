@@ -111,18 +111,18 @@ public class YaxunitTestsTool implements IMcpTool
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("mode", "Mode: run (default) or debug.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("mode", "run (default) or debug.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("help", //$NON-NLS-1$
-                "Help topic: topics, writing, assertions, setup, events, advanced. " //$NON-NLS-1$
-                + "When set, other parameters are ignored.")
-            .stringProperty("launchConfigurationName", "EDT Run Configuration name (preferred).") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("projectName", "Project name (alternative to launchConfigurationName).") //$NON-NLS-1$ //$NON-NLS-2$
+                "Help topic; when set, other arguments are ignored.") //$NON-NLS-1$
+            .stringProperty("launchConfigurationName", "EDT Run Configuration name.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", "Project name if no launch configuration is named.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Application ID for the project.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("extensions", "CSV: extension names to run.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modules", "CSV: common module names with tests.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("tests", "CSV: test FQNs (Module.Method).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
-                "Polling window in seconds (default 60). Legacy alias: timeout.") //$NON-NLS-1$
+                "Entire-call deadline in seconds (minimum/default 60; 30 seconds reserved to stop).") //$NON-NLS-1$
+            .stringProperty("runKey", "Poll a run held by an EDT dialog.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. Set false to skip pre-launch infobase sync. Under a preset that " //$NON-NLS-1$
                     + "disabled update_database an omitted argument launches without updating " //$NON-NLS-1$
@@ -210,6 +210,7 @@ public class YaxunitTestsTool implements IMcpTool
      */
     String executeWithInstallSteps(Map<String, String> params, InstallSteps steps)
     {
+        params = YaxunitTestRunner.withCallStart(params, System.currentTimeMillis());
         // Help dispatch first - other parameters ignored when help is set
         String helpTopic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
         if (helpTopic != null && !helpTopic.isEmpty())
@@ -248,6 +249,20 @@ public class YaxunitTestsTool implements IMcpTool
         if (presetGate != null)
         {
             return ToolResult.error(presetGate).put("operation", NAME).put("mode", mode).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        // Polling a handed-over launch must not repeat the install pre-step. It resumes the exact
+        // launch that opened the dialog and retains that launch's original deadline.
+        String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if (runKey != null && !runKey.isEmpty())
+        {
+            if (!"run".equals(mode)) //$NON-NLS-1$
+            {
+                return ToolResult.error("runKey is supported for mode=run only") //$NON-NLS-1$
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .toJson();
+            }
+            return asJsonEnvelope(new YaxunitTestRunner().dispatch(params));
         }
 
         // updateBeforeLaunch is passed through as it arrived: both delegates read it themselves
