@@ -230,8 +230,12 @@ public class TheToolListHasAWeightBudgetTest
      * two safety flags of the extension it installs, and the schema is where a caller learns that
      * before the call writes to the infobase. Measured 08.10: 192404.
      * </p>
+     * <p>
+     * And from 192404 to 192470 for runKey on yaxunit_tests, which collects a run answered
+     * Pending at a dialog or at the deadline of the call. Measured 14.10: 192470.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 192404;
+    private static final int DOCUMENT_BUDGET = 192470;
 
     private LiveServer server;
 

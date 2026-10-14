@@ -54,6 +54,7 @@ import ru.aiedt.mcp.server.support.JUnitRunOutcome;
 import ru.aiedt.mcp.server.support.JUnitXmlReader;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.ModalDialogWatch;
+import ru.aiedt.mcp.server.support.PendingEnvelope;
 import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -67,10 +68,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * launch terminates or the polling window expires, then parses the JUnit XML report. The alias
  * answers JSON on every branch: a refusal, a run still in progress, and a finished result. The
  * markdown report rides in {@code output}. Non-blocking: a launch still running at timeout returns
- * that JSON with {@code **Pending**} in {@code output}, and the caller re-invokes with the same
- * arguments - the next call picks up that run's report rather than starting another, and a call
- * after a report was handed over starts a new run unless it asked for the recent report with
- * {@code reuseRecent=true}.
+ * that JSON with {@code **Pending**} in {@code output} and a {@code runKey}; polling the key picks
+ * up that run's report rather than starting another. A call after a report was handed over starts
+ * a new run unless it asked for the recent report with {@code reuseRecent=true}.
  */
 public final class YaxunitTestRunner
     implements IMcpTool
@@ -79,9 +79,7 @@ public final class YaxunitTestRunner
 
     private static final int DEFAULT_TIMEOUT = 60;
 
-    private static final int MIN_TIMEOUT = 60;
-
-    static final long STOP_BUDGET_MS = 30_000L;
+    static final long MAX_RESPONSE_ASSEMBLY_RESERVE_MS = 5_000L;
 
     static final long CLIENT_START_WAIT_MS = 2_000L;
 
@@ -157,6 +155,10 @@ public final class YaxunitTestRunner
         + DebugSessionStarter.DATABASE_UPDATE_SKIPPED_BY_PRESET;
 
     private static final Map<String, ILaunch> ACTIVE_LAUNCHES = new ConcurrentHashMap<>();
+
+    private static final Map<String, Path> RUN_REPORT_DIRS = new ConcurrentHashMap<>();
+
+    private static final Map<String, RunContext> RUN_CONTEXTS = new ConcurrentHashMap<>();
 
     private static final Map<String, String> PENDING_LAUNCHES = new ConcurrentHashMap<>();
 
@@ -297,8 +299,8 @@ public final class YaxunitTestRunner
             + "Starts the application with RunUnitTests and keeps the entire call, including " //$NON-NLS-1$
             + "preparation, within `timeoutSeconds` (60 by default), returning a JSON " //$NON-NLS-1$
             + "object whose output is the JUnit Markdown report. " //$NON-NLS-1$
-            + "A launch blocked by an EDT dialog returns Pending with a runKey; answer the dialog " //$NON-NLS-1$
-            + "and poll that key. At the deadline the client is stopped. " //$NON-NLS-1$
+            + "A launch blocked by an EDT dialog or still running at the deadline returns Pending " //$NON-NLS-1$
+            + "with a runKey; the client keeps running, and polling that key retrieves its report. " //$NON-NLS-1$
             + "The infobase is updated before the launch unless updateBeforeLaunch=false; an update "
             + "that does not finish refuses the launch and nothing is started. Under a preset that "
             + "disabled update_database an omitted updateBeforeLaunch launches without updating "
@@ -326,9 +328,9 @@ public final class YaxunitTestRunner
             .stringProperty("tests", //$NON-NLS-1$
                 "Comma-separated list of test names, given as Module.Method") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "Deadline for the entire call in seconds (minimum/default 60; reserves 30 seconds " //$NON-NLS-1$
-                    + "to stop the client; legacy aliases: timeout, timeoutMs).") //$NON-NLS-1$
-            .stringProperty("runKey", "Poll a launch previously blocked by an EDT dialog.") //$NON-NLS-1$ //$NON-NLS-2$
+                "Deadline for the entire call in seconds (default 60; aliases: timeout, timeoutMs). " //$NON-NLS-1$
+                    + "At the deadline the answer is Pending with a runKey and the client keeps running.") //$NON-NLS-1$
+            .stringProperty("runKey", "Poll a pending launch and retrieve its report when ready.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. The infobase is updated before the launch; an update that does not " //$NON-NLS-1$
                     + "finish refuses the launch. Set false to launch against the infobase as it " //$NON-NLS-1$
@@ -389,6 +391,30 @@ public final class YaxunitTestRunner
         String resumeKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
         if (resumeKey != null && !resumeKey.isEmpty())
         {
+            if (PendingWorkRegistry.YAXUNIT_LAUNCH.get(resumeKey) != null)
+            {
+                return PendingExecutor.resume(PendingWorkRegistry.YAXUNIT_LAUNCH,
+                    YaxunitTestsTool.NAME, resumeKey, 1_000L,
+                    pending -> putPendingContext(pending, resumeKey,
+                        java.util.Collections.emptyList()));
+            }
+            int resumeTimeout = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT, 1, 0);
+            long resumeStartedAt = callStartedAt(params, System::currentTimeMillis);
+            String resumed;
+            try
+            {
+                resumed = resumeRun(resumeKey, pollingDeadline(resumeStartedAt, resumeTimeout),
+                    resumeStartedAt + resumeTimeout * 1000L, System::currentTimeMillis, Thread::sleep);
+            }
+            catch (InterruptedException e)
+            {
+                Thread.currentThread().interrupt();
+                return "**Error:** Test execution was interrupted while waiting"; //$NON-NLS-1$
+            }
+            if (resumed != null)
+            {
+                return resumed;
+            }
             return PendingExecutor.resume(PendingWorkRegistry.YAXUNIT_LAUNCH,
                 YaxunitTestsTool.NAME, resumeKey, 1_000L,
                 pending -> putPendingContext(pending, resumeKey, java.util.Collections.emptyList()));
@@ -400,11 +426,6 @@ public final class YaxunitTestRunner
         String modules = JsonUtils.extractStringArgument(params, "modules"); //$NON-NLS-1$
         String tests = JsonUtils.extractStringArgument(params, "tests"); //$NON-NLS-1$
         int timeout = TimeoutArgs.readSeconds(params, DEFAULT_TIMEOUT, 1, 0);
-        if (timeout < MIN_TIMEOUT)
-        {
-            return "**Error:** timeoutSeconds must be at least 60 so the call can reserve 30 " //$NON-NLS-1$
-                + "seconds for stopping the client."; //$NON-NLS-1$
-        }
         long startedAt = callStartedAt(params, System::currentTimeMillis);
 
         String unsupported = unsupportedFilter(params);
@@ -473,7 +494,7 @@ public final class YaxunitTestRunner
     }
 
     /**
-     * The instant polling must stop so the remainder belongs to client termination.
+     * The instant polling must stop so the remainder is available to assemble the answer.
      *
      * @param startedAt the call entry time
      * @param timeoutSeconds the complete call budget
@@ -481,7 +502,9 @@ public final class YaxunitTestRunner
      */
     static long pollingDeadline(long startedAt, int timeoutSeconds)
     {
-        return startedAt + timeoutSeconds * 1000L - STOP_BUDGET_MS;
+        long timeoutMs = timeoutSeconds * 1000L;
+        long reserve = Math.min(MAX_RESPONSE_ASSEMBLY_RESERVE_MS, timeoutMs / 10L);
+        return startedAt + timeoutMs - reserve;
     }
 
     /**
@@ -1023,6 +1046,8 @@ public final class YaxunitTestRunner
     private static void forgetFailedRun(String runKey)
     {
         ACTIVE_LAUNCHES.remove(runKey);
+        RUN_REPORT_DIRS.remove(runKey);
+        RUN_CONTEXTS.remove(runKey);
         UNDELIVERED_RUNS.remove(runKey);
         LAUNCH_SKIP_DECISIONS.remove(runKey);
     }
@@ -1057,25 +1082,57 @@ public final class YaxunitTestRunner
         return refusal.toJson();
     }
 
+    /**
+     * Continues a launch identified only by the run key returned in a Pending answer.
+     *
+     * @param runKey the pending run
+     * @param pollDeadline when this call stops polling
+     * @param deadline the complete call deadline
+     * @param clock the clock
+     * @param sleeper the wait seam
+     * @return the run answer, or <code>null</code> when the key is not one of this runner's
+     * @throws InterruptedException when polling is interrupted
+     */
+    static String resumeRun(String runKey, long pollDeadline, long deadline, LongSupplier clock,
+        Sleeper sleeper) throws InterruptedException
+    {
+        Path reportDir = RUN_REPORT_DIRS.get(runKey);
+        RunContext runContext = RUN_CONTEXTS.get(runKey);
+        if (reportDir == null || runContext == null)
+        {
+            return null;
+        }
+        ILaunch launch = ACTIVE_LAUNCHES.get(runKey);
+        if (launch != null && !launch.isTerminated())
+        {
+            return pollLaunch(launch, reportDir, pollDeadline, deadline, runKey, runContext,
+                clock, sleeper);
+        }
+        ACTIVE_LAUNCHES.remove(runKey);
+        File junitXml = findJunitXml(reportDir);
+        if (junitXml != null)
+        {
+            return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
+        }
+        forgetFailedRun(runKey);
+        return "**Error:** The previous launch finished, but no JUnit XML report was found in " //$NON-NLS-1$
+            + reportDir + ". Confirm the YAXUnit extension is installed."; //$NON-NLS-1$
+    }
+
     private static String pollLaunch(ILaunch launch, Path reportDir, long pollDeadline,
         long deadline, String runKey, RunContext runContext, LongSupplier clock, Sleeper sleeper)
         throws InterruptedException
     {
+        RUN_REPORT_DIRS.put(runKey, reportDir);
+        RUN_CONTEXTS.put(runKey, runContext);
         while (!launch.isTerminated())
         {
             long remaining = pollDeadline - clock.getAsLong();
             if (remaining <= 0)
             {
-                StopResult stopped = stopClient(launch, deadline, clock, sleeper);
-                forgetFailedRun(runKey);
-                return deadlineExpired(stopped);
+                return deadlinePending(launch, reportDir, runKey, runContext);
             }
             sleeper.sleep(Math.min(POLL_INTERVAL_MS, remaining));
-        }
-        if (clock.getAsLong() >= deadline)
-        {
-            forgetFailedRun(runKey);
-            return deadlineExpired(new StopResult(false, null, null));
         }
         ACTIVE_LAUNCHES.remove(runKey);
         Activator.logInfo("YAXUnit tests finished for " + runKey); //$NON-NLS-1$
@@ -1092,60 +1149,34 @@ public final class YaxunitTestRunner
         return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
     }
 
-    /** The result of asking Eclipse to terminate the launch's client process tree. */
-    static final class StopResult
-    {
-        final boolean clientStillRunning;
-
-        final String processId;
-
-        final String terminationError;
-
-        /**
-         * @param clientStillRunning whether a client process survived the stop budget
-         * @param processId the surviving process identifier, when available
-         * @param terminationError why the termination request failed, when it did
-         */
-        StopResult(boolean clientStillRunning, String processId, String terminationError)
-        {
-            this.clientStillRunning = clientStillRunning;
-            this.processId = processId;
-            this.terminationError = terminationError;
-        }
-    }
-
     /**
-     * Uses the same launch-wide termination path as {@code launch_debugger action=terminate}.
+     * Builds the non-terminal answer returned when this call's polling window closes.
+     *
+     * @param launch the client launch that remains active
+     * @param reportDir where the report will appear
+     * @param runKey the key that retrieves the run
+     * @param runContext the run's launch-time context
+     * @return a Pending answer that leaves the launch untouched
      */
-    static StopResult stopClient(ILaunch launch, long deadline, LongSupplier clock, Sleeper sleeper)
-        throws InterruptedException
+    static String deadlinePending(ILaunch launch, Path reportDir, String runKey,
+        RunContext runContext)
     {
-        String terminationError = null;
-        try
-        {
-            if (launch.canTerminate())
-            {
-                launch.terminate();
-            }
-            else
-            {
-                terminationError = "the launch reports canTerminate=false"; //$NON-NLS-1$
-            }
-        }
-        catch (Exception failed)
-        {
-            terminationError = failed.getMessage();
-        }
-
         IProcess live = firstLiveProcess(launch);
-        long remaining = deadline - clock.getAsLong();
-        while (live != null && remaining > 0)
+        ToolResult pending = PendingEnvelope.mark(ToolResult.success()
+            .put("operation", YaxunitTestsTool.NAME) //$NON-NLS-1$
+            .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("runKey", runKey) //$NON-NLS-1$
+            .put("reportDir", reportDir.toString()) //$NON-NLS-1$
+            .put("deadlineExpired", Boolean.TRUE) //$NON-NLS-1$
+            .put("clientStillRunning", Boolean.TRUE) //$NON-NLS-1$
+            .put("output", pendingText(reportDir, runContext.skippedByPreset)) //$NON-NLS-1$
+            .put("hint", "Poll this runKey to retrieve the report; the client keeps running.")); //$NON-NLS-1$ //$NON-NLS-2$
+        if (live != null)
         {
-            sleeper.sleep(Math.min(CLIENT_START_STEP_MS, remaining));
-            live = firstLiveProcess(launch);
-            remaining = deadline - clock.getAsLong();
+            pending.put("processId", processIdentity(live)); //$NON-NLS-1$
         }
-        return new StopResult(live != null, processIdentity(live), terminationError);
+        DebugSessionStarter.putDatabaseUpdate(pending, null, runContext.skippedByPreset);
+        return pending.toJson();
     }
 
     /**
@@ -1179,27 +1210,6 @@ public final class YaxunitTestRunner
         }
         String id = process.getAttribute(IProcess.ATTR_PROCESS_ID);
         return id == null || id.isEmpty() ? process.getLabel() : id;
-    }
-
-    /**
-     * Builds the terminal refusal returned after the call budget is exhausted.
-     */
-    static String deadlineExpired(StopResult stopped)
-    {
-        ToolResult result = ToolResult.error("The YAXUnit call deadline expired; the client " //$NON-NLS-1$
-            + (stopped.clientStillRunning ? "is still running." : "was stopped.")) //$NON-NLS-1$ //$NON-NLS-2$
-            .put("operation", YaxunitTestsTool.NAME) //$NON-NLS-1$
-            .put("deadlineExpired", Boolean.TRUE); //$NON-NLS-1$
-        if (stopped.clientStillRunning)
-        {
-            result.put("clientStillRunning", Boolean.TRUE) //$NON-NLS-1$
-                .put("processId", stopped.processId); //$NON-NLS-1$
-        }
-        if (stopped.terminationError != null)
-        {
-            result.put("terminationError", stopped.terminationError); //$NON-NLS-1$
-        }
-        return result.toJson();
     }
 
     /**
@@ -1271,7 +1281,10 @@ public final class YaxunitTestRunner
         beforeClaim.run();
         boolean claimed = UNDELIVERED_RUNS.remove(runKey) != null;
         String cacheMark = claimed ? null : cacheMark(reuseRecent, reportTime);
-        return readResults(junitXml, cacheMark, runContext, claimed, receipts);
+        String answer = readResults(junitXml, cacheMark, runContext, claimed, receipts);
+        RUN_REPORT_DIRS.remove(runKey);
+        RUN_CONTEXTS.remove(runKey);
+        return answer;
     }
 
     /**
@@ -1509,7 +1522,7 @@ public final class YaxunitTestRunner
         {
             text += updateSkipNote() + "\n\n"; //$NON-NLS-1$
         }
-        return text + "Call `run_yaxunit_tests` again with the same arguments to retrieve it.\n"; //$NON-NLS-1$
+        return text + "Poll the returned `runKey` to retrieve the report.\n"; //$NON-NLS-1$
     }
 
     /**

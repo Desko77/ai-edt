@@ -49,7 +49,7 @@ import ru.aiedt.mcp.server.support.YaxunitHelp;
  *       through {@code DebugSessionStarter}); an update that does not finish
  *       refuses the launch and nothing is started</li>
  *   <li>Pending JSON shape (run mode): {@code {status:Pending, runKey, reportDir,
- *       junitXml, hint}}</li>
+ *       clientStillRunning, processId, hint}}</li>
  *   <li>0-tests hint: when JUnit XML reports zero suites/cases, the markdown
  *       body explains the three usual causes and points at {@code help=writing}</li>
  *   <li>Filters: extensions, modules, tests - the three the launch
@@ -111,18 +111,19 @@ public class YaxunitTestsTool implements IMcpTool
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("mode", "run (default) or debug.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("mode", "Mode: run (default) or debug.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("help", //$NON-NLS-1$
-                "Help topic; when set, other arguments are ignored.") //$NON-NLS-1$
-            .stringProperty("launchConfigurationName", "EDT Run Configuration name.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("projectName", "Project name if no launch configuration is named.") //$NON-NLS-1$ //$NON-NLS-2$
+                "Help topic: topics, writing, assertions, setup, events, advanced. " //$NON-NLS-1$
+                + "When set, other parameters are ignored.")
+            .stringProperty("launchConfigurationName", "EDT Run Configuration name (preferred).") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", "Project name (alternative to launchConfigurationName).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Application ID for the project.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("extensions", "CSV: extension names to run.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modules", "CSV: common module names with tests.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("tests", "CSV: test FQNs (Module.Method).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
-                "Entire-call deadline in seconds (minimum/default 60; 30 seconds reserved to stop).") //$NON-NLS-1$
-            .stringProperty("runKey", "Poll a run held by an EDT dialog.") //$NON-NLS-1$ //$NON-NLS-2$
+                "Whole-call deadline, seconds (default 60); then Pending with runKey. Alias: timeout.") //$NON-NLS-1$
+            .stringProperty("runKey", "Collect a Pending run.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Default true. Set false to skip pre-launch infobase sync. Under a preset that " //$NON-NLS-1$
                     + "disabled update_database an omitted argument launches without updating " //$NON-NLS-1$
