@@ -148,6 +148,24 @@ less is refused.
 the port that answers is read from the projects it serves, and a `project_not_found` is never
 read as the server being down when the port belongs to the other instance.
 
+Its other fields, read before a heavy call or when answers stop coming (all but `status`,
+`edt_version` and `phase` need the bearer token while the token check is on):
+
+- `phase` - `ready`, `indexing` (a build or derived data is still running), `unknown`;
+- `queueDepth`, `poolActive`, `poolSize` - requests waiting for a thread, threads busy (the
+  `/health` request is one of them), the pool limit;
+- `heavyAvailable` - free slots for heavy tools, 3 by default;
+- `heapPercent` and `heapLivePercent` (heap held after a collection and at this instant),
+  `heapFreeMb`, `heapRefusalPercent` (92 by default) - a heavy tool gets `503` with `Retry-After`
+  when both shares reach the threshold and less than 256 MB are free;
+- `uiResponding`, `blockedByDialog`, `workbenchNote` - EDT is waiting on a modal window: read it
+  with `self_status`, answer it with `project_admin answer_dialog`;
+- `instance` - the workspace this port serves; `activeCall` - the running call (`name`,
+  `ageSeconds`), absent when none runs.
+
+A call to a tool the preset or the tool settings switched off answers a tool result with
+`isError=true` naming the tool and the preference page that turns it on; it is not run.
+
 ## Tags
 
 `tag_admin` writes the project's metadata tags: a tag is a named, colored label attached to
