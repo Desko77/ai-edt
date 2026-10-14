@@ -250,6 +250,27 @@ public class YaxunitTestRunnerTest
     }
 
     /**
+     * Only a report written after the run started belongs to that run: the report of an earlier
+     * run of the same tests lies in the same directory and carries no run of its own.
+     */
+    @Test
+    public void aReportYoungerThanTheLaunchIsThisRunsReport()
+    {
+        long startedAt = 1_700_000_000_000L;
+        assertFalse("no report at all is no report of this run", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(false, startedAt + 1_000L, startedAt));
+        assertTrue("a report written after the launch is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(true, startedAt + 1_000L, startedAt));
+        assertTrue("a report written in the launch's own millisecond is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(true, startedAt, startedAt));
+        assertFalse("an earlier run's report is not this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(true, startedAt - 1L, startedAt));
+        assertTrue("a run this process did not launch cannot be told apart by time", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(true, startedAt - 1L, 0L));
+        assertTrue(YaxunitTestRunner.reportOfThisRun(true, 0L, startedAt));
+    }
+
+    /**
      * An answer taken from a report carries the mark and the run it belongs to, and the two ways
      * into the report are named apart.
      */

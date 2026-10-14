@@ -642,6 +642,14 @@ report. Polling an issued `runKey` takes no heavy-tool slot. While a launch of t
 not become visible yet, a second call of the same configuration waits for it and joins it instead
 of starting a second client.
 
+The report directory is stable per launch configuration and filter set, so the report of an earlier
+run of the same tests lies where this run's report is expected. Only a report written after this
+run's launch is this run's own; an older one answers neither as a result nor as a pickup. A client
+that ended without writing this run's report is refused rather than answered with the earlier run's
+counts: the refusal carries `the client ended without writing a report for this run`,
+`status=NoReport`, `clientEnded=true`, `reportDir` and `clientExitCode` when the runtime recorded
+the code the client exited with.
+
 Every completed run writes a receipt file under `<state-location>/run-receipts/<tool>/`, at most
 twenty, the oldest displaced first. The answer names it in `receiptPath`, or `receiptError` when it
 could not be written. A key that looks like a secret (`password`, `pwd`, `scenarioText`) is left out
