@@ -44,7 +44,9 @@
        installation is alive - or of another installation that loads the same bundles.info
        of a shared profile - naming the PIDs, their installation and their -data workspace.
        No process is closed or killed in this mode, and no session is started: close them
-       yourself and re-run.
+       yourself and re-run. Versions compare in the order p2 resolves them, so a release
+       over a local build of the same version (0.2.60 over 0.2.60.<stamp>) is a downgrade:
+       refused, and installed with -AllowDowngrade.
     4. Run the p2 director of EACH selected installation, with the java named by that
        installation's ini, then -JavaExe, then JAVA_HOME, then the java on PATH.
     5. Read the versions back and print installation / before / after, exiting non-zero
@@ -202,6 +204,23 @@ function Compare-BundleVersion([string]$a, [string]$b) {
     return [string]::Compare($qa, $qb, [StringComparison]::Ordinal)
 }
 
+# The order p2 and OSGi resolve by, for two versions that both come from bundles.info or a jar
+# name: major.minor.micro numerically, then the qualifier as a string, where an empty qualifier
+# sorts BEFORE any non-empty one. A release 0.2.60 is therefore older than a local 0.2.60.<stamp>,
+# and replacing the local build with it is a downgrade.
+function Compare-P2Version([string]$a, [string]$b) {
+    $pa = $a -split '\.'; $pb = $b -split '\.'
+    for ($i = 0; $i -lt 3; $i++) {
+        $na = 0; $nb = 0
+        [void][int]::TryParse($pa[$i], [ref]$na)
+        [void][int]::TryParse($pb[$i], [ref]$nb)
+        if ($na -ne $nb) { if ($na -gt $nb) { return 1 } else { return -1 } }
+    }
+    $qa = if ($pa.Count -gt 3) { ($pa[3..($pa.Count - 1)] -join '.') } else { '' }
+    $qb = if ($pb.Count -gt 3) { ($pb[3..($pb.Count - 1)] -join '.') } else { '' }
+    return [Math]::Sign([string]::Compare($qa, $qb, [StringComparison]::Ordinal))
+}
+
 # Every call this script makes to its own server goes through here. Deliberately
 # not Invoke-WebRequest / Invoke-RestMethod: those honour the system proxy, and a
 # proxy that cannot reach localhost turns a healthy server into a generic
@@ -260,7 +279,7 @@ function Get-InstalledPluginVersion([string]$installDir) {
     if (Test-Path -LiteralPath $dir) {
         foreach ($f in (Get-ChildItem -LiteralPath $dir -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
             $m = [regex]::Match($f.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
-            if ($m.Success -and (-not $best -or (Compare-BundleVersion $m.Groups[1].Value $best) -gt 0)) {
+            if ($m.Success -and (-not $best -or (Compare-P2Version $m.Groups[1].Value $best) -gt 0)) {
                 $best = $m.Groups[1].Value
             }
         }
@@ -285,7 +304,7 @@ function Resolve-RepoBundle([string]$repoPath) {
     foreach ($cand in (Get-ChildItem -LiteralPath (Join-Path $repoPath 'plugins') -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
         $mc = [regex]::Match($cand.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
         if (-not $mc.Success) { continue }
-        if (-not $jar -or (Compare-BundleVersion $mc.Groups[1].Value $version) -gt 0) {
+        if (-not $jar -or (Compare-P2Version $mc.Groups[1].Value $version) -gt 0) {
             $jar = $cand
             $version = $mc.Groups[1].Value
         }
@@ -546,7 +565,7 @@ if ($AllInstallations) {
         if (-not $active) { return $null }
         $best = $null
         foreach ($version in @($active.versions)) {
-            if (-not $best -or (Compare-BundleVersion $version $best) -gt 0) { $best = $version }
+            if (-not $best -or (Compare-P2Version $version $best) -gt 0) { $best = $version }
         }
         return $best
     }
@@ -628,9 +647,9 @@ if ($AllInstallations) {
             # No record is marked active, so what this installation loads is not known and neither
             # is whether it needs the build. Nothing is written over an answer the report lacks.
             $status = 'no active record'
-        } elseif ((Compare-BundleVersion $repoVersion $before) -lt 0) {
+        } elseif ((Compare-P2Version $repoVersion $before) -lt 0) {
             if ($AllowDowngrade) { $status = 'downgrade-allowed' } else { $status = 'downgrade' }
-        } elseif ((Compare-BundleVersion $repoVersion $before) -eq 0) {
+        } elseif ((Compare-P2Version $repoVersion $before) -eq 0) {
             $status = 'current'
         }
         $java = Get-InstallJavaExe $dir
