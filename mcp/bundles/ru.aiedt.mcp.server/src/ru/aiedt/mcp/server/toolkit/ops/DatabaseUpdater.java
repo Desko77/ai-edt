@@ -29,7 +29,9 @@ import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
 import org.eclipse.debug.core.ILaunchManager;
 
+import com._1c.g5.v8.dt.platform.services.core.infobases.sync.v2.IInfobaseSynchronizationStateManager;
 import com._1c.g5.v8.dt.platform.services.model.InfobaseReference;
+import com._1c.g5.wiring.ServiceAccess;
 import com.e1c.g5.dt.applications.ApplicationException;
 import com.e1c.g5.dt.applications.ApplicationUpdateState;
 import com.e1c.g5.dt.applications.ApplicationUpdateType;
@@ -1784,6 +1786,19 @@ public class DatabaseUpdater implements IMcpTool
                 return taken.toJson();
             }
 
+            // The platform's own flag for "a synchronization flow is working on this infobase
+            // right now", read under the claim so the answer belongs to this update. A flow that
+            // is already running meets the update inside EDT as a lock error that names nobody;
+            // here the refusal still can. The read is a snapshot: a flow begun after it does not
+            // stop the update, and the operation description says so.
+            SyncFlowReading syncFlow = probeSyncFlowActive(
+                () -> ServiceAccess.get(IInfobaseSynchronizationStateManager.class), application);
+            String syncFlowStop = passTheSyncFlowGate(syncFlow, applicationId, () -> null);
+            if (syncFlowStop != null)
+            {
+                return syncFlowStop;
+            }
+
             ApplicationUpdateType updateType =
                 fullUpdate ? ApplicationUpdateType.FULL : ApplicationUpdateType.INCREMENTAL;
 
@@ -1900,6 +1915,10 @@ public class DatabaseUpdater implements IMcpTool
             // What the pre-flight comparison found, said in the same answer the update answers
             // with: the file it read, how many records it compared, and the addresses it named.
             putDataLossCheck(result, dataLoss, protectData, acceptDataLoss);
+
+            // A flow check that could not be made is said rather than passed over - the answer
+            // must not read as an update that looked for a running synchronization when it did not.
+            putSyncFlowCheck(result, syncFlow);
 
             if (stillUpdating != null)
             {
@@ -2299,6 +2318,161 @@ public class DatabaseUpdater implements IMcpTool
             + (plan.compared && !plan.isEmpty() && acceptDataLoss //$NON-NLS-1$
                 ? "; acceptDataLoss=true carried it through" //$NON-NLS-1$
                 : "")); //$NON-NLS-1$
+    }
+
+    /**
+     * The answer to "is a synchronization flow running against this infobase right now", as far
+     * as this EDT can tell it.
+     */
+    static final class SyncFlowReading
+    {
+        /** Whether the platform reports a flow active for the infobase, or {@code null} when the
+         * flag could not be read. */
+        final Boolean active;
+
+        /** Why the flag could not be read, or {@code null} when it was. */
+        final String notCheckedWhy;
+
+        /** The name the answer calls the infobase by. */
+        final String infobaseName;
+
+        SyncFlowReading(Boolean active, String notCheckedWhy, String infobaseName)
+        {
+            this.active = active;
+            this.notCheckedWhy = notCheckedWhy;
+            this.infobaseName = infobaseName;
+        }
+
+        /** A reading the platform answered. */
+        static SyncFlowReading checked(boolean active, String infobaseName)
+        {
+            return new SyncFlowReading(Boolean.valueOf(active), null, infobaseName);
+        }
+
+        /** A reading that says the platform was not asked, and why. */
+        static SyncFlowReading notChecked(String why, String infobaseName)
+        {
+            return new SyncFlowReading(null, why, infobaseName);
+        }
+    }
+
+    /**
+     * Asks the platform whether a synchronization flow is active for the application's infobase.
+     * <p>
+     * The state manager is EDT's own, reached the same way the sync tools reach it, and the flag
+     * it answers by is the one EDT raises for its own synchronization flows. A manager that is
+     * not there, an application without an infobase and a call that throws all answer a reading
+     * that says "not checked" rather than a refusal: an update is not held hostage to a read,
+     * but the answer says the guard did not run.
+     * </p>
+     *
+     * @param stateManager supplies the platform's synchronization state manager, or {@code null}
+     * @param application the application the update targets
+     * @return what the manager answered, or a reading that says it was not asked
+     */
+    static SyncFlowReading probeSyncFlowActive(
+        java.util.function.Supplier<IInfobaseSynchronizationStateManager> stateManager,
+        IApplication application)
+    {
+        String name = application == null ? null : application.getName();
+        InfobaseReference infobase =
+            application instanceof IInfobaseApplication ? ((IInfobaseApplication)application).getInfobase() : null;
+        if (infobase == null || infobase.getUuid() == null)
+        {
+            return SyncFlowReading.notChecked("the application carries no infobase reference", name); //$NON-NLS-1$
+        }
+        if (infobase.getName() != null && !infobase.getName().isEmpty())
+        {
+            name = infobase.getName();
+        }
+        IInfobaseSynchronizationStateManager mgr = stateManager == null ? null : stateManager.get();
+        if (mgr == null)
+        {
+            return SyncFlowReading.notChecked(
+                "the infobase synchronization state manager is unavailable on this EDT", name); //$NON-NLS-1$
+        }
+        try
+        {
+            return SyncFlowReading.checked(mgr.isFlowActive(infobase), name);
+        }
+        catch (RuntimeException | LinkageError refused)
+        {
+            Activator.logWarning("update_database: isFlowActive failed for infobase " + name //$NON-NLS-1$
+                + ": " + TextSuggest.safeMessage(refused)); //$NON-NLS-1$
+            return SyncFlowReading.notChecked(
+                "reading the active-flow flag failed: " + TextSuggest.safeMessage(refused), name); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The gate an update passes between claiming the infobase and starting the platform call.
+     * <p>
+     * Only a reading that says a flow IS active stops anything. A reading that could not be made
+     * lets the update through - the guard is best-effort by design, and what it could not do is
+     * said in the answer rather than turned into a refusal.
+     * </p>
+     *
+     * @param reading what the probe read, or {@code null} for no reading at all
+     * @param applicationId the application the update targets, for the refusal to name
+     * @param launch what the update does once the flag allows it; not called on a refusal
+     * @return the refusal JSON, or whatever {@code launch} returned
+     */
+    static String passTheSyncFlowGate(SyncFlowReading reading, String applicationId,
+        java.util.function.Supplier<String> launch)
+    {
+        if (reading != null && Boolean.TRUE.equals(reading.active))
+        {
+            return syncFlowRefusal(reading, applicationId);
+        }
+        return launch == null ? null : launch.get();
+    }
+
+    /**
+     * The refusal an update answers when the platform reports a synchronization flow active for
+     * the infobase it targets.
+     * <p>
+     * It names the infobase and says that nothing was started - the caller has to be able to
+     * tell this from an update that ran and failed - and the next step is a retry, because the
+     * flow it names is the platform's own work and ends on its own.
+     * </p>
+     *
+     * @param reading the reading that found the flow, non-null and active
+     * @param applicationId the application the update targeted
+     * @return the refusal as a JSON body
+     */
+    static String syncFlowRefusal(SyncFlowReading reading, String applicationId)
+    {
+        return ToolResult.error("The update was not started: a synchronization flow is active for " //$NON-NLS-1$
+            + "the infobase " + reading.infobaseName + " - EDT is synchronizing this infobase right " //$NON-NLS-1$
+            + "now, in this instance or another. Nothing was started - no update, no client stopped - " //$NON-NLS-1$
+            + "and the claim on the infobase has been released. Retry once that synchronization " //$NON-NLS-1$
+            + "finishes.") //$NON-NLS-1$
+            .put("tag", ErrorTags.BUSY.wire()) //$NON-NLS-1$
+            .put("infobaseName", reading.infobaseName) //$NON-NLS-1$
+            .put("applicationId", applicationId) //$NON-NLS-1$
+            .put("nothingStarted", Boolean.TRUE) //$NON-NLS-1$
+            .put("nextStep", "wait for the running synchronization to finish, then retry") //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * Adds the flow check that could not be made to an answer.
+     * <p>
+     * Said only when the check did not run: an answer that stayed silent would read as an update
+     * that looked for a running synchronization flow when it did not, which is the one thing the
+     * caller cannot find out any other way.
+     * </p>
+     *
+     * @param answer the answer being built
+     * @param reading what the probe read, or {@code null} for no reading at all
+     */
+    static void putSyncFlowCheck(ToolResult answer, SyncFlowReading reading)
+    {
+        if (reading != null && reading.notCheckedWhy != null)
+        {
+            answer.put("syncFlowCheck", "not checked: " + reading.notCheckedWhy //$NON-NLS-1$ //$NON-NLS-2$
+                + ", so the update ran without looking for a running synchronization flow"); //$NON-NLS-1$
+        }
     }
 
     /**
