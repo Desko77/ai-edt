@@ -475,12 +475,19 @@ public class McpRequestRouter
      * was switched off while the work ran - the text is handed over as text rather than dropped.
      * </p>
      *
+     * <p>
+     * A task that failed on the tool's own refusal still holds the tool's answer, and that answer
+     * is what the call would have returned: a result with {@code isError}, not a JSON-RPC error.
+     * </p>
+     *
      * @param task the finished task.
-     * @return the result, or null unless the task completed.
+     * @return the result, or null unless the task completed or the tool refused.
      */
     private Object finishedResultOf(TaskDirectory.Task task)
     {
-        if (!TaskDirectory.COMPLETED.equals(task.status) || task.result == null)
+        boolean answered = TaskDirectory.COMPLETED.equals(task.status)
+            || TaskDirectory.FAILED.equals(task.status);
+        if (!answered || task.result == null)
         {
             return null;
         }
@@ -531,35 +538,22 @@ public class McpRequestRouter
     /**
      * Builds the JSON-RPC error a failed task reports.
      * <p>
-     * A task that failed with the run's own refusal document still holds that document, and it
-     * goes out as the error's {@code data}: the refusal's members - the tables a data-loss
-     * confirmation names, the entries a batch refused - are what the caller acts on, and a
-     * message alone would carry the verdict without the evidence.
+     * Only a run that produced no answer reports an error. A task that failed on the tool's own
+     * refusal answers that refusal as its result, see {@link #finishedResultOf}.
      * </p>
      *
      * @param task the task.
-     * @return the error object, or null unless the task failed.
+     * @return the error object, or null unless the task failed without an answer.
      */
-    private static Object failureOf(TaskDirectory.Task task)
+    static Object failureOf(TaskDirectory.Task task)
     {
-        if (!TaskDirectory.FAILED.equals(task.status))
+        if (!TaskDirectory.FAILED.equals(task.status) || task.result != null)
         {
             return null;
         }
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", McpServerMeta.ERROR_INTERNAL); //$NON-NLS-1$
         error.put("message", task.failure == null ? "The task failed." : task.failure); //$NON-NLS-1$ //$NON-NLS-2$
-        if (task.result != null)
-        {
-            try
-            {
-                error.put("data", JsonParser.parseString(task.result)); //$NON-NLS-1$
-            }
-            catch (JsonParseException notJson)
-            {
-                error.put("data", task.result); //$NON-NLS-1$
-            }
-        }
         return error;
     }
 

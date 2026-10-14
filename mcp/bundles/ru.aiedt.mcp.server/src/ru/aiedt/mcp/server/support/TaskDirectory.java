@@ -13,7 +13,6 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 
@@ -276,6 +275,9 @@ public final class TaskDirectory
          */
         public volatile String lastStep;
 
+        /** How much of a text refusal's first line {@link #statusMessage} carries. */
+        static final int REFUSAL_LINE_LIMIT = 300;
+
         /** The tool's own answer, once there is one. */
         public volatile String result;
 
@@ -399,8 +401,9 @@ public final class TaskDirectory
         /**
          * Records what the work produced, once.
          * <p>
-         * An answer that is itself a refusal - the tool built {@code success:false} rather than
-         * throwing - settles the task as failed rather than completed. The registry's worker
+         * An answer that is itself a refusal settles the task as failed rather than completed, read
+         * by {@link FailureShape#looksFailed} - the same reading that marks the synchronous answer
+         * {@code isError}, so the task fails exactly when the call would have. The registry's worker
          * catches what the body throws and answers it as a refusal document, so without this the
          * exception branch below is the one that almost never fires and a run that died reads as
          * one that finished.
@@ -420,9 +423,9 @@ public final class TaskDirectory
                 // The answer before the status, and not the other way round: a reader that sees a
                 // terminal state must find what it names already there.
                 result = produced;
-                String refused = refusalTextOf(produced);
-                if (refused != null)
+                if (FailureShape.looksFailed(produced))
                 {
+                    String refused = refusalTextOf(produced);
                     failure = refused;
                     statusMessage = withTheLastStep("failed", refused); //$NON-NLS-1$
                     status = FAILED;
@@ -446,13 +449,13 @@ public final class TaskDirectory
         /**
          * The refusal an answer carries, when it is one.
          * <p>
-         * A tool that declines answers a JSON document with {@code success:false} rather than
-         * throwing, and the registry answers a body that threw the same way. Any other shape -
-         * plain text, a markdown report - is an answer, not a refusal, whatever its words say.
+         * Asked only of an answer {@link FailureShape#looksFailed} reads as a refusal. A JSON
+         * document names it in {@code error}; a text or markdown refusal opens with it, so its
+         * first non-blank line is taken, cut to {@link #REFUSAL_LINE_LIMIT} characters.
          * </p>
          *
-         * @param produced the run's answer.
-         * @return the refusal's message, or {@code null} when the answer is not a refusal document
+         * @param produced the run's answer, already read as a refusal.
+         * @return the refusal's message
          */
         static String refusalTextOf(String produced)
         {
@@ -463,22 +466,35 @@ public final class TaskDirectory
             }
             catch (JsonParseException notJson)
             {
-                return null;
+                return firstLineOf(produced);
             }
-            if (!tree.isJsonObject())
+            if (tree.isJsonObject())
             {
-                return null;
+                JsonElement error = tree.getAsJsonObject().get("error"); //$NON-NLS-1$
+                if (error != null && error.isJsonPrimitive() && !error.getAsString().isBlank())
+                {
+                    return error.getAsString();
+                }
             }
-            JsonObject body = tree.getAsJsonObject();
-            JsonElement success = body.get("success"); //$NON-NLS-1$
-            if (success == null || !success.isJsonPrimitive() || success.getAsBoolean())
+            return "The run's answer reported failure without a message."; //$NON-NLS-1$
+        }
+
+        /**
+         * The first non-blank line of a text refusal, cut to {@link #REFUSAL_LINE_LIMIT}.
+         *
+         * @param produced the refusal text.
+         * @return the line
+         */
+        private static String firstLineOf(String produced)
+        {
+            for (String line : produced.split("\\R")) //$NON-NLS-1$
             {
-                return null;
-            }
-            JsonElement error = body.get("error"); //$NON-NLS-1$
-            if (error != null && error.isJsonPrimitive() && !error.getAsString().isBlank())
-            {
-                return error.getAsString();
+                String trimmed = line.strip();
+                if (!trimmed.isEmpty())
+                {
+                    return trimmed.length() <= REFUSAL_LINE_LIMIT ? trimmed
+                        : trimmed.substring(0, REFUSAL_LINE_LIMIT) + "..."; //$NON-NLS-1$
+                }
             }
             return "The run's answer reported failure without a message."; //$NON-NLS-1$
         }

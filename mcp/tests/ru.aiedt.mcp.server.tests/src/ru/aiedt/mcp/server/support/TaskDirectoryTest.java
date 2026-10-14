@@ -317,6 +317,51 @@ public class TaskDirectoryTest
         release.countDown();
     }
 
+    /**
+     * A markdown refusal fails the task as a JSON one does, and the message carries its first line.
+     * <p>
+     * The facades answer markdown, and the synchronous call marks a {@code **Error:**} head as
+     * {@code isError}; a task over the same answer must fail with it.
+     * </p>
+     */
+    @Test
+    public void aMarkdownRefusalFailsTheTaskWithItsFirstLine() throws Exception
+    {
+        String step = "2 of 3 done (2 applied, 0 failed); now running add_table"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step,
+            () -> "**Error:** Table Items is not on the form.\n\nAvailable: Goods, Services", //$NON-NLS-1$
+            release);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        awaitTheStepIsAnnounced(key);
+        directory.poll(task.taskId);
+        release.countDown();
+        awaitCompletion(key);
+        awaitSettled(task.taskId);
+
+        TaskDirectory.Task polled = directory.poll(task.taskId);
+        assertEquals(TaskDirectory.FAILED, polled.status);
+        assertEquals("failed at " + step + ": **Error:** Table Items is not on the form.", //$NON-NLS-1$ //$NON-NLS-2$
+            polled.statusMessage);
+        assertNotNull("the refusal stays the task's result, for tasks/result to answer", //$NON-NLS-1$
+            polled.result);
+    }
+
+    /** A report that mentions an error below its head is an answer, and the task completes. */
+    @Test
+    public void aReportMentioningAnErrorCompletes() throws Exception
+    {
+        CountDownLatch release = new CountDownLatch(1);
+        String key = start("## Checks\n\n1 of 4 objects:\n**Error:** in Catalog.Items", release); //$NON-NLS-1$
+        release.countDown();
+        awaitCompletion(key);
+
+        TaskDirectory.Task task = directory.open(key, "code_review", "code_review", args()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(TaskDirectory.COMPLETED, directory.poll(task.taskId).status);
+    }
+
     /** An id nobody handed out is not a task, and cancelling one is not a success. */
     @Test
     public void anUnknownIdIsNotATask()
