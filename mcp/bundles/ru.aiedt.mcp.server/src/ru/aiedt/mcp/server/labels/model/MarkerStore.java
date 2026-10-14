@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.labels.model;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
@@ -192,6 +193,115 @@ public class MarkerStore
             assignments.remove(objectFqn);
         }
         return removed;
+    }
+
+    /**
+     * Assigns each of the names to an object, in the order they are given, and reports what the object took.
+     * <p>
+     * This is the whole of what an assignment writes to the assignment list: a name the object already
+     * carries is skipped and the rest are added. A caller that has to know what an assignment would leave
+     * behind applies this to a copy and reads the object's names back from that copy, so it cannot answer
+     * differently from the write.
+     * </p>
+     *
+     * @param objectFqn the fully qualified name of the object
+     * @param markerNames the names to assign; a name that is not defined is skipped
+     * @return the names added and the names the object already carried
+     */
+    public AssignmentEdit assignAll(String objectFqn, List<String> markerNames)
+    {
+        List<String> applied = new ArrayList<>();
+        Map<String, String> skipped = new LinkedHashMap<>();
+        for (String markerName : markerNames)
+        {
+            if (assignMarker(objectFqn, markerName))
+            {
+                applied.add(markerName);
+            }
+            else
+            {
+                skipped.put(markerName, "alreadyAssigned"); //$NON-NLS-1$
+            }
+        }
+        return new AssignmentEdit(applied, skipped);
+    }
+
+    /**
+     * Removes each of the names from an object, in the order they are given, and reports what the object
+     * gave up.
+     * <p>
+     * This is the whole of what a removal writes to the assignment list, and it removes ONE occurrence of
+     * a name: a list that carries a name twice keeps it once. A caller that has to know what a removal
+     * would leave behind applies this to a copy and reads the object's names back from that copy, so it
+     * cannot answer differently from the write.
+     * </p>
+     *
+     * @param objectFqn the fully qualified name of the object
+     * @param markerNames the names to remove; a name the object does not carry is skipped
+     * @return the names removed and the names the object did not carry
+     */
+    public AssignmentEdit unassignAll(String objectFqn, List<String> markerNames)
+    {
+        List<String> applied = new ArrayList<>();
+        Map<String, String> skipped = new LinkedHashMap<>();
+        for (String markerName : markerNames)
+        {
+            if (unassignMarker(objectFqn, markerName))
+            {
+                applied.add(markerName);
+            }
+            else
+            {
+                skipped.put(markerName, "notAssigned"); //$NON-NLS-1$
+            }
+        }
+        return new AssignmentEdit(applied, skipped);
+    }
+
+    /**
+     * What one assignment or removal did to one object's list of names.
+     * <p>
+     * The names come in two parts: the ones the edit changed, and the ones it left alone with the reason
+     * it left them.
+     * </p>
+     */
+    public static final class AssignmentEdit
+    {
+        private final List<String> applied;
+
+        private final Map<String, String> skipped;
+
+        /**
+         * Holds what one edit did to one object.
+         *
+         * @param applied the names the edit changed, in the order they were given
+         * @param skipped the names it left alone, mapped to the reason
+         */
+        AssignmentEdit(List<String> applied, Map<String, String> skipped)
+        {
+            this.applied = applied;
+            this.skipped = skipped;
+        }
+
+        /**
+         * The names the edit changed.
+         *
+         * @return the names, in the order they were given
+         */
+        public List<String> applied()
+        {
+            return applied;
+        }
+
+        /**
+         * The names the edit left alone, which the object already carried or did not carry.
+         *
+         * @return the names mapped to the reason
+         */
+        public Map<String, String> skipped()
+        {
+            return skipped;
+        }
     }
 
     /**

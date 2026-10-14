@@ -161,17 +161,31 @@ answers the same structured refusal for an unknown project and for a failed read
 of text.
 
 The five writes each pass their own door, so a write-blocking preset refuses them before the file is
-read: `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a color the
-default gray), `update_tag` (`newName`, `color`, `description`; an omitted argument keeps the field,
-an empty `description` clears it; a rename carries the assignments and the answer names
-`movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`;
-`dryRun=true` answers the count and writes nothing), `assign_tag` (`objectFqn` plus a `tags` array;
+read; a call with `dryRun=true` writes nothing and passes the door the way the `edit_metadata`
+previews do. A preset that blocks writes is answered for the standalone name of a write before the
+call reaches the facade, so under such a preset the preview is reached as `tag_admin
+operation=create_tag` (and the other four) and the standalone names stay refused with and without
+`dryRun`. `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a
+color the default gray), `update_tag` (`newName`, `color`, `description`; an omitted argument keeps
+the field, an empty `description` clears it; a rename carries the assignments and the answer names
+`movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`),
+`assign_tag` (`objectFqn` plus a `tags` array;
 the list writes as one, so one unknown tag refuses the whole call and nothing is assigned; a blank
 or whitespace element refuses the whole call with `invalidName`), `unassign_tag` (a `tags` array; a
 tag the object does not carry is `skipped`, and nothing removed answers `isError` with
 `reason=notAssigned`). The `assign_tag` and `unassign_tag` answers name what the operation itself
 changed under its write lock: a tag a parallel call assigned or removed first reads as `skipped`,
 not as `assigned` or `removed`.
+
+Every operation takes `dryRun=true`, which answers what the call would write and changes nothing -
+not a byte of the markers file, not the service's cached storage, no change notification.
+`create_tag` answers the tag it would define (`created: false`), `update_tag` the tag before and
+after (`tag`, `tagAfter`, `movedAssignments` when the rename would carry assignments), `delete_tag`
+`{deleted: false, assignments: N}`, and `assign_tag` and `unassign_tag` the object's tags before and
+after (`tagsBefore`, `assigned` or `removed`, `skipped`, `tagsAfter`). Arguments and state are
+checked the way the write checks them, so a preview refuses exactly what the write refuses, with the
+same `reason` and the same sentence: a create of a tag already defined, a rename onto a name another
+tag carries, a removal of a tag the object does not carry.
 
 `assign_tag` checks the object against the EDT model first: an object that is not in the
 configuration is refused with `objectNotFound` and the nearest names. Nested addresses resolve
