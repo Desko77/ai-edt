@@ -91,6 +91,12 @@ public class EditFormTool implements IMcpTool
     }
 
     @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(WRITE_DOOR);
+    }
+
+    @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()

@@ -188,10 +188,11 @@ public class ToolProfileTest
         assertTrue(disabled.contains("register_infobase")); //$NON-NLS-1$
         assertTrue(disabled.contains("restart_edt")); //$NON-NLS-1$
 
-        // write/refactor/constructors off, debug + yaxunit on
+        // write/refactor/constructor writes off, the constructors' reads, debug + yaxunit on
         assertTrue(disabled.contains("write_module_source")); //$NON-NLS-1$
         assertTrue(disabled.contains("rename_metadata_object")); //$NON-NLS-1$
-        assertTrue(disabled.contains("edit_metadata")); //$NON-NLS-1$
+        assertTrue(disabled.contains("edit_metadata_writes")); //$NON-NLS-1$
+        assertFalse(disabled.contains("edit_metadata")); //$NON-NLS-1$
         assertFalse(disabled.contains("debug_launch")); //$NON-NLS-1$
         assertFalse(disabled.contains("run_yaxunit_tests")); //$NON-NLS-1$
         assertFalse(disabled.contains("set_breakpoint")); //$NON-NLS-1$

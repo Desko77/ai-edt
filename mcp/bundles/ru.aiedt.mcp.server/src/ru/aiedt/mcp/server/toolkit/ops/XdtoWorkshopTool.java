@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -96,6 +97,12 @@ public class XdtoWorkshopTool implements IMcpTool
             + "set_namespace, read). Pass ownerFqn=XDTOPackage.<name> (or " //$NON-NLS-1$
             + "packageName). Property type is a QName: type=<localName> + " //$NON-NLS-1$
             + "typeNamespace (default XSD); upperBound=-1 means unbounded."; //$NON-NLS-1$
+    }
+
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(WRITE_DOOR);
     }
 
     @Override

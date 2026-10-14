@@ -128,7 +128,11 @@ public final class ToolAnnotations
         }
         for (String door : tool.getGatedWriteNames())
         {
-            if (registry.isToolEnabled(door))
+            // A *_writes door is a capability name and never a registered tool, so it is asked of
+            // the preset: isToolEnabled answers false for any name the registry does not hold.
+            boolean open = door.endsWith("_writes") ? !registry.isDisabledByPreset(door) //$NON-NLS-1$
+                : registry.isToolEnabled(door);
+            if (open)
             {
                 return true;
             }
