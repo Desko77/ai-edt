@@ -44,6 +44,16 @@ import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
  */
 public class ThePollBelongsToTheCallThatResumesItTest
 {
+    /**
+     * The registries behind these tests are singletons the whole run shares, so every run this
+     * class starts carries its own name: a key no other class computes, and a run the teardown
+     * takes back without having to guess whose it was.
+     */
+    private static final String SUBJECT = "ThePollBelongsToTheCallThatResumesItTest"; //$NON-NLS-1$
+
+    /** The keys this class started, dropped in the teardown. */
+    private final List<String> startedRuns = new ArrayList<>();
+
     private final List<String> added = new ArrayList<>();
 
     private final List<IMcpTool> externals = new ArrayList<>();
@@ -104,6 +114,14 @@ public class ThePollBelongsToTheCallThatResumesItTest
         for (String name : added)
         {
             catalog.unregister(name);
+        }
+        for (String runKey : startedRuns)
+        {
+            PendingWorkRegistry domain = PendingWorkRegistry.domainOf(runKey);
+            if (domain != null)
+            {
+                domain.remove(runKey);
+            }
         }
     }
 
@@ -219,10 +237,11 @@ public class ThePollBelongsToTheCallThatResumesItTest
     {
         Semaphore permits = new Semaphore(1);
         ToolRoad road = new ToolRoad(permits);
-        String key = "poll-done-" + System.nanoTime(); //$NON-NLS-1$
+        String key = started(SUBJECT + "-done-" + System.nanoTime()); //$NON-NLS-1$
         PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.GENERIC.getOrStart(key,
             job -> "done"); //$NON-NLS-1$
         entry.startedBy = "project_metrics"; //$NON-NLS-1$
+        entry.subject = SUBJECT;
         assertEquals("done", entry.await(10_000L)); //$NON-NLS-1$
         assertTrue("the entry never finished", eventually(() -> entry.completedAt > 0)); //$NON-NLS-1$
         try
@@ -249,11 +268,12 @@ public class ThePollBelongsToTheCallThatResumesItTest
     @Test
     public void aBatchPollOfAnUpdateKeyRefusesAndLeavesTheUpdate() throws Exception
     {
-        String key = "poll-update-" + System.nanoTime(); //$NON-NLS-1$
+        String key = started(SUBJECT + "-update-" + System.nanoTime()); //$NON-NLS-1$
         PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.UPDATE.getOrStart(key,
             job -> "updated"); //$NON-NLS-1$
         entry.workKind = DatabaseUpdater.WORK_KIND;
         entry.startedBy = DatabaseUpdater.NAME;
+        entry.subject = SUBJECT;
         assertEquals("updated", entry.await(10_000L)); //$NON-NLS-1$
         try
         {
@@ -324,10 +344,11 @@ public class ThePollBelongsToTheCallThatResumesItTest
     {
         ensure(new EditMetadataTool());
         ensure(new MetadataObjectRenamer());
-        String operations = "[{\"operation\":\"not_a_real_op_" + System.nanoTime() + "\"}]"; //$NON-NLS-1$ //$NON-NLS-2$
+        String operations = "[{\"operation\":\"not_a_real_op_" + SUBJECT + "_" + System.nanoTime() //$NON-NLS-1$ //$NON-NLS-2$
+            + "\"}]"; //$NON-NLS-1$
         Map<String, String> keyed = new LinkedHashMap<>();
         keyed.put("operations", operations); //$NON-NLS-1$
-        String runKey = EditMetadataTool.batchRunKey(keyed);
+        String runKey = started(EditMetadataTool.batchRunKey(keyed));
         Semaphore permits = new Semaphore(1);
         ToolRoad road = new ToolRoad(permits);
         CountDownLatch entered = new CountDownLatch(1);
@@ -414,7 +435,7 @@ public class ThePollBelongsToTheCallThatResumesItTest
     private String liveForAWhile(PendingWorkRegistry domain, String startedBy, long holdMillis)
         throws Exception
     {
-        String key = "poll-live-" + System.nanoTime(); //$NON-NLS-1$
+        String key = started(SUBJECT + "-live-" + System.nanoTime()); //$NON-NLS-1$
         PendingWorkRegistry.PendingEntry entry = domain.getOrStart(key, job -> {
             try
             {
@@ -427,12 +448,34 @@ public class ThePollBelongsToTheCallThatResumesItTest
             return "live"; //$NON-NLS-1$
         });
         entry.startedBy = startedBy;
+        entry.subject = SUBJECT;
         return key;
     }
 
+    /**
+     * Remembers a run this class started, so the teardown drops its entry from whichever registry
+     * holds it. A test that fails before its own cleanup leaves nothing behind for the next class.
+     *
+     * @param runKey the key of the run
+     * @return the same key
+     */
+    private String started(String runKey)
+    {
+        startedRuns.add(runKey);
+        return runKey;
+    }
+
+    /**
+     * A live run of the generic-{@code Pending} kind that stays inside until the teardown releases
+     * it, so a poll of it resumes the entry rather than waiting on work nobody started.
+     *
+     * @param domain the registry the entry lives in
+     * @param startedBy the name the run is stamped with, which a poll has to declare
+     * @return the run's key
+     */
     private String live(PendingWorkRegistry domain, String startedBy) throws Exception
     {
-        String key = "poll-live-" + System.nanoTime(); //$NON-NLS-1$
+        String key = started(SUBJECT + "-live-" + System.nanoTime()); //$NON-NLS-1$
         CountDownLatch hold = new CountDownLatch(1);
         openHolds.add(hold);
         PendingWorkRegistry.PendingEntry entry = domain.getOrStart(key, job -> {
@@ -447,6 +490,7 @@ public class ThePollBelongsToTheCallThatResumesItTest
             return "live"; //$NON-NLS-1$
         });
         entry.startedBy = startedBy;
+        entry.subject = SUBJECT;
         return key;
     }
 
