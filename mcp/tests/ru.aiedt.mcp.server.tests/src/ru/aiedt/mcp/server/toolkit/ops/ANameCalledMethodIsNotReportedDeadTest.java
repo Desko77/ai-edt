@@ -96,32 +96,78 @@ public class ANameCalledMethodIsNotReportedDeadTest
     @Test
     public void aCandidateANamedCallKeepsAliveIsDropped()
     {
-        List<Object[]> rows = List.of(
-            new Object[]{"CommonModules/Подготовка/Module.bsl", "РассчитатьВсе", //$NON-NLS-1$ //$NON-NLS-2$
-                "CommonModule.Подготовка.Module", true}, //$NON-NLS-1$
-            new Object[]{"CommonModules/Подготовка/Module.bsl", "НичемНеВызван", //$NON-NLS-1$ //$NON-NLS-2$
-                "CommonModule.Подготовка.Module", false}, //$NON-NLS-1$
-            new Object[]{"CommonModules/БезАдреса/Module.bsl", "РассчитатьВсе", null, false}); //$NON-NLS-1$ //$NON-NLS-2$
+        Module module = moduleAt("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+            "РассчитатьВсе", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+        Module unaddressed = moduleDeclaring("РассчитатьВсе"); //$NON-NLS-1$
+        List<FindDeadCodeTool.WalkedModule> walked = List.of(
+            new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", module), //$NON-NLS-1$
+            new FindDeadCodeTool.WalkedModule("CommonModules/БезАдреса/Module.bsl", unaddressed)); //$NON-NLS-1$
 
         Set<String> nameCalled = Set.of(
             FindDeadCodeTool.nameCallKey("CommonModule.Подготовка.Module", "РАССЧИТАТЬВСЕ")); //$NON-NLS-1$ //$NON-NLS-2$
 
-        List<FindDeadCodeTool.Candidate> candidates = new ArrayList<>();
-        for (Object[] row : rows)
-        {
-            candidates.add(new FindDeadCodeTool.Candidate((String)row[0], (String)row[1],
-                5, (String)row[2]));
-        }
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(walked, nameCalled, 100,
+            List.of(), method -> 0);
 
-        List<FindDeadCodeTool.Candidate> kept =
-            FindDeadCodeTool.withoutNameCalled(candidates, nameCalled);
+        // A module whose address names no FQN cannot be collected under a key, so nothing
+        // protects its export.
+        assertEquals(2, outcome.candidates.size());
+        assertFalse(outcome.candidates.stream().anyMatch(c -> "РассчитатьВсе".equals(c.methodName) //$NON-NLS-1$
+            && "CommonModule.Подготовка.Module".equals(c.moduleFqn))); //$NON-NLS-1$
+        assertTrue(outcome.candidates.stream().anyMatch(c -> "НичемНеВызван".equals(c.methodName))); //$NON-NLS-1$
+        assertTrue(outcome.candidates.stream().anyMatch(c -> c.moduleFqn == null));
+    }
 
-        // The third row has no address to be collected under, so nothing protects it.
-        assertEquals(2, kept.size());
-        assertFalse(kept.stream().anyMatch(c -> "РассчитатьВсе".equals(c.methodName) //$NON-NLS-1$
-            && c.moduleFqn != null));
-        assertTrue(kept.stream().anyMatch(c -> "НичемНеВызван".equals(c.methodName))); //$NON-NLS-1$
-        assertTrue(kept.stream().anyMatch(c -> c.moduleFqn == null));
+    /**
+     * A method a job names does not occupy the candidate limit: the limit still holds when the
+     * scan reaches the next method nothing calls.
+     */
+    @Test
+    public void aMethodAJobNamesDoesNotOccupyTheCandidateLimit()
+    {
+        com._1c.g5.v8.dt.metadata.mdclass.Configuration configuration =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createConfiguration();
+        com._1c.g5.v8.dt.metadata.mdclass.CommonModule module =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createCommonModule();
+        module.setName("Подготовка"); //$NON-NLS-1$
+        configuration.getCommonModules().add(module);
+        com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob job =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        configuration.getScheduledJobs().add(job);
+
+        Set<String> nameCalled = new HashSet<>();
+        FindDeadCodeTool.collectJobAndSubscriptionCalled(configuration, nameCalled);
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+            "РассчитатьВсе", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
+            List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+                подготовка)),
+            nameCalled, 1, List.of(), method -> 0);
+
+        assertEquals(1, outcome.candidates.size());
+        assertEquals("НичемНеВызван", outcome.candidates.get(0).methodName); //$NON-NLS-1$
+    }
+
+    /**
+     * The cap notice marks a stop the name-call filter did not cause: a limit the kept candidates
+     * never reach is no stop, whatever the exports before the filter looked like.
+     */
+    @Test
+    public void theCapNoticeMarksAStopTheFilterDidNotCause()
+    {
+        Module module = moduleAt("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+            "РассчитатьВсе", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+        Set<String> nameCalled = Set.of(
+            FindDeadCodeTool.nameCallKey("CommonModule.Подготовка.Module", "РассчитатьВсе")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
+            List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", module)), //$NON-NLS-1$
+            nameCalled, 2, List.of(), method -> 0);
+
+        assertEquals(1, outcome.candidates.size());
+        assertFalse(outcome.stoppedByLimit);
     }
 
     /** The methods a scheduled job and an event subscription name are collected and protect. */
@@ -151,12 +197,14 @@ public class ANameCalledMethodIsNotReportedDeadTest
             FindDeadCodeTool.nameCallKey("CommonModule.Подготовка.Module", "ПослеЗаписи")), //$NON-NLS-1$ //$NON-NLS-2$
             nameCalled);
 
-        List<FindDeadCodeTool.Candidate> candidates = List.of(
-            new FindDeadCodeTool.Candidate("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
-                "ПослеЗаписи", 5, "CommonModule.Подготовка.Module"), //$NON-NLS-1$ //$NON-NLS-2$
-            new FindDeadCodeTool.Candidate("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
-                "НичемНеВызван", 8, "CommonModule.Подготовка.Module")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals(1, FindDeadCodeTool.withoutNameCalled(candidates, nameCalled).size());
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+            "ПослеЗаписи", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
+            List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+                подготовка)),
+            nameCalled, 100, List.of(), method -> 0);
+        assertEquals(1, outcome.candidates.size());
+        assertEquals("НичемНеВызван", outcome.candidates.get(0).methodName); //$NON-NLS-1$
     }
 
     /**
@@ -247,6 +295,44 @@ public class ANameCalledMethodIsNotReportedDeadTest
         SimpleStatement statement = factory.createSimpleStatement();
         statement.setLeft(call);
         method.getStatements().add(statement);
+        return module;
+    }
+
+    /**
+     * A module that declares the given exports, attached to the address a live module is loaded
+     * from, so the FQN of the address names it.
+     *
+     * @param modulePath the module path relative to {@code src/}
+     * @param exportNames the names of the exports to declare
+     * @return the module
+     */
+    private static Module moduleAt(String modulePath, String... exportNames)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        for (String name : exportNames)
+        {
+            Procedure method = factory.createProcedure();
+            method.setName(name);
+            method.setExport(true);
+            module.getMethods().add(method);
+        }
+        org.eclipse.emf.ecore.resource.Resource resource = new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl()
+            .createResource(org.eclipse.emf.common.util.URI
+                .createURI("platform:/resource/Proj/src/" + modulePath)); //$NON-NLS-1$
+        resource.getContents().add(module);
+        return module;
+    }
+
+    /** A module declaring one method of the given name, with no address attached. */
+    private static Module moduleDeclaring(String methodName)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        com._1c.g5.v8.dt.bsl.model.Method method = factory.createProcedure();
+        method.setName(methodName);
+        method.setExport(true);
+        module.getMethods().add(method);
         return module;
     }
 }

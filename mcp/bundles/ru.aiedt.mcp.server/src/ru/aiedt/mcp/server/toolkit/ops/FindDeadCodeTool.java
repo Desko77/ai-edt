@@ -255,24 +255,58 @@ public class FindDeadCodeTool
             return "Error: failed to walk the source tree: " + e.getMessage(); //$NON-NLS-1$
         }
 
-        List<Candidate> candidates = new ArrayList<>();
-        int modulesScanned = 0;
-        int modulesExcludedForms = 0;
-        int exportMethods = 0;
-        int handlersSkipped = 0;
-        int interceptorsSkipped = 0;
-        int loadFailures = 0;
-        int indeterminate = 0;
         // Methods a written-by-name call reaches: the reference index the deadness check reads
-        // carries nothing about them, so they are collected here as the scan walks the same
-        // modules. Form modules the scan excludes do not give up their calls. A scheduled job's
-        // method and an event subscription's handler are strings in the metadata, so the methods
-        // they name are collected the same way.
+        // carries nothing about them, so they are collected as the scan walks the same modules.
+        // A scheduled job's method and an event subscription's handler are strings in the
+        // metadata, so the methods they name are collected the same way.
         Map<String, String> commonModules = BslCallGraphHelper.commonModuleNames(project);
         Set<String> nameCalled = new HashSet<>();
         collectJobAndSubscriptionCalled(configurationOf(project), nameCalled);
 
-        for (IFile file : bslFiles)
+        FirstPass first = walkSources(bslFiles,
+            modulePath -> BslModuleAccess.loadModule(project, modulePath), includeForms, pathPrefix,
+            moduleFilter, commonModules, nameCalled, watch);
+        Outcome outcome = candidatesOf(first.walked, nameCalled, limit, extraPatterns,
+            BslCallGraphHelper::countCallers);
+
+        return format(projectName, outcome, first, limit, params,
+            // "candidate modules", not "modules": the count is loop entries, and a
+            // form module or an unreadable one is entered and then excluded, so it
+            // never reaches modulesScanned.
+            watch.note("candidate modules")); //$NON-NLS-1$
+    }
+
+    /**
+     * Walks the source files of one scan and reads every module the filters keep.
+     * <p>
+     * The methods a written-by-name call names are collected here, in the same walk that reads the
+     * modules: the decision about candidates waits for the whole walk, because a module walked
+     * after an earlier one can still hold the written-by-name call that keeps that earlier
+     * candidate alive.
+     * </p>
+     *
+     * @param files the BSL files of the project, in walk order
+     * @param loader the module model behind a {@code src/}-relative path, or {@code null} when it
+     *        would not load
+     * @param includeForms whether form modules give up their exports as candidates
+     * @param pathPrefix the family prefix a candidate module must start with, or {@code null}
+     * @param moduleFilter the text a candidate module's path must contain, or {@code null}/empty
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        collects no call, since a module name cannot be matched
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     * @param watch the cancel signal of the call
+     * @return what the walk read: the modules and its own counts
+     */
+    static FirstPass walkSources(Iterable<IFile> files,
+        java.util.function.Function<String, Module> loader, boolean includeForms, String pathPrefix,
+        String moduleFilter, Map<String, String> commonModules, Set<String> nameCalled,
+        WatchForCancel watch)
+    {
+        List<WalkedModule> walked = new ArrayList<>();
+        int modulesScanned = 0;
+        int modulesExcludedForms = 0;
+        int loadFailures = 0;
+        for (IFile file : files)
         {
             if (modulesScanned >= MODULE_SCAN_CAP || watch.stopHere())
             {
@@ -283,7 +317,8 @@ public class FindDeadCodeTool
             {
                 continue;
             }
-            if (!includeForms && (modulePath.contains(FORMS_SEGMENT) || modulePath.startsWith(COMMON_FORMS_PREFIX)))
+            if (!includeForms && (modulePath.contains(FORMS_SEGMENT)
+                || modulePath.startsWith(COMMON_FORMS_PREFIX)))
             {
                 modulesExcludedForms++;
                 continue;
@@ -297,8 +332,7 @@ public class FindDeadCodeTool
             {
                 continue;
             }
-
-            Module module = BslModuleAccess.loadModule(project, modulePath);
+            Module module = loader.apply(modulePath);
             if (module == null)
             {
                 loadFailures++;
@@ -306,8 +340,39 @@ public class FindDeadCodeTool
             }
             modulesScanned++;
             collectNameCalled(module, commonModules, nameCalled);
+            walked.add(new WalkedModule(modulePath, module));
+        }
+        return new FirstPass(walked, modulesScanned, modulesExcludedForms, loadFailures);
+    }
 
-            for (Method method : module.allMethods())
+    /**
+     * Decides the dead-code candidates of the walked modules.
+     * <p>
+     * The set of written-by-name calls is complete before this runs, so a method such a call names
+     * is dropped here rather than at the end of the scan: it neither becomes a candidate nor
+     * occupies the candidate limit, which the answer caps by the candidates it really reports.
+     * </p>
+     *
+     * @param walked the modules the first pass read
+     * @param nameCalled the keys of methods a written-by-name call names
+     * @param limit the candidate cap
+     * @param extraPatterns extra method-name substrings to treat as called-by-name
+     * @param callerCount how many call sites reference a method, or a negative number when the
+     *        lookup could not run
+     * @return the candidates and the counts of the decision
+     */
+    static Outcome candidatesOf(List<WalkedModule> walked, Set<String> nameCalled, int limit,
+        List<String> extraPatterns, java.util.function.ToIntFunction<Method> callerCount)
+    {
+        List<Candidate> candidates = new ArrayList<>();
+        boolean stoppedByLimit = false;
+        int exportMethods = 0;
+        int handlersSkipped = 0;
+        int interceptorsSkipped = 0;
+        int indeterminate = 0;
+        walk: for (WalkedModule entry : walked)
+        {
+            for (Method method : entry.module.allMethods())
             {
                 if (!method.isExport())
                 {
@@ -329,7 +394,12 @@ public class FindDeadCodeTool
                     handlersSkipped++;
                     continue;
                 }
-                int callers = BslCallGraphHelper.countCallers(method);
+                if (entry.moduleFqn != null
+                    && nameCalled.contains(nameCallKey(entry.moduleFqn, name)))
+                {
+                    continue;
+                }
+                int callers = callerCount.applyAsInt(method);
                 if (callers < 0)
                 {
                     // The reference index/finder was unavailable or the lookup threw - the method's
@@ -340,30 +410,18 @@ public class FindDeadCodeTool
                 }
                 if (callers == 0)
                 {
-                    candidates.add(new Candidate(modulePath, name, startLineOf(method),
-                        BslCallGraphHelper.moduleFqn(module)));
+                    candidates.add(new Candidate(entry.modulePath, name, startLineOf(method),
+                        entry.moduleFqn));
                     if (candidates.size() >= limit)
                     {
-                        break;
+                        stoppedByLimit = true;
+                        break walk;
                     }
                 }
             }
-            if (candidates.size() >= limit)
-            {
-                break;
-            }
         }
-
-        // Left to the end: a module walked after this one can still hold the written-by-name call
-        // that keeps an earlier candidate alive, so the decision waits for the whole walk.
-        candidates = withoutNameCalled(candidates, nameCalled);
-
-        return format(projectName, candidates, modulesScanned, modulesExcludedForms, exportMethods,
-            handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params,
-            // "candidate modules", not "modules": the count is loop entries, and a
-            // form module or an unreadable one is entered and then excluded, so it
-            // never reaches modulesScanned.
-            watch.note("candidate modules")); //$NON-NLS-1$
+        return new Outcome(candidates, stoppedByLimit, exportMethods, handlersSkipped,
+            interceptorsSkipped, indeterminate);
     }
 
     /**
@@ -408,32 +466,6 @@ public class FindDeadCodeTool
     {
         return moduleFqn + '\u0000'
             + (methodName == null ? "" : methodName.toLowerCase(Locale.ROOT)); //$NON-NLS-1$
-    }
-
-    /**
-     * Drops the candidates a written-by-name call keeps alive.
-     *
-     * @param candidates the candidates the scan collected
-     * @param nameCalled the keys of methods a written-by-name call names
-     * @return the candidates no written-by-name call names
-     */
-    static List<Candidate> withoutNameCalled(List<Candidate> candidates,
-        Set<String> nameCalled)
-    {
-        if (nameCalled.isEmpty())
-        {
-            return candidates;
-        }
-        List<Candidate> kept = new ArrayList<>(candidates.size());
-        for (Candidate candidate : candidates)
-        {
-            if (candidate.moduleFqn == null
-                || !nameCalled.contains(nameCallKey(candidate.moduleFqn, candidate.methodName)))
-            {
-                kept.add(candidate);
-            }
-        }
-        return kept;
     }
 
     /**
@@ -531,11 +563,10 @@ public class FindDeadCodeTool
     // Output
     // -- = --
 
-    private String format(String projectName, List<Candidate> candidates, int modulesScanned,
-        int modulesExcludedForms, int exportMethods, int handlersSkipped, int interceptorsSkipped,
-        int loadFailures, int indeterminate, int limit, Map<String, String> params,
-        String cancelled)
+    private String format(String projectName, Outcome outcome, FirstPass first, int limit,
+        Map<String, String> params, String cancelled)
     {
+        List<Candidate> candidates = outcome.candidates;
         StringBuilder out = new StringBuilder();
         out.append("# Dead-code candidates: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("**Candidates:** ").append(candidates.size()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -545,20 +576,20 @@ public class FindDeadCodeTool
             // for the whole configuration.
             out.append("**Stopped: ").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        out.append("- modules scanned: ").append(modulesScanned); //$NON-NLS-1$
-        out.append(" | export methods examined: ").append(exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        out.append("- skipped: ").append(handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
-            .append(interceptorsSkipped).append(" interceptors, ") //$NON-NLS-1$
-            .append(modulesExcludedForms).append(" form modules"); //$NON-NLS-1$
-        if (loadFailures > 0)
+        out.append("- modules scanned: ").append(first.modulesScanned); //$NON-NLS-1$
+        out.append(" | export methods examined: ").append(outcome.exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        out.append("- skipped: ").append(outcome.handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
+            .append(outcome.interceptorsSkipped).append(" interceptors, ") //$NON-NLS-1$
+            .append(first.modulesExcludedForms).append(" form modules"); //$NON-NLS-1$
+        if (first.loadFailures > 0)
         {
-            out.append(", ").append(loadFailures).append(" modules failed to load"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append(", ").append(first.loadFailures).append(" modules failed to load"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        if (indeterminate > 0)
+        if (outcome.indeterminate > 0)
         {
-            out.append(", ").append(indeterminate).append(" methods indeterminate (index/finder unavailable - NOT reported as dead; run clean_project and retry)"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append(", ").append(outcome.indeterminate).append(" methods indeterminate (index/finder unavailable - NOT reported as dead; run clean_project and retry)"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        if (modulesScanned >= MODULE_SCAN_CAP)
+        if (first.modulesScanned >= MODULE_SCAN_CAP)
         {
             out.append(" (scan cap ").append(MODULE_SCAN_CAP).append(" reached)"); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -600,7 +631,7 @@ public class FindDeadCodeTool
                 .append(escape(c.methodName)).append(" | ") //$NON-NLS-1$
                 .append(c.line > 0 ? Integer.toString(c.line) : "-").append(" |\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
-        if (candidates.size() >= limit)
+        if (outcome.stoppedByLimit)
         {
             out.append("\n(candidate list capped at ").append(limit) //$NON-NLS-1$
                 .append("; raise `limit` or narrow the scope to see more)\n"); //$NON-NLS-1$
@@ -775,6 +806,73 @@ public class FindDeadCodeTool
             return ""; //$NON-NLS-1$
         }
         return cell.replace("|", "\\|"); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** One module the scan read, with the address it was read under. */
+    static final class WalkedModule
+    {
+        final String modulePath;
+
+        final Module module;
+
+        /** The module's FQN as its address names it, or {@code null} when the address names none. */
+        final String moduleFqn;
+
+        WalkedModule(String modulePath, Module module)
+        {
+            this.modulePath = modulePath;
+            this.module = module;
+            this.moduleFqn = BslCallGraphHelper.moduleFqn(module);
+        }
+    }
+
+    /** What the walk of the sources read: the modules and the counts of the walk itself. */
+    static final class FirstPass
+    {
+        final List<WalkedModule> walked;
+
+        final int modulesScanned;
+
+        final int modulesExcludedForms;
+
+        final int loadFailures;
+
+        FirstPass(List<WalkedModule> walked, int modulesScanned, int modulesExcludedForms,
+            int loadFailures)
+        {
+            this.walked = walked;
+            this.modulesScanned = modulesScanned;
+            this.modulesExcludedForms = modulesExcludedForms;
+            this.loadFailures = loadFailures;
+        }
+    }
+
+    /** The candidates the scan reports, with the counts of the decision that collected them. */
+    static final class Outcome
+    {
+        final List<Candidate> candidates;
+
+        /** Whether the decision stopped because the candidate count reached the limit. */
+        final boolean stoppedByLimit;
+
+        final int exportMethods;
+
+        final int handlersSkipped;
+
+        final int interceptorsSkipped;
+
+        final int indeterminate;
+
+        Outcome(List<Candidate> candidates, boolean stoppedByLimit, int exportMethods,
+            int handlersSkipped, int interceptorsSkipped, int indeterminate)
+        {
+            this.candidates = candidates;
+            this.stoppedByLimit = stoppedByLimit;
+            this.exportMethods = exportMethods;
+            this.handlersSkipped = handlersSkipped;
+            this.interceptorsSkipped = interceptorsSkipped;
+            this.indeterminate = indeterminate;
+        }
     }
 
     /** A dead-code candidate: the module path, the export method name, and its declaration line. */
