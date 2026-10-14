@@ -2703,6 +2703,12 @@ public class MarkerManager
      * preview that judged half a document, or an empty file, would refuse an edit the write allows.
      * </p>
      * <p>
+     * A project the service holds as unreadable is refused the way a write refuses it: that write
+     * answers from the sign without reading the file again, so the preview answers the same
+     * refusal instead of judging a file the write will not look at. The sign itself is not touched
+     * - a preview changes no state of the service - and the next ordinary read decides again.
+     * </p>
+     * <p>
      * The file is the current one when it is there and otherwise the file an earlier build wrote.
      * Neither is created, copied, renamed or refreshed, so an edit that writes nothing leaves the
      * project's settings folder byte for byte as it found it. Nothing of this read is kept: the
@@ -2731,6 +2737,12 @@ public class MarkerManager
             if (!project.isAccessible())
             {
                 return new PreviewRead(new MarkerStore(), false, false);
+            }
+            if (unreadable.contains(project))
+            {
+                // The write is refused by this sign without reading the file again, so the preview
+                // answers that same refusal rather than judging a file the write will not read.
+                return new PreviewRead(null, true, false);
             }
             byte[] bytes;
             try
