@@ -67,17 +67,39 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertTrue("the callee is a node the walk reaches", walk.nodes.containsKey(CALLEE)); //$NON-NLS-1$
     }
 
-    /** A call naming a method of the walked module itself is not an edge between two modules. */
+    /** A call naming a method of the walked module itself is an edge of the module onto itself. */
     @Test
-    public void aNameCallIntoTheWalkedModuleItselfIsNotAnEdge()
+    public void aNameCallIntoTheWalkedModuleItselfIsASelfEdge()
     {
         BslCallGraphHelper.NameCall self =
             new BslCallGraphHelper.NameCall(null, "ПослеЗагрузки", 3); //$NON-NLS-1$
 
         BmReferencesHelper.BfsResult walk = walk(rootModule(), calling(Map.of(), List.of(self)));
 
-        assertTrue(walk.edges.isEmpty());
+        assertEquals(1, walk.edges.size());
+        assertEquals(ROOT, walk.edges.get(0).fromFqn);
+        assertEquals(ROOT, walk.edges.get(0).toFqn);
+        assertEquals("calls", walk.edges.get(0).featureName); //$NON-NLS-1$
+        assertEquals(DependencyGraphTool.RESOLUTION_NAME, walk.edges.get(0).resolution);
         assertEquals(List.of(ROOT), new ArrayList<>(walk.nodes.keySet()));
+    }
+
+    /** A call a module's text writes on its own module keeps that method out of the dead list. */
+    @Test
+    public void aSelfModuleNameCallProtectsItsMethod()
+    {
+        Module module = moduleAt("CommonModules/Подготовка/Module.bsl", "ПроверитьОжидание"); //$NON-NLS-1$ //$NON-NLS-2$
+        idleHandlerOn(module, "ПроверитьОжидание"); //$NON-NLS-1$
+        Set<String> nameCalled = new HashSet<>();
+
+        FindDeadCodeTool.collectNameCalled(module, MODULES, nameCalled);
+
+        assertTrue(nameCalled.contains(FindDeadCodeTool.nameCallKey(
+            "CommonModule.Подготовка.Module", "ПроверитьОжидание"))); //$NON-NLS-1$ //$NON-NLS-2$
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
+            List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", module)), //$NON-NLS-1$
+            nameCalled, 100, List.of(), method -> 0);
+        assertTrue(outcome.candidates.isEmpty());
     }
 
     /** The walk collects the name-written calls of the modules it walks, keyed by method. */
@@ -372,6 +394,26 @@ public class ANameCalledMethodIsNotReportedDeadTest
         statement.setLeft(expression);
         method.getStatements().add(statement);
         return module;
+    }
+
+    /**
+     * Adds an idle-handler attachment naming a method of the module itself.
+     *
+     * @param module the module
+     * @param methodName the method name the attachment spells
+     */
+    private static void idleHandlerOn(Module module, String methodName)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Invocation call = factory.createInvocation();
+        call.setMethodAccess(factory.createStaticFeatureAccess());
+        ((StaticFeatureAccess)call.getMethodAccess()).setName("ПодключитьОбработчикОжидания"); //$NON-NLS-1$
+        StringLiteral literal = factory.createStringLiteral();
+        literal.getLines().add("\"" + methodName + "\""); //$NON-NLS-1$ //$NON-NLS-2$
+        call.getParams().add(literal);
+        SimpleStatement statement = factory.createSimpleStatement();
+        statement.setLeft(call);
+        module.getMethods().get(0).getStatements().add(statement);
     }
 
     /**

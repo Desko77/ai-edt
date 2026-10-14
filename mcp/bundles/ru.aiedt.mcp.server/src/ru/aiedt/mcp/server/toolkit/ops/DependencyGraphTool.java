@@ -700,7 +700,8 @@ public class DependencyGraphTool implements IMcpTool
     {
         if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
         {
-            return true; // not an edge at all; the add step refuses it
+            // Same module on both ends: a self-edge needs no node it does not already have.
+            return true;
         }
         int missing = (visited.contains(fromFqn) ? 0 : 1) + (visited.contains(toFqn) ? 0 : 1);
         if (missing > 0 && result.nodes.size() + missing > maxNodes)
@@ -871,7 +872,9 @@ public class DependencyGraphTool implements IMcpTool
      * The reference index may already have named this pair of modules, and the name-written
      * sighting then lands on a row the model resolved: the row stays model-resolved, because a
      * reference the index carries says more about the pair than a name in the text does. A row
-     * only the text filled stays name-resolved and lists the place of every sighting.
+     * only the text filled stays name-resolved and lists the place of every sighting. A row whose
+     * ends are the same module - a call the text writes on its own module - is a row like any
+     * other: the reference half never reports it, so the text-written one is its only source.
      * </p>
      *
      * @param result the graph being built
@@ -885,7 +888,7 @@ public class DependencyGraphTool implements IMcpTool
     static boolean addModuleNameEdge(BmReferencesHelper.BfsResult result, String fromFqn,
         String toFqn, String file, int line, int maxEdges)
     {
-        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        if (fromFqn == null || toFqn == null)
         {
             return false;
         }

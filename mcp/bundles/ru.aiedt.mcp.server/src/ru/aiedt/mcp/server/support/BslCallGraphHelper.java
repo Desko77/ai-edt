@@ -1231,14 +1231,12 @@ public final class BslCallGraphHelper
             // Every outgoing edge of the module level is read out of the text: a plain call into a
             // common module and a call written by name both name their target without a reference
             // the index carries, and the two readers sit behind the same method of the source. A
-            // call naming its own module is not an edge of this level, whose ends are two modules.
+            // call naming its own module is an edge of the module onto itself: the reference half
+            // drops self-calls, so the text-written row is the only one that carries them.
             for (NameCall call : source.nameCallsOf(module))
             {
-                if (call.targetModuleFqn != null && !call.targetModuleFqn.equals(selfFqn))
-                {
-                    visitor.visit(new ModuleEdge(selfFqn, call.targetModuleFqn, 1, true, selfFqn,
-                        call.line));
-                }
+                String targetFqn = call.targetModuleFqn != null ? call.targetModuleFqn : selfFqn;
+                visitor.visit(new ModuleEdge(selfFqn, targetFqn, 1, true, selfFqn, call.line));
             }
         }
     }
