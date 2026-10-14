@@ -1101,11 +1101,11 @@ public final class BslCallGraphHelper
     /**
      * Whether the type a constructor builds is the notify description.
      * <p>
-     * A name the type reads without failure settles the question, so the second reader is never
-     * reached after a match. A failure of the second reader after a successful first one is not
-     * swallowed: the type said something other than the notify description, and its other name
-     * could not be read to confirm or deny it - that is a broken type, not a description the
-     * module does not hold.
+     * A name a type reads without failure settles the question, so the second reader is never
+     * reached after a match. A reader that fails is written to the log and reads as no name: one
+     * broken type costs its own constructor, not the whole walk. When the first reader fails the
+     * second is still asked, so a type that answers only the name the first reader does not spell
+     * is still recognized.
      * </p>
      *
      * @param type the type the constructor names, resolved or not
@@ -1117,7 +1117,7 @@ public final class BslCallGraphHelper
         {
             return false;
         }
-        String name;
+        String name = null;
         try
         {
             name = type.getName();
@@ -1126,13 +1126,21 @@ public final class BslCallGraphHelper
         {
             Activator.logWarning("BslCallGraphHelper: a constructor type name could not be read" //$NON-NLS-1$
                 + " (getName): " + unreadable.getMessage()); //$NON-NLS-1$
-            return false;
         }
         if (spellsNotifyDescription(name))
         {
             return true;
         }
-        return spellsNotifyDescription(type.getNameRu());
+        try
+        {
+            return spellsNotifyDescription(type.getNameRu());
+        }
+        catch (RuntimeException unreadable)
+        {
+            Activator.logWarning("BslCallGraphHelper: a constructor type name could not be read" //$NON-NLS-1$
+                + " (getNameRu): " + unreadable.getMessage()); //$NON-NLS-1$
+            return false;
+        }
     }
 
     /**

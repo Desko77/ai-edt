@@ -7,9 +7,7 @@ package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 import java.lang.reflect.Proxy;
 import java.util.List;
@@ -214,26 +212,36 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
     }
 
     /**
-     * A type whose own name was read and whose other name cannot be read is a broken type: the
-     * failure surfaces instead of reading as a module without notify descriptions.
+     * A type whose other name cannot be read costs its own constructor, not the walk: the call
+     * does not fail, the constructor is no description this read knows, and the constructors after
+     * it are still read.
      */
     @Test
-    public void aTypeWhoseSecondNameCannotBeReadIsNotSilentlySkipped()
+    public void aTypeWhoseSecondNameCannotBeReadIsSkippedForTheNextConstructor()
     {
         IllegalStateException broken = new IllegalStateException("unreadable second name"); //$NON-NLS-1$
-        Module module = moduleWithStatement(
-            notifyDescription2(literal("\"ПослеЗагрузки\""), feature("ЭтотОбъект"))); //$NON-NLS-1$ //$NON-NLS-2$
+        Module module = moduleOfTwoStatements(
+            notifyDescription2(literal("\"ПослеЗагрузки\""), feature("ЭтотОбъект")), //$NON-NLS-1$ //$NON-NLS-2$
+            notifyDescription("\"ПослеЗавершения\"", "ЭтотОбъект")); //$NON-NLS-1$ //$NON-NLS-2$
         replaceType(module, typeWhose("ДругойТип", broken)); //$NON-NLS-1$
 
-        try
-        {
-            BslCallGraphHelper.literalNameCallsOf(module, MODULES);
-            fail("the unreadable second name of the type surfaces"); //$NON-NLS-1$
-        }
-        catch (RuntimeException surfaced)
-        {
-            assertSame(broken, surfaced);
-        }
+        List<BslCallGraphHelper.NameCall> calls = BslCallGraphHelper.literalNameCallsOf(module,
+            MODULES);
+
+        assertEquals(List.of("ПослеЗавершения"), names(calls)); //$NON-NLS-1$
+    }
+
+    /** A type whose own name cannot be read is still asked for its other name. */
+    @Test
+    public void aTypeWhoseOwnNameCannotBeReadIsStillAskedForTheOther()
+    {
+        Module module = moduleWithStatement(
+            notifyDescription2(literal("\"ПослеЗагрузки\""), feature("ЭтотОбъект"))); //$NON-NLS-1$ //$NON-NLS-2$
+        replaceType(module, typeOf(() -> {
+            throw new IllegalStateException("unreadable own name"); //$NON-NLS-1$
+        }, () -> "NotifyDescription")); //$NON-NLS-1$
+
+        assertEquals(List.of("ПослеЗагрузки"), names(BslCallGraphHelper.literalNameCallsOf(module, MODULES))); //$NON-NLS-1$
     }
 
     /** A type whose own name already answers leaves the other name reader untouched. */
@@ -373,6 +381,23 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         return (SimpleStatement)module.getMethods().get(0).getStatements().get(0);
     }
 
+    /** A module holding two statements, one per constructor expression. */
+    private static Module moduleOfTwoStatements(com._1c.g5.v8.dt.bsl.model.Expression first,
+        com._1c.g5.v8.dt.bsl.model.Expression second)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        Procedure method = factory.createProcedure();
+        module.getMethods().add(method);
+        for (com._1c.g5.v8.dt.bsl.model.Expression expression : List.of(first, second))
+        {
+            SimpleStatement statement = factory.createSimpleStatement();
+            statement.setLeft(expression);
+            method.getStatements().add(statement);
+        }
+        return module;
+    }
+
     /**
      * A notify description constructor: a method name literal and a source, each of which may be
      * {@code null} to leave the parameter out.
@@ -473,16 +498,32 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
      */
     private static Type typeWhose(String name, RuntimeException otherNameFailure)
     {
+        return typeOf(() -> name, () -> {
+            throw otherNameFailure;
+        });
+    }
+
+    /**
+     * A type whose two name readers answer what the given suppliers say; a supplier may throw the
+     * way a broken type's reader would.
+     *
+     * @param name what the own name reader answers
+     * @param nameRu what the other name reader answers
+     * @return the type
+     */
+    private static Type typeOf(java.util.function.Supplier<String> name,
+        java.util.function.Supplier<String> nameRu)
+    {
         return (Type)Proxy.newProxyInstance(
             ANameCallIsReadFromTheLiteralsOfAModuleTest.class.getClassLoader(),
             new Class<?>[]{Type.class}, (p, method, args) -> {
                 if ("getName".equals(method.getName())) //$NON-NLS-1$
                 {
-                    return name;
+                    return name.get();
                 }
                 if ("getNameRu".equals(method.getName())) //$NON-NLS-1$
                 {
-                    throw otherNameFailure;
+                    return nameRu.get();
                 }
                 if ("equals".equals(method.getName())) //$NON-NLS-1$
                 {
@@ -494,7 +535,7 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
                 }
                 if ("toString".equals(method.getName())) //$NON-NLS-1$
                 {
-                    return "a type proxy over " + name; //$NON-NLS-1$
+                    return "a type proxy"; //$NON-NLS-1$
                 }
                 Class<?> type = method.getReturnType();
                 if (!type.isPrimitive() || type == void.class)
