@@ -138,7 +138,7 @@ public class MxlRowContractTest
         outcome.removedNamedAreas.add("Низ"); //$NON-NLS-1$
         outcome.removedDrawings.add(Integer.valueOf(7));
         outcome.lastRow = 12;
-        outcome.declaredRows = 15;
+        outcome.appendRow = 15;
 
         MxlWorkshopTool.applyRowOutcome(tags, outcome, 4);
 
@@ -147,7 +147,7 @@ public class MxlRowContractTest
         assertEquals(Integer.valueOf(2), tags.get("resizedMerges")); //$NON-NLS-1$
         assertEquals(Integer.valueOf(1), tags.get("removedMerges")); //$NON-NLS-1$
         assertEquals(Integer.valueOf(12), tags.get("lastRow")); //$NON-NLS-1$
-        assertEquals(Integer.valueOf(15), tags.get("declaredRows")); //$NON-NLS-1$
+        assertEquals(Integer.valueOf(15), tags.get("appendRow")); //$NON-NLS-1$
         assertTrue(((java.util.List<?>)tags.get("removedDrawings")).contains(Integer.valueOf(7))); //$NON-NLS-1$
         assertTrue(((java.util.List<?>)tags.get("removedNamedAreas")).contains("Низ")); //$NON-NLS-1$
         assertTrue(((java.util.List<?>)tags.get("resizedNamedAreas")).contains("Шапка")); //$NON-NLS-1$

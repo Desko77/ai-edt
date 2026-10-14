@@ -1514,7 +1514,7 @@ public class MxlWorkshopTool implements IMcpTool
         tags.put("removedDrawings", outcome.removedDrawings); //$NON-NLS-1$
         tags.put("removedDataSources", Integer.valueOf(outcome.removedDataSources)); //$NON-NLS-1$
         tags.put("lastRow", Integer.valueOf(outcome.lastRow)); //$NON-NLS-1$
-        tags.put("declaredRows", Integer.valueOf(outcome.declaredRows)); //$NON-NLS-1$
+        tags.put("appendRow", Integer.valueOf(outcome.appendRow)); //$NON-NLS-1$
     }
 
     /**
@@ -2776,16 +2776,18 @@ public class MxlWorkshopTool implements IMcpTool
                 + "below / none - the new rows take the row format and the cell formats, never " //$NON-NLS-1$
                 + "text or parameters. Everything at row and below shifts down: rows, merges, " //$NON-NLS-1$
                 + "named areas, row groups, drawings, the print and repeat areas. The answer " //$NON-NLS-1$
-                + "carries lastRow - the last row that carries content, which a row created empty " //$NON-NLS-1$
-                + "is not - and declaredRows, the height the file declares\n"); //$NON-NLS-1$
+                + "carries lastRow - the last row that carries content (text, a parameter, a parameter " //$NON-NLS-1$
+                + "or template fill, turned text, a detail, a picture, a note, a row height, a merge, " //$NON-NLS-1$
+                + "unmerge, named area, row group, drawing or print area), which a row created empty " //$NON-NLS-1$
+                + "is not - and appendRow, the row an insert appends at\n"); //$NON-NLS-1$
             sb.append("- delete_rows - removes count rows from row (1-based); the rows below shift " //$NON-NLS-1$
                 + "up. Merges, named areas and drawings lying entirely inside the range go with " //$NON-NLS-1$
                 + "them and are named in the answer; partial overlaps shrink. Answers lastRow - the " //$NON-NLS-1$
-                + "last row that carries content - and declaredRows, the height the file declares\n"); //$NON-NLS-1$
+                + "last row that carries content - and appendRow, the row an insert appends at\n"); //$NON-NLS-1$
             sb.append("- copy_rows - replaces count rows at toRow with a copy of the rows at " //$NON-NLS-1$
                 + "fromRow: row format, cells with text, parameter, detail and format, and the " //$NON-NLS-1$
                 + "merges inside the source. No shift; source and target ranges must not overlap; " //$NON-NLS-1$
-                + "named areas are neither copied nor moved. Answers lastRow and declaredRows\n"); //$NON-NLS-1$
+                + "named areas are neither copied nor moved. Answers lastRow and appendRow\n"); //$NON-NLS-1$
             sb.append("- insert_columns - inserts count columns before col (1-based; the last " //$NON-NLS-1$
                 + "column + 1 appends). formatFrom: left (default, and none at col 1) / right / " //$NON-NLS-1$
                 + "none - the new columns take the column format and the cell formats, never text " //$NON-NLS-1$

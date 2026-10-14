@@ -1226,7 +1226,7 @@ public class RowOperationsOfATemplateTest
             doc.getDrawings().get(0).getPosition().getEnd().getOffset().getY());
     }
 
-    /** An empty template answers no last row, and declares no height to go with it. */
+    /** An empty template answers no last row, and appends at its first row. */
     @Test
     public void anEmptyTemplateAnswersNoLastRow()
     {
@@ -1236,12 +1236,16 @@ public class RowOperationsOfATemplateTest
 
         assertNull(outcome.error);
         assertEquals("a table that carries nothing has no last row", 0, outcome.lastRow); //$NON-NLS-1$
-        assertEquals("and no height declared", 0, outcome.declaredRows); //$NON-NLS-1$
+        BmTemplateHelper.RowOutcome past = BmTemplateHelper.insertRows(doc, outcome.appendRow + 1, 1,
+            "none"); //$NON-NLS-1$
+        assertNotNull("one past appendRow is refused", past.error); //$NON-NLS-1$
+        assertNull("appendRow itself is accepted", //$NON-NLS-1$
+            BmTemplateHelper.insertRows(doc, outcome.appendRow, 1, "none").error); //$NON-NLS-1$
     }
 
     /**
      * A row a write created and left empty does not hold the end of the table: the answer names the
-     * last row that carries content, and the declared height is answered beside it.
+     * last row that carries content, and the row an insert appends at is answered beside it.
      */
     @Test
     public void aRowCreatedEmptyDoesNotHoldTheEndOfTheTable()
@@ -1254,7 +1258,7 @@ public class RowOperationsOfATemplateTest
 
         assertNull(outcome.error);
         assertEquals("the table ends at the row that carries the text", 3, outcome.lastRow); //$NON-NLS-1$
-        assertEquals("and the file declares the three rows it holds", 3, outcome.declaredRows); //$NON-NLS-1$
+        assertEquals("the empty row still counts for where an insert appends", 8, outcome.appendRow); //$NON-NLS-1$
 
         // What a row number is measured against is the wider question: the row a write created
         // counts there, so 8 appends and 9 is refused with 7 named as the end of the document.
@@ -1277,8 +1281,7 @@ public class RowOperationsOfATemplateTest
 
         assertNull(outcome.error);
         assertEquals("the row the file made taller is the end of the table", 7, outcome.lastRow); //$NON-NLS-1$
-        assertEquals("while the declared height still counts what the file holds", 3, //$NON-NLS-1$
-            outcome.declaredRows);
+        assertEquals("and an insert appends one past it", 8, outcome.appendRow); //$NON-NLS-1$
     }
 
     /** A row only a named area reaches is a row of the table. */

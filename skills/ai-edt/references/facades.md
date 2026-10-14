@@ -888,10 +888,11 @@ target come off first. There is no shift, an overlap of the two ranges is refuse
 neither copied nor moved, and the target may run past the current end. The answer carries
 `shiftedRows`, `resizedMerges`, `removedMerges`, `resizedNamedAreas`, `removedNamedAreas`,
 `removedDrawings`, `removedDataSources`, `lastRow` - the last row that carries content after the
-operation, where content is a text, a parameter, a detail, a picture, a note, a row height set on the
-row, and every holder of a row number (merges, named areas, row groups, drawings with the areas they
-read from, the print and repeat areas); a row a write created and left empty is not it - and
-`declaredRows`, the height the file declares in rows; a drawing that goes takes its data source with
+operation, where content is a text, a parameter, a parameter or template fill, turned text, a detail,
+a picture, a note, a row height set on the row, and every holder of a row number (merges and unmerges,
+named areas, row groups, drawings with the areas they read from, the print and repeat areas); a row a
+write created and left empty is not it - and `appendRow`, the row `insert_rows` appends at (one past
+the end the row number is checked against); a drawing that goes takes its data source with
 it and the count is in `removedDataSources`.
 
 `insert_columns`, `delete_columns` and `copy_columns` work in whole columns. `insert_columns` puts

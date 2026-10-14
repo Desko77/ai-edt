@@ -3647,8 +3647,8 @@ public final class BmTemplateHelper
      * <p>
      * The shared counters say what the shift resized and removed; the row ones say how many rows
      * changed their number and where the document now ends. Both row numbers are 1-based, after the
-     * operation: {@code lastRow} is the last row that carries content, {@code declaredRows} the
-     * height the file declares, which the operation raises to hold the rows it moved.
+     * operation: {@code lastRow} is the last row that carries content, {@code appendRow} the row an
+     * insert appends at - one past the end the row operations measure a row number against.
      * </p>
      */
     public static final class RowOutcome extends ShiftOutcome
@@ -3659,8 +3659,8 @@ public final class BmTemplateHelper
         /** The last row that carries content, 1-based, after the operation; 0 when none does. */
         public int lastRow;
 
-        /** The height the document declares, in rows, after the operation; 0 when it is none. */
-        public int declaredRows;
+        /** The row insert_rows appends at, 1-based, after the operation: one past the end of the document. */
+        public int appendRow;
     }
 
     /**
@@ -3848,7 +3848,7 @@ public final class BmTemplateHelper
         moveHeight(doc, true, at, count);
         settleExtent(doc);
         outcome.lastRow = contentRowOf(doc);
-        outcome.declaredRows = doc.getHeight();
+        outcome.appendRow = lastRowOf(doc) + 1;
         return outcome;
     }
 
@@ -3904,7 +3904,7 @@ public final class BmTemplateHelper
         moveHeight(doc, false, first, count);
         settleExtent(doc);
         outcome.lastRow = contentRowOf(doc);
-        outcome.declaredRows = doc.getHeight();
+        outcome.appendRow = lastRowOf(doc) + 1;
         return outcome;
     }
 
@@ -3990,7 +3990,7 @@ public final class BmTemplateHelper
         }
         settleExtent(doc);
         outcome.lastRow = contentRowOf(doc);
-        outcome.declaredRows = doc.getHeight();
+        outcome.appendRow = lastRowOf(doc) + 1;
         return outcome;
     }
 
