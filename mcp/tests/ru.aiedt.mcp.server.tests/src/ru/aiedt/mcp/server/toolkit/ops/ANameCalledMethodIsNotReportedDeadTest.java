@@ -324,6 +324,27 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertTrue(report, report.contains("candidate scan cap")); //$NON-NLS-1$
     }
 
+    /**
+     * A load that fails still counts toward its cap: a walk of a configuration whose model is not
+     * built stops at the cap instead of trying every file of the tree.
+     */
+    @Test
+    public void aLoadThatFailsStillCountsTowardTheCap()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 6000; i++)
+        {
+            files.add(fileAt("src/CommonModules/Модуль" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> null,
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+
+        assertEquals(5000, first.modulesScanned);
+        assertEquals(5000, first.loadFailures);
+        assertTrue(first.walked.isEmpty());
+    }
+
     /** The methods a scheduled job and an event subscription name are collected and protect. */
     @Test
     public void theMethodsOfJobsAndSubscriptionsAreCollected()

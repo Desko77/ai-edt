@@ -295,8 +295,10 @@ public class FindDeadCodeTool
      * <p>
      * The two walks over the same file list are bounded separately: the candidate cap counts only
      * the modules whose exports the decision examines, and the collection reads - modules read for
-     * their name-written calls alone - have their own cap, reported on its own line. Either cap
-     * stops the walk, and an answer a cap stopped does not claim a finished scope.
+     * their name-written calls alone - have their own cap, reported on its own line. Each cap
+     * counts the loads the walk attempts, also the ones that fail, so a configuration whose model
+     * is not built stops the walk rather than loading every file for nothing. Either cap stops the
+     * walk, and an answer a cap stopped does not claim a finished scope.
      * </p>
      *
      * @param files the BSL files of the project, in walk order
@@ -354,11 +356,9 @@ public class FindDeadCodeTool
                 break;
             }
             Module module = loader.apply(modulePath);
-            if (module == null)
-            {
-                loadFailures++;
-                continue;
-            }
+            // The attempt counts against its cap, loaded or not: a configuration whose model is
+            // not built fails every load, and a walk that kept counting only successes would load
+            // the whole tree for nothing before its cap said stop.
             if (candidate)
             {
                 modulesScanned++;
@@ -366,6 +366,11 @@ public class FindDeadCodeTool
             else
             {
                 collectionReads++;
+            }
+            if (module == null)
+            {
+                loadFailures++;
+                continue;
             }
             collectNameCalled(module, commonModules, nameCalled);
             if (candidate)
@@ -884,10 +889,10 @@ public class FindDeadCodeTool
     {
         final List<WalkedModule> walked;
 
-        /** The candidate modules the walk read - the ones whose exports the decision examines. */
+        /** The candidate module loads the walk attempted, whether the module loaded or not. */
         final int modulesScanned;
 
-        /** The modules the walk read only for the name-written calls they hold. */
+        /** The loads the walk attempted only to collect name-written calls, loaded or not. */
         final int collectionReads;
 
         final int modulesExcludedForms;
