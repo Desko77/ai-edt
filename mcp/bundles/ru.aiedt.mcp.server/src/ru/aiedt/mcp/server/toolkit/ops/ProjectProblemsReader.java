@@ -881,7 +881,7 @@ public class ProjectProblemsReader
         {
             DiagnosticsBaselineStore.Diagnostic finding = diff.appeared.get(i);
             builder.append("| ").append(MarkdownTableHelper.escapeForTable(finding.message)) //$NON-NLS-1$
-                .append(" | ").append(MarkdownTableHelper.escapeForTable(finding.objectRef)) //$NON-NLS-1$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable(finding.objectPresentation)) //$NON-NLS-1$
                 .append(" | ").append(finding.severity == null ? "" : finding.severity) //$NON-NLS-1$ //$NON-NLS-2$
                 .append(" | `").append(finding.checkId).append("` | ") //$NON-NLS-1$ //$NON-NLS-2$
                 .append(finding.count)
@@ -898,12 +898,14 @@ public class ProjectProblemsReader
     /**
      * Maps the collected rows to the records a baseline is made of, collapsing identical triples.
      * Each record carries the marker's short check code beside its identity, so a later query
-     * naming either spelling of the check meets the record.
+     * naming either spelling of the check meets the record, and the place the row is shown at
+     * beside the reference it is identified by, so the same query filters and prints the record
+     * the way it filters and prints the marker standing now.
      *
      * @param errors the collected rows
      * @return the collapsed records, one per identical triple
      */
-    private static List<DiagnosticsBaselineStore.Diagnostic> collapseErrors(List<ErrorInfo> errors)
+    static List<DiagnosticsBaselineStore.Diagnostic> collapseErrors(List<ErrorInfo> errors)
     {
         List<DiagnosticsBaselineStore.Diagnostic> findings = new ArrayList<>();
         for (ErrorInfo error : errors)
@@ -912,7 +914,8 @@ public class ProjectProblemsReader
                 error.objectKey == null ? "" : error.objectKey, //$NON-NLS-1$
                 checkIdentityOf(error), error.checkCode,
                 error.message == null ? "" : error.message, //$NON-NLS-1$
-                error.severityNative));
+                error.severityNative)
+                    .shownAt(error.objectPresentation));
         }
         return DiagnosticsBaselineStore.collapse(findings);
     }
@@ -1570,7 +1573,10 @@ public class ProjectProblemsReader
                 MarkerSeverity mapped = mapEclipseSeverity(
                     marker.getAttribute(IMarker.SEVERITY, IMarker.SEVERITY_INFO));
                 String sourceId = marker.getAttribute(IMarker.SOURCE_ID, ""); //$NON-NLS-1$
-                String presentation = buildEclipsePresentation(marker);
+                String location = marker.getAttribute(IMarker.LOCATION, ""); //$NON-NLS-1$
+                String resourcePath = marker.getResource().getFullPath().toString();
+                String presentation = eclipsePresentation(location, resourcePath,
+                    marker.getAttribute(IMarker.LINE_NUMBER, -1));
                 if (!filter.matchesEclipse(mapped, sourceId, presentation))
                 {
                     continue;
@@ -1582,9 +1588,6 @@ public class ProjectProblemsReader
                     continue;
                 }
                 boolean hasDocumentation = CheckDocReader.hasCheckDocumentation(sourceId);
-                String identityRef = eclipseIdentityRef(
-                    marker.getAttribute(IMarker.LOCATION, ""), //$NON-NLS-1$
-                    marker.getResource().getFullPath().toString());
                 // An Eclipse marker keeps its position in the standard attributes rather than in
                 // extra info; -1 is what getAttribute answers when the attribute is absent, which
                 // is the same "no position" the EDT path reports.
@@ -1597,7 +1600,7 @@ public class ProjectProblemsReader
                     null,
                     // The identity keeps the line off the reference: a finding that moved is
                     // the same finding, not one new and one resolved.
-                    identityRef));
+                    eclipseIdentityRef(location, resourcePath)));
             }
         }
     }
@@ -1629,13 +1632,25 @@ public class ProjectProblemsReader
      */
     private static String buildEclipsePresentation(IMarker marker)
     {
-        String location = marker.getAttribute(IMarker.LOCATION, ""); //$NON-NLS-1$
+        return eclipsePresentation(marker.getAttribute(IMarker.LOCATION, ""), //$NON-NLS-1$
+            marker.getResource().getFullPath().toString(), marker.getAttribute(IMarker.LINE_NUMBER, -1));
+    }
+
+    /**
+     * The place an Eclipse marker is shown at and filtered by: its location when it carries one,
+     * else its path with the line it sits on, else the path alone.
+     *
+     * @param location the marker's location attribute; may be <code>null</code> or empty
+     * @param resourcePath the marker's resource path
+     * @param line the line the marker sits on, or {@code -1} when it carries none
+     * @return the presentation, never <code>null</code>
+     */
+    static String eclipsePresentation(String location, String resourcePath, int line)
+    {
         if (location != null && !location.isEmpty())
         {
             return location;
         }
-        String resourcePath = marker.getResource().getFullPath().toString();
-        int line = marker.getAttribute(IMarker.LINE_NUMBER, -1);
         if (line >= 0)
         {
             return resourcePath + ":" + line; //$NON-NLS-1$
@@ -2059,7 +2074,7 @@ public class ProjectProblemsReader
     }
 
     /** One problem, flattened to what the report shows. */
-    private static final class ErrorInfo
+    static final class ErrorInfo
     {
         private final String checkCode;
 

@@ -55,8 +55,10 @@ public final class DiagnosticsBaselineStore
 {
     /**
      * The version of the file format this build writes and reads. Version 2 added the short check
-     * code beside the symbolic id a record carries; a file of another version is refused rather
-     * than read partially.
+     * code beside the symbolic id a record carries, and the shown place beside the reference a
+     * record is identified by - the second is written only where the two differ, so a file of this
+     * version without it reads with the place equal to the reference. A file of another version is
+     * refused rather than read partially.
      */
     public static final int FORMAT_VERSION = 2;
 
@@ -81,8 +83,18 @@ public final class DiagnosticsBaselineStore
      */
     public static final class Diagnostic
     {
-        /** The object presentation or file path the finding stands on; never <code>null</code>. */
+        /**
+         * The reference the finding is identified by - the object presentation, or for a plain
+         * Eclipse marker its location or path with the line taken off. Never <code>null</code>.
+         */
         public final String objectRef;
+
+        /**
+         * The place the finding is shown at and matched by a presentation filter: the object
+         * presentation the report prints, which for a marker whose line stands outside its
+         * location carries that line. Equal to {@link #objectRef} when the two coincide.
+         */
+        public final String objectPresentation;
 
         /** The check identity - the symbolic id, or the short code when there is no symbolic one. */
         public final String checkId;
@@ -162,7 +174,26 @@ public final class DiagnosticsBaselineStore
         public Diagnostic(String objectRef, String checkId, String checkCode, String message,
             String severity, int count)
         {
+            this(objectRef, objectRef, checkId, checkCode, message, severity, count);
+        }
+
+        /**
+         * A record whose shown place and identity reference are two different strings.
+         *
+         * @param objectRef the reference the finding is identified by
+         * @param objectPresentation the place the finding is shown at and filtered by;
+         *            <code>null</code> takes the reference
+         * @param checkId the check identity
+         * @param checkCode the marker's short check code; may be <code>null</code>
+         * @param message the message text
+         * @param severity the native severity name; may be <code>null</code>
+         * @param count how many identical findings; at least one
+         */
+        private Diagnostic(String objectRef, String objectPresentation, String checkId,
+            String checkCode, String message, String severity, int count)
+        {
             this.objectRef = Objects.requireNonNull(objectRef);
+            this.objectPresentation = objectPresentation == null ? this.objectRef : objectPresentation;
             this.checkId = Objects.requireNonNull(checkId);
             this.checkCode = checkCode;
             this.message = Objects.requireNonNull(message);
@@ -171,8 +202,26 @@ public final class DiagnosticsBaselineStore
         }
 
         /**
+         * This record with the place it is shown at.
+         * <p>
+         * The reference the record is identified by is not touched: a finding keeps its identity
+         * whatever the report prints for it.
+         * </p>
+         *
+         * @param shownAt the place the finding is shown at and matched by a presentation filter;
+         *            <code>null</code> takes the identity reference
+         * @return the copy
+         */
+        public Diagnostic shownAt(String shownAt)
+        {
+            return new Diagnostic(objectRef, shownAt, checkId, checkCode, message, severity, count);
+        }
+
+        /**
          * The identity two findings are the same by: the triple, joined by a separator that
-         * cannot occur inside a Java string read from a marker presentation.
+         * cannot occur inside a Java string read from a marker presentation. The object in it is
+         * the reference, not the shown place - the shown place carries the line where the marker
+         * keeps it outside its location, and the line takes no part in the identity.
          *
          * @return the identity key, never <code>null</code>
          */
@@ -189,7 +238,8 @@ public final class DiagnosticsBaselineStore
          */
         public Diagnostic withCount(int newCount)
         {
-            return new Diagnostic(objectRef, checkId, checkCode, message, severity, newCount);
+            return new Diagnostic(objectRef, objectPresentation, checkId, checkCode, message,
+                severity, newCount);
         }
 
         @Override
@@ -490,6 +540,10 @@ public final class DiagnosticsBaselineStore
 
     /**
      * Collapses findings to one record per identical triple, counting the multiplicities.
+     * <p>
+     * Findings that differ only in the place they are shown at are one record: the place of the
+     * first stands for the group, and the count says how many the record covers.
+     * </p>
      *
      * @param findings the findings; may be <code>null</code>
      * @return the collapsed records, in first-appearance order
@@ -568,7 +622,7 @@ public final class DiagnosticsBaselineStore
         {
             return false;
         }
-        String presentation = diagnostic.objectRef.toLowerCase(Locale.ROOT);
+        String presentation = diagnostic.objectPresentation.toLowerCase(Locale.ROOT);
         for (String fqn : fqnVariantsLower)
         {
             if (FileMarkers.matchesAtSegmentBoundary(presentation, fqn))
@@ -667,7 +721,7 @@ public final class DiagnosticsBaselineStore
             {
                 continue;
             }
-            if (fileNeedle != null && !containsLower(diagnostic.objectRef, fileNeedle))
+            if (fileNeedle != null && !containsLower(diagnostic.objectPresentation, fileNeedle))
             {
                 continue;
             }
@@ -808,6 +862,10 @@ public final class DiagnosticsBaselineStore
         {
             JsonObject record = new JsonObject();
             record.addProperty("object", diagnostic.objectRef); //$NON-NLS-1$
+            if (!diagnostic.objectRef.equals(diagnostic.objectPresentation))
+            {
+                record.addProperty("objectPresentation", diagnostic.objectPresentation); //$NON-NLS-1$
+            }
             record.addProperty("check", diagnostic.checkId); //$NON-NLS-1$
             if (diagnostic.checkCode != null)
             {
@@ -886,13 +944,19 @@ public final class DiagnosticsBaselineStore
             for (JsonElement element : records.getAsJsonArray())
             {
                 JsonObject record = element.getAsJsonObject();
-                diagnostics.add(new Diagnostic(
+                // A file written before the shown place was carried stands as one whose place is
+                // its reference: that is what the report printed for it then, and reading it any
+                // other way would invent a position the file never held.
+                Diagnostic written = new Diagnostic(
                     record.get("object").getAsString(), //$NON-NLS-1$
                     record.get("check").getAsString(), //$NON-NLS-1$
                     record.has("checkCode") ? record.get("checkCode").getAsString() : null, //$NON-NLS-1$
                     record.get("message").getAsString(), //$NON-NLS-1$
                     record.has("severity") ? record.get("severity").getAsString() : null, //$NON-NLS-1$ //$NON-NLS-2$
-                    record.has("count") ? Math.max(1, record.get("count").getAsInt()) : 1)); //$NON-NLS-1$ //$NON-NLS-2$
+                    record.has("count") ? Math.max(1, record.get("count").getAsInt()) : 1); //$NON-NLS-1$ //$NON-NLS-2$
+                diagnostics.add(record.has("objectPresentation") //$NON-NLS-1$
+                    ? written.shownAt(record.get("objectPresentation").getAsString()) //$NON-NLS-1$
+                    : written);
             }
         }
         catch (RuntimeException broken)
