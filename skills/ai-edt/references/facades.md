@@ -600,14 +600,20 @@ values, and no test launch follows it. `yaxunitUnsafeMode=false` leaves the flag
 Write-blocking presets refuse this pre-step through the `install_extension` door before it changes the
 infobase.
 
-For `mode=run`, `timeoutSeconds` (default 60; `timeout` and `timeoutMs` remain aliases) is the deadline
-for the entire call: engine installation, infobase update, launch and test wait. Polling stops early
-enough to assemble the answer: the smaller of 5 seconds and 10 percent of the deadline. A launch held
-by an EDT modal returns `Pending` with `runKey`, `blockedByDialog=true` and `dialogs`; answer only
-through `answer_dialog`, then poll that key to continue the same launch. A returned launch with no
-client process is refused and forgotten. A client still running at the deadline is left running;
-the `Pending` answer carries its `runKey`, `clientStillRunning=true` and `processId` when known, and
-polling the key retrieves the finished report.
+For `mode=run`, `timeoutSeconds` (default 60; `timeout` and `timeoutMs` remain aliases) bounds the
+call's answer, not the run. Engine installation and the infobase update are not interrupted by it:
+they are writes, and a budget they consumed answers an error naming the step, with
+`deadlineExpired` and `clientLaunched=false`, launching nothing. Polling stops early enough to
+assemble the answer: the smaller of 5 seconds and 10 percent of the deadline. A launch held by an
+EDT modal returns `Pending` with `runKey`, `blockedByDialog=true` and `dialogs`; answer only through
+`answer_dialog`, then poll that key: the launch is tracked to its report under that same key for
+however long the dialog stands. The window waiting for the client process runs its full length from
+the launch's return. A returned launch with no client process is refused and forgotten. A client
+still running at the deadline is left running; the `Pending` answer carries its `runKey`,
+`clientStillRunning=true` and `processId` when known, and polling the key retrieves the finished
+report. Polling an issued `runKey` takes no heavy-tool slot. While a launch of the same tests has
+not become visible yet, a second call of the same configuration waits for it and joins it instead
+of starting a second client.
 
 Every completed run writes a receipt file under `<state-location>/run-receipts/<tool>/`, at most
 twenty, the oldest displaced first. The answer names it in `receiptPath`, or `receiptError` when it

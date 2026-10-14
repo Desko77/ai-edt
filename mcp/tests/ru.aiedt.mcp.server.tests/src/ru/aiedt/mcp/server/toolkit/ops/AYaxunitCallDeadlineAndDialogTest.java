@@ -63,11 +63,10 @@ public class AYaxunitCallDeadlineAndDialogTest
         Map<String, Object> dialog = Map.of("title", "Update application", //$NON-NLS-1$ //$NON-NLS-2$
             "buttons", List.of("Update and launch", "Launch without update", "Cancel")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
         String businessKey = "dialog-" + System.nanoTime(); //$NON-NLS-1$
-        long now = System.currentTimeMillis();
 
         JsonObject pending = JsonParser.parseString(YaxunitTestRunner.handOverLaunch(underWay,
-            List.of(), List.of(dialog), Path.of("report-dir"), now, now + 1_000L, //$NON-NLS-1$
-            businessKey, new YaxunitTestRunner.RunContext("Proj", null, null, null, false))) //$NON-NLS-1$
+            List.of(), List.of(dialog), Path.of("report-dir"), businessKey, //$NON-NLS-1$
+            new YaxunitTestRunner.RunContext("Proj", null, null, null, false))) //$NON-NLS-1$
             .getAsJsonObject();
         String runKey = pending.get("runKey").getAsString(); //$NON-NLS-1$
         assertEquals("Pending", pending.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -76,8 +75,7 @@ public class AYaxunitCallDeadlineAndDialogTest
             .getAsJsonObject().get("title").getAsString()); //$NON-NLS-1$
 
         returned.countDown();
-        JsonObject collected = JsonParser.parseString(new YaxunitTestRunner().dispatch(
-            Map.of("runKey", runKey))).getAsJsonObject(); //$NON-NLS-1$
+        JsonObject collected = pollUntilAnswered(runKey);
         assertFalse(collected.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(collected.get("error").getAsString().contains("client was not launched")); //$NON-NLS-1$ //$NON-NLS-2$
         assertEquals("Update application", collected.get("dialogTitle").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -95,7 +93,7 @@ public class AYaxunitCallDeadlineAndDialogTest
 
         String answer = YaxunitTestRunner.awaitLaunchAndPoll(underWay(new CountDownLatch(0),
             noClient), List.of(), List.of(Map.of("title", "Update application")), //$NON-NLS-1$ //$NON-NLS-2$
-            Path.of("report-dir"), 200L, 300L, runKey, //$NON-NLS-1$
+            Path.of("report-dir"), 200L, runKey, //$NON-NLS-1$
             new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
             now::get, now::addAndGet);
 
@@ -120,7 +118,7 @@ public class AYaxunitCallDeadlineAndDialogTest
         try
         {
             String answer = YaxunitTestRunner.awaitLaunchAndPoll(underWay(new CountDownLatch(0),
-                launch), List.of(), List.of(), reportDir, 200L, 300L, runKey,
+                launch), List.of(), List.of(), reportDir, 200L, runKey,
                 new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
                 now::get, now::addAndGet);
 
@@ -157,6 +155,30 @@ public class AYaxunitCallDeadlineAndDialogTest
                 });
             }
         }
+    }
+
+    /**
+     * Polls a handed-over run until its continuation answers, so a body that spends its full
+     * start window on a client that never appears still reaches the assertion.
+     *
+     * @param runKey the key the Pending envelope named
+     * @return the answered JSON, never a Pending one
+     * @throws InterruptedException when the polling is interrupted
+     */
+    private static JsonObject pollUntilAnswered(String runKey) throws InterruptedException
+    {
+        YaxunitTestRunner runner = new YaxunitTestRunner();
+        for (int attempt = 0; attempt < 40; attempt++)
+        {
+            JsonObject answer = JsonParser.parseString(runner.dispatch(Map.of("runKey", runKey))) //$NON-NLS-1$
+                .getAsJsonObject();
+            if (answer.get("status") == null || !"Pending".equals(answer.get("status").getAsString())) //$NON-NLS-1$ //$NON-NLS-2$
+            {
+                return answer;
+            }
+            Thread.sleep(250);
+        }
+        throw new AssertionError("the handed-over run never answered under " + runKey); //$NON-NLS-1$
     }
 
     /** Returns a launch call controlled by a latch. */
