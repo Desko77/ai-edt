@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.eclipse.core.resources.IFile;
 import org.eclipse.emf.ecore.EObject;
 import org.junit.Test;
 
@@ -168,6 +169,30 @@ public class ANameCalledMethodIsNotReportedDeadTest
 
         assertEquals(1, outcome.candidates.size());
         assertFalse(outcome.stoppedByLimit);
+    }
+
+    /**
+     * A written-by-name call of a form module keeps its target alive although the scan takes no
+     * candidates from form modules at the default settings.
+     */
+    @Test
+    public void aNameCallOfAFormModuleProtectsItsTarget()
+    {
+        Module form = moduleWithStatement(notifyDescription("ПослеЗагрузки", "Подготовка")); //$NON-NLS-1$ //$NON-NLS-2$
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", "ПослеЗагрузки"); //$NON-NLS-1$ //$NON-NLS-2$
+        Set<String> nameCalled = new HashSet<>();
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(
+            List.of(fileAt("src/CommonForms/ФормаЗагрузки/Module.bsl"), //$NON-NLS-1$
+                fileAt("src/CommonModules/Подготовка/Module.bsl")), //$NON-NLS-1$
+            path -> "CommonForms/ФормаЗагрузки/Module.bsl".equals(path) ? form : подготовка, //$NON-NLS-1$
+            false, null, null, MODULES, nameCalled, WatchForCancel.begin());
+
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
+            100, List.of(), method -> 0);
+
+        assertEquals(1, first.walked.size());
+        assertTrue("the form module's call keeps the export alive", outcome.candidates.isEmpty()); //$NON-NLS-1$
     }
 
     /** The methods a scheduled job and an event subscription name are collected and protect. */
@@ -334,5 +359,95 @@ public class ANameCalledMethodIsNotReportedDeadTest
         method.setExport(true);
         module.getMethods().add(method);
         return module;
+    }
+
+    /** A module holding one statement, the way a form module holds its handlers. */
+    private static Module moduleWithStatement(com._1c.g5.v8.dt.bsl.model.Expression expression)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        Procedure method = factory.createProcedure();
+        module.getMethods().add(method);
+        SimpleStatement statement = factory.createSimpleStatement();
+        statement.setLeft(expression);
+        method.getStatements().add(statement);
+        return module;
+    }
+
+    /**
+     * A notify description constructor naming a method of the named source.
+     *
+     * @param methodName the method name the first parameter spells
+     * @param sourceName the name the second parameter spells
+     * @return the constructor expression
+     */
+    private static com._1c.g5.v8.dt.bsl.model.OperatorStyleCreator notifyDescription(String methodName,
+        String sourceName)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        com._1c.g5.v8.dt.bsl.model.OperatorStyleCreator creator =
+            factory.createOperatorStyleCreator();
+        com._1c.g5.v8.dt.mcore.Type type = com._1c.g5.v8.dt.mcore.McoreFactory.eINSTANCE.createType();
+        type.setName("ОписаниеОповещения"); //$NON-NLS-1$
+        creator.setType(type);
+        StringLiteral literal = factory.createStringLiteral();
+        literal.getLines().add("\"" + methodName + "\""); //$NON-NLS-1$ //$NON-NLS-2$
+        creator.getParams().add(literal);
+        StaticFeatureAccess source = factory.createStaticFeatureAccess();
+        source.setName(sourceName);
+        creator.getParams().add(source);
+        return creator;
+    }
+
+    /**
+     * A source file standing at the given project-relative path.
+     *
+     * @param path the path, starting with {@code src/}
+     * @return the file
+     */
+    private static IFile fileAt(String path)
+    {
+        org.eclipse.core.runtime.IPath relative = proxy(org.eclipse.core.runtime.IPath.class,
+            "toString", path); //$NON-NLS-1$
+        return proxy(IFile.class, "getProjectRelativePath", relative); //$NON-NLS-1$
+    }
+
+    /**
+     * A proxy that answers one method and a default for every other.
+     *
+     * @param type the interface to implement
+     * @param methodName the one method to answer
+     * @param answer what it answers
+     * @return the proxy
+     */
+    private static <T> T proxy(Class<T> type, String methodName, Object answer)
+    {
+        return type.cast(Proxy.newProxyInstance(
+            ANameCalledMethodIsNotReportedDeadTest.class.getClassLoader(),
+            new Class<?>[]{type}, (p, method, args) -> methodName.equals(method.getName())
+                ? answer : defaultOf(method.getReturnType())));
+    }
+
+    /**
+     * The value a method of an uninteresting kind answers on the proxy.
+     *
+     * @param type the method's return type
+     * @return null, or the zero value of a primitive
+     */
+    private static Object defaultOf(Class<?> type)
+    {
+        if (!type.isPrimitive() || type == void.class)
+        {
+            return null;
+        }
+        if (type == boolean.class)
+        {
+            return Boolean.FALSE;
+        }
+        if (type == long.class)
+        {
+            return Long.valueOf(0);
+        }
+        return Integer.valueOf(0);
     }
 }

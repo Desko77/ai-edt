@@ -270,19 +270,19 @@ public class FindDeadCodeTool
             BslCallGraphHelper::countCallers);
 
         return format(projectName, outcome, first, limit, params,
-            // "candidate modules", not "modules": the count is loop entries, and a
-            // form module or an unreadable one is entered and then excluded, so it
-            // never reaches modulesScanned.
-            watch.note("candidate modules")); //$NON-NLS-1$
+            // The count names modules read, including a form module the walk read for its
+            // calls while taking no candidates from it.
+            watch.note("modules")); //$NON-NLS-1$
     }
 
     /**
-     * Walks the source files of one scan and reads every module the filters keep.
+     * Walks the source files of one scan and reads every module the walk cap allows.
      * <p>
-     * The methods a written-by-name call names are collected here, in the same walk that reads the
-     * modules: the decision about candidates waits for the whole walk, because a module walked
-     * after an earlier one can still hold the written-by-name call that keeps that earlier
-     * candidate alive.
+     * The methods a written-by-name call names are collected from every module the walk reads,
+     * including one whose own exports are no candidates - a form module at the default settings, a
+     * module outside the family prefix or the path filter: the calls sit wherever they sit, and the
+     * decision about candidates waits for the whole walk anyway, because a module walked after an
+     * earlier one can still hold the written-by-name call that keeps that earlier candidate alive.
      * </p>
      *
      * @param files the BSL files of the project, in walk order
@@ -295,7 +295,7 @@ public class FindDeadCodeTool
      *        collects no call, since a module name cannot be matched
      * @param nameCalled the keys of methods a written-by-name call names, filled
      * @param watch the cancel signal of the call
-     * @return what the walk read: the modules and its own counts
+     * @return what the walk read: the modules whose exports are candidates, and the walk's counts
      */
     static FirstPass walkSources(Iterable<IFile> files,
         java.util.function.Function<String, Module> loader, boolean includeForms, String pathPrefix,
@@ -317,6 +317,14 @@ public class FindDeadCodeTool
             {
                 continue;
             }
+            Module module = loader.apply(modulePath);
+            if (module == null)
+            {
+                loadFailures++;
+                continue;
+            }
+            modulesScanned++;
+            collectNameCalled(module, commonModules, nameCalled);
             if (!includeForms && (modulePath.contains(FORMS_SEGMENT)
                 || modulePath.startsWith(COMMON_FORMS_PREFIX)))
             {
@@ -332,14 +340,6 @@ public class FindDeadCodeTool
             {
                 continue;
             }
-            Module module = loader.apply(modulePath);
-            if (module == null)
-            {
-                loadFailures++;
-                continue;
-            }
-            modulesScanned++;
-            collectNameCalled(module, commonModules, nameCalled);
             walked.add(new WalkedModule(modulePath, module));
         }
         return new FirstPass(walked, modulesScanned, modulesExcludedForms, loadFailures);
