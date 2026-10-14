@@ -741,20 +741,7 @@ public final class BslCallGraphHelper
         }
         String selfFqn = moduleFqn(module);
         List<NameCall> calls = new ArrayList<>();
-        // A parameter or a variable may carry the name of a common module, and a call through it
-        // is a call through a variable. A name declared in a method hides the module in that method
-        // only; a name declared outside every method hides it in the whole module (key null).
-        java.util.Map<Method, Set<String>> shadowed = new java.util.HashMap<>();
-        java.util.Iterator<EObject> declared = module.eAllContents();
-        while (declared.hasNext())
-        {
-            EObject node = declared.next();
-            if (node instanceof Variable && ((Variable)node).getName() != null)
-            {
-                shadowed.computeIfAbsent(enclosingMethod(node), scope -> new HashSet<>())
-                    .add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
-            }
-        }
+        java.util.Map<Method, Set<String>> shadowed = shadowedNamesOf(module);
         java.util.Iterator<EObject> contents = module.eAllContents();
         while (contents.hasNext())
         {
@@ -780,9 +767,7 @@ public final class BslCallGraphHelper
             {
                 continue;
             }
-            String lowered = name.toLowerCase(java.util.Locale.ROOT);
-            if (shadowed.getOrDefault(null, Collections.emptySet()).contains(lowered)
-                || shadowed.getOrDefault(enclosingMethod(node), Collections.emptySet()).contains(lowered))
+            if (shadowedIn(shadowed, node, name.toLowerCase(java.util.Locale.ROOT)))
             {
                 continue;
             }
@@ -794,6 +779,53 @@ public final class BslCallGraphHelper
             }
         }
         return calls;
+    }
+
+    /**
+     * The names a module's own declarations hide, per method: a parameter or a variable may carry
+     * the name of a common module, and a call through it is a call through that parameter or
+     * variable, not through the module.
+     * <p>
+     * A name declared in a method hides the module in that method only; a name declared outside
+     * every method hides it in the whole module (key {@code null}).
+     * </p>
+     *
+     * @param module the module whose declarations to read
+     * @return the hidden names of each method, and of the module itself under the {@code null}
+     *         method
+     */
+    private static java.util.Map<Method, Set<String>> shadowedNamesOf(Module module)
+    {
+        java.util.Map<Method, Set<String>> shadowed = new java.util.HashMap<>();
+        java.util.Iterator<EObject> declared = module.eAllContents();
+        while (declared.hasNext())
+        {
+            EObject node = declared.next();
+            if (node instanceof Variable && ((Variable)node).getName() != null)
+            {
+                shadowed.computeIfAbsent(enclosingMethod(node), scope -> new HashSet<>())
+                    .add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        return shadowed;
+    }
+
+    /**
+     * Whether a name is hidden at the place a node sits: by a declaration of the method the node
+     * belongs to, or by one that stands outside every method.
+     *
+     * @param shadowed the hidden names of each method, as {@link #shadowedNamesOf(Module)} reads
+     *        them
+     * @param node the node the name is read at
+     * @param loweredName the name, already folded to one case
+     * @return whether a declaration of that name hides the module in the method the node sits in
+     */
+    private static boolean shadowedIn(java.util.Map<Method, Set<String>> shadowed, EObject node,
+        String loweredName)
+    {
+        return shadowed.getOrDefault(null, Collections.emptySet()).contains(loweredName)
+            || shadowed.getOrDefault(enclosingMethod(node), Collections.emptySet())
+                .contains(loweredName);
     }
 
     /** The Russian and the English spelling of the notify description type. */
@@ -836,17 +868,22 @@ public final class BslCallGraphHelper
             return Collections.emptyList();
         }
         List<NameCall> calls = new ArrayList<>();
+        // The same set of hidden names the plain call sites are read against: a notify
+        // description's source and a background entry point's owner are read as module names, so
+        // a name a method declares as its own must hide the module here as well.
+        java.util.Map<Method, Set<String>> shadowed = shadowedNamesOf(module);
         java.util.Iterator<EObject> it = module.eAllContents();
         while (it.hasNext())
         {
             EObject node = it.next();
             if (node instanceof Invocation)
             {
-                nameCallsOfInvocation((Invocation)node, commonModules, calls);
+                nameCallsOfInvocation((Invocation)node, commonModules, shadowed, calls);
             }
             else if (node instanceof OperatorStyleCreator)
             {
-                nameCallsOfNotifyDescription((OperatorStyleCreator)node, commonModules, calls);
+                nameCallsOfNotifyDescription((OperatorStyleCreator)node, commonModules, shadowed,
+                    calls);
             }
         }
         return calls;
@@ -858,10 +895,13 @@ public final class BslCallGraphHelper
      *
      * @param call the invocation to read
      * @param commonModules the project's common modules, lower-cased name to name
+     * @param shadowed the names each method's own declarations hide, as
+     *        {@link #shadowedNamesOf(Module)} reads them
      * @param out the calls found so far, filled
      */
     private static void nameCallsOfInvocation(Invocation call,
-        java.util.Map<String, String> commonModules, List<NameCall> out)
+        java.util.Map<String, String> commonModules, java.util.Map<Method, Set<String>> shadowed,
+        List<NameCall> out)
     {
         if (call.getMethodAccess() instanceof StaticFeatureAccess)
         {
@@ -886,6 +926,12 @@ public final class BslCallGraphHelper
             return;
         }
         String owner = ((StaticFeatureAccess)source).getName();
+        if (owner == null || shadowedIn(shadowed, call, owner.toLowerCase(java.util.Locale.ROOT)))
+        {
+            // The invocation starts with a name the method declares as its own, so it is a call
+            // through that parameter or variable, not one through the entry point's module.
+            return;
+        }
         String method = ((DynamicFeatureAccess)call.getMethodAccess()).getName();
         if (!backgroundExecutionCall(owner, method))
         {
@@ -945,10 +991,13 @@ public final class BslCallGraphHelper
      *
      * @param creator the constructor expression to read
      * @param commonModules the project's common modules, lower-cased name to name
+     * @param shadowed the names each method's own declarations hide, as
+     *        {@link #shadowedNamesOf(Module)} reads them
      * @param out the calls found so far, filled
      */
     private static void nameCallsOfNotifyDescription(OperatorStyleCreator creator,
-        java.util.Map<String, String> commonModules, List<NameCall> out)
+        java.util.Map<String, String> commonModules, java.util.Map<Method, Set<String>> shadowed,
+        List<NameCall> out)
     {
         if (!isNotifyDescription(creator.getType()))
         {
@@ -967,8 +1016,10 @@ public final class BslCallGraphHelper
             return;
         }
         String source = ((StaticFeatureAccess)creator.getParams().get(1)).getName();
-        if (source == null)
+        if (source == null || shadowedIn(shadowed, creator, source.toLowerCase(java.util.Locale.ROOT)))
         {
+            // The source is a name the method declares as its own, so the description names a
+            // method of that parameter or variable, not of a module.
             return;
         }
         if (THIS_OBJECT_RU.equalsIgnoreCase(source) || THIS_OBJECT_EN.equalsIgnoreCase(source))
