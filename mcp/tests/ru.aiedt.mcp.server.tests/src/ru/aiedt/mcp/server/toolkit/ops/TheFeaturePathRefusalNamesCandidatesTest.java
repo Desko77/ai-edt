@@ -90,6 +90,34 @@ public class TheFeaturePathRefusalNamesCandidatesTest
             refusal.contains("smoke.feature")); //$NON-NLS-1$
     }
 
+    /**
+     * A relative path - what a call without a project resolves to - is looked up from the working
+     * directory, the one the refusal names.
+     */
+    @Test
+    public void aRelativePathIsAnsweredFromTheWorkingDirectory() throws Exception
+    {
+        String sub = "vanessa-relative-" + System.nanoTime(); //$NON-NLS-1$
+        Path under = new File(sub).getAbsoluteFile().toPath();
+        Files.createDirectories(under);
+        try
+        {
+            Files.write(under.resolve("smoke.feature"), new byte[] {1}); //$NON-NLS-1$
+
+            String refusal = refusalFor(new File(sub, "smokee.feature")); //$NON-NLS-1$
+
+            assertTrue("the directory the relative path points into must be searched: " + refusal, //$NON-NLS-1$
+                refusal.contains("Nearest .feature files: smoke.feature")); //$NON-NLS-1$
+        }
+        finally
+        {
+            try (Stream<Path> entries = Files.walk(under))
+            {
+                entries.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            }
+        }
+    }
+
     /** A directory with nothing to run says so, rather than listing nothing without a word. */
     @Test
     public void anEmptyDirectoryIsSaidToHoldNoFeatures() throws Exception

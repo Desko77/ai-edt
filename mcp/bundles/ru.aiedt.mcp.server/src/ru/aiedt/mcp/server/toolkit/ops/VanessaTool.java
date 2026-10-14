@@ -2264,11 +2264,13 @@ public class VanessaTool implements IMcpTool
      * outright rather than left to be inferred from the names.
      * </p>
      *
-     * @param named the resolved path the caller asked for, known not to exist
+     * @param asked the resolved path the caller asked for, known not to exist; relative to the
+     *            working directory when no project resolved it
      * @return the refusal as a tool result document
      */
-    static String featurePathNotFound(File named)
+    static String featurePathNotFound(File asked)
     {
+        File named = asked.getAbsoluteFile();
         StringBuilder refusal = new StringBuilder("featurePath not found: ") //$NON-NLS-1$
             .append(named.getAbsolutePath());
         File pointedAt = named.getParentFile();
@@ -2313,7 +2315,7 @@ public class VanessaTool implements IMcpTool
      */
     static List<File> nearestFeatureFiles(File named, int limit)
     {
-        File searched = nearestExistingDirectory(named.getParentFile());
+        File searched = nearestExistingDirectory(named.getAbsoluteFile().getParentFile());
         if (searched == null)
         {
             return List.of();

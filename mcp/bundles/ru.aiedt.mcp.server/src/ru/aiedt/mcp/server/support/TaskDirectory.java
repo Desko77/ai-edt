@@ -307,6 +307,7 @@ public final class TaskDirectory
             {
                 return;
             }
+            catchUpTheLastStep();
             PendingWorkRegistry registry = PendingWorkRegistry.domainOf(runKey);
             PendingWorkRegistry.StopOutcome stopping = registry == null
                 ? PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP
@@ -418,6 +419,7 @@ public final class TaskDirectory
             {
                 return;
             }
+            catchUpTheLastStep();
             if (produced != null)
             {
                 // The answer before the status, and not the other way round: a reader that sees a
@@ -450,8 +452,9 @@ public final class TaskDirectory
          * The refusal an answer carries, when it is one.
          * <p>
          * Asked only of an answer {@link FailureShape#looksFailed} reads as a refusal. A JSON
-         * document names it in {@code error}; a text or markdown refusal opens with it, so its
-         * first non-blank line is taken, cut to {@link #REFUSAL_LINE_LIMIT} characters.
+         * document names it in {@code error}; a text or markdown refusal opens with it. Either way
+         * the first non-blank line is taken, cut to {@link #REFUSAL_LINE_LIMIT} characters: the
+         * whole refusal is the task's result, and the message only names it.
          * </p>
          *
          * @param produced the run's answer, already read as a refusal.
@@ -473,7 +476,7 @@ public final class TaskDirectory
                 JsonElement error = tree.getAsJsonObject().get("error"); //$NON-NLS-1$
                 if (error != null && error.isJsonPrimitive() && !error.getAsString().isBlank())
                 {
-                    return error.getAsString();
+                    return firstLineOf(error.getAsString());
                 }
             }
             return "The run's answer reported failure without a message."; //$NON-NLS-1$
@@ -497,6 +500,24 @@ public final class TaskDirectory
                 }
             }
             return "The run's answer reported failure without a message."; //$NON-NLS-1$
+        }
+
+        /**
+         * Takes the run's current note as the last step, when the run is still held.
+         * <p>
+         * A poll copies the note as it goes, but a run can publish a step and end - or be
+         * cancelled - before anyone polls. The entry still carries its note at both moments, so
+         * the outcome is said with the step the run actually reached, not the one a poll saw.
+         * </p>
+         */
+        private void catchUpTheLastStep()
+        {
+            PendingWorkRegistry registry = PendingWorkRegistry.domainOf(runKey);
+            PendingWorkRegistry.PendingEntry running = registry != null ? registry.get(runKey) : null;
+            if (running != null && running.progressNote != null)
+            {
+                lastStep = running.progressNote;
+            }
         }
 
         /**

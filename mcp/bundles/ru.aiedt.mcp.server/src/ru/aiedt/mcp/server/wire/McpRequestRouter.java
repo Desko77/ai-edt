@@ -403,7 +403,16 @@ public class McpRequestRouter
             return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
                 "Failed to retrieve task: no task with id " + taskId); //$NON-NLS-1$
         }
-        return answer(requestId, TaskResult.state(task, finishedResultOf(task), failureOf(task)), era);
+        // One reading of the task, under the lock settle and cancel take: read field by field, a
+        // poll could find the result not yet there and the status already failed, and answer a
+        // terminal task with neither a result nor an error.
+        TaskResult state;
+        synchronized (task)
+        {
+            state = TaskResult.state(task, redactIfAsked(task.statusMessage, true),
+                finishedResultOf(task), failureOf(task));
+        }
+        return answer(requestId, state, era);
     }
 
     /**
@@ -553,7 +562,8 @@ public class McpRequestRouter
         }
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", McpServerMeta.ERROR_INTERNAL); //$NON-NLS-1$
-        error.put("message", task.failure == null ? "The task failed." : task.failure); //$NON-NLS-1$ //$NON-NLS-2$
+        error.put("message", task.failure == null ? "The task failed." //$NON-NLS-1$ //$NON-NLS-2$
+            : redactIfAsked(task.failure, true));
         return error;
     }
 

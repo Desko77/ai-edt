@@ -348,6 +348,66 @@ public class TaskDirectoryTest
             polled.result);
     }
 
+    /**
+     * A run that announces a step and refuses before anyone polls still names that step.
+     * <p>
+     * The poll is what copies the note as the run goes; a run that ends first must not lose it.
+     * </p>
+     */
+    @Test
+    public void aRefusalBeforeAnyPollStillNamesTheStep() throws Exception
+    {
+        String step = "1 of 4 done (1 applied, 0 failed); now running add_group"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step,
+            () -> ru.aiedt.mcp.server.wire.ToolResult.error("the group exists").toJson(), //$NON-NLS-1$
+            release);
+        awaitTheStepIsAnnounced(key);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        release.countDown();
+        awaitCompletion(key);
+        awaitSettled(task.taskId);
+
+        assertEquals("failed at " + step + ": the group exists", //$NON-NLS-1$ //$NON-NLS-2$
+            directory.poll(task.taskId).statusMessage);
+    }
+
+    /** Cancelling before any poll names the step the run had announced. */
+    @Test
+    public void cancellingBeforeAnyPollNamesTheStep() throws Exception
+    {
+        String step = "2 of 9 done (2 applied, 0 failed); now running add_field"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step, () -> "never collected", release); //$NON-NLS-1$
+        awaitTheStepIsAnnounced(key);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(directory.cancel(task.taskId));
+
+        assertTrue("the message must name the step: " + task.statusMessage, //$NON-NLS-1$
+            task.statusMessage.startsWith("cancelled at " + step + ":")); //$NON-NLS-1$ //$NON-NLS-2$
+        release.countDown();
+    }
+
+    /** A long JSON refusal is named by its first line, cut to the limit; the result keeps it whole. */
+    @Test
+    public void aLongJsonRefusalIsCutInTheMessage()
+    {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 100; i++)
+        {
+            text.append("Catalog.Item").append(i).append(' ');
+        }
+        text.append("\nsecond line");
+        String refused = TaskDirectory.Task.refusalTextOf(
+            ru.aiedt.mcp.server.wire.ToolResult.error(text.toString()).toJson());
+
+        assertEquals(TaskDirectory.Task.REFUSAL_LINE_LIMIT + 3, refused.length());
+        assertTrue(refused.endsWith("...")); //$NON-NLS-1$
+        assertFalse(refused.contains("second line")); //$NON-NLS-1$
+    }
+
     /** A report that mentions an error below its head is an answer, and the task completes. */
     @Test
     public void aReportMentioningAnErrorCompletes() throws Exception
