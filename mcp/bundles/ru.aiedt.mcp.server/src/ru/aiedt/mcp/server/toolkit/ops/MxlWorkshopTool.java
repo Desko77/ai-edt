@@ -2778,7 +2778,7 @@ public class MxlWorkshopTool implements IMcpTool
                 + "named areas, row groups, drawings, the print and repeat areas. The answer " //$NON-NLS-1$
                 + "carries lastRow - the last row that carries content (text, a parameter, a parameter " //$NON-NLS-1$
                 + "or template fill, turned text, a detail, a picture, a note, a row height, a merge, " //$NON-NLS-1$
-                + "unmerge, named area, row group, drawing or print area), which a row created empty " //$NON-NLS-1$
+                + "unmerge, named area, row group, drawing with its data area, print or repeat area), which a row created empty " //$NON-NLS-1$
                 + "is not - and appendRow, the row an insert appends at\n"); //$NON-NLS-1$
             sb.append("- delete_rows - removes count rows from row (1-based); the rows below shift " //$NON-NLS-1$
                 + "up. Merges, named areas and drawings lying entirely inside the range go with " //$NON-NLS-1$
