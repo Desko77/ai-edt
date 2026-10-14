@@ -75,7 +75,7 @@ public enum ToolProfile
      * </p>
      */
     DEBUG_AND_TEST("Debug & Test", //$NON-NLS-1$
-        "Read + debug ops + breakpoints + yaxunit_tests. No write / refactoring / constructors, " //$NON-NLS-1$
+        "Read + debug ops + breakpoints + yaxunit_tests. No write / refactoring / constructor writes, " //$NON-NLS-1$
             + "and nothing that creates, deletes or overwrites an infobase.", //$NON-NLS-1$
         debugAndTestDisabled(),
         Collections.emptySet()),
@@ -513,12 +513,13 @@ public enum ToolProfile
     }
 
     /**
-     * @return everything that writes, launches or debugs
+     * @return everything that writes, launches or debugs - the constructors' help, reads and dryRun
+     *         previews excepted; their writes are the {@code *_writes} capability names and
+     *         {@code extension_workshop}, which {@link #writersOutsideWriteGroups()} adds
      */
     private static Set<String> readOnlyDisabled()
     {
-        Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING,
-            ToolCategory.CONSTRUCTORS);
+        Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING);
         disabled.addAll(writersOutsideWriteGroups());
         // Returns a snippet and writes nothing, but a preset this strict is expected to hand back
         // nothing that reads like generated code either.
@@ -528,11 +529,12 @@ public enum ToolProfile
 
     /**
      * @return everything that changes the sources or the metadata, plus everything destructive - but
-     *         not the rest of the applications group, which is what there is to debug
+     *         not the rest of the applications group, which is what there is to debug, and not the
+     *         constructors' help, reads and dryRun previews, whose writes are gated by name
      */
     private static Set<String> debugAndTestDisabled()
     {
-        Set<String> disabled = toolsOf(ToolCategory.REFACTORING, ToolCategory.CONSTRUCTORS);
+        Set<String> disabled = toolsOf(ToolCategory.REFACTORING);
         disabled.addAll(destructiveTools());
         disabled.addAll(writersOutsideWriteGroups());
         return disabled;

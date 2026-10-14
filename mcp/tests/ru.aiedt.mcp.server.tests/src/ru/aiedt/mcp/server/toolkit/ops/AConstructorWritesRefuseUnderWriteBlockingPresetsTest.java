@@ -28,6 +28,7 @@ import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 
 /**
  * Every write-blocking preset refuses each constructor facade's writes by its door, before the
@@ -186,14 +187,30 @@ public class AConstructorWritesRefuseUnderWriteBlockingPresetsTest
     }
 
     /**
-     * Under the preset that keeps the constructors group on, the reading operations answer
-     * something other than the door - they got past the gate, and failed on the project that is
-     * not there, which is the read's own business.
+     * Under every write-blocking preset, which all keep the constructors group on, the reading
+     * operations answer something other than the door - they got past the gate, and failed on the
+     * project that is not there, which is the read's own business.
      */
     @Test
     public void theReadsOfTheSameFacadesGetPastTheDoor()
     {
-        store.setValue(PrefKeys.PREF_TOOL_PRESET, ToolProfile.CODE_REVIEW.name());
+        for (String preset : Arrays.asList(ToolProfile.READ_ONLY.name(),
+            ToolProfile.DEBUG_AND_TEST.name(), ToolProfile.CODE_REVIEW.name()))
+        {
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, preset);
+            theReadsGetPastTheDoor(preset);
+            assertFalse(preset + " keeps edit_metadata callable", //$NON-NLS-1$
+                McpToolCatalog.getInstance().isDisabledByPreset("edit_metadata")); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Runs the reading operations of the constructor facades under the preset already in the store.
+     *
+     * @param preset the name of that preset, for the failure message
+     */
+    private void theReadsGetPastTheDoor(String preset)
+    {
         List<Row> reads = Arrays.asList(
             new Row("edit_metadata help", EditMetadataTool::new, "edit_metadata_writes", //$NON-NLS-1$ //$NON-NLS-2$
                 "operation", "help"), //$NON-NLS-1$
@@ -219,7 +236,8 @@ public class AConstructorWritesRefuseUnderWriteBlockingPresetsTest
                 held.add(row.facade + " was refused by the write door: " + answer); //$NON-NLS-1$
             }
         }
-        assertTrue("these reads have no business asking the write door: " + held, held.isEmpty()); //$NON-NLS-1$
+        assertTrue(preset + ": these reads have no business asking the write door: " + held, //$NON-NLS-1$
+            held.isEmpty());
     }
 
     /**

@@ -49,9 +49,10 @@ public class PresetWriteBlockingTest
      * </p>
      * <p>
      * The {@code *_writes} names are the constructor doors: capability names, registered nowhere,
-     * that each constructor facade asks about before its first write. Code Review keeps the
-     * constructors group on so a review can read what a constructor would produce, which is why
-     * the writes of each facade have to be named here by hand.
+     * that each constructor facade asks about before its first write. All three presets keep the
+     * constructors group on so its help, reads and previews answer, which is why the writes of
+     * each facade have to be named here by hand, and {@code extension_workshop}, whose reads are
+     * not separated from its writes, as a whole.
      * </p>
      */
     private static final List<String> COMPOSITE_WRITERS =
@@ -63,7 +64,7 @@ public class PresetWriteBlockingTest
             "create_tag", "update_tag", "delete_tag", "assign_tag", "unassign_tag",
             "edit_form_writes", "edit_metadata_writes", "dcs_workshop_writes", "mxl_workshop_writes",
             "xdto_workshop_writes", "external_object_workshop_writes",
-            "external_data_source_workshop_writes",
+            "external_data_source_workshop_writes", "extension_workshop",
             // The installYaxunit pre-step of yaxunit_tests writes the infobase through this name,
             // and the one write-blocking preset that keeps the facade on (Debug & Test) keeps the
             // whole applications group on as well - the name is disabled by hand there or the
@@ -110,7 +111,11 @@ public class PresetWriteBlockingTest
         {
             for (String name : group.getToolNames())
             {
-                if (!disabled.contains(name))
+                // A constructor stays on for its help, reads and previews; its writes are off
+                // through the door it asks before the first write.
+                boolean doorOff = group == ToolCategory.CONSTRUCTORS
+                    && disabled.contains(name + "_writes"); //$NON-NLS-1$
+                if (!disabled.contains(name) && !doorOff)
                 {
                     enabledWriters.add(name + " (" + group.name() + ")");
                 }

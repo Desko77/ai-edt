@@ -14,15 +14,19 @@ import static org.junit.Assert.assertTrue;
 import java.util.List;
 import java.util.Map;
 
+import org.eclipse.jface.preference.IPreferenceStore;
 import org.junit.After;
 import org.junit.Test;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+import ru.aiedt.mcp.server.toolkit.ops.EditMetadataTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitCommitTool;
 import ru.aiedt.mcp.server.toolkit.ops.GitTool;
 import ru.aiedt.mcp.server.toolkit.ops.ModulesLister;
@@ -80,6 +84,32 @@ public class TheCatalogueSaysWhatAToolMayChangeTest
 
         registry.register(new GitCommitTool());
         assertNull(ToolAnnotations.of(git, registry).get("readOnlyHint")); //$NON-NLS-1$
+    }
+
+    /**
+     * A constructor facade stays on under every write-blocking preset for its help, reads and
+     * previews, so its class follows its write door: a writer while the door is open, a reader
+     * once a preset shuts it. The door is a capability name the registry does not hold.
+     */
+    @Test
+    public void aConstructorFollowsItsWriteDoor()
+    {
+        IPreferenceStore store = Activator.getDefault().getPreferenceStore();
+        String presetBefore = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        try
+        {
+            McpToolCatalog registry = McpToolCatalog.getInstance();
+            EditMetadataTool constructor = new EditMetadataTool();
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, ToolProfile.EDITING.name());
+            assertNull(ToolAnnotations.of(constructor, registry).get("readOnlyHint")); //$NON-NLS-1$
+
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, ToolProfile.READ_ONLY.name());
+            assertEquals(Boolean.TRUE, ToolAnnotations.of(constructor, registry).get("readOnlyHint")); //$NON-NLS-1$
+        }
+        finally
+        {
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, presetBefore);
+        }
     }
 
     /**
