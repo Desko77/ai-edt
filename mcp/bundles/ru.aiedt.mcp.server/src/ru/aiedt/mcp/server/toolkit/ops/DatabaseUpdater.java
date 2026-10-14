@@ -2475,7 +2475,7 @@ public class DatabaseUpdater implements IMcpTool
         if (reading != null && reading.notCheckedWhy != null)
         {
             answer.put("syncFlowCheck", "not checked: " + reading.notCheckedWhy //$NON-NLS-1$ //$NON-NLS-2$
-                + ", so the update ran without looking for a running synchronization flow"); //$NON-NLS-1$
+                + "; no running synchronization flow was looked for before the update"); //$NON-NLS-1$
         }
     }
 
