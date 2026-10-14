@@ -1380,6 +1380,14 @@ final class ObjectOps
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String listModeArg = JsonUtils.extractStringArgument(params, "listMode"); //$NON-NLS-1$
+        final ConfigurationListProperties.ListMode listMode =
+            ConfigurationListProperties.ListMode.parse(listModeArg);
+        if (listMode == null)
+        {
+            return ToolResult.error("listMode takes one of: " //$NON-NLS-1$
+                + ConfigurationListProperties.ListMode.spelled()).toJson();
+        }
 
         final boolean[] typeSkipped = { false };
         BmDefinedTypeHelper.QualifierOptions qualifiers = new BmDefinedTypeHelper.QualifierOptions();
@@ -1394,11 +1402,20 @@ final class ObjectOps
         qualifiers.allowedLength = JsonUtils.extractStringArgument(params, "allowedLength"); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
-            + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
-            + EditMetadataTool.requireNonEmpty(type, "type"); //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn"); //$NON-NLS-1$
+        if (listMode != ConfigurationListProperties.ListMode.CLEAR)
+        {
+            err += EditMetadataTool.requireNonEmpty(type, "type"); //$NON-NLS-1$
+        }
         if (!err.isEmpty())
         {
             return ToolResult.error(err.trim()).toJson();
+        }
+        if (listMode == ConfigurationListProperties.ListMode.CLEAR)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "A metadata element must have at least one type; listMode=clear is not allowed.", //$NON-NLS-1$
+                "set_object_type"); //$NON-NLS-1$
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -1422,6 +1439,8 @@ final class ObjectOps
         final boolean[] typeApplied = { false };
         final List<String> typeResolved = new ArrayList<>();
         final List<String> typeUnresolved = new ArrayList<>();
+        final AtomicReference<BmDefinedTypeHelper.TypesResult> typeResult =
+            new AtomicReference<>();
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, topFqn, dryRun,
             (tx, owner) -> {
@@ -1447,8 +1466,10 @@ final class ObjectOps
                     }
                     target = (MdObject) child;
                 }
-                BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.setTypes(
-                    target, project, config, Collections.singletonList(type), qualifiers);
+                BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.updateTypes(
+                    target, project, config, Collections.singletonList(type), qualifiers,
+                    listMode, dryRun);
+                typeResult.set(tr);
                 typeApplied[0] = tr.ok;
                 typeSkipped[0] = tr.idempotentSkip;
                 if (tr.resolved != null)
@@ -1470,6 +1491,7 @@ final class ObjectOps
 
         Map<String, Object> typeApply = new LinkedHashMap<>();
         typeApply.put("requested", type); //$NON-NLS-1$
+        typeApply.put("listMode", listMode.name().toLowerCase()); //$NON-NLS-1$
         // A type that was already what was asked for is not a type this call applied. Reporting the
         // two the same way is how a request that wrote nothing read as a success.
         typeApply.put("applied", Boolean.valueOf(typeApplied[0] && !typeSkipped[0])); //$NON-NLS-1$
@@ -1486,7 +1508,19 @@ final class ObjectOps
             typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
         }
         r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
-        List<String> ignoredQualifiers = qualifiers.ignoredFor(type);
+        BmDefinedTypeHelper.TypesResult tr = typeResult.get();
+        if (tr != null)
+        {
+            r.tags.put("added", tr.added); //$NON-NLS-1$
+            r.tags.put("removed", tr.removed); //$NON-NLS-1$
+            r.tags.put("skipped", tr.skipped); //$NON-NLS-1$
+            r.tags.put("types", tr.finalTypes); //$NON-NLS-1$
+            r.tags.put("typeCount", Integer.valueOf(tr.finalTypes.size())); //$NON-NLS-1$
+        }
+        String qualifiedTypes = listMode == ConfigurationListProperties.ListMode.ADD && tr != null
+            ? String.join(",", tr.added) //$NON-NLS-1$
+            : listMode == ConfigurationListProperties.ListMode.REPLACE ? type : null;
+        List<String> ignoredQualifiers = qualifiers.ignoredFor(qualifiedTypes);
         if (!ignoredQualifiers.isEmpty())
         {
             r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$

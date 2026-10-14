@@ -41,6 +41,7 @@ import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmHelpHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
+import ru.aiedt.mcp.server.support.ConfigurationListProperties;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.EventStubGenerator;
 import ru.aiedt.mcp.server.support.MetadataGuards;
@@ -2022,9 +2023,23 @@ final class SpecializedOps
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String typesCsv = JsonUtils.extractStringArgument(params, "types"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String listModeArg = JsonUtils.extractStringArgument(params, "listMode"); //$NON-NLS-1$
+        final ConfigurationListProperties.ListMode listMode =
+            ConfigurationListProperties.ListMode.parse(listModeArg);
+        if (listMode == null)
+        {
+            return ToolResult.error("listMode takes one of: " //$NON-NLS-1$
+                + ConfigurationListProperties.ListMode.spelled()).toJson();
+        }
         if (ownerFqn == null || ownerFqn.isEmpty())
         {
             return ToolResult.error("setDefinedTypeTypes requires ownerFqn (DefinedType.X)").toJson();
+        }
+        if (listMode == ConfigurationListProperties.ListMode.CLEAR)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "A metadata element must have at least one type; listMode=clear is not allowed.", //$NON-NLS-1$
+                "set_defined_type_types"); //$NON-NLS-1$
         }
         if (typesCsv == null || typesCsv.isEmpty())
         {
@@ -2063,11 +2078,9 @@ final class SpecializedOps
             (tx, owner) -> {
                 Configuration config = Activator.getDefault().getConfigurationProvider()
                     .getConfiguration(project);
-                IDtProject dtProject = Activator.getDefault().getDtProjectManager()
-                    .getDtProject(project);
                 ru.aiedt.mcp.server.support.BmDefinedTypeHelper.TypesResult tr
-                    = ru.aiedt.mcp.server.support.BmDefinedTypeHelper.setTypes(
-                        owner, dtProject, config, types, qualifiers);
+                    = ru.aiedt.mcp.server.support.BmDefinedTypeHelper.updateTypes(
+                        owner, project, config, types, qualifiers, listMode, dryRun);
                 ref.set(tr);
                 if (!tr.ok)
                 {
@@ -2088,14 +2101,20 @@ final class SpecializedOps
         ToolResult tool = r.ok ? ToolResult.success() : ToolResult.error(r.error != null ? r.error : "setDefinedTypeTypes failed");
         tool.put("operation", "set_defined_type_types")
             .put("ownerFqn", ownerFqn)
-            .put("requestedTypes", types);
+            .put("requestedTypes", types)
+            .put("listMode", listMode.name().toLowerCase());
         if (ref.get() != null)
         {
             ru.aiedt.mcp.server.support.BmDefinedTypeHelper.TypesResult tr = ref.get();
             tool.put("resolved", tr.resolved)
                 .put("unresolved", tr.unresolved)
                 .put("mutated", tr.mutated)
-                .put("idempotentSkip", tr.idempotentSkip);
+                .put("idempotentSkip", tr.idempotentSkip)
+                .put("added", tr.added)
+                .put("removed", tr.removed)
+                .put("skipped", tr.skipped)
+                .put("types", tr.finalTypes)
+                .put("typeCount", tr.finalTypes.size());
             if (!tr.unresolved.isEmpty())
             {
                 tool.put("partialMutation", "Some FQNs could not be turned into TypeItems"); //$NON-NLS-1$ //$NON-NLS-2$
