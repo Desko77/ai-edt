@@ -41,8 +41,10 @@
        with neither it stops here and installs nothing.
     3. Refuse the whole run when a record belongs to no installation found here, when a
        bundles.info cannot be read, or while any 1cedt.exe or javaw.exe of a selected
-       installation is alive, naming the PIDs. No process is closed or killed in this
-       mode, and no session is started: close them yourself and re-run.
+       installation is alive - or of another installation that loads the same bundles.info
+       of a shared profile - naming the PIDs, their installation and their -data workspace.
+       No process is closed or killed in this mode, and no session is started: close them
+       yourself and re-run.
     4. Run the p2 director of EACH selected installation, with the java named by that
        installation's ini, then -JavaExe, then JAVA_HOME, then the java on PATH.
     5. Read the versions back and print installation / before / after, exiting non-zero
@@ -424,15 +426,49 @@ if ($AllInstallations) {
     # The processes of an installation: its own launcher, and the JVM that launcher started. The
     # JVM runs from a shared JDK, so its own path says nothing about the installation - the
     # installation directory appears in its command line, in the launcher jar it was started with.
+    # The launcher hands the JVM its own path in the form it was started with, so a session started
+    # with forward slashes carries the installation directory written that way.
     function Get-InstallationProcess([string]$installDir) {
         $found = @()
+        $wanted = $installDir -replace '/', '\'
         $filter = "Name='1cedt.exe' or Name='1cedtc.exe' or Name='javaw.exe' or Name='java.exe'"
         foreach ($p in @(Get-CimInstance Win32_Process -Filter $filter -ErrorAction SilentlyContinue)) {
-            $command = $p.CommandLine
-            $inCommand = $command -and $command.IndexOf($installDir, [StringComparison]::OrdinalIgnoreCase) -ge 0
+            $command = if ($p.CommandLine) { $p.CommandLine -replace '/', '\' } else { $null }
+            $inCommand = $command -and $command.IndexOf($wanted, [StringComparison]::OrdinalIgnoreCase) -ge 0
             if ((Test-UnderPath $p.ExecutablePath $installDir) -or $inCommand) { $found += $p }
         }
         return $found
+    }
+
+    # The workspace a process was started on, from its -data argument, or an empty string.
+    function Get-ProcessWorkspace($process) {
+        $m = [regex]::Match([string]$process.CommandLine, '-data\s+("([^"]*)"|(\S+))')
+        if (-not $m.Success) { return '' }
+        if ($m.Groups[2].Success) { return $m.Groups[2].Value }
+        return $m.Groups[3].Value
+    }
+
+    # The bundles.info an installation loads: the record the report marks active, normalised so
+    # that two installations naming one file are seen to be one profile.
+    function Get-ActiveBundlesInfo($records) {
+        foreach ($record in @($records)) {
+            if ($record.active) { return ([string]$record.bundlesInfo -replace '/', '\').ToLowerInvariant() }
+        }
+        return ''
+    }
+
+    # A director writes into the profile its installation loads. Another installation loading the
+    # same bundles.info reads that profile too, so its running EDT holds this one as well: the entry
+    # becomes 'running' and SharedWith names the installations whose processes hold it.
+    function Set-SharedProfileHolder($plan) {
+        foreach ($p in @($plan)) {
+            if (-not $p.Active) { continue }
+            foreach ($q in @($plan)) {
+                if ([object]::ReferenceEquals($p, $q) -or $q.Active -ne $p.Active -or @($q.Running).Count -eq 0) { continue }
+                $p.Status = 'running'
+                $p.SharedWith += $q
+            }
+        }
     }
 
     # The java.exe an installation's director runs on, and where that choice came from. The director
@@ -599,8 +635,12 @@ if ($AllInstallations) {
             JavaFrom = $java.Source
             Launch   = [string]$entry.launcher
             Selected = $false
+            Active   = Get-ActiveBundlesInfo $entry.records
+            SharedWith = @()
         }
     }
+
+    Set-SharedProfileHolder $plan
 
     Write-Step "Found $($plan.Count) installation(s) recording $BundleSymbolicName; repository has $repoVersion"
     foreach ($p in $plan) {
@@ -689,8 +729,16 @@ if ($AllInstallations) {
     if ($running.Count -gt 0) {
         Write-Err2 "$($running.Count) installation(s) have a running 1C:EDT: close it and re-run. No process is closed or killed here."
         foreach ($p in $running) {
-            foreach ($process in $p.Running) {
-                Write-Note "  PID $($process.ProcessId) $($process.Name)  [$($p.Install)]"
+            $holders = @($p) + @($p.SharedWith)
+            foreach ($q in @($p.SharedWith)) {
+                Write-Note "  $($p.Install) loads the same profile as $($q.Install): $($p.Active)"
+            }
+            foreach ($holder in $holders) {
+                foreach ($process in @($holder.Running)) {
+                    $workspace = Get-ProcessWorkspace $process
+                    $on = if ($workspace) { "  workspace $workspace" } else { '' }
+                    Write-Note "  PID $($process.ProcessId) $($process.Name)  [$($holder.Install)]$on"
+                }
             }
         }
     }
