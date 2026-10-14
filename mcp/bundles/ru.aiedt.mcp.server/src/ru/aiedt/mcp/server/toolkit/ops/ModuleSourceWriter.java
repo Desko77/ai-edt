@@ -696,9 +696,11 @@ public class ModuleSourceWriter implements IMcpTool
             PersistenceResult persistence;
             FileMarkers.Grouped validation = null;
             String delivery = null;
+            boolean unchanged = false;
             if (provided != null)
             {
                 boolean written = provided.write(newLines);
+                unchanged = !written;
                 // Nothing in the BM holds this module, so there is no index to flush and no
                 // marker to wait for; saying so beats a "skipped" that reads as a failure.
                 persistence = PersistenceResult.notApplicable(
@@ -708,11 +710,19 @@ public class ModuleSourceWriter implements IMcpTool
             }
             else
             {
-                writeFile(file, newLines, hasBom, fileExists);
+                unchanged = !writeFile(file, newLines, hasBom, fileExists);
 
                 // --- step 14: persistence sync (BM flush) ---
-                String moduleFqn = resolveFqnForValidation(objectName, modulePath);
-                persistence = forceExportModule(project, moduleFqn);
+                if (unchanged)
+                {
+                    persistence = PersistenceResult.notApplicable(
+                        "not needed: the module already held this text, the file was not written"); //$NON-NLS-1$
+                }
+                else
+                {
+                    String moduleFqn = resolveFqnForValidation(objectName, modulePath);
+                    persistence = forceExportModule(project, moduleFqn);
+                }
 
                 // --- step 15: optional EDT validation ---
                 if (validateAfterWrite)
@@ -736,6 +746,9 @@ public class ModuleSourceWriter implements IMcpTool
                 fm.put("linesBefore", totalOriginal); //$NON-NLS-1$
             else
                 fm.put("newFile", true); //$NON-NLS-1$
+
+            if (unchanged)
+                fm.put("unchanged", true); //$NON-NLS-1$
 
             if (protectionWarning != null)
                 fm.put("protection", protectionWarning); //$NON-NLS-1$
@@ -1355,9 +1368,11 @@ public class ModuleSourceWriter implements IMcpTool
      * @param lines lines to write, joined with the delimiter the file already uses
      * @param withBom whether to prepend the BOM
      * @param fileExists whether the file already exists (create vs. setContents)
+     * @return <code>false</code> when the file already holds exactly these bytes and was left
+     *     untouched, <code>true</code> when it was written
      * @throws Exception on any I/O or workspace failure
      */
-    private void writeFile(IFile file, List<String> lines, boolean withBom, boolean fileExists)
+    private boolean writeFile(IFile file, List<String> lines, boolean withBom, boolean fileExists)
         throws Exception
     {
         String content = String.join("\n", lines); //$NON-NLS-1$
@@ -1378,6 +1393,10 @@ public class ModuleSourceWriter implements IMcpTool
         {
             output = contentBytes;
         }
+        if (fileExists && holdsExactly(file, output))
+        {
+            return false;
+        }
         try (InputStream stream = new ByteArrayInputStream(output))
         {
             if (fileExists)
@@ -1387,6 +1406,37 @@ public class ModuleSourceWriter implements IMcpTool
                 createParentFolders(file);
                 file.create(stream, true, null);
             }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the file holds exactly the given bytes, both on disk and in the workspace.
+     * <p>
+     * A file out of sync with the workspace counts as different: its disk bytes may already be
+     * the new text while the workspace and the EDT model still hold the old one, and only the
+     * write brings them together. A file that cannot be read counts as different too, so the
+     * write goes ahead as it did before.
+     * </p>
+     *
+     * @param file the module file
+     * @param bytes the content about to be written
+     * @return <code>true</code> when the file is in sync and its content equals the bytes
+     */
+    private static boolean holdsExactly(IFile file, byte[] bytes)
+    {
+        if (!file.isSynchronized(IResource.DEPTH_ZERO))
+        {
+            return false;
+        }
+        try (InputStream in = file.getContents(true))
+        {
+            return Arrays.equals(in.readAllBytes(), bytes);
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("Could not compare " + file.getFullPath() + " before writing: " + e); //$NON-NLS-1$ //$NON-NLS-2$
+            return false;
         }
     }
 
