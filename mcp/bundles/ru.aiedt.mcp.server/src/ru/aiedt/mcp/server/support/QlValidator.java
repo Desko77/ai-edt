@@ -11,14 +11,22 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.emf.common.util.TreeIterator;
 import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.xtext.nodemodel.ICompositeNode;
+import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 import org.eclipse.xtext.parser.IParseResult;
 import org.eclipse.xtext.resource.IResourceServiceProvider;
 import org.eclipse.xtext.resource.XtextResource;
@@ -31,6 +39,8 @@ import org.eclipse.xtext.validation.Issue;
 import com._1c.g5.v8.dt.core.platform.IExtensionProject;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
+import com._1c.g5.v8.dt.ql.model.AbstractQuerySchemaSource;
+import com._1c.g5.v8.dt.ql.model.CommonExpression;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -136,6 +146,123 @@ public final class QlValidator
     }
 
     /**
+     * One place in the query text, as an issue names it.
+     * <p>
+     * An offset is the precise place; line and column are what an issue carries when it carries no
+     * offset, and two places are the same place when either spelling agrees on it.
+     * </p>
+     */
+    public static final class At
+    {
+        /** The character offset, or a negative number when the issue carries none. */
+        public final int offset;
+
+        /** The 1-based line, or a negative number when unknown. */
+        public final int line;
+
+        /** The 1-based column, or a negative number when unknown. */
+        public final int column;
+
+        private At(int offset, int line, int column)
+        {
+            this.offset = offset;
+            this.line = line;
+            this.column = column;
+        }
+
+        /**
+         * Makes a place out of what an issue named.
+         *
+         * @param offset the offset, negative when absent
+         * @param line the line, negative when absent
+         * @param column the column, negative when absent
+         * @return the place
+         */
+        public static At of(int offset, int line, int column)
+        {
+            return new At(offset, line, column);
+        }
+
+        /**
+         * Whether two issues point at the same place.
+         * <p>
+         * Offsets decide when both sides have one; otherwise the line and the column decide, and a
+         * place that names neither is never the same place as anything - two unknown positions are
+         * not one known position.
+         * </p>
+         *
+         * @param other the other place
+         * @return whether both issues point here
+         */
+        boolean sameAs(At other)
+        {
+            if (this.offset >= 0 && other.offset >= 0)
+            {
+                return this.offset == other.offset;
+            }
+            if (this.line <= 0 || this.column <= 0 || other.line <= 0 || other.column <= 0)
+            {
+                return false;
+            }
+            return this.line == other.line && this.column == other.column;
+        }
+    }
+
+    /**
+     * One written field reference that begins with a declared source alias, and the span of the text
+     * it occupies.
+     */
+    public static final class FieldSite
+    {
+        /** The character offset of the reference. */
+        public final int offset;
+
+        /** The length of the reference in characters. */
+        public final int length;
+
+        /** The 1-based line the reference starts on. */
+        public final int line;
+
+        /** The alias the reference begins with, as written. */
+        public final String alias;
+
+        /**
+         * Makes a site.
+         *
+         * @param offset the character offset
+         * @param length the length in characters
+         * @param line the 1-based starting line
+         * @param alias the alias the reference begins with
+         */
+        public FieldSite(int offset, int length, int line, String alias)
+        {
+            this.offset = offset;
+            this.length = length;
+            this.line = line;
+            this.alias = alias;
+        }
+    }
+
+    /**
+     * What a parsed query says about its own sources: which aliases it declared, whether each
+     * alias's table resolved in the model that parsed the query, and where its alias-headed field
+     * references sit in the text.
+     * <p>
+     * Built per model: the parse is the same text, so the sites are the same in both, while
+     * resolution is a property of the model that did the parsing - the very difference the merge of
+     * two answers turns on.
+     * </p>
+     */
+    public static final class QueryLayout
+    {
+        /** Lower-case alias to whether its source resolved in the model that parsed the query. */
+        public final Map<String, Boolean> aliasResolves = new LinkedHashMap<>();
+
+        /** The alias-headed field references, in text order. */
+        public final List<FieldSite> sites = new ArrayList<>();
+    }
+
+    /**
      * Outcome of a validation pass.
      */
     public static final class ValidationResult
@@ -175,6 +302,17 @@ public final class QlValidator
          */
         public String resolvedInProject;
 
+        /**
+         * The projects whose models a settled answer draws on, when it draws on more than the one
+         * the caller named.
+         * <p>
+         * Distinct from {@link #resolvedInProject}, which names the one model that answered alone.
+         * A merged answer is drawn from both: the named project's diagnostics, kept or dropped
+         * against the other model place by place.
+         * </p>
+         */
+        public List<String> resolvedInProjects;
+
         private ValidationResult(boolean available, List<QlIssue> issues, String reason)
         {
             this(available, issues, reason, false);
@@ -185,7 +323,7 @@ public final class QlValidator
         {
             this.unconfirmed = unconfirmed;
             this.available = available;
-            this.issues = issues != null ? issues : new ArrayList<>();
+            this.issues = oneIssuePerPlace(issues != null ? issues : new ArrayList<>());
             this.unavailableReason = reason;
             int e = 0;
             int w = 0;
@@ -271,6 +409,10 @@ public final class QlValidator
             stats.put("warnings", warningCount); //$NON-NLS-1$
             stats.put("available", available); //$NON-NLS-1$
             stats.put("unconfirmed", unconfirmed); //$NON-NLS-1$
+            if (resolvedInProjects != null)
+            {
+                stats.put("resolvedInProjects", resolvedInProjects); //$NON-NLS-1$
+            }
             if (unavailableReason != null)
             {
                 // Reported whenever there is one. It used to be withheld unless the whole check
@@ -368,6 +510,239 @@ public final class QlValidator
         return kept;
     }
 
+    /**
+     * One diagnostic per place: the resource's copy and the checker's copy of one finding share a
+     * severity, a line, a column and a message, and answering with both reports every place twice
+     * and doubles every count.
+     *
+     * @param raw the diagnostics as collected
+     * @return the diagnostics, one per place, in collection order
+     */
+    static List<QlIssue> oneIssuePerPlace(List<QlIssue> raw)
+    {
+        Map<String, QlIssue> byPlace = new LinkedHashMap<>();
+        for (QlIssue issue : raw)
+        {
+            String key = placeKey(issue.severity, issue.line, issue.column, issue.message);
+            if (!byPlace.containsKey(key))
+            {
+                byPlace.put(key, issue);
+            }
+        }
+        return new ArrayList<>(byPlace.values());
+    }
+
+    /**
+     * The identity of a place: severity, line, column and message together. Two diagnostics
+     * identical on all four are the same finding said twice; two that differ on the message, or in
+     * severity, are two findings and both stay.
+     *
+     * @param severity the severity
+     * @param line the line
+     * @param column the column
+     * @param message the message
+     * @return the key of the place
+     */
+    private static String placeKey(String severity, int line, int column, String message)
+    {
+        return severity + "\u0000" + line + "\u0000" + column + "\u0000" + message; //$NON-NLS-1$
+    }
+
+    /**
+     * Reads the sources and the alias-headed field references of a parsed query, with the span each
+     * reference occupies in the text.
+     * <p>
+     * Best-effort by design: the layout exists to settle one model's answer against another's, and
+     * a query the walk cannot read yields an empty layout, which settles nothing - the conservative
+     * direction for a check that reports diagnostics.
+     * </p>
+     *
+     * @param resource the parsed query
+     * @return the layout, empty when the model could not be walked
+     */
+    public static QueryLayout layoutOf(Resource resource)
+    {
+        QueryLayout layout = new QueryLayout();
+        try
+        {
+            Set<String> aliases = new LinkedHashSet<>();
+            for (TreeIterator<EObject> walk = EcoreUtil.getAllContents(resource, false); walk
+                .hasNext();)
+            {
+                EObject next = walk.next();
+                if (next instanceof AbstractQuerySchemaSource)
+                {
+                    AbstractQuerySchemaSource source = (AbstractQuerySchemaSource)next;
+                    String alias = source.getAlias();
+                    if (alias != null && !alias.isBlank())
+                    {
+                        String key = alias.toLowerCase(Locale.ROOT);
+                        aliases.add(key);
+                        layout.aliasResolves.put(key, Boolean.valueOf(resolvesHere(source)));
+                    }
+                }
+            }
+            for (TreeIterator<EObject> walk = EcoreUtil.getAllContents(resource, false); walk
+                .hasNext();)
+            {
+                EObject next = walk.next();
+                if (!(next instanceof CommonExpression))
+                {
+                    continue;
+                }
+                String alias = aliasHeaded(((CommonExpression)next).getContent(), aliases);
+                if (alias == null)
+                {
+                    continue;
+                }
+                ICompositeNode node = NodeModelUtils.findActualNodeFor(next);
+                if (node == null)
+                {
+                    continue;
+                }
+                layout.sites.add(new FieldSite(node.getTotalOffset(), node.getTotalLength(),
+                    node.getStartLine(), alias));
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("Could not read the query's sources: " + e.getMessage()); //$NON-NLS-1$
+            return new QueryLayout();
+        }
+        return layout;
+    }
+
+    /**
+     * The declared alias a written field reference begins with, when it begins with one.
+     *
+     * @param content the written text of the reference
+     * @param aliases the query's declared aliases, lower case
+     * @return the alias as written, or <code>null</code> when the reference names no alias
+     */
+    private static String aliasHeaded(String content, Set<String> aliases)
+    {
+        if (content == null)
+        {
+            return null;
+        }
+        String head = content;
+        int dot = content.indexOf('.');
+        if (dot >= 0)
+        {
+            head = content.substring(0, dot);
+        }
+        head = head.trim();
+        return isIdentifier(head) && aliases.contains(head.toLowerCase(Locale.ROOT)) ? head : null;
+    }
+
+    /**
+     * Whether a word is shaped like a query identifier: a letter or an underscore, then letters,
+     * underscores or digits. Read per character rather than through a regular expression, so the
+     * Cyrillic alphabet needs no separate spelling-out.
+     *
+     * @param word the word
+     * @return whether the word can name an alias
+     */
+    private static boolean isIdentifier(String word)
+    {
+        if (word.isEmpty())
+        {
+            return false;
+        }
+        for (int i = 0; i < word.length(); i++)
+        {
+            char c = word.charAt(i);
+            if (Character.isLetter(c) || c == '_' || (i > 0 && Character.isDigit(c)))
+            {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Whether a source's table resolved in the model that parsed the query.
+     * <p>
+     * Read from the model rather than from a diagnostic's words: the words are localised, and a
+     * rule written against them stops working on an install in another language. A source that is
+     * not a metadata table - a temporary table, a nested query - resolves nowhere by definition.
+     * </p>
+     *
+     * @param source the source
+     * @return whether the model this query was parsed in holds the table the source names
+     */
+    private static boolean resolvesHere(AbstractQuerySchemaSource source)
+    {
+        return QueryResultSchema.dbViewOf(source) != null;
+    }
+
+    /**
+     * Whether a diagnostic one model raised still stands now that the other model has answered too.
+     * <p>
+     * The diagnostic is dropped only when BOTH hold: the other model said nothing at the very place
+     * of the diagnostic, and the source its field's alias names resolved in the other model's
+     * parse. The first condition keeps what both models see - an invented field is reported
+     * everywhere. The second keeps what the other model was never in a position to judge: an error
+     * about an object the named project owns itself, whose table the other model does not hold. A
+     * diagnostic tied to no alias at all - a syntax complaint, a table that is not there - stands,
+     * because nothing the other model could have said bears on it.
+     * </p>
+     *
+     * @param issue the place of the diagnostic
+     * @param otherIssues the places the other model reported at
+     * @param sites the alias-headed field references of the parsed query
+     * @param aliasResolvesElsewhere which aliases resolved in the other model
+     * @return whether the diagnostic belongs in the settled answer
+     */
+    public static boolean standsAfterMerging(At issue, List<At> otherIssues, List<FieldSite> sites,
+        Map<String, Boolean> aliasResolvesElsewhere)
+    {
+        for (At other : otherIssues)
+        {
+            if (other.sameAs(issue))
+            {
+                return true;
+            }
+        }
+        String alias = aliasUnderwriting(issue, sites);
+        if (alias == null)
+        {
+            return true;
+        }
+        Boolean resolves = aliasResolvesElsewhere.get(alias.toLowerCase(Locale.ROOT));
+        return resolves == null || !resolves.booleanValue();
+    }
+
+    /**
+     * The declared alias whose field reference covers the place a diagnostic points at.
+     * <p>
+     * Offsets decide when both have them; a diagnostic without one is matched by line, which is
+     * where its reference starts when the two differ at all.
+     * </p>
+     *
+     * @param issue the place of the diagnostic
+     * @param sites the alias-headed field references, in text order
+     * @return the alias, or <code>null</code> when no reference covers the place
+     */
+    private static String aliasUnderwriting(At issue, List<FieldSite> sites)
+    {
+        for (FieldSite site : sites)
+        {
+            if (issue.offset >= 0 && site.offset >= 0)
+            {
+                if (issue.offset >= site.offset && issue.offset < site.offset + site.length)
+                {
+                    return site.alias;
+                }
+            }
+            else if (issue.line > 0 && site.line == issue.line)
+            {
+                return site.alias;
+            }
+        }
+        return null;
+    }
 
     /**
      * The configuration an extension extends, when there is a usable one to ask as well.
@@ -410,6 +785,29 @@ public final class QlValidator
         static Pass voided()
         {
             return new Pass(null);
+        }
+    }
+
+    /**
+     * What one model answered, with the layout of the query as that model resolved it.
+     */
+    private static final class Asked
+    {
+        /** The verdict, never <code>null</code>. */
+        final ValidationResult verdict;
+
+        /** The query's sources as this model resolved them. */
+        final QueryLayout layout;
+
+        private Asked(ValidationResult verdict, QueryLayout layout)
+        {
+            this.verdict = verdict;
+            this.layout = layout;
+        }
+
+        static Asked of(ValidationResult verdict)
+        {
+            return new Asked(verdict, new QueryLayout());
         }
     }
 
@@ -669,14 +1067,16 @@ public final class QlValidator
      * <p>
      * The extension is asked first because a query written in one usually concerns it. The
      * configuration is asked only when the extension raised errors, so the ordinary case pays for
-     * one validation and not two, and its answer is taken only when it is clean.
+     * one validation and not two, and its answer is taken whole only when it is clean.
      * </p>
      * <p>
      * Not ranked by diagnostic count: a model that cannot find the table never reaches the fields,
      * so it can answer with one complaint while the model that did find it reports a real error per
      * bad field. Counting would prefer the one that resolved nothing. Clean or not clean cannot go
-     * wrong that way, and when neither is clean the answer kept is the one from the project the
-     * caller named.
+     * wrong that way, and when neither is clean the two answers are settled place by place: the
+     * named project's diagnostics kept against the other model's silence, so a non-adopted
+     * attribute of a borrowed object stops being an error while an invented field, and an error
+     * about an object the named project owns itself, stay.
      * </p>
      *
      * @param asked the project the caller named.
@@ -735,6 +1135,13 @@ public final class QlValidator
     /**
      * One pass of the check: the named project's model, and the other one when its answer would be
      * used.
+     * <p>
+     * The other model's clean answer settles the query on its own. Its unclean one does not end the
+     * matter: a query that mixes a borrowed object's non-adopted attribute with an object the
+     * extension owns upsets both models, and their answers are then settled place by place - each
+     * diagnostic of the named model kept unless the other model is silent at that very place and
+     * the source the diagnostic's field names resolved there.
+     * </p>
      *
      * @param asked the project the caller named.
      * @param queryText the query.
@@ -744,7 +1151,7 @@ public final class QlValidator
     private static Pass onePass(IProject asked, String queryText, boolean dcsMode,
         boolean bareExpression)
     {
-        ValidationResult here = runValidation(asked, queryText, dcsMode);
+        Asked here = runValidation(asked, queryText, dcsMode);
         if (bareExpression)
         {
             // Demoted HERE, before anything counts the errors. Left until after the answer was
@@ -752,14 +1159,14 @@ public final class QlValidator
             // the check to the other model to have them confirmed - and when that model could not
             // be reached, an ordinary expression came back refused as unconfirmed. Nothing was
             // ever going to confirm them: there is no FROM clause for a field to resolve against.
-            here = withTheUnjudgeableDemoted(here);
+            here = new Asked(withTheUnjudgeableDemoted(here.verdict), here.layout);
         }
-        if (!here.available)
+        if (!here.verdict.available)
         {
             // This EDT cannot check queries. Readiness has nothing to add to that, and asking about
             // it first would turn a build in progress into a block on an install where the policy
             // is to write anyway.
-            return Pass.of(here);
+            return Pass.of(here.verdict);
         }
         String notReady = ProjectStateGuard.checkReadyOrError(asked);
         if (notReady != null)
@@ -769,15 +1176,15 @@ public final class QlValidator
             // nothing wrong with a query that is wrong.
             return Pass.of(ValidationResult.unconfirmed(notReady));
         }
-        if (here.unconfirmed || here.errorCount == 0 || here.parserObjected)
+        if (here.verdict.unconfirmed || here.verdict.errorCount == 0 || here.verdict.parserObjected)
         {
             // Parsing settled it: the other model would be parsing the same text.
-            return Pass.of(here);
+            return Pass.of(here.verdict);
         }
         Companion companion = companionOf(asked);
         if (companion.kind == Companion.Kind.NONE)
         {
-            return Pass.of(here);
+            return Pass.of(here.verdict);
         }
         if (companion.kind != Companion.Kind.READY_TO_ASK)
         {
@@ -804,10 +1211,10 @@ public final class QlValidator
                     "This query could not be confirmed against the model that holds the objects" //$NON-NLS-1$
                         + " it names. " + otherNotReady)); //$NON-NLS-1$
             }
-            ValidationResult above = runValidation(alternative, queryText, dcsMode);
+            Asked above = runValidation(alternative, queryText, dcsMode);
             if (bareExpression)
             {
-                above = withTheUnjudgeableDemoted(above);
+                above = new Asked(withTheUnjudgeableDemoted(above.verdict), above.layout);
             }
             if (other.moved())
             {
@@ -816,7 +1223,7 @@ public final class QlValidator
                 // well have settled by the time a second pass ran.
                 return Pass.voided();
             }
-            if (!above.available || above.unconfirmed)
+            if (!above.verdict.available || above.verdict.unconfirmed)
             {
                 // It was there, it was ready, and asking it did not work. The errors found in the
                 // named project stay unconfirmed all the same.
@@ -824,13 +1231,53 @@ public final class QlValidator
                     "This query could not be confirmed against the model that holds the objects" //$NON-NLS-1$
                         + " it names. That model could not be asked.")); //$NON-NLS-1$
             }
-            if (above.errorCount != 0)
+            if (above.verdict.errorCount != 0)
             {
-                return Pass.of(here);
+                return Pass.of(mergedFromBoth(here, above, asked.getName(), alternative.getName()));
             }
-            above.resolvedInProject = alternative.getName();
-            return Pass.of(above);
+            above.verdict.resolvedInProject = alternative.getName();
+            return Pass.of(above.verdict);
         }
+    }
+
+    /**
+     * Settles the two models' answers against each other, for a query neither of them accounts for
+     * whole.
+     * <p>
+     * Every diagnostic of the named model is kept or dropped by
+     * {@link #standsAfterMerging(At, List, List, Map)}; the other model's own diagnostics - about
+     * the objects the named project declares itself - enter the answer nowhere, because the named
+     * model is the only one of the two that holds those objects. The answer names both models in
+     * {@code resolvedInProjects}.
+     * </p>
+     *
+     * @param here what the named project answered, with its layout.
+     * @param above what the other model answered, with its layout.
+     * @param askedName the named project's name.
+     * @param otherName the other model's project name.
+     * @return the settled answer.
+     */
+    private static ValidationResult mergedFromBoth(Asked here, Asked above, String askedName,
+        String otherName)
+    {
+        List<At> otherPlaces = new ArrayList<>();
+        for (QlIssue other : above.verdict.issues)
+        {
+            otherPlaces.add(At.of(-1, other.line, other.column));
+        }
+        List<QlIssue> kept = new ArrayList<>();
+        for (QlIssue issue : here.verdict.issues)
+        {
+            if (standsAfterMerging(At.of(-1, issue.line, issue.column), otherPlaces, here.layout.sites,
+                above.layout.aliasResolves))
+            {
+                kept.add(issue);
+            }
+        }
+        ValidationResult merged = ValidationResult.of(kept);
+        merged.parserObjected = here.verdict.parserObjected;
+        merged.resolvedInProjects = List.of(askedName, otherName);
+        return merged;
     }
 
     /**
@@ -844,7 +1291,7 @@ public final class QlValidator
         return diagnostic.getClass().getSimpleName();
     }
 
-    private static ValidationResult runValidation(IProject project, String queryText,
+    private static Asked runValidation(IProject project, String queryText,
         boolean dcsMode)
     {
         XtextResource resource = null;
@@ -859,12 +1306,12 @@ public final class QlValidator
                 .getResourceServiceProvider(lookup);
             if (rsp == null)
             {
-                return ValidationResult.unavailable("QlDcs language support not registered"); //$NON-NLS-1$
+                return Asked.of(ValidationResult.unavailable("QlDcs language support not registered")); //$NON-NLS-1$
             }
             IResourceSetProvider rsProvider = rsp.get(IResourceSetProvider.class);
             if (rsProvider == null)
             {
-                return ValidationResult.unavailable("IResourceSetProvider not available"); //$NON-NLS-1$
+                return Asked.of(ValidationResult.unavailable("IResourceSetProvider not available")); //$NON-NLS-1$
             }
             ResourceSet rs = rsProvider.get(project);
             URI uri = URI.createPlatformResourceURI("/" + project.getName() //$NON-NLS-1$
@@ -892,6 +1339,7 @@ public final class QlValidator
             {
                 resource.load(in, null);
             }
+            QueryLayout layout = layoutOf(resource);
             List<QlIssue> issues = found;
             for (Resource.Diagnostic d : resource.getErrors())
             {
@@ -917,13 +1365,13 @@ public final class QlValidator
                     // retry a query that will fail the same way every time.
                     ValidationResult settledByTheParser = ValidationResult.of(issues);
                     settledByTheParser.parserObjected = true;
-                    return settledByTheParser;
+                    return new Asked(settledByTheParser, layout);
                 }
                 // Parsing found what parsing finds. Whether the query names objects that exist was
                 // never asked, and answering "no problems" would say it was.
-                return ValidationResult.unconfirmedWith(issues,
+                return new Asked(ValidationResult.unconfirmedWith(issues,
                     "The checker that resolves names against metadata was not available, so only" //$NON-NLS-1$
-                        + " the syntax of this query was checked."); //$NON-NLS-1$
+                        + " the syntax of this query was checked."), layout); //$NON-NLS-1$
             }
             List<Issue> semantic = validator.validate(resource, CheckMode.ALL,
                 CancelIndicator.NullImpl);
@@ -947,7 +1395,7 @@ public final class QlValidator
             }
             ValidationResult settled = ValidationResult.of(issues);
             settled.parserObjected = parserObjected;
-            return settled;
+            return new Asked(settled, layout);
         }
         catch (Exception e)
         {
@@ -958,13 +1406,13 @@ public final class QlValidator
                 // text. That verdict stands on its own.
                 ValidationResult settledByTheParser = ValidationResult.of(found);
                 settledByTheParser.parserObjected = true;
-                return settledByTheParser;
+                return Asked.of(settledByTheParser);
             }
             // Not unavailable: this EDT can check queries, and this one check came apart. Saying
             // otherwise would have callers write through it, and would drop whatever parsing had
             // already found.
-            return ValidationResult.unconfirmedWith(found, "Checking this query failed part-way: " //$NON-NLS-1$
-                + e.getMessage());
+            return Asked.of(ValidationResult.unconfirmedWith(found, "Checking this query failed part-way: " //$NON-NLS-1$
+                + e.getMessage()));
         }
         finally
         {

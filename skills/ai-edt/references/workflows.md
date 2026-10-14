@@ -62,6 +62,14 @@ stale derived state rather than real type errors. Revalidation does not clear th
    language the query is written in; a star over a nested query or a temporary table stays as one
    column, because there is no table of the model behind it.
 
+In an extension project the query is checked against two models: the extension's own and the
+configuration it extends. A clean answer from the configuration settles the query whole and is
+named in `resolvedInProject`. When neither model is clean - a query mixing a borrowed object's
+non-adopted attribute with an object the extension declares itself - the two answers are settled
+place by place: a diagnostic of the extension is dropped only where the configuration is silent at
+that very place and the table the field's alias names resolves in the configuration's model. The
+answer then names both projects in `resolvedInProjects`, and one place is reported once.
+
 Do not batch several queries and validate at the end - a failure then costs a hunt for which one
 broke.
 
