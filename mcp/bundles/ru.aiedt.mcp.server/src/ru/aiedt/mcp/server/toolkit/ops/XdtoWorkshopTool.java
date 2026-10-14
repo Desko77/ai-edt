@@ -179,8 +179,7 @@ public class XdtoWorkshopTool implements IMcpTool
         }
         if (!BmXdtoHelper.xdtoApiAvailable())
         {
-            return ToolResult.error("XDTO model API (com._1c.g5.v8.dt.xdto.model) is not " //$NON-NLS-1$
-                + "reachable on this EDT runtime").toJson(); //$NON-NLS-1$
+            return apiNotReachable();
         }
         switch (op)
         {
@@ -495,6 +494,25 @@ public class XdtoWorkshopTool implements IMcpTool
     }
 
     // ---- helpers ----
+
+    /**
+     * The refusal for an EDT runtime the XDTO model API did not come with, naming the call that
+     * answers availability.
+     * <p>
+     * The facade's help ends with an {@code XDTO API: available / UNAVAILABLE} line, so the
+     * refusal names that help rather than a topic: this facade has none, its help is one document.
+     * The hint carries the call ready to send.
+     * </p>
+     *
+     * @return the refusal as a tool result document
+     */
+    static String apiNotReachable()
+    {
+        return ToolResult.error("XDTO model API (com._1c.g5.v8.dt.xdto.model) is not " //$NON-NLS-1$
+            + "reachable on this EDT runtime. operation=help answers whether it is.") //$NON-NLS-1$
+            .hint(NAME, Map.of("operation", "help")) //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
 
     private static final class Ctx
     {
