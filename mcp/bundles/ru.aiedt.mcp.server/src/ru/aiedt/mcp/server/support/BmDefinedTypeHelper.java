@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -112,7 +113,325 @@ public final class BmDefinedTypeHelper
         public boolean idempotentSkip;
         public final List<String> resolved = new ArrayList<>();
         public final List<String> unresolved = new ArrayList<>();
+        public final List<String> added = new ArrayList<>();
+        public final List<String> removed = new ArrayList<>();
+        public final List<String> skipped = new ArrayList<>();
+        public final List<String> finalTypes = new ArrayList<>();
         public String error;
+    }
+
+    /**
+     * Applies one of the list operations accepted by the type-editing facade.
+     *
+     * @param target object carrying the type description
+     * @param project owning project for platform type resolution
+     * @param config configuration for reference type resolution
+     * @param typeFqns types named by the call
+     * @param qualifierOptions qualifiers for newly added types, or for a replacement
+     * @param mode requested list operation
+     * @param preview whether to calculate the result without changing {@code target}
+     * @return the update result and the resulting ordered composition
+     */
+    public static TypesResult updateTypes(MdObject target, IProject project,
+        Configuration config, List<String> typeFqns, QualifierOptions qualifierOptions,
+        ConfigurationListProperties.ListMode mode, boolean preview)
+    {
+        TypesResult r = new TypesResult();
+        if (target == null || typeFqns == null || mode == null)
+        {
+            r.error = "target, typeFqns and mode are required"; //$NON-NLS-1$
+            return r;
+        }
+        Object typeDesc = readTypeDescription(target);
+        if (typeDesc == null)
+        {
+            typeDesc = readTypeDescriptionByGetter(target, "getCommandParameterType"); //$NON-NLS-1$
+            if (typeDesc == null)
+            {
+                typeDesc = ensureTypeDescription(target);
+            }
+        }
+        if (typeDesc == null)
+        {
+            r.error = "Cannot resolve or create TypeDescription on " //$NON-NLS-1$
+                + target.eClass().getName();
+            return r;
+        }
+        return updateTypesOnDescription(typeDesc, project, config, typeFqns,
+            qualifierOptions, target, mode, preview);
+    }
+
+    /**
+     * Description-level implementation of an ordered type-list update.
+     * Existing type items stay in place for add/remove, which also keeps their qualifiers intact.
+     *
+     * @param typeDesc type description to inspect and possibly mutate
+     * @param project owning project for platform type resolution
+     * @param config configuration for reference type resolution
+     * @param typeFqns types named by the call
+     * @param qualifierOptions qualifiers for newly added types, or for a replacement
+     * @param contextObject owner used for stored-carrier checks and proxy resolution
+     * @param mode requested list operation
+     * @param preview whether to return the resulting composition without mutation
+     * @return the update result and the resulting ordered composition
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public static TypesResult updateTypesOnDescription(Object typeDesc, IProject project,
+        Configuration config, List<String> typeFqns, QualifierOptions qualifierOptions,
+        EObject contextObject, ConfigurationListProperties.ListMode mode, boolean preview)
+    {
+        TypesResult r = new TypesResult();
+        if (typeDesc == null || typeFqns == null || mode == null)
+        {
+            r.error = "typeDesc, typeFqns and mode are required"; //$NON-NLS-1$
+            return r;
+        }
+        EList<?> typesList = readTypesList(typeDesc);
+        if (typesList == null)
+        {
+            r.error = "TypeDescription does not expose getTypes()"; //$NON-NLS-1$
+            return r;
+        }
+
+        List<String> current = readCurrentTypeNamesInOrder(typesList);
+        List<String> requested = expandCommaSeparatedFqns(typeFqns);
+        for (String fqn : requested)
+        {
+            if (!isAcceptableType(fqn, project, config))
+            {
+                r.unresolved.add(fqn);
+            }
+        }
+        if (!r.unresolved.isEmpty())
+        {
+            r.error = "Some types could not be resolved: " + String.join(", ", r.unresolved) //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Check the spelling against the platform's own type names and the " //$NON-NLS-1$
+                + "referenced objects in this configuration"; //$NON-NLS-1$
+            return r;
+        }
+
+        planTypeListUpdate(current, requested, mode, r);
+        if (mode == ConfigurationListProperties.ListMode.CLEAR || r.finalTypes.isEmpty())
+        {
+            r.error = "A metadata element must have at least one type; clear and removal " //$NON-NLS-1$
+                + "of the last type are not allowed."; //$NON-NLS-1$
+            return r;
+        }
+
+        if (typeIsStoredInDatabase(contextObject))
+        {
+            QualifierOptions effective = effectiveStringQualifiers(typeDesc, current,
+                r.finalTypes, r.added, qualifierOptions, mode);
+            String refusal = compositeStringLengthRefusal(r.finalTypes, effective);
+            if (refusal != null)
+            {
+                r.error = refusal;
+                return r;
+            }
+        }
+
+        if (mode == ConfigurationListProperties.ListMode.REPLACE)
+        {
+            Object destination = typeDesc;
+            if (preview)
+            {
+                if (!(typeDesc instanceof EObject))
+                {
+                    r.error = "Cannot preview a non-EObject TypeDescription"; //$NON-NLS-1$
+                    return r;
+                }
+                destination = EcoreUtil.copy((EObject)typeDesc);
+            }
+            TypesResult replaced = setTypesOnDescription(destination, project, config,
+                new ArrayList<>(r.finalTypes), qualifierOptions, contextObject);
+            if (replaced.ok)
+            {
+                // A replacement that names the stored types in another order is idempotent and
+                // writes nothing, so the answer names the composition the model holds.
+                r.finalTypes.clear();
+                r.finalTypes.addAll(readTypeDescriptionNamesInOrder(destination));
+                r.ok = true;
+                r.mutated = replaced.mutated && !preview;
+                r.idempotentSkip = replaced.idempotentSkip;
+                r.resolved.addAll(replaced.resolved);
+                r.unresolved.addAll(replaced.unresolved);
+            }
+            else
+            {
+                r.error = replaced.error;
+                r.unresolved.addAll(replaced.unresolved);
+            }
+            return r;
+        }
+
+        if (r.added.isEmpty() && r.removed.isEmpty())
+        {
+            r.ok = true;
+            r.idempotentSkip = true;
+            r.resolved.addAll(requested);
+            return r;
+        }
+
+        List<Object> newItems = new ArrayList<>();
+        for (String fqn : r.added)
+        {
+            Object item = createTypeItem(fqn, project, config);
+            if (item == null)
+            {
+                r.unresolved.add(fqn);
+            }
+            else
+            {
+                newItems.add(item);
+            }
+        }
+        if (!r.unresolved.isEmpty())
+        {
+            r.error = "Could not build TypeItems for: " + String.join(", ", r.unresolved); //$NON-NLS-1$ //$NON-NLS-2$
+            return r;
+        }
+        if (preview)
+        {
+            r.ok = true;
+            r.resolved.addAll(requested);
+            return r;
+        }
+
+        try
+        {
+            if (mode == ConfigurationListProperties.ListMode.ADD)
+            {
+                int firstAdded = typesList.size();
+                for (Object item : newItems)
+                {
+                    ((EList)typesList).add(item);
+                }
+                resolveAddedPrimitiveItems(typesList, contextObject, firstAdded, r.added);
+                applyPrimitiveQualifiers(typeDesc, r.added, qualifierOptions);
+            }
+            else
+            {
+                Set<String> namesToRemove = new HashSet<>(r.removed);
+                for (int i = typesList.size() - 1; i >= 0; i--)
+                {
+                    String name = readTypeName(typesList.get(i));
+                    if (name != null && namesToRemove.contains(name))
+                    {
+                        ((EList)typesList).remove(i);
+                    }
+                }
+            }
+            r.ok = true;
+            r.mutated = true;
+            r.resolved.addAll(requested);
+            return r;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("type list update failed: " + e.getMessage()); //$NON-NLS-1$
+            r.error = "Type list update failed: " + e.getMessage(); //$NON-NLS-1$
+            return r;
+        }
+    }
+
+    /** Computes the ordered result and the three response lists without touching the model. */
+    private static void planTypeListUpdate(List<String> current, List<String> requested,
+        ConfigurationListProperties.ListMode mode, TypesResult result)
+    {
+        LinkedHashSet<String> finalNames = new LinkedHashSet<>(current);
+        Set<String> seenRequest = new HashSet<>();
+        if (mode == ConfigurationListProperties.ListMode.REPLACE)
+        {
+            finalNames.clear();
+            for (String name : requested)
+            {
+                if (!seenRequest.add(name))
+                {
+                    result.skipped.add(name);
+                }
+                else
+                {
+                    finalNames.add(name);
+                }
+            }
+            Set<String> requestedSet = new HashSet<>(finalNames);
+            for (String name : current)
+            {
+                if (!requestedSet.contains(name))
+                {
+                    result.removed.add(name);
+                }
+            }
+            Set<String> currentSet = new HashSet<>(current);
+            for (String name : finalNames)
+            {
+                if (!currentSet.contains(name))
+                {
+                    result.added.add(name);
+                }
+            }
+        }
+        else if (mode == ConfigurationListProperties.ListMode.ADD)
+        {
+            for (String name : requested)
+            {
+                if (!seenRequest.add(name) || !finalNames.add(name))
+                {
+                    result.skipped.add(name);
+                }
+                else
+                {
+                    result.added.add(name);
+                }
+            }
+        }
+        else if (mode == ConfigurationListProperties.ListMode.REMOVE)
+        {
+            for (String name : requested)
+            {
+                if (!seenRequest.add(name) || !finalNames.remove(name))
+                {
+                    result.skipped.add(name);
+                }
+                else
+                {
+                    result.removed.add(name);
+                }
+            }
+        }
+        result.finalTypes.addAll(finalNames);
+    }
+
+    /** Chooses the String length that the model will carry after the update. */
+    private static QualifierOptions effectiveStringQualifiers(Object typeDesc, List<String> current,
+        List<String> finalTypes, List<String> added, QualifierOptions requested,
+        ConfigurationListProperties.ListMode mode)
+    {
+        boolean finalHasString = finalTypes.contains("String"); //$NON-NLS-1$
+        boolean existingStringStays = current.contains("String") //$NON-NLS-1$
+            && !added.contains("String"); //$NON-NLS-1$
+        if (!finalHasString || (!existingStringStays
+            && mode != ConfigurationListProperties.ListMode.REMOVE))
+        {
+            return requested;
+        }
+        QualifierOptions effective = new QualifierOptions();
+        effective.length = Integer.valueOf(declaredStringLengthOf(typeDesc));
+        return effective;
+    }
+
+    /** Resolves only newly appended primitive proxies, leaving reference items untouched. */
+    private static void resolveAddedPrimitiveItems(EList<?> typesList, EObject contextObject,
+        int firstAdded, List<String> addedNames)
+    {
+        for (int offset = 0; offset < addedNames.size(); offset++)
+        {
+            if (addedNames.get(offset).indexOf('.') >= 0)
+            {
+                continue;
+            }
+            resolveTypeItemInPlace(typesList, contextObject, firstAdded + offset);
+        }
     }
 
     /**
@@ -1171,6 +1490,21 @@ public final class BmDefinedTypeHelper
             return new HashSet<>();
         }
         return readCurrentTypeNames(typesList);
+    }
+
+    /**
+     * Reads a type description in model order.
+     *
+     * @param typeDescription the description to read, may be <code>null</code>
+     * @return the canonical names in their stored order
+     */
+    public static List<String> readTypeDescriptionNamesInOrder(Object typeDescription)
+    {
+        if (typeDescription == null)
+        {
+            return new ArrayList<>();
+        }
+        return readCurrentTypeNamesInOrder(readTypesList(typeDescription));
     }
 
     /**
@@ -3252,6 +3586,44 @@ public final class BmDefinedTypeHelper
         }
     }
 
+    /** Resolves one primitive proxy appended by listMode=add. */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static void resolveTypeItemInPlace(EList<?> typesList, EObject contextObject, int index)
+    {
+        if (typesList == null || index < 0 || index >= typesList.size() || contextObject == null)
+        {
+            return;
+        }
+        Object item = typesList.get(index);
+        if (!(item instanceof EObject) || !((EObject)item).eIsProxy())
+        {
+            return;
+        }
+        Activator activator = Activator.getDefault();
+        Object bmManager = activator == null ? null : activator.getBmModelManager();
+        org.eclipse.emf.ecore.resource.Resource resource = contextObject.eResource();
+        if (bmManager == null || resource == null)
+        {
+            return;
+        }
+        try
+        {
+            Method resolve = bmManager.getClass().getMethod("resolve", EObject.class, //$NON-NLS-1$
+                org.eclipse.emf.ecore.resource.Resource.class, EObject.class);
+            Object resolved = resolve.invoke(bmManager, item, resource, contextObject);
+            if (resolved instanceof EObject && resolved != item
+                && !((EObject)resolved).eIsProxy())
+            {
+                ((EList)typesList).set(index, resolved);
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveTypeItemInPlace failed for index " + index //$NON-NLS-1$
+                + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
     /**
      * Builds a canonical primitive Type proxy via
      * {@code IEObjectProvider.Registry.INSTANCE.get(McorePackage.Literals.TYPE_ITEM, version).getProxy(typeName)}.
@@ -3803,6 +4175,25 @@ public final class BmDefinedTypeHelper
             return names;
         }
         for (Object item : (EList<Object>) typesList)
+        {
+            String name = readTypeName(item);
+            if (name != null && !name.isEmpty())
+            {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    /** Reads the current composition in model order. */
+    private static List<String> readCurrentTypeNamesInOrder(EList<?> typesList)
+    {
+        List<String> names = new ArrayList<>();
+        if (typesList == null)
+        {
+            return names;
+        }
+        for (Object item : typesList)
         {
             String name = readTypeName(item);
             if (name != null && !name.isEmpty())

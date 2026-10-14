@@ -379,8 +379,12 @@ command's path as the form file writes it: `Form.Command.X`, `Form.StandardComma
   or parameter, a command parameter type and a session parameter take the composition. Repeating
   the composition the model already holds, naming no `length`, is not refused either: the stored
   length stands and the answer keeps its idempotent skip. `length=0` and a composition the caller
-  changes are refused. A lone
-  `String` without a length is a type of its own and is written. A creating operation answers the
+  changes are refused. A lone `String` without a length is a type of its own and is written.
+  `set_object_type` and `set_defined_type_types` take
+  `listMode=replace|add|remove`; add preserves the existing order and qualifiers, remove preserves
+  the order of the survivors, and both report `added`, `removed`, `skipped`, `types` and
+  `typeCount`. An existing add or absent remove is skipped. `clear` and removal of the final type
+  are refused. A dry run reports the resulting composition without writing it. A creating operation answers the
   refusal before the element exists - after it the owner holds neither the element nor a trace of
   it; in an extension project the refusal precedes the borrowing of the owner and of the reference
   types' targets, so the extension holds none of them either, and `dryRun` answers the same refusal

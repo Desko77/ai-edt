@@ -457,8 +457,7 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("propertyValue", //$NON-NLS-1$
                 "Property value for setObjectProperty (string; coerced to setter type).") //$NON-NLS-1$
             .stringProperty("listMode", //$NON-NLS-1$
-                "set_object_property on a list-shaped property: replace (default), add, " //$NON-NLS-1$
-                    + "remove, clear.") //$NON-NLS-1$
+                "List operation: replace (default), add, remove, clear.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "Type for the attribute-creating operations and set_object_type: String / " //$NON-NLS-1$
                     + "Number / Date / Boolean / UUID, CatalogRef.X, or several comma-separated. " //$NON-NLS-1$
@@ -3189,8 +3188,9 @@ public class EditMetadataTool implements IMcpTool
             + "'http://example.com/myservice'). Required - platform rejects empty " //$NON-NLS-1$
             + "namespaces.\n\n"); //$NON-NLS-1$
         sb.append("### listMode\n\n"); //$NON-NLS-1$
-        sb.append("set_object_property on a list-shaped property: replace (default), add, " //$NON-NLS-1$
-            + "remove, clear. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
+        sb.append("set_object_property on a list-shaped property, set_object_type and " //$NON-NLS-1$
+            + "set_defined_type_types: replace (default), add, remove, clear. Type carriers " //$NON-NLS-1$
+            + "refuse clear because they must keep at least one type. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
             + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
             + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
             + "usedMobileApplicationFunctionalities.\n\n"); //$NON-NLS-1$
