@@ -1255,6 +1255,12 @@ public class RowOperationsOfATemplateTest
         assertNull(outcome.error);
         assertEquals("the table ends at the row that carries the text", 3, outcome.lastRow); //$NON-NLS-1$
         assertEquals("and the file declares the three rows it holds", 3, outcome.declaredRows); //$NON-NLS-1$
+
+        // What a row number is measured against is the wider question: the row a write created
+        // counts there, so 8 appends and 9 is refused with 7 named as the end of the document.
+        BmTemplateHelper.RowOutcome past = BmTemplateHelper.insertRows(doc, 9, 1, "none"); //$NON-NLS-1$
+        assertNotNull(past.error);
+        assertTrue(past.error, past.error.contains("runs to row 7")); //$NON-NLS-1$
     }
 
     /** A row whose own format declares a height is a row of the table. */
