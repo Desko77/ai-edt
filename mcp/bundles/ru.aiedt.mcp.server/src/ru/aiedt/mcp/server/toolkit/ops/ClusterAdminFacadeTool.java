@@ -79,11 +79,6 @@ public class ClusterAdminFacadeTool
     /** The door a preset switches the take-out operation off under. */
     public static final String DOOR_REMOVE = "remove_from_cluster"; //$NON-NLS-1$
 
-    /** Every operation this facade accepts, in the order a refusal lists them. */
-    private static final String KNOWN =
-        "get_clusters | create_cluster | update_cluster | delete_cluster | add_to_cluster | " //$NON-NLS-1$
-            + "remove_from_cluster | help"; //$NON-NLS-1$
-
     /** The cluster service is not there: the plugin is headless, starting or stopping. */
     static final String REASON_SERVICE_UNAVAILABLE = "serviceUnavailable"; //$NON-NLS-1$
 
@@ -103,6 +98,22 @@ public class ClusterAdminFacadeTool
     static final String REASON_INVALID_NAME = "invalidName"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
+
+    /** Every operation this facade accepts, as the schema and the refusals name them. */
+    private static final String KNOWN = knownOperations();
+
+    /**
+     * The operation list out of the catalog, so the schema, the refusals and the help all read
+     * one source and cannot drift apart.
+     *
+     * @return the catalog's names with help last, joined with " | "
+     */
+    private static String knownOperations()
+    {
+        List<String> names = new ArrayList<>(OPS.keySet());
+        names.add("help"); //$NON-NLS-1$
+        return String.join(" | ", names); //$NON-NLS-1$
+    }
 
     /** Every help topic, in the order the catalog names them: operations, then named topics. */
     private static final List<String> HELP_TOPICS = helpTopics();
@@ -273,7 +284,8 @@ public class ClusterAdminFacadeTool
                 return doRemoveFromCluster(params);
             }
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + KNOWN + ".").toJson(); //$NON-NLS-1$
         }
     }
 
