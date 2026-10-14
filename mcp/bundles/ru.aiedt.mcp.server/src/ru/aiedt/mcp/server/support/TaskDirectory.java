@@ -12,6 +12,11 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
+
 /**
  * Durable handles over the work already running behind {@link PendingWorkRegistry}.
  * <p>
@@ -261,6 +266,16 @@ public final class TaskDirectory
         /** A sentence about the current state, for a human reading the poll. */
         public volatile String statusMessage;
 
+        /**
+         * The last step the run announced, kept until the record ends.
+         * <p>
+         * The live note moves on with the work and a finished run reports nothing, so without this
+         * copy the outcome would be all a terminal record says: a caller reading "failed" over a
+         * ten-minute update would not learn whether it stopped at the first step or the last.
+         * </p>
+         */
+        public volatile String lastStep;
+
         /** The tool's own answer, once there is one. */
         public volatile String result;
 
@@ -294,7 +309,7 @@ public final class TaskDirectory
             PendingWorkRegistry.StopOutcome stopping = registry == null
                 ? PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP
                 : registry.cancelAndStop(runKey);
-            statusMessage = cancellationMessage(stopping, registry);
+            statusMessage = withTheLastStep("cancelled", cancellationMessage(stopping, registry)); //$NON-NLS-1$
             status = CANCELLED;
             lastUpdatedAt = System.currentTimeMillis();
         }
@@ -383,6 +398,13 @@ public final class TaskDirectory
 
         /**
          * Records what the work produced, once.
+         * <p>
+         * An answer that is itself a refusal - the tool built {@code success:false} rather than
+         * throwing - settles the task as failed rather than completed. The registry's worker
+         * catches what the body throws and answers it as a refusal document, so without this the
+         * exception branch below is the one that almost never fires and a run that died reads as
+         * one that finished.
+         * </p>
          *
          * @param produced the tool's answer, or {@code null} when the work threw.
          * @param thrown what it threw, or {@code null}.
@@ -395,20 +417,90 @@ public final class TaskDirectory
             }
             if (produced != null)
             {
-                // The answer before the status, and not the other way round: a reader that sees
-                // COMPLETED must find the result already there.
+                // The answer before the status, and not the other way round: a reader that sees a
+                // terminal state must find what it names already there.
                 result = produced;
-                statusMessage = operation + " finished"; //$NON-NLS-1$
-                status = COMPLETED;
+                String refused = refusalTextOf(produced);
+                if (refused != null)
+                {
+                    failure = refused;
+                    statusMessage = withTheLastStep("failed", refused); //$NON-NLS-1$
+                    status = FAILED;
+                }
+                else
+                {
+                    statusMessage = operation + " finished"; //$NON-NLS-1$
+                    status = COMPLETED;
+                }
             }
             else
             {
                 failure = thrown == null ? "The run finished without producing a result." //$NON-NLS-1$
                     : "The run failed: " + thrown.getMessage(); //$NON-NLS-1$
-                statusMessage = failure;
+                statusMessage = withTheLastStep("failed", failure); //$NON-NLS-1$
                 status = FAILED;
             }
             lastUpdatedAt = System.currentTimeMillis();
+        }
+
+        /**
+         * The refusal an answer carries, when it is one.
+         * <p>
+         * A tool that declines answers a JSON document with {@code success:false} rather than
+         * throwing, and the registry answers a body that threw the same way. Any other shape -
+         * plain text, a markdown report - is an answer, not a refusal, whatever its words say.
+         * </p>
+         *
+         * @param produced the run's answer.
+         * @return the refusal's message, or {@code null} when the answer is not a refusal document
+         */
+        static String refusalTextOf(String produced)
+        {
+            JsonElement tree;
+            try
+            {
+                tree = JsonParser.parseString(produced);
+            }
+            catch (JsonParseException notJson)
+            {
+                return null;
+            }
+            if (!tree.isJsonObject())
+            {
+                return null;
+            }
+            JsonObject body = tree.getAsJsonObject();
+            JsonElement success = body.get("success"); //$NON-NLS-1$
+            if (success == null || !success.isJsonPrimitive() || success.getAsBoolean())
+            {
+                return null;
+            }
+            JsonElement error = body.get("error"); //$NON-NLS-1$
+            if (error != null && error.isJsonPrimitive() && !error.getAsString().isBlank())
+            {
+                return error.getAsString();
+            }
+            return "The run's answer reported failure without a message."; //$NON-NLS-1$
+        }
+
+        /**
+         * The outcome said together with the step the run had announced last.
+         * <p>
+         * A run without steps - one that never published a note - is told plainly, because "failed
+         * at" an invented step would name a place the run never stood.
+         * </p>
+         *
+         * @param outcome {@code failed} or {@code cancelled}.
+         * @param text what happened.
+         * @return the sentence for {@link #statusMessage}
+         */
+        private String withTheLastStep(String outcome, String text)
+        {
+            if (lastStep == null || lastStep.isBlank())
+            {
+                return text;
+            }
+            return outcome + " at " + lastStep + ": " + text; //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         /**
@@ -427,9 +519,12 @@ public final class TaskDirectory
             {
                 // Work with steps says where it has got to. Carrying that here is what makes a
                 // poll worth issuing: without it every poll of a long run answers the same
-                // sentence, and the caller learns only that time has passed.
+                // sentence, and the caller learns only that time has passed. The note is kept
+                // apart from the message as well: the message is replaced by the outcome, and the
+                // step is what the outcome is then said together with.
                 if (running.progressNote != null)
                 {
+                    lastStep = running.progressNote;
                     statusMessage = running.progressNote;
                     lastUpdatedAt = System.currentTimeMillis();
                 }
@@ -442,7 +537,7 @@ public final class TaskDirectory
             failure = "The run behind this task is no longer held by the server. Its result was " //$NON-NLS-1$
                 + "either collected by another call with the same parameters, or the run was " //$NON-NLS-1$
                 + "evicted for age. Start the work again."; //$NON-NLS-1$
-            statusMessage = failure;
+            statusMessage = withTheLastStep("failed", failure); //$NON-NLS-1$
             status = FAILED;
             lastUpdatedAt = System.currentTimeMillis();
         }

@@ -178,7 +178,10 @@ from the person at the status bar. Either way the tool is not interrupted mid-un
 
 A cancelled task turns `cancelled`, and its `statusMessage` says what stopping came to: the work
 stopped; it was told to stop and had not ("It may still be running and still writing"); or only the
-waiting stopped, because a Designer-mode process cannot be interrupted once started. The run key is held until the body of the call finishes, so the same
+waiting stopped, because a Designer-mode process cannot be interrupted once started. The outcome is
+said together with the last step the run announced (`failed at <step>: ...` / `cancelled at <step>:
+...`), and a run that answers a refusal (`success:false`) settles the task as `failed` with the
+refusal document in the poll's `error.data`. The run key is held until the body of the call finishes, so the same
 work asked for again inside that window answers `stillStopping: true` instead of starting a second
 run - that is the cancel being allowed to finish, not a failure to act on. `get_tasks` names the
 closed projects it did not read.

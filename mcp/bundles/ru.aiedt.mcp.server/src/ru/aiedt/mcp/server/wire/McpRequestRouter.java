@@ -530,6 +530,12 @@ public class McpRequestRouter
 
     /**
      * Builds the JSON-RPC error a failed task reports.
+     * <p>
+     * A task that failed with the run's own refusal document still holds that document, and it
+     * goes out as the error's {@code data}: the refusal's members - the tables a data-loss
+     * confirmation names, the entries a batch refused - are what the caller acts on, and a
+     * message alone would carry the verdict without the evidence.
+     * </p>
      *
      * @param task the task.
      * @return the error object, or null unless the task failed.
@@ -543,6 +549,17 @@ public class McpRequestRouter
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", McpServerMeta.ERROR_INTERNAL); //$NON-NLS-1$
         error.put("message", task.failure == null ? "The task failed." : task.failure); //$NON-NLS-1$ //$NON-NLS-2$
+        if (task.result != null)
+        {
+            try
+            {
+                error.put("data", JsonParser.parseString(task.result)); //$NON-NLS-1$
+            }
+            catch (JsonParseException notJson)
+            {
+                error.put("data", task.result); //$NON-NLS-1$
+            }
+        }
         return error;
     }
 
