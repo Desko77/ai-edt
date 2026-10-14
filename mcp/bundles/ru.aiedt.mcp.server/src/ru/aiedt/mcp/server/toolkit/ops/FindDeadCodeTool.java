@@ -563,7 +563,7 @@ public class FindDeadCodeTool
     // Output
     // -- = --
 
-    private String format(String projectName, Outcome outcome, FirstPass first, int limit,
+    String format(String projectName, Outcome outcome, FirstPass first, int limit,
         Map<String, String> params, String cancelled)
     {
         List<Candidate> candidates = outcome.candidates;
