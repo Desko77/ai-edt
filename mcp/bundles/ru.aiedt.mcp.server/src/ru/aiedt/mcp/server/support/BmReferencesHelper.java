@@ -606,6 +606,38 @@ public final class BmReferencesHelper
     }
 
     /**
+     * Whether a row the reference walk cannot give still passes the kind filter, with the same
+     * accounting the walk keeps: the row's kind is seen, and a kind the filter refuses is counted
+     * once per row.
+     *
+     * @param result the walk the row joins
+     * @param fromFqn the source end
+     * @param toFqn the target end
+     * @param featureName the {@code via} of the row
+     * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+     * @return whether the row may enter the graph
+     */
+    public static boolean kindKept(BfsResult result, String fromFqn, String toFqn,
+        String featureName, Set<String> keepKinds)
+    {
+        if (featureName != null && !featureName.isEmpty())
+        {
+            result.kindsSeen.add(featureName);
+        }
+        if (keepKinds != null && (featureName == null || !keepKinds.contains(featureName)))
+        {
+            // One row is dropped once, however many times it is offered.
+            if (result.kindDroppedEdges.add(edgeKey(fromFqn, toFqn, featureName)))
+            {
+                result.edgesDroppedByKind.merge(featureName == null ? "" : featureName, //$NON-NLS-1$
+                    Integer.valueOf(1), Integer::sum);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
      * The object an edge end should name, or <code>null</code> when the end is not part of this
      * graph at all.
      * <p>

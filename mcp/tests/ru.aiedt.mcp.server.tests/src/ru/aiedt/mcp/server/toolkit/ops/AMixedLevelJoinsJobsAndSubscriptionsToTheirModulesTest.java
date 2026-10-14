@@ -6,6 +6,7 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -49,7 +50,7 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         result.nodes.put(SUBSCRIPTION, asGraphObject(subscription));
 
         int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
-            100);
+            100, null);
 
         assertEquals(2, added);
         BmReferencesHelper.Edge jobEdge = edge(result, JOB);
@@ -72,11 +73,50 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         result.nodes.put(JOB, asGraphObject(job));
 
         int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
-            100);
+            100, null);
 
         assertEquals(0, added);
         assertNull(edge(result, JOB));
         assertEquals(1, result.nodes.size());
+    }
+
+    /**
+     * A job row passes the kind filter like a row of the walk: a kind the caller did not name is
+     * dropped and counted, and its target is no node.
+     */
+    @Test
+    public void aJobRowPassesTheKindFilter()
+    {
+        ScheduledJob job = MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
+        result.nodes.put(JOB, asGraphObject(job));
+
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
+            100, java.util.Set.of("attributes")); //$NON-NLS-1$
+
+        assertEquals(0, added);
+        assertTrue(result.edges.isEmpty());
+        assertTrue("the refused kind is seen", result.kindsSeen.contains("РассчитатьВсе")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(java.util.Map.of("РассчитатьВсе", Integer.valueOf(1)), //$NON-NLS-1$
+            result.edgesDroppedByKind);
+        assertFalse("a dropped row adds no node", result.nodes.containsKey(MODULE)); //$NON-NLS-1$
+    }
+
+    /** A kind the caller named keeps the job row. */
+    @Test
+    public void aNamedKindKeepsTheJobRow()
+    {
+        ScheduledJob job = MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
+        result.nodes.put(JOB, asGraphObject(job));
+
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
+            100, java.util.Set.of("РассчитатьВсе")); //$NON-NLS-1$
+
+        assertEquals(1, added);
+        assertEquals(MODULE, edge(result, JOB).toFqn);
     }
 
     /** An empty method reference gives no row. */
@@ -89,7 +129,7 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         result.nodes.put(SUBSCRIPTION, asGraphObject(subscription));
 
         assertEquals(0, DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
-            10, 100));
+            10, 100, null));
     }
 
     /** The configuration of the project, holding one common module. */

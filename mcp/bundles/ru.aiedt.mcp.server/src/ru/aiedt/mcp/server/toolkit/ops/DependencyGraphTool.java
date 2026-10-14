@@ -272,14 +272,14 @@ public class DependencyGraphTool implements IMcpTool
                     }
                     else
                     {
+                        Set<String> keep =
+                            edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
                         if (roots.isEmpty())
                         {
                             result = new BmReferencesHelper.BfsResult();
                         }
                         else
                         {
-                            Set<String> keep =
-                                edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
                             BmReferencesHelper.EdgePolicy policy = edgePolicy(level, keep);
                             result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots,
                                 direction, maxNodes, maxEdges, depth,
@@ -289,7 +289,8 @@ public class DependencyGraphTool implements IMcpTool
                         {
                             // The reference walk cannot give the rows a job's method name and a
                             // subscription's handler stand for: both are plain strings.
-                            addJobAndSubscriptionEdges(result, configuration, maxNodes, maxEdges);
+                            addJobAndSubscriptionEdges(result, configuration, maxNodes, maxEdges,
+                                keep);
                         }
                     }
                     bfsRef.set(result);
@@ -783,10 +784,11 @@ public class DependencyGraphTool implements IMcpTool
      * @param configuration the project configuration
      * @param maxNodes the node cap of the walk
      * @param maxEdges the edge cap of the walk
+     * @param keepKinds the {@code via} values to keep, or {@code null} for all of them
      * @return how many rows were added
      */
     static int addJobAndSubscriptionEdges(BmReferencesHelper.BfsResult result,
-        Configuration configuration, int maxNodes, int maxEdges)
+        Configuration configuration, int maxNodes, int maxEdges, Set<String> keepKinds)
     {
         int added = 0;
         List<Map.Entry<String, IBmObject>> nodes = new ArrayList<>(result.nodes.entrySet());
@@ -815,6 +817,13 @@ public class DependencyGraphTool implements IMcpTool
                 continue;
             }
             String targetFqn = "CommonModule." + module + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
+            // The same kind filter and the same accounting the walk applies to its own rows: a
+            // dropped row adds neither an edge nor the node its target would have been.
+            if (!BmReferencesHelper.kindKept(result, node.getKey(), targetFqn,
+                parsed.methodName, keepKinds))
+            {
+                continue;
+            }
             if (!result.nodes.containsKey(targetFqn))
             {
                 if (result.nodes.size() >= maxNodes)
