@@ -341,7 +341,7 @@
 | `InfobaseAdminFacadeTool` | `get_applications` | `projectName:string` | delegate ApplicationsReader |
 | `InfobaseAdminFacadeTool` | `inspect_database_sync` | `applicationId:string`, `projectName:string` | read in place |
 | `InfobaseAdminFacadeTool` | `list_registered_infobases` | `find:string`, `operation:string`, `topic:string` | read in place |
-| `InfobaseAdminFacadeTool` | `read_event_log` | `applicationId:string`, `event:string`, `from:string`, `limit:integer`, `projectName:string`, `severity:string`, `to:string`, `user:string` | delegate EventLogTool |
+| `InfobaseAdminFacadeTool` | `read_event_log` | `applicationId:string`, `event:string`, `excludeEvents:string[]`, `from:string`, `limit:integer`, `projectName:string`, `severity:string`, `to:string`, `user:string` | delegate EventLogTool |
 | `InfobaseAdminFacadeTool` | `register_infobase` | `accessMode:string`, `connectionString:string`, `makeDefault:boolean`, `name:string`, `password:string`, `path:string`, `projectName:string`, `userName:string` | delegate InfobaseRegistrar |
 | `InfobaseAdminFacadeTool` | `restore_database_snapshot` | `applicationId:string`, `backupTo:string`, `cancel:boolean`, `path:string`, `projectName:string`, `runKey:string` | read in place |
 | `InfobaseAdminFacadeTool` | `set_infobase_credentials` | `accessMode:string`, `applicationId:string`, `password:string`, `projectName:string`, `userName:string` | delegate InfobaseCredentialsWriter |

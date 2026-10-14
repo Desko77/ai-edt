@@ -345,6 +345,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application (infobase) id from get_applications.") //$NON-NLS-1$
+            .stringArrayProperty("excludeEvents", //$NON-NLS-1$
+                "read_event_log: events to leave out, by whole name or, ending in *, by the start " //$NON-NLS-1$
+                    + "of it - _$Transaction$_* drops the transaction events. Case is ignored; " //$NON-NLS-1$
+                    + "applied before limit.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "Infobase name: required for create_infobase, delete_infobase and " //$NON-NLS-1$
                     + "register_infobase of a server infobase. sync_control " //$NON-NLS-1$

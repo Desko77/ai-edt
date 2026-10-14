@@ -289,8 +289,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // retrieve_database_changes adds replaceLocal, markSynchronized and the sentences
         // timeoutSeconds, runKey and cancel gained for that pull.
         // And for verifyInfobaseContent: an incremental update can be asked to read the infobase's
-        // own ConfigDumpInfo and refuse when it does not match the stored copy. Measured 29.09: 8364.
-        PROSE.put("infobase_admin", Integer.valueOf(8364));
+        // own ConfigDumpInfo and refuse when it does not match the stored copy. Measured 29.09:
+        // 8364. Raised to 8538 for the excludeEvents sentence on the facade schema. Measured 14.10:
+        // 8538.
+        PROSE.put("infobase_admin", Integer.valueOf(8538));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
         // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
@@ -353,7 +355,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
         PROSE.put("get_metadata_details", Integer.valueOf(867));
-        PROSE.put("read_event_log", Integer.valueOf(633));
+        // Raised from 633 to 806 for excludeEvents on read_event_log: the sentence tells a caller
+        // that a whole event name or the start of one may be left out, and that the exclusion
+        // runs before the limit. Measured 14.10: 806.
+        PROSE.put("read_event_log", Integer.valueOf(806));
         PROSE.put("get_form_structure", Integer.valueOf(614));
         PROSE.put("list_modules", Integer.valueOf(587));
         PROSE.put("ai_context", Integer.valueOf(581));
@@ -686,6 +691,14 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * and the operation names the projectName sentence now carries, over the extraInfo sentence
      * rebuilt shorter. Measured 13.10: 107340.
      * </p>
+     * <p>
+     * And from 107340 to 107469 for excludeEvents on read_event_log: one sentence for the new
+     * argument. Measured 14.10: 107469.
+     * </p>
+     * <p>
+     * And from 107469 to 107643 for the excludeEvents sentence on the infobase_admin schema, which
+     * is where a client routing the operation through the facade reads it. Measured 14.10: 107643.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107340;
+    private static final int DOCUMENT_PROSE = 107643;
 }
