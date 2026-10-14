@@ -210,7 +210,7 @@ public class MarkerManager
 
     public static final String UNREADABLE_MARKER_FILE =
 
-        "the marker file is unreadable; resolve it first"; //$NON-NLS-1$
+        "the marker file does not parse; resolve it first"; //$NON-NLS-1$
 
 
 
@@ -790,9 +790,7 @@ public class MarkerManager
             MarkerStore storage = loadIntoCache(project);
             if (storage == null)
             {
-                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
-                    "the marker file of project " + safeName(project) //$NON-NLS-1$
-                        + " could not be read, so no marker was created"); //$NON-NLS-1$
+                outcome = storageRefusal(project, "no marker was created"); //$NON-NLS-1$
             }
             else if (storage.getMarkerByName(name) != null)
             {
@@ -900,9 +898,7 @@ public class MarkerManager
             MarkerStore storage = loadIntoCache(project);
             if (storage == null)
             {
-                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
-                    "the marker file of project " + safeName(project) //$NON-NLS-1$
-                        + " could not be read, so the marker was not updated"); //$NON-NLS-1$
+                outcome = storageRefusal(project, "the marker was not updated"); //$NON-NLS-1$
             }
             else
             {
@@ -1010,9 +1006,7 @@ public class MarkerManager
             MarkerStore storage = loadIntoCache(project);
             if (storage == null)
             {
-                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
-                    "the marker file of project " + safeName(project) //$NON-NLS-1$
-                        + " could not be read, so the marker was not deleted"); //$NON-NLS-1$
+                outcome = storageRefusal(project, "the marker was not deleted"); //$NON-NLS-1$
             }
             else if (storage.getMarkerByName(markerName) == null)
             {
@@ -1184,9 +1178,7 @@ public class MarkerManager
             MarkerStore storage = loadIntoCache(project);
             if (storage == null)
             {
-                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
-                    "the marker file of project " + safeName(project) //$NON-NLS-1$
-                        + " could not be read, so nothing was assigned"); //$NON-NLS-1$
+                outcome = storageRefusal(project, "nothing was assigned"); //$NON-NLS-1$
             }
             else
             {
@@ -1285,9 +1277,7 @@ public class MarkerManager
             MarkerStore storage = loadIntoCache(project);
             if (storage == null)
             {
-                outcome = MarkerWriteOutcome.refused(storageRefusalCode(project),
-                    "the marker file of project " + safeName(project) //$NON-NLS-1$
-                        + " could not be read, so nothing was removed"); //$NON-NLS-1$
+                outcome = storageRefusal(project, "nothing was removed"); //$NON-NLS-1$
             }
             else
             {
@@ -2237,6 +2227,26 @@ public class MarkerManager
     }
 
     /**
+     * The refusal of an edit whose project storage the manager could not load, worded the way
+     * the preview of the same edit words it.
+     *
+     * @param project the project whose storage was asked for
+     * @param consequence what the edit did not do, as the tail of a sentence
+     * @return the refusal
+     */
+    private MarkerWriteOutcome storageRefusal(IProject project, String consequence)
+    {
+        String code = storageRefusalCode(project);
+        if (MarkerWriteOutcome.UNREADABLE_FILE.equals(code))
+        {
+            return MarkerWriteOutcome.refused(code, UNREADABLE_MARKER_FILE + ". " //$NON-NLS-1$
+                + Character.toUpperCase(consequence.charAt(0)) + consequence.substring(1));
+        }
+        return MarkerWriteOutcome.refused(code, "the marker file of project " + safeName(project) //$NON-NLS-1$
+            + " could not be read, so " + consequence); //$NON-NLS-1$
+    }
+
+    /**
      * The project's name for a refusal sentence, or a placeholder for the null no caller should
      * hand in but one still can.
      *
@@ -2258,7 +2268,7 @@ public class MarkerManager
     {
         if (MarkerWriteOutcome.UNREADABLE_FILE.equals(refusal))
         {
-            return "the marker file does not parse; resolve it first"; //$NON-NLS-1$
+            return UNREADABLE_MARKER_FILE;
         }
         if (MarkerWriteOutcome.READ_ONLY_FILE.equals(refusal))
         {

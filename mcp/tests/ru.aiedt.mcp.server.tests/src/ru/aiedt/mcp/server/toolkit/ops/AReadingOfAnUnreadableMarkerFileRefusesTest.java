@@ -158,7 +158,8 @@ public class AReadingOfAnUnreadableMarkerFileRefusesTest
         JsonObject refusal = JsonParser.parseString(answer).getAsJsonObject();
 
         assertFalse(answer, refusal.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(answer, refusal.get("error").getAsString().contains("unreadable")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(answer, refusal.get("error").getAsString()
+            .contains(MarkerManager.UNREADABLE_MARKER_FILE)); //$NON-NLS-1$
         assertFalse("an unread file is not a project without markers: " + answer, //$NON-NLS-1$
             answer.contains(NO_MARKERS));
     }
@@ -174,7 +175,8 @@ public class AReadingOfAnUnreadableMarkerFileRefusesTest
         JsonObject refusal = JsonParser.parseString(answer).getAsJsonObject();
 
         assertFalse(answer, refusal.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(answer, refusal.get("error").getAsString().contains("unreadable")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(answer, refusal.get("error").getAsString()
+            .contains(MarkerManager.UNREADABLE_MARKER_FILE)); //$NON-NLS-1$
         assertFalse("an unread file is not an unmatched name: " + answer, //$NON-NLS-1$
             answer.contains("Unmatched")); //$NON-NLS-1$
     }
