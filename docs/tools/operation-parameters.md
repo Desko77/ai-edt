@@ -111,10 +111,12 @@
 | `DcsWorkshopTool` | `set_total_field` | `attributeName:string`, `dryRun:boolean`, `expression:string`, `formFqn:string`, `name:string`, `nestedSchemaName:string`, `objectName:string`, `overwriteModel:boolean`, `projectName:string`, `property:string`, `queryText:string`, `templateName:string`, `validate_expression:boolean`, `validate_query:boolean`, `value:string` | handler DcsWorkshopTool.doSetTotalField, read in place |
 | `DcsWorkshopTool` | `set_user_field` | `attributeName:string`, `dryRun:boolean`, `expression:string`, `formFqn:string`, `name:string`, `nestedSchemaName:string`, `objectName:string`, `overwriteModel:boolean`, `projectName:string`, `property:string`, `queryText:string`, `templateName:string`, `title:string`, `validate_expression:boolean`, `validate_query:boolean`, `value:string` | handler DcsWorkshopTool.doSetUserField, read in place |
 | `DiagnosticsFacadeTool` | `clean_project` | `projectName:string` | delegate ProjectCleaner |
+| `DiagnosticsFacadeTool` | `clear_baseline` | `projectName:string` | read in place |
 | `DiagnosticsFacadeTool` | `get_check_description` | `checkId:string` | delegate CheckDocReader |
 | `DiagnosticsFacadeTool` | `get_problem_summary` | `projectName:string` | delegate ProblemSummaryReader |
-| `DiagnosticsFacadeTool` | `get_project_errors` | `checkId:string`, `compact:boolean`, `extraInfo:boolean`, `fileFilter:string`, `limit:integer`, `objects:string[]`, `projectName:string`, `scope:string`, `severity:string`, `waitForRefresh:boolean` | delegate ProjectProblemsReader |
+| `DiagnosticsFacadeTool` | `get_project_errors` | `checkId:string`, `compact:boolean`, `extraInfo:boolean`, `fileFilter:string`, `limit:integer`, `objects:string[]`, `projectName:string`, `scope:string`, `severity:string`, `sinceBaseline:boolean`, `waitForRefresh:boolean` | delegate ProjectProblemsReader |
 | `DiagnosticsFacadeTool` | `revalidate_objects` | `objectFqns:string[]`, `objects:string[]`, `projectName:string` | delegate ObjectsRevalidator |
+| `DiagnosticsFacadeTool` | `save_baseline` | `objects:string[]`, `projectName:string` | read in place |
 | `DiagnosticsFacadeTool` | `validate_for_export` | `checkFilter:string`, `limit:integer`, `pathFilter:string`, `projectName:string` | delegate ValidateForExportTool |
 | `DocsLookupFacadeTool` | `get_object_help` | `format:string`, `language:string`, `objectName:string`, `projectName:string` | delegate GetObjectHelpTool |
 | `DocsLookupFacadeTool` | `get_platform_documentation` | `category:string`, `language:string`, `limit:integer`, `memberName:string`, `memberType:string`, `projectName:string`, `typeName:string` | delegate PlatformDocReader |

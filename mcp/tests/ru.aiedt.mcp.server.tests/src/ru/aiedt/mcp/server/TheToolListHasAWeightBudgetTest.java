@@ -230,8 +230,14 @@ public class TheToolListHasAWeightBudgetTest
      * two safety flags of the extension it installs, and the schema is where a caller learns that
      * before the call writes to the infobase. Measured 08.10: 192404.
      * </p>
+     * <p>
+     * And from 192404 to 192661 for save_baseline and clear_baseline on diagnostics: the two
+     * operation names in the description and the operation list, the sinceBaseline argument and
+     * its sentence, and the projectName and extraInfo sentences rebuilt to name the new
+     * operations in less than they said before. Measured 13.10: 192661.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 192404;
+    private static final int DOCUMENT_BUDGET = 192661;
 
     private LiveServer server;
 

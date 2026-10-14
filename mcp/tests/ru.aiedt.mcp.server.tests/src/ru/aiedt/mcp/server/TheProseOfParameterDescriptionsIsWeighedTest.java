@@ -681,6 +681,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * already-installed paths, the single write and control read, the mismatch refusal, and the
      * explicit opt-out. Measured 08.10: 107202.
      * </p>
+     * <p>
+     * And by 115 for save_baseline and clear_baseline on diagnostics: the sinceBaseline sentence
+     * and the operation names the projectName sentence now carries, over the extraInfo sentence
+     * rebuilt shorter. Measured 13.10: 107340.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107202;
+    private static final int DOCUMENT_PROSE = 107340;
 }

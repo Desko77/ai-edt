@@ -197,11 +197,13 @@ public class CanonicalSurfaceContractTest
             "uninstall_extension", "list_extension", "export_extension", "extension_lifecycle",
             "extension_diff", "list_interceptors", "help"));
 
-        // diagnostics (DiagnosticsFacadeTool.execute + its OPS catalog): six operations, all
-        // literally the standalone names they replace, plus help.
+        // diagnostics (DiagnosticsFacadeTool.execute + its OPS catalog): six operations that are
+        // literally the standalone names they replace, the two baseline operations the facade
+        // handles itself, plus help.
         m.put("diagnostics", Set.of(
             "get_project_errors", "get_problem_summary", "revalidate_objects", "clean_project",
-            "validate_for_export", "get_check_description", "help"));
+            "validate_for_export", "get_check_description", "save_baseline", "clear_baseline",
+            "help"));
 
         // project_admin (ProjectAdminFacadeTool.execute + its OPS catalog): ten operations, all
         // literally the standalone names they replace, plus help.
