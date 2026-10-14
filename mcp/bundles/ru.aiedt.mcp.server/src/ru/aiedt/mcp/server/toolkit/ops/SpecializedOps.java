@@ -704,6 +704,26 @@ final class SpecializedOps
             return ToolResult.error(target.refusal).toJson();
         }
 
+        // The composition refusal of an addressing attribute the call creates is answered before
+        // the write entry adopts the Task: the adoption commits on its own and survives the
+        // rollback the in-transaction refusal throws, so the extension would hold the Task.
+        for (NameValue spec : wanted)
+        {
+            if (spec.type == null)
+            {
+                continue;
+            }
+            String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+                target.fqn, null, "AddressingAttribute", spec.name, //$NON-NLS-1$
+                Collections.singletonList(spec.type), new BmDefinedTypeHelper.QualifierOptions());
+            if (preBorrowRefusal != null)
+            {
+                return EditMetadataTool.refusedResult(target.fqn, dryRun,
+                    "addressing attribute '" + spec.name + "': " + preBorrowRefusal, //$NON-NLS-1$ //$NON-NLS-2$
+                    "set_task_addressing"); //$NON-NLS-1$
+            }
+        }
+
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, target.fqn, dryRun,
             (tx, owner) -> {
                 Task task = taskOf(owner, ownerFqn);
@@ -737,6 +757,20 @@ final class SpecializedOps
                         {
                             throw new RuntimeException("Cannot create an AddressingAttribute under " //$NON-NLS-1$
                                 + fqnOf(task) + ": no compatible MdClassFactory method."); //$NON-NLS-1$
+                        }
+                        if (spec.type != null)
+                        {
+                            // Answered while the attribute is still detached - the same
+                            // order the attribute-creating operations keep.
+                            String compositionRefusal =
+                                BmDefinedTypeHelper.creationCompositeStringRefusal(task, attribute,
+                                    Collections.singletonList(spec.type),
+                                    new BmDefinedTypeHelper.QualifierOptions());
+                            if (compositionRefusal != null)
+                            {
+                                throw new RuntimeException("addressing attribute '" + spec.name //$NON-NLS-1$
+                                    + "': " + compositionRefusal); //$NON-NLS-1$
+                            }
                         }
                         attribute.setName(spec.name);
                         task.getAddressingAttributes().add(attribute);
@@ -1523,6 +1557,17 @@ final class SpecializedOps
         final List<String> appliedFeatureProps = new ArrayList<>();
         final Map<String, String> failedFeatureProps = new LinkedHashMap<>();
 
+        // The composition refusal is answered before the write entry adopts an owner the
+        // extension did not hold: the adoption commits on its own and survives the rollback the
+        // in-transaction refusal throws, so the extension would hold what it adopted.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, null, childType, name, Collections.singletonList(type), qualifiers);
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                childType.toLowerCase() + " '" + name + "': " + preBorrowRefusal, opLabel); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 EList<MdObject> list = EditMetadataTool.invokeListGetter(owner, collection);
@@ -1594,6 +1639,16 @@ final class SpecializedOps
                         + "': no compatible MdClassFactory method (tried " //$NON-NLS-1$
                         + "create" + owner.eClass().getName() + childType //$NON-NLS-1$
                         + ", create" + childType + ", MdClassPackage lookup)."); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                // The composition refusal is answered while the field is still detached:
+                // it is known from the arguments and the carrier alone, and the
+                // transaction rolls back to a refusal thrown before anything is attached.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    owner, field, Collections.singletonList(type), qualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException(
+                        childType.toLowerCase() + " '" + name + "': " + compositionRefusal); //$NON-NLS-1$ //$NON-NLS-2$
                 }
                 field.setName(name);
                 synOut[0] = EditMetadataTool.applyMdObjectSynonym(field, synonym, name, project);

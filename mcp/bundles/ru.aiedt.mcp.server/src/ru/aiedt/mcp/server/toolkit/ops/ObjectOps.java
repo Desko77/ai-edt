@@ -1658,6 +1658,17 @@ final class ObjectOps
             return ProjectResolver.notFound(projectName).toJson();
         }
 
+        // The composition refusal is answered before a borrowing adopts anything for a call that
+        // will be refused: an adoption commits on its own and survives the rollback the
+        // in-transaction refusal throws, so the extension would hold what it borrowed.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, null, "Attribute", name, Collections.singletonList(type), attrQualifiers); //$NON-NLS-1$
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "attribute '" + name + "': " + preBorrowRefusal, "add_object_attribute"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+
         // Phase 6.6: auto-borrow referenced metadata objects when the attribute
         // type is a reference (CatalogRef.X / DocumentRef.X / etc.) inside an
         // extension project. Best-effort - failures surface as warning tags.
@@ -1761,6 +1772,16 @@ final class ObjectOps
                         + "': no compatible MdClassFactory method found " //$NON-NLS-1$
                         + "(tried create" + owner.eClass().getName() + "Attribute, " //$NON-NLS-1$ //$NON-NLS-2$
                         + "createAttribute, MdClassPackage EClass lookup)."); //$NON-NLS-1$
+                }
+                // The composition refusal is answered while the attribute is still detached:
+                // it is known from the arguments and the carrier alone, and the transaction
+                // rolls back to a refusal thrown before anything is attached.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    owner, attribute, Collections.singletonList(type), attrQualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException("attribute '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                        + compositionRefusal);
                 }
                 attribute.setName(name);
                 synonymRef.set(EditMetadataTool.applyMdObjectSynonym(attribute, synonym, name, project));
@@ -2399,6 +2420,18 @@ final class ObjectOps
             return ProjectResolver.notFound(projectName).toJson();
         }
 
+        // The composition refusal is answered before a borrowing adopts anything: an adoption
+        // commits on its own and survives the rollback the in-transaction refusal throws, so the
+        // extension would hold the owner, the tabular section and the reference targets.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, tcName, "Attribute", name, Collections.singletonList(type), tcQualifiers); //$NON-NLS-1$
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "tabular section attribute '" + name + "': " + preBorrowRefusal, //$NON-NLS-1$ //$NON-NLS-2$
+                "add_tabular_section_attribute"); //$NON-NLS-1$
+        }
+
         // Auto-borrow the referenced metadata object when a tabular-section
         // attribute's type is a reference (CatalogRef.X / DocumentRef.X / ...)
         // inside an extension project - mirrors opAddObjectAttribute. Best-effort;
@@ -2473,6 +2506,15 @@ final class ObjectOps
                         + "': no compatible MdClassFactory method found " //$NON-NLS-1$
                         + "(tried createTabularSectionAttribute and " //$NON-NLS-1$
                         + "create" + ts.eClass().getName() + "Attribute)."); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                // Answered while the attribute is still detached - the mirror of the
+                // object-attribute path above.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    ts, attribute, Collections.singletonList(type), tcQualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException("tabular section attribute '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                        + compositionRefusal);
                 }
                 attribute.setName(name);
                 tcSynonymRef.set(EditMetadataTool.applyMdObjectSynonym(attribute, tcSynonym, name, project));

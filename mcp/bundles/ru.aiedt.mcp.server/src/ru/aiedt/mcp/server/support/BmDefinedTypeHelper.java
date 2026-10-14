@@ -287,37 +287,77 @@ public final class BmDefinedTypeHelper
      */
     public static boolean typeIsStoredInDatabase(Object owner)
     {
-        if (!(owner instanceof BasicFeature
-            || owner instanceof Constant
-            || owner instanceof DefinedType
-            || owner instanceof SequenceDimension))
+        if (!isStoredTypeCarrier(owner))
         {
             return false;
         }
         if (owner instanceof EObject)
         {
-            return !belongsToAnObjectThatKeepsItsFeaturesInMemory((EObject)owner);
+            return !chainHoldsFeaturesInMemory(((EObject)owner).eContainer());
         }
         return true;
     }
 
     /**
-     * Tells whether the containment chain above a feature reaches an object that stores none of
-     * them.
+     * Tells whether a type written on an element that does not exist yet is stored in a database
+     * table.
      * <p>
-     * The walk starts at the owner of the feature, not at the feature itself: a detached feature
-     * carries no chain and keeps its answer, and a feature sitting directly in a configuration
-     * keeps it too. The four classes are unrelated in the model - each of them extends
-     * {@code MdObject} on its own - so every one of them is named.
+     * The same rule {@link #typeIsStoredInDatabase} applies to an attached element, answered for
+     * the pair the creation holds: the owner the element is about to sit in, and the element kind
+     * as a detached instance of the class the creation would attach. The walk along the
+     * containment chain starts at the owner itself, because once attached the element's first
+     * container is that owner - a report or a data processor standing right above the new feature
+     * keeps it out of the database the way it keeps the attached ones.
      * </p>
      *
-     * @param feature the feature whose chain to walk, not <code>null</code>
-     * @return <code>true</code> when a report, a data processor or one of the external kinds holds
-     *         the feature above it
+     * @param owner the object the element is about to be created in, possibly <code>null</code>
+     *            when nothing of the model answers for it yet
+     * @param child the element kind, a detached instance of the class the creation would attach
+     * @return <code>true</code> when the type becomes a table column
      */
-    private static boolean belongsToAnObjectThatKeepsItsFeaturesInMemory(EObject feature)
+    public static boolean typeToBeCreatedIsStoredInDatabase(EObject owner, Object child)
     {
-        for (EObject owner = feature.eContainer(); owner != null; owner = owner.eContainer())
+        if (!isStoredTypeCarrier(child))
+        {
+            return false;
+        }
+        return owner == null || !chainHoldsFeaturesInMemory(owner);
+    }
+
+    /**
+     * Whether the object is of a kind whose type description becomes a table column: a
+     * {@code BasicFeature} (the base of every attribute of a database object and of a tabular
+     * section, of a register dimension, resource and attribute, of an addressing attribute and of
+     * an accounting flag), or one of the top-level objects whose one type description is stored
+     * as well - the constant value, the sequence dimension, the defined type.
+     *
+     * @param candidate the object to ask, possibly <code>null</code>
+     * @return <code>true</code> when the kind itself carries a stored type
+     */
+    private static boolean isStoredTypeCarrier(Object candidate)
+    {
+        return candidate instanceof BasicFeature
+            || candidate instanceof Constant
+            || candidate instanceof DefinedType
+            || candidate instanceof SequenceDimension;
+    }
+
+    /**
+     * Tells whether the containment chain at or above <code>start</code> reaches an object that
+     * stores none of its features.
+     * <p>
+     * The four classes are unrelated in the model - each of them extends {@code MdObject} on its
+     * own - so every one of them is named. A detached object carries no chain above it and keeps
+     * its answer.
+     * </p>
+     *
+     * @param start the object the walk starts at, inclusive, possibly <code>null</code>
+     * @return <code>true</code> when a report, a data processor or one of the external kinds holds
+     *         the chain at or above <code>start</code>
+     */
+    private static boolean chainHoldsFeaturesInMemory(EObject start)
+    {
+        for (EObject owner = start; owner != null; owner = owner.eContainer())
         {
             if (owner instanceof Report
                 || owner instanceof DataProcessor
@@ -381,6 +421,37 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * The refusal a creating operation answers before the element it was asked for exists.
+     * <p>
+     * The composition refusal of {@link #compositeStringLengthRefusal} is known from the
+     * arguments and the carrier alone, so a creating operation asks it before it creates
+     * anything: after the refusal the model holds neither the element nor a trace of it. The
+     * carrier does not exist yet, so the stored decision is taken on the pair of the owner the
+     * element will sit in and the element kind - see {@link #typeToBeCreatedIsStoredInDatabase}.
+     * </p>
+     * <p>
+     * The check inside {@link #setTypesOnDescription} stays where it is: {@code set_object_type}
+     * and the write paths without a creation take their refusal there.
+     * </p>
+     *
+     * @param owner the object the element is about to be created in, possibly <code>null</code>
+     *            when nothing of the model answers for it yet
+     * @param child the element kind, a detached instance of the class the creation would attach
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable
+     */
+    public static String creationCompositeStringRefusal(EObject owner, Object child,
+        List<String> typeFqns, QualifierOptions qualifierOptions)
+    {
+        if (!typeToBeCreatedIsStoredInDatabase(owner, child))
+        {
+            return null;
+        }
+        return compositeStringLengthRefusal(expandCommaSeparatedFqns(typeFqns), qualifierOptions);
+    }
+
+    /**
      * Description-level core of {@link #setTypes}: validates the requested
      * FQNs, builds fresh TypeItems, replaces the TypeDescription's types
      * list, deep-resolves the proxies against {@code contextObject}'s
@@ -421,25 +492,7 @@ public final class BmDefinedTypeHelper
         // Expand on commas here so every caller (object / TS / form attributes,
         // columns, register fields) gets a proper multi-<types> composite instead of
         // one malformed <types> element with a comma ("Неизвестный тип").
-        List<String> expandedFqns = new ArrayList<>();
-        for (String raw : typeFqns)
-        {
-            if (raw == null)
-            {
-                continue;
-            }
-            for (String part : raw.split(",")) //$NON-NLS-1$
-            {
-                String s = part.trim();
-                if (!s.isEmpty())
-                {
-                    // A Russian primitive (Строка) and a Russian metadata-type prefix
-                    // (ОпределяемыйТип.X) become the English spelling. The check and the
-                    // builder both read that spelling, so the two writings name one object.
-                    expandedFqns.add(normalizePrimitiveFqn(s));
-                }
-            }
-        }
+        List<String> expandedFqns = expandCommaSeparatedFqns(typeFqns);
         List<String> requested = new ArrayList<>();
         for (String fqn : expandedFqns)
         {
@@ -4028,6 +4081,45 @@ public final class BmDefinedTypeHelper
         }
         String en = RU_PRIMITIVE_TO_EN.get(fqn.trim().toLowerCase(Locale.ROOT));
         return en != null ? en : fqn;
+    }
+
+    /**
+     * Reads the requested type FQNs the way every reader of the argument reads them: split on
+     * commas, trimmed, empty parts dropped, each part in the spelling
+     * {@link #normalizePrimitiveFqn} answers. Callers pass the {@code type} argument as a single
+     * list element and a composition arrives comma-joined, so this is where one element becomes
+     * the composition's parts.
+     * <p>
+     * Shared by the write ({@link #setTypesOnDescription}) and by the refusal a creating
+     * operation answers before the element exists ({@link #creationCompositeStringRefusal}),
+     * so the two cannot disagree about what the caller asked for.
+     * </p>
+     *
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @return the normalized parts, empty when nothing was asked
+     */
+    private static List<String> expandCommaSeparatedFqns(List<String> typeFqns)
+    {
+        List<String> expanded = new ArrayList<>();
+        for (String raw : typeFqns)
+        {
+            if (raw == null)
+            {
+                continue;
+            }
+            for (String part : raw.split(",")) //$NON-NLS-1$
+            {
+                String s = part.trim();
+                if (!s.isEmpty())
+                {
+                    // A Russian primitive (Строка) and a Russian metadata-type prefix
+                    // (ОпределяемыйТип.X) become the English spelling. The check and the
+                    // builder both read that spelling, so the two writings name one object.
+                    expanded.add(normalizePrimitiveFqn(s));
+                }
+            }
+        }
+        return expanded;
     }
 
     /**

@@ -2822,6 +2822,29 @@ public class EditMetadataTool implements IMcpTool
         return err.toJson();
     }
 
+    /**
+     * The answer of a refusal thrown before the write entry ran: the error shape
+     * {@link #formatResult} gives a refusal thrown inside the transaction, with the preview tag a
+     * preview carries there.
+     *
+     * @param fqn the owner the refused call named
+     * @param dryRun whether the refused call was a preview
+     * @param error the refusal text
+     * @param op the operation's own name
+     * @return the JSON answer
+     */
+    static String refusedResult(String fqn, boolean dryRun, String error, String op)
+    {
+        BmObjectHelper.Result r = new BmObjectHelper.Result();
+        r.fqn = fqn;
+        r.error = error;
+        if (dryRun)
+        {
+            r.tags.put("dryRun", Boolean.TRUE); //$NON-NLS-1$
+        }
+        return formatResult(r, op);
+    }
+
     static void applyTags(ToolResult result, Map<String, Object> tags)
     {
         if (result == null || tags == null || tags.isEmpty())
