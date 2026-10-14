@@ -637,7 +637,8 @@ public final class BslCallGraphHelper
             }
             // A plain ModuleName.Method(...) call names a module the project holds, so it needs no
             // target check; a string literal has to be answered by a method, and the target module
-            // is loaded the way the module level loads every module it walks into.
+            // is loaded the way the module level loads every module it walks into. One cache holds
+            // the answers for the whole walk, so a module many calls name is loaded once.
             List<NameCall> calls = commonModuleNameCallsOf(module, commonModules);
             if (calls == null)
             {
@@ -648,13 +649,7 @@ public final class BslCallGraphHelper
                 calls = new ArrayList<>(calls);
             }
             calls.addAll(withExistingTargets(literalNameCallsOf(module, commonModules), module,
-                fqn -> {
-                    BslModuleAccess.ModulePathResolution path =
-                        BslModuleAccess.resolveModulePath(project, fqn);
-                    return path != null && path.isResolved()
-                        ? BslModuleAccess.loadModule(project, path.getPath())
-                        : null;
-                }));
+                targetMethodNames()));
             return calls;
         }
 
@@ -668,7 +663,29 @@ public final class BslCallGraphHelper
             return commonModules;
         }
 
+        /**
+         * The method names of the target modules of this walk, each module read once.
+         *
+         * @return the cache
+         */
+        private MethodNameCache targetMethodNames()
+        {
+            if (targetMethods == null)
+            {
+                targetMethods = new MethodNameCache(fqn -> {
+                    BslModuleAccess.ModulePathResolution path =
+                        BslModuleAccess.resolveModulePath(project, fqn);
+                    return path != null && path.isResolved()
+                        ? BslModuleAccess.loadModule(project, path.getPath())
+                        : null;
+                });
+            }
+            return targetMethods;
+        }
+
         private java.util.Map<String, String> commonModules;
+
+        private MethodNameCache targetMethods;
     }
 
     /**
@@ -1103,23 +1120,93 @@ public final class BslCallGraphHelper
      *
      * @param calls the calls read out of a module's text
      * @param self the module the calls sit in, the target of every call naming its own module
-     * @param targetModules the loaded module behind an FQN, or {@code null} when there is none
+     * @param targetModules the method names of the target modules, read once per module
      * @return the calls whose named method exists, in the order they were read
      */
     static List<NameCall> withExistingTargets(List<NameCall> calls, Module self,
-        java.util.function.Function<String, Module> targetModules)
+        MethodNameCache targetModules)
     {
         List<NameCall> kept = new ArrayList<>();
         for (NameCall call : calls)
         {
-            Module target = call.targetModuleFqn == null ? self
-                : targetModules.apply(call.targetModuleFqn);
-            if (target != null && hasMethodNamed(target, call.methodName))
+            boolean exists = call.targetModuleFqn == null
+                ? hasMethodNamed(self, call.methodName)
+                : targetModules.hasMethodNamed(call.targetModuleFqn, call.methodName);
+            if (exists)
             {
                 kept.add(call);
             }
         }
         return kept;
+    }
+
+    /**
+     * The method names of the target modules of one walk, each module read once.
+     * <p>
+     * A walk that reads many written-by-name calls into the same module would load that module
+     * per call site otherwise - under the read transaction, with a journal entry per load.
+     * </p>
+     */
+    public static final class MethodNameCache
+    {
+        private final java.util.function.Function<String, Module> loader;
+
+        private final java.util.Map<String, Set<String>> namesByFqn = new java.util.HashMap<>();
+
+        /**
+         * @param loader the module behind an FQN, or {@code null} when there is none
+         */
+        public MethodNameCache(java.util.function.Function<String, Module> loader)
+        {
+            this.loader = loader;
+        }
+
+        /**
+         * Whether the module an FQN names declares a method of the given name, without regard to
+         * case.
+         * <p>
+         * The module is read on the first question about it and remembered, also when it answered
+         * nothing or would not load.
+         * </p>
+         *
+         * @param fqn the module's FQN
+         * @param methodName the name as a call site spells it
+         * @return whether the module declares the method
+         */
+        public boolean hasMethodNamed(String fqn, String methodName)
+        {
+            if (fqn == null || methodName == null || methodName.isEmpty())
+            {
+                return false;
+            }
+            Set<String> names = namesByFqn.computeIfAbsent(fqn,
+                key -> methodNamesOf(loader.apply(key)));
+            return names.contains(methodName.toLowerCase(java.util.Locale.ROOT));
+        }
+    }
+
+    /**
+     * The method names a module declares, folded to one case.
+     *
+     * @param module the module to read
+     * @return its method names, or an empty set for a module that is not there
+     */
+    private static Set<String> methodNamesOf(Module module)
+    {
+        if (module == null)
+        {
+            return Collections.emptySet();
+        }
+        Set<String> names = new HashSet<>();
+        for (Method method : module.allMethods())
+        {
+            String name = method.getName();
+            if (name != null)
+            {
+                names.add(name.toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        return names;
     }
 
     /**

@@ -175,9 +175,12 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         Module withTheMethod = moduleDeclaring("НесуществующийМетод"); //$NON-NLS-1$
 
         List<BslCallGraphHelper.NameCall> read = BslCallGraphHelper.literalNameCallsOf(caller, MODULES);
-        java.util.function.Function<String, Module> none = fqn -> null;
-        java.util.function.Function<String, Module> wrong = fqn -> callee;
-        java.util.function.Function<String, Module> right = fqn -> withTheMethod;
+        BslCallGraphHelper.MethodNameCache none = new BslCallGraphHelper.MethodNameCache(
+            fqn -> null);
+        BslCallGraphHelper.MethodNameCache wrong = new BslCallGraphHelper.MethodNameCache(
+            fqn -> callee);
+        BslCallGraphHelper.MethodNameCache right = new BslCallGraphHelper.MethodNameCache(
+            fqn -> withTheMethod);
 
         assertTrue(BslCallGraphHelper.withExistingTargets(read, caller, none).isEmpty());
         assertTrue(BslCallGraphHelper.withExistingTargets(read, caller, wrong).isEmpty());
@@ -195,7 +198,32 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
 
         List<BslCallGraphHelper.NameCall> read = BslCallGraphHelper.literalNameCallsOf(caller, MODULES);
         assertEquals(1, BslCallGraphHelper.withExistingTargets(read, caller,
-            fqn -> callee).size());
+            new BslCallGraphHelper.MethodNameCache(fqn -> callee)).size());
+    }
+
+    /** Two calls into one module read that module once. */
+    @Test
+    public void twoCallsIntoOneModuleReadItOnce()
+    {
+        int[] loads = {0};
+        Module target = moduleDeclaring("РассчитатьВсе"); //$NON-NLS-1$
+        BslCallGraphHelper.MethodNameCache cache = new BslCallGraphHelper.MethodNameCache(fqn -> {
+            loads[0]++;
+            return target;
+        });
+        List<BslCallGraphHelper.NameCall> calls = List.of(
+            new BslCallGraphHelper.NameCall("CommonModule.ДлительныеПодготовки.Module", //$NON-NLS-1$
+                "РассчитатьВсе", 1), //$NON-NLS-1$
+            new BslCallGraphHelper.NameCall("CommonModule.ДлительныеПодготовки.Module", //$NON-NLS-1$
+                "НичемНеНазван", 2)); //$NON-NLS-1$
+        Module caller = moduleDeclaring("Чтоугодно"); //$NON-NLS-1$
+
+        List<BslCallGraphHelper.NameCall> kept = BslCallGraphHelper.withExistingTargets(calls,
+            caller, cache);
+
+        assertEquals(1, kept.size());
+        assertEquals("РассчитатьВсе", kept.get(0).methodName); //$NON-NLS-1$
+        assertEquals(1, loads[0]);
     }
 
     /** The method names of the calls, in their order. */
