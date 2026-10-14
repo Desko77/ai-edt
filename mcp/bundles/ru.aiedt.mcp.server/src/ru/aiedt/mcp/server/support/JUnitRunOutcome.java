@@ -19,7 +19,8 @@ import java.util.Set;
  * case is noted by name and then forgotten: nothing downstream reads its message or its trace, and a
  * run of ten thousand green tests should not cost ten thousand stacks to say so. The names stay for
  * the one reader that needs them - the call's own {@code tests} / {@code modules} filter, which is
- * answered for by looking its names up in the report (see {@link RunNameReconciliation}).
+ * answered for by looking its names up in the report (see {@link RunNameReconciliation}). Test names
+ * and the names of what holds them are kept apart, so a module is never found by a test's name.
  * </p>
  * <p>
  * {@link JUnitXmlReader} fills one of these in and {@link JUnitReportFormatter} reads it back out;
@@ -65,15 +66,15 @@ public final class JUnitRunOutcome
     private final List<TestCase> errorDetails = new ArrayList<>();
     private final List<TestCase> skippedDetails = new ArrayList<>();
 
+    /** The module-qualified names of the tests the report carries, in report order, without repeats. */
+    private final Set<String> testNamesInReport = new LinkedHashSet<>();
+
     /**
-     * The names the report carries, in the order they were read, without repeats.
-     * <p>
-     * A test is noted by its module-qualified name and by the class name the report wrote beside it,
-     * a suite by its own name: a caller naming a module expects to find it where the report spelled
-     * it, whether that was the suite or the class of the tests inside.
-     * </p>
+     * The names of what holds the tests: every suite name and every class name the report wrote
+     * beside a test, in report order, without repeats. A caller naming a module expects to find it
+     * where the report spelled it, whether that was the suite or the class of the tests inside.
      */
-    private final Set<String> namesInReport = new LinkedHashSet<>();
+    private final Set<String> moduleNamesInReport = new LinkedHashSet<>();
 
     private int total;
     private int failures;
@@ -141,14 +142,21 @@ public final class JUnitRunOutcome
     }
 
     /**
-     * The names the report carries for what ran: every test's module-qualified name, the class name
-     * beside it, and every suite's name.
-     *
-     * @return those names, in report order; empty, never <code>null</code>, and not modifiable
+     * @return the module-qualified names of the tests the report carries, in report order; empty,
+     *         never <code>null</code>, and not modifiable
      */
-    public Set<String> getNamesInReport()
+    public Set<String> getTestNamesInReport()
     {
-        return Collections.unmodifiableSet(namesInReport);
+        return Collections.unmodifiableSet(testNamesInReport);
+    }
+
+    /**
+     * @return every suite name and class name the report carries, in report order; empty, never
+     *         <code>null</code>, and not modifiable
+     */
+    public Set<String> getModuleNamesInReport()
+    {
+        return Collections.unmodifiableSet(moduleNamesInReport);
     }
 
     /**
@@ -226,16 +234,28 @@ public final class JUnitRunOutcome
     }
 
     /**
-     * Notes one name the report carries for what ran.
+     * Notes the module-qualified name of one test the report carries.
      *
-     * @param name the name; empty names and repeats are dropped, and the caller may pass a name that
-     *            was noted before
+     * @param name the name; empty names and repeats are dropped
      */
-    void noteName(String name)
+    void noteTestName(String name)
     {
         if (name != null && !name.isEmpty())
         {
-            namesInReport.add(name);
+            testNamesInReport.add(name);
+        }
+    }
+
+    /**
+     * Notes one suite name or class name the report carries.
+     *
+     * @param name the name; empty names and repeats are dropped
+     */
+    void noteModuleName(String name)
+    {
+        if (name != null && !name.isEmpty())
+        {
+            moduleNamesInReport.add(name);
         }
     }
 }

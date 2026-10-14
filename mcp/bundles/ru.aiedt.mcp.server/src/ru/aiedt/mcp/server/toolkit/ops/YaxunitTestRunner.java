@@ -174,16 +174,18 @@ public final class YaxunitTestRunner
     private static final Map<String, Path> RUN_REPORT_DIRS = new ConcurrentHashMap<>();
 
     /**
-     * When each run launched here started, by runKey, in milliseconds since the epoch.
+     * The report each run launched here found in its directory at launch, by runKey.
      * <p>
      * The report directory is stable per launch configuration and filter set, so the report of an
-     * earlier run of the same tests lies in the same directory as this run's. The launch moment is
-     * what tells the two apart: the client writes its report after this and not before. Recorded
-     * where the launch is started, under the launch lock, beside the undelivered mark, and dropped
-     * when the report is handed over, which is when the run is over.
+     * earlier run of the same tests lies in the same directory as this run's. The launch clears the
+     * directory and then takes this stamp, under the launch lock: normally it says no report is
+     * there, and a file the clearing could not remove is recorded with its modification time and
+     * size. A report counts as this run's when it differs from the stamp. Nothing is compared with
+     * a clock, so a file system that rounds modification times does not turn a fresh report into a
+     * stale one. Dropped when the report is handed over, which is when the run is over.
      * </p>
      */
-    private static final Map<String, Long> RUN_STARTED_AT = new ConcurrentHashMap<>();
+    private static final Map<String, ReportStamp> RUN_REPORT_BEFORE = new ConcurrentHashMap<>();
 
     private static final Map<String, RunContext> RUN_CONTEXTS = new ConcurrentHashMap<>();
 
@@ -322,15 +324,16 @@ public final class YaxunitTestRunner
     }
 
     /**
-     * Records the moment a run launched here started. Taken before the client is told to run, so
-     * every report the client of this run writes is written after it.
+     * Records the report a run launched here found in its directory at launch. Taken after the
+     * directory is cleared and before the client is told to run.
      *
      * @param runKey the run
-     * @param startedAt the moment the launch was issued, in milliseconds since the epoch
+     * @param before the stamp of the report then in the directory, {@link ReportStamp#ABSENT} when
+     *            there was none
      */
-    static void noteRunStarted(String runKey, long startedAt)
+    static void noteRunStarted(String runKey, ReportStamp before)
     {
-        RUN_STARTED_AT.put(runKey, Long.valueOf(startedAt));
+        RUN_REPORT_BEFORE.put(runKey, before);
     }
 
     /**
@@ -341,20 +344,18 @@ public final class YaxunitTestRunner
      */
     static void forgetRunStarted(String runKey)
     {
-        RUN_STARTED_AT.remove(runKey);
+        RUN_REPORT_BEFORE.remove(runKey);
     }
 
     /**
-     * When a run launched here started.
+     * The report a run launched here found in its directory at launch.
      *
      * @param runKey the run
-     * @return the moment the launch was issued in milliseconds since the epoch, or <code>0</code>
-     *         when this process did not launch the run
+     * @return the stamp, or <code>null</code> when this process did not launch the run
      */
-    static long runStartedAt(String runKey)
+    static ReportStamp reportBefore(String runKey)
     {
-        Long startedAt = RUN_STARTED_AT.get(runKey);
-        return startedAt == null ? 0L : startedAt.longValue();
+        return RUN_REPORT_BEFORE.get(runKey);
     }
 
     @Override
@@ -663,30 +664,88 @@ public final class YaxunitTestRunner
      * The directory is stable per launch configuration and filter set, so the report of an earlier
      * run of the same tests lies exactly where this run's report is expected, and the names the
      * client writes carry no run of their own. Two things tell them apart and both are needed: the
-     * report has to be there at all, and it has to have been written after this run's launch was
-     * issued. A report older than the launch cannot be the answer of a client that started after
-     * it, so it is treated as no report of this run - reading it would hand the caller the counts
-     * of an earlier run as the result of the tests it just asked for.
+     * report has to be there at all, and it has to differ from what the directory held when this
+     * run was launched. A report equal to the stamp is the one the launch found, so it is treated
+     * as no report of this run - reading it would hand the caller the counts of an earlier run as
+     * the result of the tests it just asked for.
      * </p>
      *
-     * @param present whether a report exists in the run's directory
-     * @param writtenAt when that report was written, in milliseconds since the epoch, or
-     *            <code>0</code> when unknown
-     * @param runStartedAt when this run's launch was issued, in milliseconds since the epoch, or
-     *            <code>0</code> when this process did not launch the run
+     * @param now the report in the run's directory, {@link ReportStamp#ABSENT} when there is none
+     * @param before what the directory held at launch, or <code>null</code> when this process did
+     *            not launch the run
      * @return whether the report belongs to this run
      */
-    static boolean reportOfThisRun(boolean present, long writtenAt, long runStartedAt)
+    static boolean reportOfThisRun(ReportStamp now, ReportStamp before)
     {
-        if (!present)
+        if (now == null || now.isAbsent())
         {
             return false;
         }
-        if (writtenAt <= 0 || runStartedAt <= 0)
+        return before == null || before.isAbsent() || !now.equals(before);
+    }
+
+    /**
+     * A report file as the freshness check compares it: whether it is there, when it was last
+     * modified and how long it is.
+     */
+    static final class ReportStamp
+    {
+        /** No report in the directory. */
+        static final ReportStamp ABSENT = new ReportStamp(false, 0L, 0L);
+
+        private final boolean present;
+
+        private final long modified;
+
+        private final long length;
+
+        /**
+         * @param present whether the file is there
+         * @param modified its modification time in milliseconds since the epoch
+         * @param length its length in bytes
+         */
+        ReportStamp(boolean present, long modified, long length)
         {
-            return true;
+            this.present = present;
+            this.modified = modified;
+            this.length = length;
         }
-        return writtenAt >= runStartedAt;
+
+        /**
+         * The stamp of a report file.
+         *
+         * @param file the file, or <code>null</code> when the directory holds none
+         * @return its stamp, {@link #ABSENT} for <code>null</code>
+         */
+        static ReportStamp of(File file)
+        {
+            return file == null ? ABSENT : new ReportStamp(true, file.lastModified(), file.length());
+        }
+
+        /**
+         * @return whether this stamp says no report is there
+         */
+        boolean isAbsent()
+        {
+            return !present;
+        }
+
+        @Override
+        public boolean equals(Object other)
+        {
+            if (!(other instanceof ReportStamp))
+            {
+                return false;
+            }
+            ReportStamp that = (ReportStamp)other;
+            return present == that.present && modified == that.modified && length == that.length;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Boolean.hashCode(present) * 31 * 31 + Long.hashCode(modified) * 31 + Long.hashCode(length);
+        }
     }
 
     /**
@@ -766,16 +825,17 @@ public final class YaxunitTestRunner
      * The report of the run's directory when this run wrote it, and <code>null</code> otherwise.
      *
      * @param junitXml the report found in the directory, or <code>null</code> when none is there
-     * @param runStartedAt when this run's launch was issued, in milliseconds since the epoch
+     * @param before what the directory held at launch, or <code>null</code> when this process did
+     *            not launch the run
      * @return the report of this run, or <code>null</code> when the file is an earlier run's
      */
-    static File reportOfThisRun(File junitXml, long runStartedAt)
+    static File reportOfThisRun(File junitXml, ReportStamp before)
     {
         if (junitXml == null)
         {
             return null;
         }
-        return reportOfThisRun(true, junitXml.lastModified(), runStartedAt) ? junitXml : null;
+        return reportOfThisRun(ReportStamp.of(junitXml), before) ? junitXml : null;
     }
 
     /**
@@ -976,7 +1036,7 @@ public final class YaxunitTestRunner
                     if (existing.isTerminated())
                     {
                         ACTIVE_LAUNCHES.remove(runKey);
-                        File junitXml = reportOfThisRun(findJunitXml(reportDir), runStartedAt(runKey));
+                        File junitXml = reportOfThisRun(findJunitXml(reportDir), reportBefore(runKey));
                         if (junitXml != null)
                         {
                             return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
@@ -1001,7 +1061,7 @@ public final class YaxunitTestRunner
                         // too, and handing it over as the pickup would answer the caller with the
                         // counts of a run it never asked for. What is left of a pickup whose report
                         // is not there is a new run, which is what the call falls through to.
-                        cached = reportOfThisRun(cached, runStartedAt(runKey));
+                        cached = reportOfThisRun(cached, reportBefore(runKey));
                     }
                     if (servesFromCache(cached != null, recent, uncollected, reuseRecent))
                     {
@@ -1077,10 +1137,10 @@ public final class YaxunitTestRunner
                         workingCopy.setAttribute(LaunchConfigAccess.ATTR_STARTUP_OPTION, startupOption);
                         Activator.logInfo("Starting YAXUnit test launch: config=" + matchingConfig.getName() //$NON-NLS-1$
                             + ", startup=" + startupOption); //$NON-NLS-1$
-                        // When this run starts, taken before the client is told to run: the report
-                        // the client of this run writes is written after this moment, and any
-                        // report in the directory older than it is an earlier run's.
-                        noteRunStarted(runKey, System.currentTimeMillis());
+                        // What the cleared directory holds, taken before the client is told to
+                        // run: a report equal to this stamp is an earlier run's, one that differs
+                        // was written by this run's client.
+                        noteRunStarted(runKey, ReportStamp.of(findJunitXml(reportDir)));
                         // Published before the launch call runs, still under the lock: a second
                         // call of these tests finds the mark inside the same lock and waits
                         // instead of wiping this launch's report directory and starting a
@@ -1361,7 +1421,7 @@ public final class YaxunitTestRunner
         UNDELIVERED_RUNS.remove(runKey);
         LAUNCH_SKIP_DECISIONS.remove(runKey);
         LAUNCHES_IN_FLIGHT.remove(runKey);
-        RUN_STARTED_AT.remove(runKey);
+        RUN_REPORT_BEFORE.remove(runKey);
     }
 
     /**
@@ -1426,7 +1486,7 @@ public final class YaxunitTestRunner
                 clock, sleeper);
         }
         ACTIVE_LAUNCHES.remove(runKey);
-        File junitXml = awaitReportFile(reportDir, runStartedAt(runKey), clock, sleeper);
+        File junitXml = awaitReportFile(reportDir, reportBefore(runKey), clock, sleeper);
         if (junitXml != null)
         {
             return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
@@ -1438,23 +1498,24 @@ public final class YaxunitTestRunner
     /**
      * Waits briefly for the report of a launch that has just terminated: the client writes it on
      * its way out, and a poll that reads the directory in the same moment races that write. Only a
-     * report written after the run started counts as its own, so an earlier run's report left in
-     * the same directory does not end the wait.
+     * report that differs from what the directory held at launch counts as its own, so an earlier
+     * run's report left in the same directory does not end the wait.
      *
      * @param reportDir where the report appears
-     * @param runStartedAt when this run's launch was issued, in milliseconds since the epoch
+     * @param before what the directory held at launch, or <code>null</code> when this process did
+     *            not launch the run
      * @param clock the current-time source
      * @param sleeper the wait seam
      * @return the report of this run, or <code>null</code> when none appeared within the window
      * @throws InterruptedException when the wait is interrupted
      */
-    static File awaitReportFile(Path reportDir, long runStartedAt, LongSupplier clock,
+    static File awaitReportFile(Path reportDir, ReportStamp before, LongSupplier clock,
         Sleeper sleeper) throws InterruptedException
     {
         long deadline = clock.getAsLong() + CLIENT_START_WAIT_MS;
         while (true)
         {
-            File junitXml = reportOfThisRun(findJunitXml(reportDir), runStartedAt);
+            File junitXml = reportOfThisRun(findJunitXml(reportDir), before);
             if (junitXml != null)
             {
                 return junitXml;
@@ -1500,7 +1561,7 @@ public final class YaxunitTestRunner
         }
         ACTIVE_LAUNCHES.remove(runKey);
         Activator.logInfo("YAXUnit tests finished for " + runKey); //$NON-NLS-1$
-        File junitXml = reportOfThisRun(findJunitXml(reportDir), runStartedAt(runKey));
+        File junitXml = reportOfThisRun(findJunitXml(reportDir), reportBefore(runKey));
         if (junitXml == null)
         {
             return clientEndedWithoutReport(reportDir, null, launch);
@@ -1785,7 +1846,8 @@ public final class YaxunitTestRunner
         {
             JUnitRunOutcome results = JUnitXmlReader.parse(junitXml);
             RunNameReconciliation.Result reconciliation = RunNameReconciliation.reconcile(
-                namesTheCallNamed(runContext), results.getNamesInReport());
+                namesOf(runContext.modules), namesOf(runContext.tests),
+                results.getModuleNamesInReport(), results.getTestNamesInReport());
             String markdown = JUnitReportFormatter.format(results);
             if (cacheMark != null)
             {
@@ -1865,29 +1927,17 @@ public final class YaxunitTestRunner
     }
 
     /**
-     * The names the call gave that the report has to carry: its {@code modules} and {@code tests}
-     * filters, in the order the filters are declared, each split the way the launch parameters
-     * split them, so the reconciliation reads exactly the names the run was launched with.
-     * <p>
-     * {@code extensions} is not among them: an extension is a container the tests live in, not a
-     * name the report writes for a test, a suite or a class.
-     * </p>
+     * The names one filter of the call gave, split the way the launch parameters split them, so the
+     * reconciliation reads exactly the names the run was launched with. {@code extensions} is never
+     * passed here: an extension is a container the tests live in, not a name the report writes for
+     * a test, a suite or a class.
      *
-     * @param runContext the filters the run was chosen by
+     * @param filter the CSV value of {@code modules} or {@code tests}, possibly <code>null</code>
      * @return the names, possibly empty
      */
-    static List<String> namesTheCallNamed(RunContext runContext)
+    static List<String> namesOf(String filter)
     {
-        List<String> named = new ArrayList<>();
-        if (runContext.modules != null && !runContext.modules.isEmpty())
-        {
-            named.addAll(splitToList(runContext.modules));
-        }
-        if (runContext.tests != null && !runContext.tests.isEmpty())
-        {
-            named.addAll(splitToList(runContext.tests));
-        }
-        return named;
+        return filter == null || filter.isEmpty() ? new ArrayList<>() : splitToList(filter);
     }
 
     /**

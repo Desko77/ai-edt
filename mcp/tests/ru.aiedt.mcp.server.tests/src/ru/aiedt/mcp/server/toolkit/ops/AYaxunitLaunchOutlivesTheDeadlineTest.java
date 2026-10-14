@@ -289,9 +289,7 @@ public class AYaxunitLaunchOutlivesTheDeadlineTest
         try
         {
             File earlier = writePassingReport(reportDir);
-            Files.setLastModifiedTime(earlier.toPath(),
-                FileTime.fromMillis(System.currentTimeMillis() - 600_000L));
-            YaxunitTestRunner.noteRunStarted(runKey, System.currentTimeMillis());
+            YaxunitTestRunner.noteRunStarted(runKey, YaxunitTestRunner.ReportStamp.of(earlier));
 
             JsonObject refusal = JsonParser.parseString(YaxunitTestRunner.pollLaunch(launch, reportDir,
                 1L, runKey, new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
@@ -328,8 +326,12 @@ public class AYaxunitLaunchOutlivesTheDeadlineTest
         Path reportDir = Files.createTempDirectory("yaxunit-own"); //$NON-NLS-1$
         try
         {
-            writePassingReport(reportDir);
-            YaxunitTestRunner.noteRunStarted(runKey, System.currentTimeMillis() - 1_000L);
+            YaxunitTestRunner.noteRunStarted(runKey, YaxunitTestRunner.ReportStamp.ABSENT);
+            File written = writePassingReport(reportDir);
+            // A file system that rounds modification times can put the run's own report below the
+            // launch; the stamp, not the clock, decides.
+            Files.setLastModifiedTime(written.toPath(),
+                FileTime.fromMillis(System.currentTimeMillis() - 600_000L));
 
             JsonObject answer = JsonParser.parseString(YaxunitTestRunner.pollLaunch(launch, reportDir,
                 1L, runKey, new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$

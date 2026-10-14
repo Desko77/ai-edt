@@ -164,7 +164,7 @@ public final class JUnitXmlReader
      */
     private static void collectSuite(Element suite, JUnitRunOutcome results)
     {
-        results.noteName(suite.getAttribute(ATTR_NAME).trim());
+        results.noteModuleName(suite.getAttribute(ATTR_NAME).trim());
 
         List<Element> testCases = new ArrayList<>();
         collectOwnTestCases(suite, testCases);
@@ -261,8 +261,8 @@ public final class JUnitXmlReader
      */
     private static void noteCaseNames(Element testCase, JUnitRunOutcome results)
     {
-        results.noteName(fullName(testCase));
-        results.noteName(testCase.getAttribute(ATTR_CLASSNAME).trim());
+        results.noteTestName(fullName(testCase));
+        results.noteModuleName(testCase.getAttribute(ATTR_CLASSNAME).trim());
     }
 
     /**

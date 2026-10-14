@@ -50,9 +50,11 @@ public class ANameIsLookedUpByTheWholeOfItOrItsTailTest
     @Test
     public void theCountsAndTheMissingNamesComeBack()
     {
-        List<String> named = Arrays.asList("МодульТестов", "МодульДругой", "МодульТестов.Тест_Сумма"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-        RunNameReconciliation.Result result = RunNameReconciliation.reconcile(named,
-            new LinkedHashSet<>(Arrays.asList("МодульТестов", "МодульТестов.Тест_Сумма"))); //$NON-NLS-1$ //$NON-NLS-2$
+        RunNameReconciliation.Result result = RunNameReconciliation.reconcile(
+            Arrays.asList("МодульТестов", "МодульДругой"), //$NON-NLS-1$ //$NON-NLS-2$
+            Arrays.asList("МодульТестов.Тест_Сумма"), //$NON-NLS-1$
+            new LinkedHashSet<>(Arrays.asList("МодульТестов")), //$NON-NLS-1$
+            new LinkedHashSet<>(Arrays.asList("МодульТестов.Тест_Сумма"))); //$NON-NLS-1$
 
         assertEquals(3, result.namedCount);
         assertEquals(2, result.foundCount);
@@ -72,24 +74,51 @@ public class ANameIsLookedUpByTheWholeOfItOrItsTailTest
     @Test
     public void nothingNamedOrNothingMissingIsNoDiscrepancy()
     {
-        RunNameReconciliation.Result allFound = RunNameReconciliation.reconcile(
-            Arrays.asList("МодульТестов.Тест_Сумма"), Collections.singleton("МодульТестов.Тест_Сумма")); //$NON-NLS-1$ //$NON-NLS-2$
+        RunNameReconciliation.Result allFound = RunNameReconciliation.reconcile(null,
+            Arrays.asList("Тест_Сумма"), Collections.emptyList(), //$NON-NLS-1$
+            Collections.singleton("МодульТестов.Тест_Сумма")); //$NON-NLS-1$
         assertTrue(allFound.isComplete());
         assertEquals(1, allFound.namedCount);
         assertEquals(1, allFound.foundCount);
 
         RunNameReconciliation.Result noneNamed =
-            RunNameReconciliation.reconcile(Collections.emptyList(), Collections.singleton("A")); //$NON-NLS-1$ //$NON-NLS-2$
+            RunNameReconciliation.reconcile(Collections.emptyList(), Collections.emptyList(),
+                Collections.singleton("A"), Collections.singleton("A.B")); //$NON-NLS-1$ //$NON-NLS-2$
         assertTrue(noneNamed.isComplete());
         assertEquals(0, noneNamed.namedCount);
         assertEquals(0, noneNamed.foundCount);
 
         RunNameReconciliation.Result noReport = RunNameReconciliation.reconcile(
-            Arrays.asList(" A ", "a", "  "), Collections.emptyList()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            Arrays.asList(" A ", "a", "  "), null, Collections.emptyList(), Collections.emptyList()); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         assertEquals("a name given twice is one name, and a blank one is none", 1, noReport.namedCount); //$NON-NLS-1$
         assertEquals(1, noReport.missing.size());
         assertEquals("A", noReport.missing.get(0)); //$NON-NLS-1$
 
-        assertTrue(RunNameReconciliation.reconcile(null, Collections.singleton("A")).isComplete()); //$NON-NLS-1$
+        assertTrue(RunNameReconciliation.reconcile(null, null, Collections.singleton("A"), //$NON-NLS-1$
+            Collections.singleton("A.B")).isComplete()); //$NON-NLS-1$
+    }
+
+    /**
+     * A module is found among the suite and class names only: a test that carries the module's
+     * name in its own name does not stand for a module that never ran, and a module name is not
+     * matched by its tail.
+     */
+    @Test
+    public void aModuleIsNotFoundByATestThatCarriesItsName()
+    {
+        RunNameReconciliation.Result byTest = RunNameReconciliation.reconcile(
+            Arrays.asList("Smoke"), null, Collections.singleton("OtherModule"), //$NON-NLS-1$ //$NON-NLS-2$
+            Collections.singleton("OtherModule.Smoke")); //$NON-NLS-1$
+        assertEquals(Collections.singletonList("Smoke"), byTest.missing); //$NON-NLS-1$
+
+        RunNameReconciliation.Result byTail = RunNameReconciliation.reconcile(
+            Arrays.asList("Тесты"), null, Collections.singleton("Общие.Тесты"), //$NON-NLS-1$ //$NON-NLS-2$
+            Collections.emptyList());
+        assertEquals(Collections.singletonList("Тесты"), byTail.missing); //$NON-NLS-1$
+
+        RunNameReconciliation.Result inAnotherCase = RunNameReconciliation.reconcile(
+            Arrays.asList("ом_тесты"), null, Collections.singleton("ОМ_Тесты"), //$NON-NLS-1$ //$NON-NLS-2$
+            Collections.emptyList());
+        assertTrue(inAnotherCase.isComplete());
     }
 }

@@ -190,9 +190,16 @@ public class JUnitXmlReaderTest
 
         JUnitRunOutcome r = parse(xml);
 
-        assertTrue(r.getNamesInReport().toString(),
-            r.getNamesInReport().containsAll(java.util.Arrays.asList("LedgerChecks", "BillingChecks",
-                "Mod_Ledger", "Mod_Ledger.roundsHalfUp", "Mod_Ledger.keepsPrecision", "bareCase")));
+        assertTrue(r.getModuleNamesInReport().toString(),
+            r.getModuleNamesInReport().containsAll(java.util.Arrays.asList("LedgerChecks", "BillingChecks",
+                "Mod_Ledger")));
+        assertTrue(r.getTestNamesInReport().toString(),
+            r.getTestNamesInReport().containsAll(java.util.Arrays.asList("Mod_Ledger.roundsHalfUp",
+                "Mod_Ledger.keepsPrecision", "bareCase")));
+        assertFalse("a test name is not a module name: " + r.getModuleNamesInReport(),
+            r.getModuleNamesInReport().contains("Mod_Ledger.roundsHalfUp"));
+        assertFalse("a suite name is not a test name: " + r.getTestNamesInReport(),
+            r.getTestNamesInReport().contains("LedgerChecks"));
     }
 
     @Test

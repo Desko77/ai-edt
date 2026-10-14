@@ -25,9 +25,11 @@ import java.util.Set;
  * the report, and the ones that are not there are reported as the discrepancy they are.
  * </p>
  * <p>
- * A name is matched against a name in the report whole, ignoring case, or by its tail after a dot:
- * {@code Тест_Сумма} and {@code МодульТестов.Тест_Сумма} are one name, so a call may name a test with
- * its module or without it. 1C identifiers do not distinguish case, and neither does this.
+ * A module is looked up among the suite and class names of the report, whole and ignoring case. A
+ * test is looked up among the test names, whole, ignoring case, or by its tail after a dot:
+ * {@code Тест_Сумма} and {@code МодульТестов.Тест_Сумма} are one test, so a call may name a test with
+ * its module or without it. The two kinds are never matched across: a module is not found by a test
+ * that happens to carry its name. 1C identifiers do not distinguish case, and neither does this.
  * </p>
  */
 public final class RunNameReconciliation
@@ -88,59 +90,82 @@ public final class RunNameReconciliation
     }
 
     /**
-     * Looks every name the call gave up in the report.
+     * Looks every name the call gave up in the report, modules among module names and tests among
+     * test names.
      *
-     * @param named the names carried by the {@code tests} and {@code modules} filters, as the call
-     *            gave them; <code>null</code> and blank entries are ignored, and a name given twice
-     *            is one name
-     * @param namesInReport what the report carries (see
-     *            {@link JUnitRunOutcome#getNamesInReport()})
-     * @return what the report says about them
+     * @param modules the names of the {@code modules} filter as the call gave them; <code>null</code>
+     *            and blank entries are ignored, and a name given twice is one name
+     * @param tests the names of the {@code tests} filter, read the same way
+     * @param moduleNamesInReport the suite and class names of the report (see
+     *            {@link JUnitRunOutcome#getModuleNamesInReport()})
+     * @param testNamesInReport the test names of the report (see
+     *            {@link JUnitRunOutcome#getTestNamesInReport()})
+     * @return what the report says about them; missing modules come before missing tests
      */
-    public static Result reconcile(List<String> named, Collection<String> namesInReport)
+    public static Result reconcile(List<String> modules, List<String> tests,
+        Collection<String> moduleNamesInReport, Collection<String> testNamesInReport)
     {
         List<String> missing = new ArrayList<>();
+        int counted = lookUp(modules, moduleNamesInReport, false, missing);
+        counted += lookUp(tests, testNamesInReport, true, missing);
+        return new Result(missing, counted);
+    }
+
+    /**
+     * Looks one filter's names up among the report names of the same kind.
+     *
+     * @param named the names the filter carries, possibly <code>null</code>
+     * @param inReport the report names of that kind, possibly <code>null</code>
+     * @param byTail whether a name also matches by its tail after a dot - true for tests only
+     * @param missing where the names the report lacks are added, in the order given
+     * @return how many distinct names the filter gave
+     */
+    private static int lookUp(List<String> named, Collection<String> inReport, boolean byTail,
+        List<String> missing)
+    {
         int counted = 0;
-        if (named != null)
+        if (named == null)
         {
-            Set<String> seen = new HashSet<>();
-            for (String name : named)
+            return counted;
+        }
+        Set<String> seen = new HashSet<>();
+        for (String name : named)
+        {
+            if (name == null || name.trim().isEmpty())
             {
-                if (name == null || name.trim().isEmpty())
-                {
-                    continue;
-                }
-                String trimmed = name.trim();
-                if (!seen.add(trimmed.toLowerCase(Locale.ROOT)))
-                {
-                    continue;
-                }
-                counted++;
-                if (!carried(trimmed, namesInReport))
-                {
-                    missing.add(trimmed);
-                }
+                continue;
+            }
+            String trimmed = name.trim();
+            if (!seen.add(trimmed.toLowerCase(Locale.ROOT)))
+            {
+                continue;
+            }
+            counted++;
+            if (!carried(trimmed, inReport, byTail))
+            {
+                missing.add(trimmed);
             }
         }
-        return new Result(missing, counted);
+        return counted;
     }
 
     /**
      * Whether the report carries a name for what the call named.
      *
      * @param named one name the call gave
-     * @param namesInReport what the report carries
+     * @param inReport the report names of the same kind
+     * @param byTail whether a tail after a dot matches as well
      * @return whether one of them is that name
      */
-    private static boolean carried(String named, Collection<String> namesInReport)
+    private static boolean carried(String named, Collection<String> inReport, boolean byTail)
     {
-        if (namesInReport == null)
+        if (inReport == null)
         {
             return false;
         }
-        for (String candidate : namesInReport)
+        for (String candidate : inReport)
         {
-            if (sameName(named, candidate))
+            if (byTail ? sameName(named, candidate) : named.equalsIgnoreCase(candidate))
             {
                 return true;
             }

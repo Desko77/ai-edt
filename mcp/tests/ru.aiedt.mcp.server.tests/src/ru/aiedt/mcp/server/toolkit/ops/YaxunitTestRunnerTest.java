@@ -250,24 +250,32 @@ public class YaxunitTestRunnerTest
     }
 
     /**
-     * Only a report written after the run started belongs to that run: the report of an earlier
-     * run of the same tests lies in the same directory and carries no run of its own.
+     * A report belongs to the run when it differs from what the directory held at launch: the
+     * report of an earlier run of the same tests lies in the same directory and carries no run of
+     * its own. No clock takes part, so a modification time rounded below the launch does not make
+     * a fresh report stale.
      */
     @Test
-    public void aReportYoungerThanTheLaunchIsThisRunsReport()
+    public void aReportThatDiffersFromTheLaunchStampIsThisRunsReport()
     {
-        long startedAt = 1_700_000_000_000L;
+        YaxunitTestRunner.ReportStamp absent = YaxunitTestRunner.ReportStamp.ABSENT;
+        YaxunitTestRunner.ReportStamp earlier = new YaxunitTestRunner.ReportStamp(true,
+            1_700_000_000_000L, 812L);
         assertFalse("no report at all is no report of this run", //$NON-NLS-1$
-            YaxunitTestRunner.reportOfThisRun(false, startedAt + 1_000L, startedAt));
-        assertTrue("a report written after the launch is this run's", //$NON-NLS-1$
-            YaxunitTestRunner.reportOfThisRun(true, startedAt + 1_000L, startedAt));
-        assertTrue("a report written in the launch's own millisecond is this run's", //$NON-NLS-1$
-            YaxunitTestRunner.reportOfThisRun(true, startedAt, startedAt));
-        assertFalse("an earlier run's report is not this run's", //$NON-NLS-1$
-            YaxunitTestRunner.reportOfThisRun(true, startedAt - 1L, startedAt));
-        assertTrue("a run this process did not launch cannot be told apart by time", //$NON-NLS-1$
-            YaxunitTestRunner.reportOfThisRun(true, startedAt - 1L, 0L));
-        assertTrue(YaxunitTestRunner.reportOfThisRun(true, 0L, startedAt));
+            YaxunitTestRunner.reportOfThisRun(absent, absent));
+        assertTrue("a report in a directory that held none at launch is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(earlier, absent));
+        assertFalse("the report the launch found is an earlier run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(new YaxunitTestRunner.ReportStamp(true,
+                1_700_000_000_000L, 812L), earlier));
+        assertTrue("a rewrite with a modification time rounded below the launch is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(new YaxunitTestRunner.ReportStamp(true,
+                1_699_999_998_000L, 940L), earlier));
+        assertTrue("a rewrite of the same length at another time is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(new YaxunitTestRunner.ReportStamp(true,
+                1_700_000_002_000L, 812L), earlier));
+        assertTrue("a run this process did not launch has no stamp to compare with", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(earlier, null));
     }
 
     /**
