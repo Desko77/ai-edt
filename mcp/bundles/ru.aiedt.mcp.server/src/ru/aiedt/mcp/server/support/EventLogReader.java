@@ -128,6 +128,14 @@ public final class EventLogReader
          * (Information, Warning, Error, Note) - matched exactly, not as a substring. */
         public String severity = ""; //$NON-NLS-1$
 
+        /**
+         * Names of events to leave out, on top of {@link #event}. A name ending in {@code *} is a
+         * mask on the start of the name, so {@code _$Transaction$_*} leaves out every transaction
+         * event; any other name is the whole name. Both are compared without regard to case, and
+         * the exclusion is applied before the limit, so an excluded record never fills a row.
+         */
+        public List<String> excludeEvents = new ArrayList<>();
+
         /** Most rows to return. */
         public int limit = 100;
     }
@@ -347,11 +355,60 @@ public final class EventLogReader
         {
             return false;
         }
+        if (leavesOut(row.get("event"), q.excludeEvents)) //$NON-NLS-1$
+        {
+            return false;
+        }
         if (!q.user.isEmpty() && !contains(row.get("user"), q.user)) //$NON-NLS-1$
         {
             return false;
         }
         return q.severity.isEmpty() || severityMatches(row.get("severity"), q.severity); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a row's event is one the query asked to leave out.
+     * <p>
+     * A pattern is the whole event name or, ending in {@code *}, the start of one. Case is folded
+     * on both sides, and event names are often Russian, so the folding is done per character by the
+     * root locale rather than by a regular expression built on ASCII word rules. A pattern that is
+     * empty, or names nothing but the star, is not one this can act on and is skipped: an exclusion
+     * that silently leaves nothing out is visible in the answer, while one that quietly drops every
+     * row would read as a log with nothing in it.
+     * </p>
+     *
+     * @param value the row's event name, as decoded.
+     * @param patterns what the query asked to leave out, possibly none.
+     * @return true when the event is one of them.
+     */
+    private static boolean leavesOut(Object value, List<String> patterns)
+    {
+        if (value == null || patterns == null || patterns.isEmpty())
+        {
+            return false;
+        }
+        String name = String.valueOf(value).trim().toLowerCase(Locale.ROOT);
+        for (String pattern : patterns)
+        {
+            String wanted = pattern == null ? "" : pattern.trim().toLowerCase(Locale.ROOT); //$NON-NLS-1$
+            if (wanted.isEmpty())
+            {
+                continue;
+            }
+            if (wanted.endsWith("*")) //$NON-NLS-1$
+            {
+                String start = wanted.substring(0, wanted.length() - 1);
+                if (!start.isEmpty() && name.startsWith(start))
+                {
+                    return true;
+                }
+            }
+            else if (name.equals(wanted))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

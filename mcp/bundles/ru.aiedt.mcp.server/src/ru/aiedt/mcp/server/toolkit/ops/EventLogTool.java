@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -62,8 +63,9 @@ public class EventLogTool implements IMcpTool
         return "Reads the event log of a project's FILE infobase - the record of what happened in " //$NON-NLS-1$
             + "it: logins, postings, configuration updates, errors the platform raised. Answers " //$NON-NLS-1$
             + "with one row per event (moment, event, severity, user, computer, application, " //$NON-NLS-1$
-            + "session, comment), newest last, filtered by from / to / event / user / severity and " //$NON-NLS-1$
-            + "capped by limit. Free text passes through the sensitive-data masker on the way out. " //$NON-NLS-1$
+            + "session, comment), newest last, filtered by from / to / event / user / severity, " //$NON-NLS-1$
+            + "with whole events left out by excludeEvents, and capped by limit. Free text passes " //$NON-NLS-1$
+            + "through the sensitive-data masker on the way out. " //$NON-NLS-1$
             + "A server infobase keeps its log on the server and is refused by name; so is the " //$NON-NLS-1$
             + "single-file SQLite form of the log, which needs a different reader. Read-only."; //$NON-NLS-1$
     }
@@ -84,6 +86,10 @@ public class EventLogTool implements IMcpTool
                 "Keep only events whose name contains this, ignoring case - e.g. 'Session', " //$NON-NLS-1$
                     + "'DBConfigUpdate', '_$Data$_.Post'.") //$NON-NLS-1$
             .stringProperty("user", "Keep only records of users whose name contains this.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringArrayProperty("excludeEvents", //$NON-NLS-1$
+                "Leave out these events, by whole name or, ending in *, by the start of it - " //$NON-NLS-1$
+                    + "_$Transaction$_* drops transaction events. Case is ignored; applied " //$NON-NLS-1$
+                    + "after event and before limit.") //$NON-NLS-1$
             .stringProperty("severity", //$NON-NLS-1$
                 "Keep only this severity: Information, Warning, Error or Note.") //$NON-NLS-1$
             .integerProperty("limit", "Most rows to return (default 100).") //$NON-NLS-1$ //$NON-NLS-2$
@@ -161,17 +167,7 @@ public class EventLogTool implements IMcpTool
                 .toJson();
         }
 
-        EventLogReader.Query query = new EventLogReader.Query();
-        query.from = orEmpty(JsonUtils.extractStringArgument(params, "from")); //$NON-NLS-1$
-        query.to = orEmpty(JsonUtils.extractStringArgument(params, "to")); //$NON-NLS-1$
-        query.event = orEmpty(JsonUtils.extractStringArgument(params, "event")); //$NON-NLS-1$
-        query.user = orEmpty(JsonUtils.extractStringArgument(params, "user")); //$NON-NLS-1$
-        query.severity = orEmpty(JsonUtils.extractStringArgument(params, "severity")); //$NON-NLS-1$
-        Integer limit = JsonUtils.extractIntegerArgument(params, "limit"); //$NON-NLS-1$
-        if (limit != null && limit > 0)
-        {
-            query.limit = limit;
-        }
+        EventLogReader.Query query = queryFrom(params);
 
         Path infobaseDirectory = Paths.get(directory.trim());
         EventLogReader.Result read = EventLogReader.read(infobaseDirectory, query);
@@ -211,6 +207,38 @@ public class EventLogTool implements IMcpTool
     }
 
     /**
+     * The filters a call asks for, in the shape the reader takes them.
+     * <p>
+     * Package-visible so the arguments a call carries can be read back without a workspace: the
+     * mapping from an argument to a filter is the whole contract of this tool, and an argument
+     * advertised in the schema that reaches no filter is a promise the server does not keep.
+     * </p>
+     *
+     * @param params the call arguments.
+     * @return the filters, with the reader's own defaults where the call names none.
+     */
+    static EventLogReader.Query queryFrom(Map<String, String> params)
+    {
+        EventLogReader.Query query = new EventLogReader.Query();
+        query.from = orEmpty(JsonUtils.extractStringArgument(params, "from")); //$NON-NLS-1$
+        query.to = orEmpty(JsonUtils.extractStringArgument(params, "to")); //$NON-NLS-1$
+        query.event = orEmpty(JsonUtils.extractStringArgument(params, "event")); //$NON-NLS-1$
+        query.user = orEmpty(JsonUtils.extractStringArgument(params, "user")); //$NON-NLS-1$
+        query.severity = orEmpty(JsonUtils.extractStringArgument(params, "severity")); //$NON-NLS-1$
+        List<String> excluded = JsonUtils.extractArrayArgument(params, "excludeEvents"); //$NON-NLS-1$
+        if (excluded != null)
+        {
+            query.excludeEvents = excluded;
+        }
+        Integer limit = JsonUtils.extractIntegerArgument(params, "limit"); //$NON-NLS-1$
+        if (limit != null && limit > 0)
+        {
+            query.limit = limit;
+        }
+        return query;
+    }
+
+    /**
      * Which filters were in force, so an empty answer names what emptied it.
      *
      * @param query the filters.
@@ -224,6 +252,8 @@ public class EventLogTool implements IMcpTool
         appendFilter(sb, "event", query.event); //$NON-NLS-1$
         appendFilter(sb, "user", query.user); //$NON-NLS-1$
         appendFilter(sb, "severity", query.severity); //$NON-NLS-1$
+        appendFilter(sb, "excludeEvents", query.excludeEvents.isEmpty() ? "" //$NON-NLS-1$ //$NON-NLS-2$
+            : String.join(", ", query.excludeEvents)); //$NON-NLS-1$
         if (sb.length() == 0)
         {
             return "none - the log itself holds no records in this range"; //$NON-NLS-1$

@@ -33,7 +33,10 @@ than all of them.
 - **What actually happened in the infobase.** `infobase_admin operation=read_event_log` reads the
   event log of a FILE infobase - logins, postings, configuration updates, errors the platform
   raised - filtered by `from` / `to` / `event` / `user` / `severity`. `severity` matches exactly and
-  takes the letters `I`, `W`, `E`, `N` as well as the full names. This is the only route here to
+  takes the letters `I`, `W`, `E`, `N` as well as the full names. `excludeEvents` takes event names
+  to leave out - a whole name, or, ending in `*`, the start of one, so `_$Transaction$_*` drops the
+  transaction events that otherwise fill the answer; case is ignored and the exclusion runs before
+  `limit`. This is the only route here to
   runtime facts rather than configuration; a server infobase and the single-file SQLite form of the
   log are both refused by name rather than answered with an empty list.
 

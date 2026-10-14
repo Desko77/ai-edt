@@ -240,8 +240,18 @@ public class TheToolListHasAWeightBudgetTest
      * And from 192661 to 192666 for runKey on yaxunit_tests, which collects a run answered
      * Pending at a dialog or at the deadline of the call. Measured 14.10: 192666.
      * </p>
+     * <p>
+     * And from 192666 to 192930 for excludeEvents on read_event_log: the argument, its
+     * declaration and the sentence that says a name or its start may be given. Measured 14.10:
+     * 192930.
+     * </p>
+     * <p>
+     * And from 192930 to 193180 for the excludeEvents declaration on the infobase_admin schema,
+     * which is where a client routing the operation through the facade reads it. Measured 14.10:
+     * 193180.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 192666;
+    private static final int DOCUMENT_BUDGET = 193180;
 
     private LiveServer server;
 
@@ -405,8 +415,11 @@ public class TheToolListHasAWeightBudgetTest
         // and retrieve_database_changes adds the operation, replaceLocal, markSynchronized and the
         // pending wait the schema describes. And for verifyInfobaseContent and the sentence that
         // a load marks the stored copy. Raised for the sentence that a load names the stored copy
-        // when the mark could not be written. Measured 29.09: 12539.
-        BUDGETS.put("infobase_admin", Integer.valueOf(12539)); //$NON-NLS-1$
+        // when the mark could not be written. Measured 29.09: 12539. Raised from 12539 to 12789
+        // for excludeEvents: the declaration on the facade schema and the sentence that says a
+        // name or its start may be given and that the exclusion runs before the limit. Measured
+        // 14.10: 12789.
+        BUDGETS.put("infobase_admin", Integer.valueOf(12789)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
@@ -466,7 +479,10 @@ public class TheToolListHasAWeightBudgetTest
         // the two places the refusals are named. Measured 08.10: 2904.
         BUDGETS.put("tag_admin", Integer.valueOf(2904)); //$NON-NLS-1$
         BUDGETS.put("get_form_screenshot", Integer.valueOf(1748)); //$NON-NLS-1$
-        BUDGETS.put("read_event_log", Integer.valueOf(1673)); //$NON-NLS-1$
+        // Raised from 1673 to 1937 for excludeEvents on read_event_log: the declaration and the
+        // sentence that says a name or its start may be given, and that the exclusion runs
+        // before the limit. Measured 14.10: 1937.
+        BUDGETS.put("read_event_log", Integer.valueOf(1937)); //$NON-NLS-1$
         BUDGETS.put("get_metadata_details", Integer.valueOf(1613)); //$NON-NLS-1$
         BUDGETS.put("copy_object", Integer.valueOf(1420)); //$NON-NLS-1$
         BUDGETS.put("get_form_structure", Integer.valueOf(1359)); //$NON-NLS-1$
