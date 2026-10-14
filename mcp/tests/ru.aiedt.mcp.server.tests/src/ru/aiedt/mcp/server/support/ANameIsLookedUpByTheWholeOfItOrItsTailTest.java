@@ -110,6 +110,12 @@ public class ANameIsLookedUpByTheWholeOfItOrItsTailTest
             Arrays.asList("Smoke"), null, Collections.singleton("OtherModule"), //$NON-NLS-1$ //$NON-NLS-2$
             Collections.singleton("OtherModule.Smoke")); //$NON-NLS-1$
         assertEquals(Collections.singletonList("Smoke"), byTest.missing); //$NON-NLS-1$
+        assertEquals(Collections.singletonList("Smoke"), byTest.missingModules); //$NON-NLS-1$
+        assertTrue(byTest.missingTests.isEmpty());
+        String described = byTest.describe();
+        assertTrue(described, described.contains("no suite or class named Smoke (modules)")); //$NON-NLS-1$
+        assertFalse("a missing module is not described as a missing test: " + described, //$NON-NLS-1$
+            described.contains("no test named")); //$NON-NLS-1$
 
         RunNameReconciliation.Result byTail = RunNameReconciliation.reconcile(
             Arrays.asList("Тесты"), null, Collections.singleton("Общие.Тесты"), //$NON-NLS-1$ //$NON-NLS-2$

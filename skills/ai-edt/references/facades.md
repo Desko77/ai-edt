@@ -643,16 +643,18 @@ not become visible yet, a second call of the same configuration waits for it and
 of starting a second client.
 
 The report directory is stable per launch configuration and filter set, so the report of an earlier
-run of the same tests lies where this run's report is expected. Only a report written after this
-run's launch is this run's own; an older one answers neither as a result nor as a pickup. A client
+run of the same tests lies where this run's report is expected. The launch clears the directory and
+refuses, naming the file and launching nothing, when a report could not be removed; only a report
+that appeared after the clearing is this run's own, and an earlier one answers neither as a result
+nor as a pickup. A client
 that ended without writing this run's report is refused rather than answered with the earlier run's
 counts: the refusal carries `the client ended without writing a report for this run`,
 `status=NoReport`, `clientEnded=true`, `reportDir` and `clientExitCode` when the runtime recorded
 the code the client exited with.
 
 Every run answer carries the number of tests the report holds, in `testsInReport`. When the call
-named `tests` or `modules`, each name given is looked up in the report against every test name, suite
-name and class name it carries, ignoring case and accepting a test named with or without its module;
+named `tests` or `modules`, each name given is looked up in the report ignoring case - a module among
+its suite and class names, a test among its test names, with or without the module;
 a name the report does not carry is listed in `missingInReport` and turns the answer into a
 discrepancy (`isError`) whose text names the absent ones as not registered in the module or not
 found, beside the counts `namedInCall` and `foundInReport`. A run whose every found test passed is

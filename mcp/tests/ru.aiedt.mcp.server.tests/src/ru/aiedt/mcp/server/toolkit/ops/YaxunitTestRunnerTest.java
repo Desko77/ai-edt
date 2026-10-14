@@ -250,6 +250,33 @@ public class YaxunitTestRunnerTest
     }
 
     /**
+     * A report the clearing of the directory could not remove refuses the launch and is named:
+     * a run launched over it could tell its own report from it only by time and length.
+     */
+    @Test
+    public void aReportTheClearingLeftRefusesTheLaunch() throws Exception
+    {
+        Path reportDir = Files.createTempDirectory("yaxunit-leftover"); //$NON-NLS-1$
+        try
+        {
+            assertNull("an empty directory launches", YaxunitTestRunner.leftoverReportRefusal(reportDir)); //$NON-NLS-1$
+            Path leftover = reportDir.resolve("junit.xml"); //$NON-NLS-1$
+            Files.write(leftover, "<testsuite name=\"Earlier\" tests=\"1\"/>".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+            String refusal = YaxunitTestRunner.leftoverReportRefusal(reportDir);
+            assertNotNull("a report the clearing left refuses the launch", refusal); //$NON-NLS-1$
+            assertTrue(refusal, refusal.contains(leftover.toString()));
+            assertTrue(refusal, refusal.contains("Nothing was launched")); //$NON-NLS-1$
+        }
+        finally
+        {
+            try (Stream<Path> walk = Files.walk(reportDir))
+            {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            }
+        }
+    }
+
+    /**
      * A report belongs to the run when it differs from what the directory held at launch: the
      * report of an earlier run of the same tests lies in the same directory and carries no run of
      * its own. No clock takes part, so a modification time rounded below the launch does not make

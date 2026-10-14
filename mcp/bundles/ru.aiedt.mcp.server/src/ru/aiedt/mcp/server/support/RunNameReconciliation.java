@@ -44,8 +44,14 @@ public final class RunNameReconciliation
      */
     public static final class Result
     {
-        /** The names the report does not carry, in the order the call gave them. */
+        /** The names the report does not carry, modules first, in the order the call gave them. */
         public final List<String> missing;
+
+        /** The names of the {@code modules} filter the report does not carry. */
+        public final List<String> missingModules;
+
+        /** The names of the {@code tests} filter the report does not carry. */
+        public final List<String> missingTests;
 
         /** How many distinct names the call gave. */
         public final int namedCount;
@@ -54,14 +60,19 @@ public final class RunNameReconciliation
         public final int foundCount;
 
         /**
-         * @param missing the names the report does not carry
+         * @param missingModules the module names the report does not carry
+         * @param missingTests the test names the report does not carry
          * @param namedCount how many distinct names the call gave
          */
-        Result(List<String> missing, int namedCount)
+        Result(List<String> missingModules, List<String> missingTests, int namedCount)
         {
-            this.missing = Collections.unmodifiableList(missing);
+            List<String> all = new ArrayList<>(missingModules);
+            all.addAll(missingTests);
+            this.missing = Collections.unmodifiableList(all);
+            this.missingModules = Collections.unmodifiableList(missingModules);
+            this.missingTests = Collections.unmodifiableList(missingTests);
             this.namedCount = namedCount;
-            this.foundCount = namedCount - missing.size();
+            this.foundCount = namedCount - all.size();
         }
 
         /**
@@ -81,11 +92,21 @@ public final class RunNameReconciliation
          */
         public String describe()
         {
-            return "The report carries no test, suite or class named " + String.join(", ", missing) //$NON-NLS-1$
-                + ": " + missing.size() + " of the " + namedCount //$NON-NLS-1$ //$NON-NLS-2$
-                + " names given in tests / modules. A name is matched against every test name, suite" //$NON-NLS-1$
-                + " name and class name the report carries, so one listed here is not registered in" //$NON-NLS-1$
-                + " the module the run was given, or is not found under the name the call used."; //$NON-NLS-1$
+            List<String> parts = new ArrayList<>();
+            if (!missingModules.isEmpty())
+            {
+                parts.add("no suite or class named " + String.join(", ", missingModules) //$NON-NLS-1$ //$NON-NLS-2$
+                    + " (modules)"); //$NON-NLS-1$
+            }
+            if (!missingTests.isEmpty())
+            {
+                parts.add("no test named " + String.join(", ", missingTests) + " (tests)"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            }
+            return "The report carries " + String.join(" and ", parts) + ": " + missing.size() //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " of the " + namedCount + " names given in tests / modules. A module is matched" //$NON-NLS-1$ //$NON-NLS-2$
+                + " against the suite and class names of the report, a test against its test names," //$NON-NLS-1$
+                + " with or without the module, so one listed here is not registered in the module" //$NON-NLS-1$
+                + " the run was given, or is not found under the name the call used."; //$NON-NLS-1$
         }
     }
 
@@ -105,10 +126,11 @@ public final class RunNameReconciliation
     public static Result reconcile(List<String> modules, List<String> tests,
         Collection<String> moduleNamesInReport, Collection<String> testNamesInReport)
     {
-        List<String> missing = new ArrayList<>();
-        int counted = lookUp(modules, moduleNamesInReport, false, missing);
-        counted += lookUp(tests, testNamesInReport, true, missing);
-        return new Result(missing, counted);
+        List<String> missingModules = new ArrayList<>();
+        List<String> missingTests = new ArrayList<>();
+        int counted = lookUp(modules, moduleNamesInReport, false, missingModules);
+        counted += lookUp(tests, testNamesInReport, true, missingTests);
+        return new Result(missingModules, missingTests, counted);
     }
 
     /**

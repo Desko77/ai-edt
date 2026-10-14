@@ -685,6 +685,30 @@ public final class YaxunitTestRunner
     }
 
     /**
+     * The refusal of a launch whose report directory still holds a report after it was cleared.
+     * <p>
+     * The clearing logs a file it cannot delete and goes on. A run launched over that file could
+     * only tell its own report from it by modification time and length, and a file system with
+     * coarse modification times can give a rewrite of the same length the same time. The launch is
+     * refused instead, naming the file, so no earlier run's report can ever be read as this run's.
+     * </p>
+     *
+     * @param reportDir the run's report directory, already cleared
+     * @return the refusal, or <code>null</code> when the directory holds no report
+     */
+    static String leftoverReportRefusal(Path reportDir)
+    {
+        File leftover = findJunitXml(reportDir);
+        if (leftover == null)
+        {
+            return null;
+        }
+        return "the report of an earlier run could not be removed before the launch: " + leftover //$NON-NLS-1$
+            + ". Close what holds it open or delete it, then run the tests again. Nothing was " //$NON-NLS-1$
+            + "launched."; //$NON-NLS-1$
+    }
+
+    /**
      * A report file as the freshness check compares it: whether it is there, when it was last
      * modified and how long it is.
      */
@@ -1127,6 +1151,12 @@ public final class YaxunitTestRunner
                         }
                         cleanupTempDir(reportDir);
                         Files.createDirectories(reportDir);
+                        String leftover = leftoverReportRefusal(reportDir);
+                        if (leftover != null)
+                        {
+                            Activator.logInfo("Refusing the YAXUnit launch for " + runKey + ": " + leftover); //$NON-NLS-1$
+                            return "**Error:** " + leftover; //$NON-NLS-1$
+                        }
                         Path paramsFile = reportDir.resolve("xUnitParams.json"); //$NON-NLS-1$
                         String paramsJson = buildParamsJson(reportDir.resolve("junit.xml").toString(), //$NON-NLS-1$
                             extensions, modules, tests);
@@ -1138,8 +1168,8 @@ public final class YaxunitTestRunner
                         Activator.logInfo("Starting YAXUnit test launch: config=" + matchingConfig.getName() //$NON-NLS-1$
                             + ", startup=" + startupOption); //$NON-NLS-1$
                         // What the cleared directory holds, taken before the client is told to
-                        // run: a report equal to this stamp is an earlier run's, one that differs
-                        // was written by this run's client.
+                        // run: no report, since a leftover one was refused above, so any report
+                        // that appears is this run's client's.
                         noteRunStarted(runKey, ReportStamp.of(findJunitXml(reportDir)));
                         // Published before the launch call runs, still under the lock: a second
                         // call of these tests finds the mark inside the same lock and waits
