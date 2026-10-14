@@ -195,6 +195,19 @@ public final class BmEventSubscriptionHelper
      */
     public static String commonModuleNamed(Configuration config, String moduleName)
     {
+        MdObject module = commonModuleObject(config, moduleName);
+        return module == null ? null : module.getName();
+    }
+
+    /**
+     * The metadata object of the common module a {@code Module.Method} reference names.
+     *
+     * @param config       project configuration (already resolved by caller)
+     * @param moduleName   short name (without the {@code CommonModule.} prefix)
+     * @return the module's metadata object, or {@code null} when there is no such module
+     */
+    public static MdObject commonModuleObject(Configuration config, String moduleName)
+    {
         if (config == null || moduleName == null || moduleName.isEmpty())
         {
             return null;
@@ -206,13 +219,13 @@ public final class BmEventSubscriptionHelper
             {
                 if (o instanceof MdObject && moduleName.equalsIgnoreCase(((MdObject)o).getName()))
                 {
-                    return ((MdObject)o).getName();
+                    return (MdObject)o;
                 }
             }
         }
         catch (Exception e)
         {
-            Activator.logWarning("commonModuleNamed failed: " + e.getMessage()); //$NON-NLS-1$
+            Activator.logWarning("commonModuleObject failed: " + e.getMessage()); //$NON-NLS-1$
         }
         return null;
     }

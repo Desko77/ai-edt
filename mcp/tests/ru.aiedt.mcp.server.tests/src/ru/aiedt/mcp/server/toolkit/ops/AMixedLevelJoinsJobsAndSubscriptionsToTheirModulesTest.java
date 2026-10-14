@@ -8,6 +8,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.eclipse.emf.ecore.EObject;
@@ -130,6 +131,24 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
 
         assertEquals(0, DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
             10, 100, null));
+    }
+
+    /** The module node a job row adds carries the common module's own metadata object. */
+    @Test
+    public void theModuleNodeCarriesTheModulesOwnObject()
+    {
+        CommonModule module = MdClassFactory.eINSTANCE.createCommonModule();
+        module.setName("Подготовка"); //$NON-NLS-1$
+        Configuration configuration = MdClassFactory.eINSTANCE.createConfiguration();
+        configuration.getCommonModules().add(module);
+        ScheduledJob job = MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
+        result.nodes.put(JOB, asGraphObject(job));
+
+        DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration, 10, 100, null);
+
+        assertSame(module, result.nodes.get(MODULE));
     }
 
     /** The configuration of the project, holding one common module. */

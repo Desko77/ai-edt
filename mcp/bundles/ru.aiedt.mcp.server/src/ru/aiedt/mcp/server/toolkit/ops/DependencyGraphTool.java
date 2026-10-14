@@ -775,7 +775,8 @@ public class DependencyGraphTool implements IMcpTool
      * The reference walk cannot give these rows: a job's method name and a subscription's handler
      * are plain strings in the metadata, not references the BM engine records. The object is joined
      * to the module itself, with the method name as the {@code via}; the row is model-resolved,
-     * because the metadata states it rather than a call site spelling it. A name the project does
+     * because the metadata states it rather than a call site spelling it. The module node a row
+     * adds carries the common module's metadata object. A name the project does
      * not answer with a common module gives no row, and a method the module does not declare is
      * not checked for here - the row is about the module, not the method.
      * </p>
@@ -810,13 +811,13 @@ public class DependencyGraphTool implements IMcpTool
             {
                 continue;
             }
-            String module = BmEventSubscriptionHelper.commonModuleNamed(configuration,
+            MdObject target = BmEventSubscriptionHelper.commonModuleObject(configuration,
                 parsed.moduleName);
-            if (module == null)
+            if (target == null)
             {
                 continue;
             }
-            String targetFqn = "CommonModule." + module + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
+            String targetFqn = "CommonModule." + target.getName() + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
             // The same kind filter and the same accounting the walk applies to its own rows: a
             // dropped row adds neither an edge nor the node its target would have been.
             if (!BmReferencesHelper.kindKept(result, node.getKey(), targetFqn,
@@ -831,7 +832,9 @@ public class DependencyGraphTool implements IMcpTool
                     result.truncated = true;
                     continue;
                 }
-                result.nodes.put(targetFqn, null);
+                // The metadata objects the runtime builds answer the graph's node type; the
+                // double cast says so to the compiler.
+                result.nodes.put(targetFqn, (IBmObject)(Object)target);
             }
             if (edgeExists(result, node.getKey(), targetFqn, parsed.methodName))
             {

@@ -6,8 +6,12 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
+import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -116,18 +120,35 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         assertEquals(null, calls.get(0).targetModuleFqn);
     }
 
+    /** The English idle handler attachment is read the same way. */
+    @Test
+    public void theEnglishIdleHandlerIsReadAsItsOwn()
+    {
+        Module module = moduleWithStatement(
+            invocation(null, "AttachIdleHandler", literal("\"CheckIdle\""))); //$NON-NLS-1$ //$NON-NLS-2$
+
+        List<BslCallGraphHelper.NameCall> calls = BslCallGraphHelper.literalNameCallsOf(module, MODULES);
+
+        assertEquals(List.of("CheckIdle"), names(calls)); //$NON-NLS-1$
+        assertEquals(null, calls.get(0).targetModuleFqn);
+    }
+
     /** The background execution entry points name a method of the common module the string spells. */
     @Test
     public void aBackgroundExecutionNamesTheCommonModuleAndItsMethod()
     {
         Module inBackground = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьВФоне", //$NON-NLS-1$ //$NON-NLS-2$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
+        Module aFunction = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьФункцию", //$NON-NLS-1$ //$NON-NLS-2$
+            literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
+        Module aProcedure = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьПроцедуру", //$NON-NLS-1$ //$NON-NLS-2$
+            literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
         Module byJobs = moduleWithStatement(invocation("ФоновыеЗадания", "Выполнить", //$NON-NLS-1$ //$NON-NLS-2$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
         Module inEnglish = moduleWithStatement(invocation("BackgroundJobs", "Execute", //$NON-NLS-1$ //$NON-NLS-2$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
 
-        for (Module module : List.of(inBackground, byJobs, inEnglish))
+        for (Module module : List.of(inBackground, aFunction, aProcedure, byJobs, inEnglish))
         {
             List<BslCallGraphHelper.NameCall> calls =
                 BslCallGraphHelper.literalNameCallsOf(module, MODULES);
@@ -135,6 +156,72 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
             assertEquals("CommonModule.ДлительныеПодготовки.Module", calls.get(0).targetModuleFqn); //$NON-NLS-1$
             assertEquals("РассчитатьВсе", calls.get(0).methodName); //$NON-NLS-1$
         }
+    }
+
+    /** The module-and-method pair a background-call literal spells, read on the text itself. */
+    @Test
+    public void theBackgroundTargetIsReadOnTheText()
+    {
+        assertEquals(java.util.List.of("ДлительныеПодготовки", "РассчитатьВсе"), //$NON-NLS-1$ //$NON-NLS-2$
+            java.util.Arrays.asList(BslCallGraphHelper.backgroundTargetOf(
+                "ДлительныеПодготовки.РассчитатьВсе"))); //$NON-NLS-1$
+        assertEquals(java.util.List.of("ДлительныеПодготовки", "РассчитатьВсе"), //$NON-NLS-1$ //$NON-NLS-2$
+            java.util.Arrays.asList(BslCallGraphHelper.backgroundTargetOf(
+                "ДлительныеПодготовки . РассчитатьВсе"))); //$NON-NLS-1$
+        assertNull(BslCallGraphHelper.backgroundTargetOf("ДлительныеПодготовки.")); //$NON-NLS-1$
+        assertNull(BslCallGraphHelper.backgroundTargetOf(".РассчитатьВсе")); //$NON-NLS-1$
+        assertNull(BslCallGraphHelper.backgroundTargetOf("БезТочки")); //$NON-NLS-1$
+        assertNull(BslCallGraphHelper.backgroundTargetOf(" . ")); //$NON-NLS-1$
+        assertNull(BslCallGraphHelper.backgroundTargetOf(null));
+    }
+
+    /** A literal spelling spaces around the dot still names the module and the method. */
+    @Test
+    public void spacesAroundTheDotStillNameTheTarget()
+    {
+        Module module = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьВФоне", //$NON-NLS-1$ //$NON-NLS-2$
+            literal("\"ДлительныеПодготовки . РассчитатьВсе\""))); //$NON-NLS-1$
+
+        List<BslCallGraphHelper.NameCall> calls = BslCallGraphHelper.literalNameCallsOf(module, MODULES);
+
+        assertEquals(1, calls.size());
+        assertEquals("CommonModule.ДлительныеПодготовки.Module", calls.get(0).targetModuleFqn); //$NON-NLS-1$
+        assertEquals("РассчитатьВсе", calls.get(0).methodName); //$NON-NLS-1$
+    }
+
+    /**
+     * A type whose own name was read and whose other name cannot be read is a broken type: the
+     * failure surfaces instead of reading as a module without notify descriptions.
+     */
+    @Test
+    public void aTypeWhoseSecondNameCannotBeReadIsNotSilentlySkipped()
+    {
+        IllegalStateException broken = new IllegalStateException("unreadable second name"); //$NON-NLS-1$
+        Module module = moduleWithStatement(
+            notifyDescription2(literal("\"ПослеЗагрузки\""), feature("ЭтотОбъект"))); //$NON-NLS-1$ //$NON-NLS-2$
+        replaceType(module, typeWhose("ДругойТип", broken)); //$NON-NLS-1$
+
+        try
+        {
+            BslCallGraphHelper.literalNameCallsOf(module, MODULES);
+            fail("the unreadable second name of the type surfaces"); //$NON-NLS-1$
+        }
+        catch (RuntimeException surfaced)
+        {
+            assertSame(broken, surfaced);
+        }
+    }
+
+    /** A type whose own name already answers leaves the other name reader untouched. */
+    @Test
+    public void aTypeWhoseOwnNameAnswersNeverReadsTheOther()
+    {
+        Module module = moduleWithStatement(
+            notifyDescription2(literal("\"ПослеЗагрузки\""), feature("ЭтотОбъект"))); //$NON-NLS-1$ //$NON-NLS-2$
+        replaceType(module, typeWhose("ОписаниеОповещения", //$NON-NLS-1$
+            new IllegalStateException("the other name must not be read"))); //$NON-NLS-1$
+
+        assertEquals(List.of("ПослеЗагрузки"), names(BslCallGraphHelper.literalNameCallsOf(module, MODULES))); //$NON-NLS-1$
     }
 
     /** A string naming no common module of the project is not a call. */
@@ -337,5 +424,65 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         StaticFeatureAccess feature = BslFactory.eINSTANCE.createStaticFeatureAccess();
         feature.setName(name);
         return feature;
+    }
+
+    /**
+     * Replaces the type of the notify description the module's single statement builds.
+     *
+     * @param module the module
+     * @param type the type the constructor asks for
+     */
+    private static void replaceType(Module module, Type type)
+    {
+        ((OperatorStyleCreator)lastStatement(module).getLeft()).setType(type);
+    }
+
+    /**
+     * A type that answers its own name and throws from its other name reader.
+     *
+     * @param name what the own name reader answers
+     * @param otherNameFailure what the other name reader throws
+     * @return the type
+     */
+    private static Type typeWhose(String name, RuntimeException otherNameFailure)
+    {
+        return (Type)Proxy.newProxyInstance(
+            ANameCallIsReadFromTheLiteralsOfAModuleTest.class.getClassLoader(),
+            new Class<?>[]{Type.class}, (p, method, args) -> {
+                if ("getName".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return name;
+                }
+                if ("getNameRu".equals(method.getName())) //$NON-NLS-1$
+                {
+                    throw otherNameFailure;
+                }
+                if ("equals".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return Boolean.valueOf(p == args[0]);
+                }
+                if ("hashCode".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return Integer.valueOf(System.identityHashCode(p));
+                }
+                if ("toString".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return "a type proxy over " + name; //$NON-NLS-1$
+                }
+                Class<?> type = method.getReturnType();
+                if (!type.isPrimitive() || type == void.class)
+                {
+                    return null;
+                }
+                if (type == boolean.class)
+                {
+                    return Boolean.FALSE;
+                }
+                if (type == long.class)
+                {
+                    return Long.valueOf(0);
+                }
+                return Integer.valueOf(0);
+            });
     }
 }

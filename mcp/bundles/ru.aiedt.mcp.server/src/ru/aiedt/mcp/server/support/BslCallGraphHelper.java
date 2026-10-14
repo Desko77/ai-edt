@@ -954,21 +954,43 @@ public final class BslCallGraphHelper
         {
             return;
         }
-        String literal = stringLiteralAt(call.getParams(), 0);
-        if (literal == null)
+        String[] target = backgroundTargetOf(stringLiteralAt(call.getParams(), 0));
+        if (target == null)
         {
             return;
+        }
+        String fqn = commonModuleFqn(target[0], commonModules);
+        if (fqn != null)
+        {
+            out.add(new NameCall(fqn, target[1], lineOf(call)));
+        }
+    }
+
+    /**
+     * The module and the method a background-call literal spells, with the spaces around the dot
+     * read as separators rather than parts of the names.
+     *
+     * @param literal the text of the literal, without its quotes
+     * @return the module name and the method name, or {@code null} when the literal names no pair
+     */
+    static String[] backgroundTargetOf(String literal)
+    {
+        if (literal == null)
+        {
+            return null;
         }
         int dot = literal.indexOf('.');
         if (dot <= 0 || dot == literal.length() - 1)
         {
-            return;
+            return null;
         }
-        String fqn = commonModuleFqn(literal.substring(0, dot), commonModules);
-        if (fqn != null)
+        String module = literal.substring(0, dot).trim();
+        String method = literal.substring(dot + 1).trim();
+        if (module.isEmpty() || method.isEmpty())
         {
-            out.add(new NameCall(fqn, literal.substring(dot + 1), lineOf(call)));
+            return null;
         }
+        return new String[]{module, method};
     }
 
     /**
@@ -1053,6 +1075,13 @@ public final class BslCallGraphHelper
 
     /**
      * Whether the type a constructor builds is the notify description.
+     * <p>
+     * A name the type reads without failure settles the question, so the second reader is never
+     * reached after a match. A failure of the second reader after a successful first one is not
+     * swallowed: the type said something other than the notify description, and its other name
+     * could not be read to confirm or deny it - that is a broken type, not a description the
+     * module does not hold.
+     * </p>
      *
      * @param type the type the constructor names, resolved or not
      * @return whether the type spells the notify description's name, in either language
@@ -1063,17 +1092,34 @@ public final class BslCallGraphHelper
         {
             return false;
         }
+        String name;
         try
         {
-            return NOTIFY_DESCRIPTION_RU.equalsIgnoreCase(type.getName())
-                || NOTIFY_DESCRIPTION_EN.equalsIgnoreCase(type.getName())
-                || NOTIFY_DESCRIPTION_RU.equalsIgnoreCase(type.getNameRu())
-                || NOTIFY_DESCRIPTION_EN.equalsIgnoreCase(type.getNameRu());
+            name = type.getName();
         }
-        catch (Exception unresolved)
+        catch (RuntimeException unreadable)
         {
+            Activator.logWarning("BslCallGraphHelper: a constructor type name could not be read" //$NON-NLS-1$
+                + " (getName): " + unreadable.getMessage()); //$NON-NLS-1$
             return false;
         }
+        if (spellsNotifyDescription(name))
+        {
+            return true;
+        }
+        return spellsNotifyDescription(type.getNameRu());
+    }
+
+    /**
+     * Whether a type name spells the notify description, in either language.
+     *
+     * @param name the name a type reader gave, or {@code null}
+     * @return whether it spells the notify description
+     */
+    private static boolean spellsNotifyDescription(String name)
+    {
+        return NOTIFY_DESCRIPTION_RU.equalsIgnoreCase(name)
+            || NOTIFY_DESCRIPTION_EN.equalsIgnoreCase(name);
     }
 
     /**
