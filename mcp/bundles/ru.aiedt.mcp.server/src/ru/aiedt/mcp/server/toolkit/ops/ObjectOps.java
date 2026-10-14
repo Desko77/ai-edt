@@ -1762,6 +1762,16 @@ final class ObjectOps
                         + "(tried create" + owner.eClass().getName() + "Attribute, " //$NON-NLS-1$ //$NON-NLS-2$
                         + "createAttribute, MdClassPackage EClass lookup)."); //$NON-NLS-1$
                 }
+                // The composition refusal is answered while the attribute is still detached:
+                // it is known from the arguments and the carrier alone, and the transaction
+                // rolls back to a refusal thrown before anything is attached.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    owner, attribute, Collections.singletonList(type), attrQualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException("attribute '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                        + compositionRefusal);
+                }
                 attribute.setName(name);
                 synonymRef.set(EditMetadataTool.applyMdObjectSynonym(attribute, synonym, name, project));
                 attrs.add(attribute);
@@ -2473,6 +2483,15 @@ final class ObjectOps
                         + "': no compatible MdClassFactory method found " //$NON-NLS-1$
                         + "(tried createTabularSectionAttribute and " //$NON-NLS-1$
                         + "create" + ts.eClass().getName() + "Attribute)."); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                // Answered while the attribute is still detached - the mirror of the
+                // object-attribute path above.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    ts, attribute, Collections.singletonList(type), tcQualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException("tabular section attribute '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                        + compositionRefusal);
                 }
                 attribute.setName(name);
                 tcSynonymRef.set(EditMetadataTool.applyMdObjectSynonym(attribute, tcSynonym, name, project));

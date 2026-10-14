@@ -364,7 +364,12 @@ command's path as the form file writes it: `Form.Command.X`, `Form.StandardComma
   the composition the model already holds, naming no `length`, is not refused either: the stored
   length stands and the answer keeps its idempotent skip. `length=0` and a composition the caller
   changes are refused. A lone
-  `String` without a length is a type of its own and is written. Under `dryRun` the first two do not borrow the reference types' targets and
+  `String` without a length is a type of its own and is written. A creating operation answers the
+  refusal before the element exists - after it the owner holds neither the element nor a trace of
+  it, and `dryRun` answers the same refusal (`add_object_attribute`, `add_tabular_section_attribute`,
+  `add_register_field`, `add_addressing_attribute`, `add_accounting_flag`,
+  `add_ext_dimension_accounting_flag`, and the `addressingAttributes` entries of
+  `set_task_addressing`). Under `dryRun` the first two do not borrow the reference types' targets and
   list them in `autoBorrowSkipped` (`targetFqn`, `reason: dryRun`) and do not borrow the owner either;
   outside a dry run a failed borrow of the owner is listed there as `ownerFqn` with the borrow's own
   reason. `add_metadata_attribute` reads `dryRun` as well. The adoption operations

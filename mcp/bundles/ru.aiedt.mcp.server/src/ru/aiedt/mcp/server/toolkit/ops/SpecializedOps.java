@@ -738,6 +738,20 @@ final class SpecializedOps
                             throw new RuntimeException("Cannot create an AddressingAttribute under " //$NON-NLS-1$
                                 + fqnOf(task) + ": no compatible MdClassFactory method."); //$NON-NLS-1$
                         }
+                        if (spec.type != null)
+                        {
+                            // Answered while the attribute is still detached - the same
+                            // order the attribute-creating operations keep.
+                            String compositionRefusal =
+                                BmDefinedTypeHelper.creationCompositeStringRefusal(task, attribute,
+                                    Collections.singletonList(spec.type),
+                                    new BmDefinedTypeHelper.QualifierOptions());
+                            if (compositionRefusal != null)
+                            {
+                                throw new RuntimeException("addressing attribute '" + spec.name //$NON-NLS-1$
+                                    + "': " + compositionRefusal); //$NON-NLS-1$
+                            }
+                        }
                         attribute.setName(spec.name);
                         task.getAddressingAttributes().add(attribute);
                         created.add(spec.name);
@@ -1594,6 +1608,16 @@ final class SpecializedOps
                         + "': no compatible MdClassFactory method (tried " //$NON-NLS-1$
                         + "create" + owner.eClass().getName() + childType //$NON-NLS-1$
                         + ", create" + childType + ", MdClassPackage lookup)."); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                // The composition refusal is answered while the field is still detached:
+                // it is known from the arguments and the carrier alone, and the
+                // transaction rolls back to a refusal thrown before anything is attached.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    owner, field, Collections.singletonList(type), qualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException(
+                        childType.toLowerCase() + " '" + name + "': " + compositionRefusal); //$NON-NLS-1$ //$NON-NLS-2$
                 }
                 field.setName(name);
                 synOut[0] = EditMetadataTool.applyMdObjectSynonym(field, synonym, name, project);
