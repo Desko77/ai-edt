@@ -710,7 +710,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "holds and the model does not stops the call, which names the addresses " //$NON-NLS-1$
                 + "(dataLossTables) with status=confirmationRequired and starts nothing; " //$NON-NLS-1$
                 + "acceptDataLoss=true carries it through. The platform's active-flow flag is " //$NON-NLS-1$
-                + "read for the infobase under the claim: an active synchronization flow refuses " //$NON-NLS-1$
+                + "read for the infobase under the claim: an active synchronization flow of this EDT refuses " //$NON-NLS-1$
                 + "with busy naming the infobase, and a flow begun after that read does not " //$NON-NLS-1$
                 + "stop the update.\n"); //$NON-NLS-1$
             sb.append("- **inspect_database_sync** - read what stands between a project and its " //$NON-NLS-1$

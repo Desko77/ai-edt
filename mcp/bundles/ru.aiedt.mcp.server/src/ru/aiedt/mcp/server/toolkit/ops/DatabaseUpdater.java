@@ -1573,6 +1573,7 @@ public class DatabaseUpdater implements IMcpTool
 
         // Populated by auto-free so both success and error paths can report what was stopped.
         List<Map<String, Object>> freedClients = null;
+        SyncFlowReading syncFlow = null;
         // Held across the whole attempt and released in the finally below, so a throw halfway
         // through an update does not leave a claim behind. A claim outliving its work would be
         // cleared as stale only when this whole EDT went away.
@@ -1791,7 +1792,7 @@ public class DatabaseUpdater implements IMcpTool
             // is already running meets the update inside EDT as a lock error that names nobody;
             // here the refusal still can. The read is a snapshot: a flow begun after it does not
             // stop the update, and the operation description says so.
-            SyncFlowReading syncFlow = probeSyncFlowActive(
+            syncFlow = probeSyncFlowActive(
                 () -> ServiceAccess.get(IInfobaseSynchronizationStateManager.class), application);
             String syncFlowStop = passTheSyncFlowGate(syncFlow, applicationId, () -> null);
             if (syncFlowStop != null)
@@ -1991,6 +1992,7 @@ public class DatabaseUpdater implements IMcpTool
                     .put("stateAfter", stateAfter.name()) //$NON-NLS-1$
                     .put("updateComplete", Boolean.FALSE); //$NON-NLS-1$
                 putDataLossCheck(refusal, dataLoss, protectData, acceptDataLoss);
+                putSyncFlowCheck(refusal, syncFlow);
                 if (stillUpdating != null)
                 {
                     refusal.put("claimReleased", stillUpdating); //$NON-NLS-1$
@@ -2024,6 +2026,7 @@ public class DatabaseUpdater implements IMcpTool
                 errorResult.put("freedClients", freedClients); //$NON-NLS-1$
             }
             putHolders(errorResult, applicationId, ownerNames);
+            putSyncFlowCheck(errorResult, syncFlow);
             return errorResult.toJson();
         }
         catch (Exception e)
@@ -2037,6 +2040,7 @@ public class DatabaseUpdater implements IMcpTool
                 errorResult.put("freedClients", freedClients); //$NON-NLS-1$
             }
             putHolders(errorResult, applicationId, ownerNames);
+            putSyncFlowCheck(errorResult, syncFlow);
             return errorResult.toJson();
         }
         finally
@@ -2385,14 +2389,14 @@ public class DatabaseUpdater implements IMcpTool
         {
             name = infobase.getName();
         }
-        IInfobaseSynchronizationStateManager mgr = stateManager == null ? null : stateManager.get();
-        if (mgr == null)
-        {
-            return SyncFlowReading.notChecked(
-                "the infobase synchronization state manager is unavailable on this EDT", name); //$NON-NLS-1$
-        }
         try
         {
+            IInfobaseSynchronizationStateManager mgr = stateManager == null ? null : stateManager.get();
+            if (mgr == null)
+            {
+                return SyncFlowReading.notChecked(
+                    "the infobase synchronization state manager is unavailable on this EDT", name); //$NON-NLS-1$
+            }
             return SyncFlowReading.checked(mgr.isFlowActive(infobase), name);
         }
         catch (RuntimeException | LinkageError refused)

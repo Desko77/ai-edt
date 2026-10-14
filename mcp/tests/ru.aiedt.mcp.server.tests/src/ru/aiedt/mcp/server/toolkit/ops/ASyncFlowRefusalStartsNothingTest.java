@@ -216,6 +216,27 @@ public class ASyncFlowRefusalStartsNothingTest
         assertTrue(launch.ran());
     }
 
+    /** A manager that cannot even be resolved means not checked too, and the update still runs. */
+    @Test
+    public void aManagerThatCannotBeResolvedMeansNotChecked()
+    {
+        IInfobaseApplication application = new StubInfobaseApplication("app-1", //$NON-NLS-1$
+            ModelFactory.eINSTANCE.createInfobaseReference());
+        application.getInfobase().setUuid(UUID.randomUUID());
+        application.getInfobase().setName("УчебнаяБаза"); //$NON-NLS-1$
+
+        SyncFlowReading reading = DatabaseUpdater.probeSyncFlowActive(() -> {
+            throw new IllegalStateException("no service"); //$NON-NLS-1$
+        }, application);
+
+        assertNull("an unresolved manager gives no answer", reading.active); //$NON-NLS-1$
+        assertTrue(reading.notCheckedWhy, reading.notCheckedWhy.contains("no service")); //$NON-NLS-1$
+        Launch launch = new Launch();
+        assertEquals("started", //$NON-NLS-1$
+            DatabaseUpdater.passTheSyncFlowGate(reading, "app-1", launch)); //$NON-NLS-1$
+        assertTrue(launch.ran());
+    }
+
     /** A manager whose call throws means the same: not checked, and the update still runs. */
     @Test
     public void aManagerThatRefusesMeansNotChecked()
