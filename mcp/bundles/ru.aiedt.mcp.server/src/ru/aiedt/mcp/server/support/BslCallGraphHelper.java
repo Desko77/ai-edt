@@ -954,7 +954,8 @@ public final class BslCallGraphHelper
         {
             return;
         }
-        String[] target = backgroundTargetOf(stringLiteralAt(call.getParams(), 0));
+        String[] target = backgroundTargetOf(stringLiteralAt(call.getParams(),
+            backgroundNameArgumentIndex(owner, method)));
         if (target == null)
         {
             return;
@@ -994,9 +995,9 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * Whether an invocation is one of the background execution entry points whose first parameter
-     * names the procedure as {@code ОбщийМодуль.Метод}: the long operations module's three runners
-     * and the background jobs executor.
+     * Whether an invocation is one of the background execution entry points whose parameters name
+     * the procedure as {@code ОбщийМодуль.Метод}: the long operations module's three runners and
+     * the background jobs executor.
      *
      * @param owner the name the invocation starts with
      * @param method the invoked method's name
@@ -1023,6 +1024,30 @@ public final class BslCallGraphHelper
             return "Execute".equalsIgnoreCase(method); //$NON-NLS-1$
         }
         return false;
+    }
+
+    /**
+     * The parameter position a background execution entry point holds its
+     * {@code ОбщийМодуль.Метод} literal in.
+     * <p>
+     * {@code ВыполнитьВФоне} and the background jobs executors name the procedure first, the way
+     * their signatures read; {@code ВыполнитьФункцию} and {@code ВыполнитьПроцедуру} take the
+     * execution parameters first and name the method second.
+     * </p>
+     *
+     * @param owner the name the invocation starts with
+     * @param method the invoked method's name
+     * @return the argument index the literal sits at
+     */
+    private static int backgroundNameArgumentIndex(String owner, String method)
+    {
+        if ("ДлительныеОперации".equalsIgnoreCase(owner) //$NON-NLS-1$
+            && ("ВыполнитьФункцию".equalsIgnoreCase(method) //$NON-NLS-1$
+                || "ВыполнитьПроцедуру".equalsIgnoreCase(method))) //$NON-NLS-1$
+        {
+            return 1;
+        }
+        return 0;
     }
 
     /**

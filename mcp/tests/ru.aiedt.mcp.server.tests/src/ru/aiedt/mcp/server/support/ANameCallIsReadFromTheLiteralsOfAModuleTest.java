@@ -133,15 +133,21 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         assertEquals(null, calls.get(0).targetModuleFqn);
     }
 
-    /** The background execution entry points name a method of the common module the string spells. */
+    /**
+     * The background execution entry points name a method of the common module the string spells:
+     * {@code ВыполнитьФункцию} and {@code ВыполнитьПроцедуру} in their second argument, after the
+     * execution parameters, the others in the first.
+     */
     @Test
     public void aBackgroundExecutionNamesTheCommonModuleAndItsMethod()
     {
         Module inBackground = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьВФоне", //$NON-NLS-1$ //$NON-NLS-2$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
         Module aFunction = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьФункцию", //$NON-NLS-1$ //$NON-NLS-2$
+            feature("ПараметрыВыполнения"), //$NON-NLS-1$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
         Module aProcedure = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьПроцедуру", //$NON-NLS-1$ //$NON-NLS-2$
+            feature("ПараметрыВыполнения"), //$NON-NLS-1$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
         Module byJobs = moduleWithStatement(invocation("ФоновыеЗадания", "Выполнить", //$NON-NLS-1$ //$NON-NLS-2$
             literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
@@ -155,6 +161,24 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
             assertEquals(1, calls.size());
             assertEquals("CommonModule.ДлительныеПодготовки.Module", calls.get(0).targetModuleFqn); //$NON-NLS-1$
             assertEquals("РассчитатьВсе", calls.get(0).methodName); //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * The runners that take their execution parameters first name their method in the second
+     * argument: a literal in the first argument of those names nothing.
+     */
+    @Test
+    public void theMethodLiteralOfAParameterizedRunnerSitsInTheSecondArgument()
+    {
+        Module aFunction = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьФункцию", //$NON-NLS-1$ //$NON-NLS-2$
+            literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
+        Module aProcedure = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьПроцедуру", //$NON-NLS-1$ //$NON-NLS-2$
+            literal("\"ДлительныеПодготовки.РассчитатьВсе\""))); //$NON-NLS-1$
+
+        for (Module module : List.of(aFunction, aProcedure))
+        {
+            assertTrue(BslCallGraphHelper.literalNameCallsOf(module, MODULES).isEmpty());
         }
     }
 
@@ -388,7 +412,7 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
      * global function name when the module name is {@code null}.
      */
     private static Invocation invocation(String ownerName, String methodName,
-        com._1c.g5.v8.dt.bsl.model.Expression firstParam)
+        com._1c.g5.v8.dt.bsl.model.Expression... params)
     {
         BslFactory factory = BslFactory.eINSTANCE;
         Invocation call = factory.createInvocation();
@@ -403,9 +427,12 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
             access.setName(methodName);
             call.setMethodAccess(access);
         }
-        if (firstParam != null)
+        for (com._1c.g5.v8.dt.bsl.model.Expression param : params)
         {
-            call.getParams().add(firstParam);
+            if (param != null)
+            {
+                call.getParams().add(param);
+            }
         }
         return call;
     }
