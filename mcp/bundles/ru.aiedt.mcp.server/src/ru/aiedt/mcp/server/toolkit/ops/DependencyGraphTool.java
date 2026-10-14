@@ -36,6 +36,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BmReferencesHelper;
 import ru.aiedt.mcp.server.support.BslCallGraphHelper;
 import ru.aiedt.mcp.server.support.DependencyGraphBuilder;
@@ -283,6 +284,12 @@ public class DependencyGraphTool implements IMcpTool
                             result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots,
                                 direction, maxNodes, maxEdges, depth,
                                 () -> monitor.isCanceled() || watch.stopHere(), policy);
+                        }
+                        if (level == Level.MIXED)
+                        {
+                            // The reference walk cannot give the rows a job's method name and a
+                            // subscription's handler stand for: both are plain strings.
+                            addJobAndSubscriptionEdges(result, configuration, maxNodes, maxEdges);
                         }
                     }
                     bfsRef.set(result);
@@ -758,6 +765,104 @@ public class DependencyGraphTool implements IMcpTool
 
     /** The resolution of an edge only the module's text reported. */
     static final String RESOLUTION_NAME = "name"; //$NON-NLS-1$
+
+    /**
+     * Joins the scheduled jobs and the event subscriptions the graph carries to the common modules
+     * their methods sit in.
+     * <p>
+     * The reference walk cannot give these rows: a job's method name and a subscription's handler
+     * are plain strings in the metadata, not references the BM engine records. The object is joined
+     * to the module itself, with the method name as the {@code via}; the row is model-resolved,
+     * because the metadata states it rather than a call site spelling it. A name the project does
+     * not answer with a common module gives no row, and a method the module does not declare is
+     * not checked for here - the row is about the module, not the method.
+     * </p>
+     *
+     * @param result the graph the walk filled
+     * @param configuration the project configuration
+     * @param maxNodes the node cap of the walk
+     * @param maxEdges the edge cap of the walk
+     * @return how many rows were added
+     */
+    static int addJobAndSubscriptionEdges(BmReferencesHelper.BfsResult result,
+        Configuration configuration, int maxNodes, int maxEdges)
+    {
+        int added = 0;
+        List<Map.Entry<String, IBmObject>> nodes = new ArrayList<>(result.nodes.entrySet());
+        for (Map.Entry<String, IBmObject> node : nodes)
+        {
+            IBmObject object = node.getValue();
+            String methodReference = object instanceof com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob
+                ? ((com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob)object).getMethodName()
+                : object instanceof com._1c.g5.v8.dt.metadata.mdclass.EventSubscription
+                    ? ((com._1c.g5.v8.dt.metadata.mdclass.EventSubscription)object).getHandler()
+                    : null;
+            if (methodReference == null || methodReference.isEmpty())
+            {
+                continue;
+            }
+            BmEventSubscriptionHelper.NormalizationResult parsed =
+                BmEventSubscriptionHelper.normalizeHandler(methodReference);
+            if (parsed == null)
+            {
+                continue;
+            }
+            String module = BmEventSubscriptionHelper.commonModuleNamed(configuration,
+                parsed.moduleName);
+            if (module == null)
+            {
+                continue;
+            }
+            String targetFqn = "CommonModule." + module + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
+            if (!result.nodes.containsKey(targetFqn))
+            {
+                if (result.nodes.size() >= maxNodes)
+                {
+                    result.truncated = true;
+                    continue;
+                }
+                result.nodes.put(targetFqn, null);
+            }
+            if (edgeExists(result, node.getKey(), targetFqn, parsed.methodName))
+            {
+                continue;
+            }
+            if (result.edges.size() >= maxEdges)
+            {
+                result.truncated = true;
+                continue;
+            }
+            BmReferencesHelper.Edge edge = new BmReferencesHelper.Edge(node.getKey(), targetFqn,
+                parsed.methodName, BmReferencesHelper.Side.FORWARD);
+            edge.resolution = RESOLUTION_MODEL;
+            result.edges.add(edge);
+            added++;
+        }
+        return added;
+    }
+
+    /**
+     * Whether the graph already holds the edge the helper is about to add.
+     *
+     * @param result the graph
+     * @param fromFqn the source end
+     * @param toFqn the target end
+     * @param via the feature name
+     * @return whether the edge is already there
+     */
+    private static boolean edgeExists(BmReferencesHelper.BfsResult result, String fromFqn,
+        String toFqn, String via)
+    {
+        for (BmReferencesHelper.Edge existing : result.edges)
+        {
+            if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                && via.equals(existing.featureName))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     /**
      * Records one edge the module's text wrote by name, merging it with the same connection

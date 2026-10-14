@@ -29,6 +29,8 @@ import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
 import com._1c.g5.v8.dt.bsl.model.Pragma;
 
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BslCallGraphHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -263,9 +265,12 @@ public class FindDeadCodeTool
         int indeterminate = 0;
         // Methods a written-by-name call reaches: the reference index the deadness check reads
         // carries nothing about them, so they are collected here as the scan walks the same
-        // modules. Form modules the scan excludes do not give up their calls.
+        // modules. Form modules the scan excludes do not give up their calls. A scheduled job's
+        // method and an event subscription's handler are strings in the metadata, so the methods
+        // they name are collected the same way.
         Map<String, String> commonModules = BslCallGraphHelper.commonModuleNames(project);
         Set<String> nameCalled = new HashSet<>();
+        collectJobAndSubscriptionCalled(configurationOf(project), nameCalled);
 
         for (IFile file : bslFiles)
         {
@@ -371,8 +376,8 @@ public class FindDeadCodeTool
      *        reads nothing, since a module name cannot be matched
      * @param nameCalled the keys of methods a written-by-name call names, filled
      */
-    static void collectNameCalled(Module module, java.util.Map<String, String> commonModules,
-        java.util.Set<String> nameCalled)
+    static void collectNameCalled(Module module, Map<String, String> commonModules,
+        Set<String> nameCalled)
     {
         if (commonModules == null)
         {
@@ -413,7 +418,7 @@ public class FindDeadCodeTool
      * @return the candidates no written-by-name call names
      */
     static List<Candidate> withoutNameCalled(List<Candidate> candidates,
-        java.util.Set<String> nameCalled)
+        Set<String> nameCalled)
     {
         if (nameCalled.isEmpty())
         {
@@ -429,6 +434,97 @@ public class FindDeadCodeTool
             }
         }
         return kept;
+    }
+
+    /**
+     * Adds the methods the scheduled jobs and the event subscriptions name to the set of methods
+     * the scan must not report: both hold their method reference as a plain string the reference
+     * index does not carry.
+     *
+     * @param configuration the project configuration, or {@code null} when it is not available
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     */
+    static void collectJobAndSubscriptionCalled(
+        com._1c.g5.v8.dt.metadata.mdclass.Configuration configuration, Set<String> nameCalled)
+    {
+        if (configuration == null)
+        {
+            return;
+        }
+        try
+        {
+            for (Object entry : configuration.getScheduledJobs())
+            {
+                if (entry instanceof com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob)
+                {
+                    collectMethodReference(
+                        ((com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob)entry).getMethodName(),
+                        configuration, nameCalled);
+                }
+            }
+            for (Object entry : configuration.getEventSubscriptions())
+            {
+                if (entry instanceof com._1c.g5.v8.dt.metadata.mdclass.EventSubscription)
+                {
+                    collectMethodReference(
+                        ((com._1c.g5.v8.dt.metadata.mdclass.EventSubscription)entry).getHandler(),
+                        configuration, nameCalled);
+                }
+            }
+        }
+        catch (Exception unreadable)
+        {
+            // An unreadable configuration protects nothing, which is what the scan said before
+            // jobs and subscriptions were read at all.
+        }
+    }
+
+    /**
+     * Adds one {@code Module.Method} reference to the collected methods.
+     *
+     * @param methodReference the string a job's method name or a subscription's handler holds
+     * @param configuration the project configuration, for the module's own spelling
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     */
+    private static void collectMethodReference(String methodReference,
+        com._1c.g5.v8.dt.metadata.mdclass.Configuration configuration, Set<String> nameCalled)
+    {
+        if (methodReference == null || methodReference.isEmpty())
+        {
+            return;
+        }
+        BmEventSubscriptionHelper.NormalizationResult parsed =
+            BmEventSubscriptionHelper.normalizeHandler(methodReference);
+        if (parsed == null)
+        {
+            return;
+        }
+        String module = BmEventSubscriptionHelper.commonModuleNamed(configuration,
+            parsed.moduleName);
+        if (module != null)
+        {
+            nameCalled.add(nameCallKey("CommonModule." + module + ".Module", parsed.methodName)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The project's configuration, or {@code null} when the provider or the configuration is not
+     * available.
+     *
+     * @param project the project
+     * @return its configuration
+     */
+    private static com._1c.g5.v8.dt.metadata.mdclass.Configuration configurationOf(IProject project)
+    {
+        try
+        {
+            return Activator.getDefault().getConfigurationProvider() == null ? null
+                : Activator.getDefault().getConfigurationProvider().getConfiguration(project);
+        }
+        catch (Exception unavailable)
+        {
+            return null;
+        }
     }
 
     // -- = --

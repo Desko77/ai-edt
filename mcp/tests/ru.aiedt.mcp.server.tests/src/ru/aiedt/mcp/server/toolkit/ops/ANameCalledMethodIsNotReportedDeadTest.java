@@ -124,6 +124,41 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertTrue(kept.stream().anyMatch(c -> c.moduleFqn == null));
     }
 
+    /** The methods a scheduled job and an event subscription name are collected and protect. */
+    @Test
+    public void theMethodsOfJobsAndSubscriptionsAreCollected()
+    {
+        com._1c.g5.v8.dt.metadata.mdclass.Configuration configuration =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createConfiguration();
+        com._1c.g5.v8.dt.metadata.mdclass.CommonModule module =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createCommonModule();
+        module.setName("Подготовка"); //$NON-NLS-1$
+        configuration.getCommonModules().add(module);
+        com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob job =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        configuration.getScheduledJobs().add(job);
+        com._1c.g5.v8.dt.metadata.mdclass.EventSubscription subscription =
+            com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory.eINSTANCE.createEventSubscription();
+        subscription.setHandler("CommonModule.Подготовка.ПослеЗаписи"); //$NON-NLS-1$
+        configuration.getEventSubscriptions().add(subscription);
+
+        Set<String> nameCalled = new HashSet<>();
+        FindDeadCodeTool.collectJobAndSubscriptionCalled(configuration, nameCalled);
+
+        assertEquals(Set.of(
+            FindDeadCodeTool.nameCallKey("CommonModule.Подготовка.Module", "РассчитатьВсе"), //$NON-NLS-1$ //$NON-NLS-2$
+            FindDeadCodeTool.nameCallKey("CommonModule.Подготовка.Module", "ПослеЗаписи")), //$NON-NLS-1$ //$NON-NLS-2$
+            nameCalled);
+
+        List<FindDeadCodeTool.Candidate> candidates = List.of(
+            new FindDeadCodeTool.Candidate("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+                "ПослеЗаписи", 5, "CommonModule.Подготовка.Module"), //$NON-NLS-1$ //$NON-NLS-2$
+            new FindDeadCodeTool.Candidate("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+                "НичемНеВызван", 8, "CommonModule.Подготовка.Module")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(1, FindDeadCodeTool.withoutNameCalled(candidates, nameCalled).size());
+    }
+
     /**
      * Walks the module level from a root over a named call source.
      *
