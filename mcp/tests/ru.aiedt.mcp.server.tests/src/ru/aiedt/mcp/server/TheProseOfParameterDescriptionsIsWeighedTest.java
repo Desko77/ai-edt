@@ -350,7 +350,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised by 121 for updateBeforeLaunch naming the preset that launches an omitted update
         // without updating (measured 07.10: 1244), and by 54 more for the sentence saying every
         // answer of the run names the drop in databaseUpdate (measured 07.10: 1298).
-        PROSE.put("yaxunit_tests", Integer.valueOf(1581));
+        // Raised to 1701 for the sentence on tests that a name in tests or modules the report of
+        // the run lacks is a discrepancy, not a pass (measured 14.10: 1701).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1701));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
@@ -699,6 +701,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And from 107469 to 107643 for the excludeEvents sentence on the infobase_admin schema, which
      * is where a client routing the operation through the facade reads it. Measured 14.10: 107643.
      * </p>
+     * <p>
+     * And from 107643 to 107723 for the sentence on yaxunit_tests that a name in tests or modules
+     * the report of the run lacks is a discrepancy, not a pass. Measured 14.10: 107723.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107643;
+    private static final int DOCUMENT_PROSE = 107723;
 }

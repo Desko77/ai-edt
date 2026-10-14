@@ -8,14 +8,18 @@ package ru.aiedt.mcp.server.support;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * What a JUnit XML report says, once it has been read.
  * <p>
- * Four counters and three lists of the cases worth naming. Passing cases are counted and then
- * forgotten: nothing downstream enumerates them, and a run of ten thousand green tests should not cost
- * ten thousand objects to say so.
+ * Four counters, the names the report carries, and three lists of the cases worth naming. A passing
+ * case is noted by name and then forgotten: nothing downstream reads its message or its trace, and a
+ * run of ten thousand green tests should not cost ten thousand stacks to say so. The names stay for
+ * the one reader that needs them - the call's own {@code tests} / {@code modules} filter, which is
+ * answered for by looking its names up in the report (see {@link RunNameReconciliation}).
  * </p>
  * <p>
  * {@link JUnitXmlReader} fills one of these in and {@link JUnitReportFormatter} reads it back out;
@@ -60,6 +64,16 @@ public final class JUnitRunOutcome
     private final List<TestCase> failureDetails = new ArrayList<>();
     private final List<TestCase> errorDetails = new ArrayList<>();
     private final List<TestCase> skippedDetails = new ArrayList<>();
+
+    /**
+     * The names the report carries, in the order they were read, without repeats.
+     * <p>
+     * A test is noted by its module-qualified name and by the class name the report wrote beside it,
+     * a suite by its own name: a caller naming a module expects to find it where the report spelled
+     * it, whether that was the suite or the class of the tests inside.
+     * </p>
+     */
+    private final Set<String> namesInReport = new LinkedHashSet<>();
 
     private int total;
     private int failures;
@@ -124,6 +138,17 @@ public final class JUnitRunOutcome
     public boolean isPassed()
     {
         return failures == 0 && errors == 0;
+    }
+
+    /**
+     * The names the report carries for what ran: every test's module-qualified name, the class name
+     * beside it, and every suite's name.
+     *
+     * @return those names, in report order; empty, never <code>null</code>, and not modifiable
+     */
+    public Set<String> getNamesInReport()
+    {
+        return Collections.unmodifiableSet(namesInReport);
     }
 
     /**
@@ -198,5 +223,19 @@ public final class JUnitRunOutcome
     void addSkipped(TestCase testCase)
     {
         skippedDetails.add(testCase);
+    }
+
+    /**
+     * Notes one name the report carries for what ran.
+     *
+     * @param name the name; empty names and repeats are dropped, and the caller may pass a name that
+     *            was noted before
+     */
+    void noteName(String name)
+    {
+        if (name != null && !name.isEmpty())
+        {
+            namesInReport.add(name);
+        }
     }
 }

@@ -60,6 +60,7 @@ import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
+import ru.aiedt.mcp.server.support.RunNameReconciliation;
 import ru.aiedt.mcp.server.support.RunReceipts;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
@@ -1753,11 +1754,20 @@ public final class YaxunitTestRunner
      * when asked to.
      * <p>
      * The answer is the JSON object the facade's envelope passes through untouched: the markdown
-     * report in {@code output}, the run's counters beside it, {@code cached} for the report of an
-     * earlier run, {@code databaseUpdate} for the update the preset dropped off the call the run
-     * answers, and {@code receiptPath} naming the receipt on disk - or {@code receiptError}
-     * saying why there is none, with the result fields still in place. A report that cannot be
-     * parsed at all is no result, stays markdown and files no receipt.
+     * report in {@code output}, the run's counters beside it, {@code testsInReport} for how many
+     * tests the report carries, {@code cached} for the report of an earlier run,
+     * {@code databaseUpdate} for the update the preset dropped off the call the run answers, and
+     * {@code receiptPath} naming the receipt on disk - or {@code receiptError} saying why there is
+     * none, with the result fields still in place. A report that cannot be parsed at all is no
+     * result, stays markdown and files no receipt.
+     * </p>
+     * <p>
+     * A call that named {@code tests} or {@code modules} is answered for as well: every name it
+     * gave is looked up in the report, the counts go out as {@code namedInCall} and
+     * {@code foundInReport}, and a name the report does not carry turns the answer into a
+     * discrepancy - {@code success:false}, the names in {@code missingInReport} and in the error,
+     * the counters kept - because a green report of other tests is not the result that was asked
+     * for.
      * </p>
      *
      * @param junitXml the report the run left behind
@@ -1774,6 +1784,8 @@ public final class YaxunitTestRunner
         try
         {
             JUnitRunOutcome results = JUnitXmlReader.parse(junitXml);
+            RunNameReconciliation.Result reconciliation = RunNameReconciliation.reconcile(
+                namesTheCallNamed(runContext), results.getNamesInReport());
             String markdown = JUnitReportFormatter.format(results);
             if (cacheMark != null)
             {
@@ -1785,6 +1797,10 @@ public final class YaxunitTestRunner
                     + " (Configuration > Extensions); the extensions / modules / tests filter matches existing" //$NON-NLS-1$
                     + " tests; and, if a test module was just edited, that it compiles (get_project_errors)" //$NON-NLS-1$
                     + " and the project was rebuilt (clean_project).\n"; //$NON-NLS-1$
+            }
+            if (!reconciliation.isComplete())
+            {
+                markdown += "\n\n> **Discrepancy:** " + reconciliation.describe() + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
             }
             Path reportFile = junitXml.toPath().resolveSibling("report.md"); //$NON-NLS-1$
             boolean reportWritten = false;
@@ -1810,7 +1826,21 @@ public final class YaxunitTestRunner
                 .put("failures", results.getFailures()) //$NON-NLS-1$
                 .put("errors", results.getErrors()) //$NON-NLS-1$
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
+                .put("testsInReport", results.getTotal()) //$NON-NLS-1$
                 .put("reportPath", reportPath); //$NON-NLS-1$
+            if (reconciliation.namedCount > 0)
+            {
+                answer.put("namedInCall", reconciliation.namedCount) //$NON-NLS-1$
+                    .put("foundInReport", reconciliation.foundCount); //$NON-NLS-1$
+            }
+            if (!reconciliation.isComplete())
+            {
+                // The run happened and its counters stand, but it did not answer the call: the
+                // names that were asked for are not the tests that ran, and a success here would
+                // be read as if they were.
+                answer.put("missingInReport", reconciliation.missing) //$NON-NLS-1$
+                    .demote(reconciliation.describe());
+            }
             // The one place a report-carrying answer gets the skip marker: both the run that
             // finishes inside the call and the report picked up by runKey pass through here, and
             // the field pair is the same putDatabaseUpdate the debug-mode answer goes through.
@@ -1832,6 +1862,32 @@ public final class YaxunitTestRunner
             Activator.logError("Failed to parse JUnit XML: " + junitXml, e); //$NON-NLS-1$
             return "**Error:** Could not parse the test results: " + e.getMessage(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The names the call gave that the report has to carry: its {@code modules} and {@code tests}
+     * filters, in the order the filters are declared, each split the way the launch parameters
+     * split them, so the reconciliation reads exactly the names the run was launched with.
+     * <p>
+     * {@code extensions} is not among them: an extension is a container the tests live in, not a
+     * name the report writes for a test, a suite or a class.
+     * </p>
+     *
+     * @param runContext the filters the run was chosen by
+     * @return the names, possibly empty
+     */
+    static List<String> namesTheCallNamed(RunContext runContext)
+    {
+        List<String> named = new ArrayList<>();
+        if (runContext.modules != null && !runContext.modules.isEmpty())
+        {
+            named.addAll(splitToList(runContext.modules));
+        }
+        if (runContext.tests != null && !runContext.tests.isEmpty())
+        {
+            named.addAll(splitToList(runContext.tests));
+        }
+        return named;
     }
 
     /**
@@ -2060,7 +2116,7 @@ public final class YaxunitTestRunner
         return GsonHolder.toJson(params);
     }
 
-    private List<String> splitToList(String value)
+    private static List<String> splitToList(String value)
     {
         List<String> result = new ArrayList<>();
         for (String part : value.split(",")) //$NON-NLS-1$

@@ -250,8 +250,12 @@ public class TheToolListHasAWeightBudgetTest
      * which is where a client routing the operation through the facade reads it. Measured 14.10:
      * 193180.
      * </p>
+     * <p>
+     * And from 193180 to 193260 for the sentence on yaxunit_tests that a name in tests or modules
+     * the report of the run lacks is a discrepancy, not a pass. Measured 14.10: 193260.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 193180;
+    private static final int DOCUMENT_BUDGET = 193260;
 
     private LiveServer server;
 
@@ -463,7 +467,10 @@ public class TheToolListHasAWeightBudgetTest
         // And to 3366 for yaxunitUnsafeMode, which a caller has to read before installYaxunit lowers
         // the two safety flags of the extension, and for the sentence that says an unnamed update
         // is dropped under a preset that disabled update_database. Measured 08.10: 3366.
-        BUDGETS.put("yaxunit_tests", Integer.valueOf(3366)); //$NON-NLS-1$
+        // And to 3530 for the sentence on tests that a name in tests or modules the report of the
+        // run lacks is a discrepancy, not a pass: the schema is where a caller learns that before
+        // it reads a pass. Measured 14.10: 3530.
+        BUDGETS.put("yaxunit_tests", Integer.valueOf(3530)); //$NON-NLS-1$
         // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains

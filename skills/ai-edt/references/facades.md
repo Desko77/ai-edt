@@ -650,6 +650,14 @@ counts: the refusal carries `the client ended without writing a report for this 
 `status=NoReport`, `clientEnded=true`, `reportDir` and `clientExitCode` when the runtime recorded
 the code the client exited with.
 
+Every run answer carries the number of tests the report holds, in `testsInReport`. When the call
+named `tests` or `modules`, each name given is looked up in the report against every test name, suite
+name and class name it carries, ignoring case and accepting a test named with or without its module;
+a name the report does not carry is listed in `missingInReport` and turns the answer into a
+discrepancy (`isError`) whose text names the absent ones as not registered in the module or not
+found, beside the counts `namedInCall` and `foundInReport`. A run whose every found test passed is
+answered the same way.
+
 Every completed run writes a receipt file under `<state-location>/run-receipts/<tool>/`, at most
 twenty, the oldest displaced first. The answer names it in `receiptPath`, or `receiptError` when it
 could not be written. A key that looks like a secret (`password`, `pwd`, `scenarioText`) is left out

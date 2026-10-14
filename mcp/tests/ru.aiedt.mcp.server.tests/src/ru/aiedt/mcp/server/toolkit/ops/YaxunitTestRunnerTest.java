@@ -505,7 +505,7 @@ public class YaxunitTestRunnerTest
         try
         {
             String raw = YaxunitTestRunner.handOverFinishedLaunch(runKey, onePassingReport(root),
-                new YaxunitTestRunner.RunContext("Proj", "Ext", "Module", "Module.Test", false), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                new YaxunitTestRunner.RunContext("Proj", "Ext", "Module", "Module.passes", false), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
                 fields -> RunReceipts.writeResolving(fields, tool -> {
                     throw new IllegalStateException("plugin state is gone"); //$NON-NLS-1$
                 }));

@@ -140,7 +140,12 @@ public final class JUnitXmlReader
         if (suites.getLength() == 0)
         {
             // No suite to read counters from - the test cases are the whole story.
-            results.setTotal(doc.getElementsByTagName(TAG_TESTCASE).getLength());
+            NodeList cases = doc.getElementsByTagName(TAG_TESTCASE);
+            results.setTotal(cases.getLength());
+            for (int i = 0; i < cases.getLength(); i++)
+            {
+                noteCaseNames((Element)cases.item(i), results);
+            }
             return results;
         }
 
@@ -159,6 +164,8 @@ public final class JUnitXmlReader
      */
     private static void collectSuite(Element suite, JUnitRunOutcome results)
     {
+        results.noteName(suite.getAttribute(ATTR_NAME).trim());
+
         List<Element> testCases = new ArrayList<>();
         collectOwnTestCases(suite, testCases);
 
@@ -169,6 +176,7 @@ public final class JUnitXmlReader
         for (Element testCase : testCases)
         {
             String name = fullName(testCase);
+            noteCaseNames(testCase, results);
 
             Element failure = firstDescendant(testCase, TAG_FAILURE);
             if (failure != null)
@@ -242,6 +250,19 @@ public final class JUnitXmlReader
             }
             collectOwnTestCases(element, out);
         }
+    }
+
+    /**
+     * Notes the names one test case is known by: what the report called it, and the class it named
+     * beside the test - which is the test module, and what a call naming that module looks for.
+     *
+     * @param testCase the test case element
+     * @param results the results being built
+     */
+    private static void noteCaseNames(Element testCase, JUnitRunOutcome results)
+    {
+        results.noteName(fullName(testCase));
+        results.noteName(testCase.getAttribute(ATTR_CLASSNAME).trim());
     }
 
     /**
