@@ -1411,17 +1411,24 @@ public class ModuleSourceWriter implements IMcpTool
     }
 
     /**
-     * Whether the file on disk holds exactly the given bytes.
+     * Whether the file holds exactly the given bytes, both on disk and in the workspace.
      * <p>
-     * A file that cannot be read counts as different, so the write goes ahead as it did before.
+     * A file out of sync with the workspace counts as different: its disk bytes may already be
+     * the new text while the workspace and the EDT model still hold the old one, and only the
+     * write brings them together. A file that cannot be read counts as different too, so the
+     * write goes ahead as it did before.
      * </p>
      *
      * @param file the module file
      * @param bytes the content about to be written
-     * @return <code>true</code> when the file content equals the bytes
+     * @return <code>true</code> when the file is in sync and its content equals the bytes
      */
     private static boolean holdsExactly(IFile file, byte[] bytes)
     {
+        if (!file.isSynchronized(IResource.DEPTH_ZERO))
+        {
+            return false;
+        }
         try (InputStream in = file.getContents(true))
         {
             return Arrays.equals(in.readAllBytes(), bytes);

@@ -148,6 +148,31 @@ public class AnUnchangedWriteLeavesTheFileTest
     }
 
     /**
+     * A file changed on disk behind the workspace is written even when the disk already holds the
+     * result, so the workspace and the model catch up with it.
+     *
+     * @throws Exception when the file cannot be written behind the workspace
+     */
+    @Test
+    public void aFileOutOfSyncIsWrittenEvenWhenTheDiskHoldsTheResult() throws Exception
+    {
+        String changed = "// Шапка модуля.\r\n\r\nПроцедура ПередЗаписью(Отказ)\r\n\tОтказ = Ложь;\r\nКонецПроцедуры\r\n"; //$NON-NLS-1$
+        Files.write(moduleFile, changed.getBytes(StandardCharsets.UTF_8));
+        Files.setLastModifiedTime(moduleFile, java.nio.file.attribute.FileTime.fromMillis(
+            Files.getLastModifiedTime(moduleFile).toMillis() + 10_000));
+        assertFalse("the file is out of sync before the write", //$NON-NLS-1$
+            module().isSynchronized(IResource.DEPTH_ZERO));
+
+        String answer = write("replaceMethod", "ПередЗаписью", null, //$NON-NLS-1$ //$NON-NLS-2$
+            "Процедура ПередЗаписью(Отказ)\r\n\tОтказ = Ложь;\r\nКонецПроцедуры"); //$NON-NLS-1$
+
+        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
+        assertFalse(answer, answer.contains("unchanged")); //$NON-NLS-1$
+        assertTrue("the write brought the workspace in sync", //$NON-NLS-1$
+            module().isSynchronized(IResource.DEPTH_ZERO));
+    }
+
+    /**
      * @return the module file as the workspace holds it
      */
     private static IFile module()
