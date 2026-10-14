@@ -199,6 +199,10 @@ public final class PendingWorkRegistry
     public static final PendingWorkRegistry DEBUG_LAUNCH = new PendingWorkRegistry(
         "debug_launch", "debug-launch-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
 
+    /** Async backend for a YAXUnit launch held inside an EDT modal dialog. */
+    public static final PendingWorkRegistry YAXUNIT_LAUNCH = new PendingWorkRegistry(
+        "yaxunit_tests", "yaxunit-launch-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
+
     /**
      * What a cancel reaches in each of the domains that have no process or client of their
      * own to destroy.
@@ -646,7 +650,7 @@ public final class PendingWorkRegistry
     {
         return Collections.unmodifiableList(
             Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, SNAPSHOT, REFERENCES, IMPORT_BINARY,
-                VANESSA, NAPARNIK, GENERIC, RETRIEVE, DEBUG_LAUNCH));
+                VANESSA, NAPARNIK, GENERIC, RETRIEVE, DEBUG_LAUNCH, YAXUNIT_LAUNCH));
     }
 
     /**

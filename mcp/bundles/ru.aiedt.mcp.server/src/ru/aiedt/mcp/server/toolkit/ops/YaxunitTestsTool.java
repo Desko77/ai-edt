@@ -19,6 +19,8 @@ import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
+import ru.aiedt.mcp.server.support.PendingWorkRegistry;
+import ru.aiedt.mcp.server.support.TimeoutArgs;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.GitHubReleaseResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -49,7 +51,7 @@ import ru.aiedt.mcp.server.support.YaxunitHelp;
  *       through {@code DebugSessionStarter}); an update that does not finish
  *       refuses the launch and nothing is started</li>
  *   <li>Pending JSON shape (run mode): {@code {status:Pending, runKey, reportDir,
- *       junitXml, hint}}</li>
+ *       clientStillRunning, processId, hint}}</li>
  *   <li>0-tests hint: when JUnit XML reports zero suites/cases, the markdown
  *       body explains the three usual causes and points at {@code help=writing}</li>
  *   <li>Filters: extensions, modules, tests - the three the launch
@@ -122,26 +124,28 @@ public class YaxunitTestsTool implements IMcpTool
             .stringProperty("modules", "CSV: common module names with tests.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("tests", "CSV: test FQNs (Module.Method).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
-                "Polling window in seconds (default 60). Legacy alias: timeout.") //$NON-NLS-1$
+                "Whole-call deadline, seconds (default 60). With the client running, Pending " //$NON-NLS-1$
+                    + "with runKey; an earlier expiry, an error naming the step. " //$NON-NLS-1$
+                    + "Aliases: timeout, timeoutMs.") //$NON-NLS-1$
+            .stringProperty("runKey", "Collect a Pending run.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "Default true. Set false to skip pre-launch infobase sync. Under a preset that " //$NON-NLS-1$
-                    + "disabled update_database an omitted argument launches without updating " //$NON-NLS-1$
-                    + "(the answer carries databaseUpdate=SKIPPED_BY_PRESET); an " //$NON-NLS-1$
+                "Default true. Set false to skip pre-launch infobase sync. A preset that " //$NON-NLS-1$
+                    + "disabled update_database launches an omitted argument without updating " //$NON-NLS-1$
+                    + "(answers carry databaseUpdate=SKIPPED_BY_PRESET); an " //$NON-NLS-1$
                     + "explicit true is refused.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
-                "Default false. Set true to take the report of a run that finished within the " //$NON-NLS-1$
-                    + "last 5 minutes instead of running the tests again.") //$NON-NLS-1$
+                "Default false. Set true to take the report of a run finished in the " //$NON-NLS-1$
+                    + "last 5 minutes instead of running again.") //$NON-NLS-1$
             .booleanProperty("installYaxunit", //$NON-NLS-1$
-                "Default false. When true, if the YAxUnit engine extension is not yet " //$NON-NLS-1$
-                    + "installed in the infobase, its latest release is downloaded from " //$NON-NLS-1$
+                "Default false. When true, if the YAxUnit engine is not yet " //$NON-NLS-1$
+                    + "installed in the infobase, its latest release is fetched from " //$NON-NLS-1$
                     + "GitHub (bia-technologies/yaxunit) and installed as 'YAxUnit' before " //$NON-NLS-1$
-                    + "running. When already installed nothing is downloaded. The install " //$NON-NLS-1$
-                    + "outcome is reported in the response as 'installYaxunit'. Needs network " //$NON-NLS-1$
-                    + "access to GitHub and a resolvable thick-client runtime + stored IB " //$NON-NLS-1$
-                    + "credentials.") //$NON-NLS-1$
+                    + "running; when already installed nothing is downloaded. The response " //$NON-NLS-1$
+                    + "names the outcome 'installYaxunit'. Needs GitHub access and a " //$NON-NLS-1$
+                    + "resolvable thick-client runtime + stored IB credentials.") //$NON-NLS-1$
             .booleanProperty("yaxunitUnsafeMode", //$NON-NLS-1$
                 "Default true; read only with installYaxunit=true. On new and already-installed " //$NON-NLS-1$
-                    + "paths, reads both YAxUnit safety flags, lowers both in one write when " //$NON-NLS-1$
+                    + "paths, reads both safety flags, lowers both in one write when " //$NON-NLS-1$
                     + "either is on, and confirms them before launch. A mismatch aborts with " //$NON-NLS-1$
                     + "both actual values. False leaves the flags unread and unchanged.") //$NON-NLS-1$
             .stringProperty("yaxunitRepo", //$NON-NLS-1$
@@ -170,6 +174,27 @@ public class YaxunitTestsTool implements IMcpTool
             return "debug_yaxunit_tests"; //$NON-NLS-1$
         }
         return "run_yaxunit_tests"; //$NON-NLS-1$
+    }
+
+    /**
+     * The run this call resumes in {@code domain}, when that domain holds the YAXUnit launches
+     * this facade's run mode hands over.
+     * <p>
+     * Only {@code mode=run} polls a {@code runKey} - debug mode refuses one - and the default
+     * mode is run, so a call naming a live key of this domain is a poll unless it says debug,
+     * which never reaches the registry. Without this declaration each poll counted as a fresh
+     * heavy call and took a permit of the heavy-tool limit while only waiting on work already
+     * accounted for.
+     * </p>
+     *
+     * @param domain the registry domain the key was found in
+     * @param operation the operation argument; may be {@code null}
+     * @return {@link #NAME} for this facade's handed-over launches, <code>null</code> otherwise
+     */
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return PendingWorkRegistry.YAXUNIT_LAUNCH.domain().equals(domain) ? NAME : null;
     }
 
     /**
@@ -210,6 +235,7 @@ public class YaxunitTestsTool implements IMcpTool
      */
     String executeWithInstallSteps(Map<String, String> params, InstallSteps steps)
     {
+        params = YaxunitTestRunner.withCallStart(params, System.currentTimeMillis());
         // Help dispatch first - other parameters ignored when help is set
         String helpTopic = JsonUtils.extractStringArgument(params, "help"); //$NON-NLS-1$
         if (helpTopic != null && !helpTopic.isEmpty())
@@ -248,6 +274,20 @@ public class YaxunitTestsTool implements IMcpTool
         if (presetGate != null)
         {
             return ToolResult.error(presetGate).put("operation", NAME).put("mode", mode).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        // Polling a handed-over launch must not repeat the install pre-step. It resumes the exact
+        // launch that opened the dialog and retains that launch's original deadline.
+        String runKey = JsonUtils.extractStringArgument(params, "runKey"); //$NON-NLS-1$
+        if (runKey != null && !runKey.isEmpty())
+        {
+            if (!"run".equals(mode)) //$NON-NLS-1$
+            {
+                return ToolResult.error("runKey is supported for mode=run only") //$NON-NLS-1$
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .toJson();
+            }
+            return asJsonEnvelope(new YaxunitTestRunner().dispatch(params));
         }
 
         // updateBeforeLaunch is passed through as it arrived: both delegates read it themselves
@@ -294,6 +334,20 @@ public class YaxunitTestsTool implements IMcpTool
                 return refusal.toJson();
             }
             installSummary = installed.summary;
+            // The install is a write and runs to its end whatever the deadline; the answer names
+            // the step when that end leaves no polling budget for a launch. Named here rather
+            // than in the runner, which cannot tell an install that overran from anything else.
+            long startedAt = YaxunitTestRunner.callStartedAt(params, System::currentTimeMillis);
+            if (System.currentTimeMillis() >= YaxunitTestRunner.pollingDeadline(startedAt,
+                TimeoutArgs.readSeconds(params, YaxunitTestRunner.DEFAULT_TIMEOUT_SECONDS, 1, 0)))
+            {
+                return ToolResult.error("The YAXUnit call deadline expired during the engine install;" //$NON-NLS-1$
+                    + " the tests were not launched. Call again with a larger timeoutSeconds.") //$NON-NLS-1$
+                    .put("operation", NAME) //$NON-NLS-1$
+                    .put("deadlineExpired", Boolean.TRUE) //$NON-NLS-1$
+                    .put("clientLaunched", Boolean.FALSE) //$NON-NLS-1$
+                    .toJson();
+            }
         }
 
         String result;

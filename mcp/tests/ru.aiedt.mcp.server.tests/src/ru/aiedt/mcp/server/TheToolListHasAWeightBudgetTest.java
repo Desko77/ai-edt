@@ -236,8 +236,12 @@ public class TheToolListHasAWeightBudgetTest
      * its sentence, and the projectName and extraInfo sentences rebuilt to name the new
      * operations in less than they said before. Measured 13.10: 192661.
      * </p>
+     * <p>
+     * And from 192661 to 192666 for runKey on yaxunit_tests, which collects a run answered
+     * Pending at a dialog or at the deadline of the call. Measured 14.10: 192666.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 192661;
+    private static final int DOCUMENT_BUDGET = 192666;
 
     private LiveServer server;
 

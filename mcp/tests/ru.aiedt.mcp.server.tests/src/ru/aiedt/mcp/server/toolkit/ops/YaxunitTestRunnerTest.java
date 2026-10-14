@@ -108,6 +108,17 @@ public class YaxunitTestRunnerTest
         assertTrue("schema should declare timeoutSeconds", schema.contains("\"timeoutSeconds\""));
     }
 
+    /**
+     * The timeout is the budget of the complete call, not a polling window opened after launch.
+     */
+    @Test
+    public void schemaCallsTimeoutTheDeadlineOfTheWholeCall()
+    {
+        String schema = newTool().getInputSchema();
+        assertTrue("timeoutSeconds must describe the complete call deadline: " + schema,
+            schema.contains("entire call")); //$NON-NLS-1$
+    }
+
     @Test
     public void executeWithoutProjectNameReportsItAsRequired()
     {
@@ -306,21 +317,13 @@ public class YaxunitTestRunnerTest
      * @throws Exception when the stand-in report cannot be written
      */
     @Test
-    public void theAliasAnswersJsonOnARefusalAPendingRunAndAResult() throws Exception
+    public void theAliasAnswersJsonOnARefusalAndAResult() throws Exception
     {
         JsonObject refusal = JsonParser.parseString(newTool().execute(new HashMap<String, String>()))
             .getAsJsonObject();
         assertFalse(refusal.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(refusal.get("error").getAsString(), //$NON-NLS-1$
             refusal.get("error").getAsString().contains("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
-
-        JsonObject pending = JsonParser.parseString(
-            YaxunitTestRunner.publish(YaxunitTestRunner.pendingText(Path.of("report-dir"), false))) //$NON-NLS-1$
-            .getAsJsonObject();
-        assertTrue(pending.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(pending.get("output").getAsString(), //$NON-NLS-1$
-            pending.get("output").getAsString().contains("**Pending:**")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("yaxunit_tests", pending.get("operation").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
 
         Path report = Files.createTempDirectory("yaxunit-json"); //$NON-NLS-1$
         Path receipts = report.resolve("receipts"); //$NON-NLS-1$

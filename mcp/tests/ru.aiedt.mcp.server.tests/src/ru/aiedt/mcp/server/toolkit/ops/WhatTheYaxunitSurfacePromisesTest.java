@@ -134,4 +134,29 @@ public class WhatTheYaxunitSurfacePromisesTest
         assertEquals("boolean", //$NON-NLS-1$
             facade.getAsJsonObject("yaxunitUnsafeMode").get("type").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
     }
+
+    /**
+     * The deadline promise names both sides of the client's existence: a Pending pickup once it
+     * runs, and an error naming the preparation step when the budget is spent before it.
+     * <p>
+     * The run-mode deadline once read as "then Pending with runKey" whatever had happened, while
+     * an expiry before any client existed answered an error with no key at all - a caller that
+     * built its poll from the schema had nothing to poll and no step to blame.
+     * </p>
+     */
+    @Test
+    public void theDeadlinePromiseNamesBothSidesOfTheClientsExistence()
+    {
+        for (IMcpTool tool : new IMcpTool[] { new YaxunitTestsTool(), new YaxunitTestRunner() })
+        {
+            String text = properties(tool).getAsJsonObject("timeoutSeconds") //$NON-NLS-1$
+                .get("description").getAsString(); //$NON-NLS-1$
+            assertTrue(tool.getName() + " still promises Pending alone: " + text, //$NON-NLS-1$
+                text.contains("Pending")); //$NON-NLS-1$
+            assertTrue(tool.getName() + " must say the client keeps running past the deadline: " //$NON-NLS-1$
+                + text, text.contains("client")); //$NON-NLS-1$
+            assertTrue(tool.getName() + " must name the step an early expiry reports: " + text, //$NON-NLS-1$
+                text.contains("step")); //$NON-NLS-1$
+        }
+    }
 }
