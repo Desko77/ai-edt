@@ -829,9 +829,10 @@ public class McpRequestRouter
         }
         if (!toolRegistry.isToolEnabled(toolName))
         {
-            // Not an error on purpose: an agent that is handed a protocol error gives up, while an
-            // agent that is handed instructions asks the human to act on them.
-            return answer(requestId, ToolCallResult.text(disabledToolMessage(toolName)), era);
+            // A tool result marked isError, not a JSON-RPC error: the agent reads the instructions in
+            // the text and asks the human to act on them, and it does not take a call that did not
+            // run for one that succeeded. A facade's closed write door answers the same way.
+            return answer(requestId, ToolCallResult.text(disabledToolMessage(toolName)).asFailure(), era);
         }
 
         Map<String, String> arguments = ToolRoad.flattenArguments(request.getArguments());
