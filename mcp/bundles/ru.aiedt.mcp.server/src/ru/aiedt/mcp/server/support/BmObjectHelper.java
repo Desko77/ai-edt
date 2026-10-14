@@ -753,6 +753,152 @@ public final class BmObjectHelper
     }
 
     /**
+     * The composition refusal of a creating operation, answered before any borrowing runs.
+     * <p>
+     * A borrowing adopts its object in a commit of its own, so it survives the rollback of the
+     * transaction the refusal inside a creation throws in - answered only there, a refused call
+     * would leave the extension holding the owner and the reference targets it borrowed. The
+     * question is therefore asked first, on the owner the call can see without adopting anything:
+     * the object the address already resolves to in the project's own configuration, otherwise the
+     * base-configuration object at the same address. The two views differ in nothing the carrier
+     * decision reads - the owner's class and its chain of containers are the same - so the refusal
+     * is the one {@link BmDefinedTypeHelper#creationCompositeStringRefusal} answers once the
+     * element sits attached, asked here through the same code rather than a second copy of rules.
+     * </p>
+     * <p>
+     * Nothing answers for the owner - neither configuration holds it, or the configuration service
+     * is unreachable - and the question is left to the check inside the transaction, which stays
+     * where it is for the paths this entry cannot see.
+     * </p>
+     *
+     * @param project the project the call writes in, possibly <code>null</code>
+     * @param ownerFqn the owner the call names
+     * @param tabularSectionName the tabular section a column call names, or <code>null</code>
+     * @param childKind the kind of the element the call creates (Attribute, Dimension, ...)
+     * @param name the name the call gives the element
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable or the
+     *         question cannot be answered before the borrowing
+     */
+    public static String preBorrowCompositeStringRefusal(IProject project, String ownerFqn,
+        String tabularSectionName, String childKind, String name, List<String> typeFqns,
+        BmDefinedTypeHelper.QualifierOptions qualifierOptions)
+    {
+        if (project == null || ownerFqn == null || ownerFqn.isEmpty()
+            || childKind == null || childKind.isEmpty()
+            || typeFqns == null || typeFqns.isEmpty())
+        {
+            return null;
+        }
+        IConfigurationProvider provider = Activator.getDefault() == null
+            ? null : Activator.getDefault().getConfigurationProvider();
+        if (provider == null)
+        {
+            return null;
+        }
+        String normalized = MetadataTypeCatalog.normalizeFqn(ownerFqn);
+        String[] parts = normalized.split("\\.", 2); //$NON-NLS-1$
+        if (parts.length != 2)
+        {
+            return null;
+        }
+        Configuration config = provider.getConfiguration(project);
+        MdObject view = config == null ? null
+            : MetadataTypeCatalog.findObject(config, parts[0], parts[1]);
+        if (view == null)
+        {
+            // The base configuration holds the objects the extension did not adopt; its object at
+            // the same address answers the carrier question the adopted one would.
+            IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+            Configuration baseConfig = parent == null ? null : provider.getConfiguration(parent);
+            view = baseConfig == null ? null
+                : MetadataTypeCatalog.findObject(baseConfig, parts[0], parts[1]);
+        }
+        return preBorrowCompositeStringRefusalOnView(view, tabularSectionName, childKind, name,
+            typeFqns, qualifierOptions);
+    }
+
+    /**
+     * The question of {@link #preBorrowCompositeStringRefusal} on an owner view already resolved.
+     * <p>
+     * Split out so the decision is asked without a workspace: the view is what the resolving half
+     * reads out of the configurations, and the decision below it needs nothing else. The question
+     * is asked only where the creating path inside the transaction would ask it - an element of the
+     * same name already in the collection takes the idempotent or the mismatch path instead, and a
+     * composition repeated on an existing element without a length is judged by the length the
+     * model carries, which only the transaction sees.
+     * </p>
+     *
+     * @param ownerView the owner as the call sees it, possibly <code>null</code>
+     * @param tabularSectionName the tabular section a column call names, or <code>null</code>
+     * @param childKind the kind of the element the call creates
+     * @param name the name the call gives the element
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable or the
+     *         question cannot be answered on this view
+     */
+    static String preBorrowCompositeStringRefusalOnView(MdObject ownerView,
+        String tabularSectionName, String childKind, String name, List<String> typeFqns,
+        BmDefinedTypeHelper.QualifierOptions qualifierOptions)
+    {
+        MdObject carrier = ownerView;
+        if (tabularSectionName != null && !tabularSectionName.isEmpty())
+        {
+            EList<MdObject> sections = ownerView == null ? null : getTabularSections(ownerView);
+            carrier = sections == null ? null : findByName(sections, tabularSectionName);
+            if (carrier == null)
+            {
+                return null;
+            }
+        }
+        if (carrier == null || name == null || name.isEmpty())
+        {
+            return null;
+        }
+        String getter = childKindGetter(childKind);
+        if (getter == null)
+        {
+            return null;
+        }
+        EList<MdObject> existing = listByGetter(carrier, getter);
+        if (existing != null && findByName(existing, name) != null)
+        {
+            return null;
+        }
+        MdObject child = createOwnerScopedObject(carrier, childKind);
+        if (child == null)
+        {
+            return null;
+        }
+        return BmDefinedTypeHelper.creationCompositeStringRefusal(carrier, child, typeFqns,
+            qualifierOptions);
+    }
+
+    /**
+     * Reads a containment list of an owner through one named getter, answering <code>null</code>
+     * when the owner's class has no such getter or it answers no list.
+     *
+     * @param owner the object to read
+     * @param getter the getter's name (e.g. {@code getAttributes})
+     * @return the list, or <code>null</code>
+     */
+    @SuppressWarnings("unchecked")
+    private static EList<MdObject> listByGetter(MdObject owner, String getter)
+    {
+        try
+        {
+            Object result = owner.getClass().getMethod(getter).invoke(owner);
+            return result instanceof EList ? (EList<MdObject>)result : null;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * Resolves the root external object (ExternalDataProcessor / ExternalReport)
      * of an external-object project by name. External-object projects
      * (.epf/.erf) have no Configuration - the roots live as top objects in the

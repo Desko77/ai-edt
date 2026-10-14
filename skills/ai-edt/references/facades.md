@@ -366,7 +366,9 @@ command's path as the form file writes it: `Form.Command.X`, `Form.StandardComma
   changes are refused. A lone
   `String` without a length is a type of its own and is written. A creating operation answers the
   refusal before the element exists - after it the owner holds neither the element nor a trace of
-  it, and `dryRun` answers the same refusal (`add_object_attribute`, `add_tabular_section_attribute`,
+  it; in an extension project the refusal precedes the borrowing of the owner and of the reference
+  types' targets, so the extension holds none of them either, and `dryRun` answers the same refusal
+  (`add_object_attribute`, `add_tabular_section_attribute`,
   `add_register_field`, `add_addressing_attribute`, `add_accounting_flag`,
   `add_ext_dimension_accounting_flag`, and the `addressingAttributes` entries of
   `set_task_addressing`). Under `dryRun` the first two do not borrow the reference types' targets and

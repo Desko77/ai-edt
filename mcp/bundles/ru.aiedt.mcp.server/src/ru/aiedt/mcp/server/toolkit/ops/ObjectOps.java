@@ -1658,6 +1658,17 @@ final class ObjectOps
             return ProjectResolver.notFound(projectName).toJson();
         }
 
+        // The composition refusal is answered before a borrowing adopts anything for a call that
+        // will be refused: an adoption commits on its own and survives the rollback the
+        // in-transaction refusal throws, so the extension would hold what it borrowed.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, null, "Attribute", name, Collections.singletonList(type), attrQualifiers); //$NON-NLS-1$
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "attribute '" + name + "': " + preBorrowRefusal, "add_object_attribute"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+
         // Phase 6.6: auto-borrow referenced metadata objects when the attribute
         // type is a reference (CatalogRef.X / DocumentRef.X / etc.) inside an
         // extension project. Best-effort - failures surface as warning tags.
@@ -2407,6 +2418,18 @@ final class ObjectOps
         if (project == null)
         {
             return ProjectResolver.notFound(projectName).toJson();
+        }
+
+        // The composition refusal is answered before a borrowing adopts anything: an adoption
+        // commits on its own and survives the rollback the in-transaction refusal throws, so the
+        // extension would hold the owner, the tabular section and the reference targets.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, tcName, "Attribute", name, Collections.singletonList(type), tcQualifiers); //$NON-NLS-1$
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "tabular section attribute '" + name + "': " + preBorrowRefusal, //$NON-NLS-1$ //$NON-NLS-2$
+                "add_tabular_section_attribute"); //$NON-NLS-1$
         }
 
         // Auto-borrow the referenced metadata object when a tabular-section
