@@ -448,25 +448,36 @@ if ($AllInstallations) {
         return $m.Groups[3].Value
     }
 
-    # The bundles.info an installation loads: the record the report marks active, normalised so
-    # that two installations naming one file are seen to be one profile.
-    function Get-ActiveBundlesInfo($records) {
+    # A path normalised the way the report normalises the areas it names: full, back slashes,
+    # no trailing separator, lower case.
+    function Get-NormalPath([string]$path) {
+        if (-not $path) { return '' }
+        return ([IO.Path]::GetFullPath(($path -replace '/', '\'))).TrimEnd('\').ToLowerInvariant()
+    }
+
+    # The configuration area an installation loads: the one holding the record the report marks
+    # active, normalised so that it compares with the areas the report's consumers name.
+    function Get-ActiveArea($records) {
         foreach ($record in @($records)) {
-            if ($record.active) { return ([string]$record.bundlesInfo -replace '/', '\').ToLowerInvariant() }
+            if ($record.active) { return Get-NormalPath (Split-Path (Split-Path ([string]$record.bundlesInfo))) }
         }
         return ''
     }
 
-    # A director writes into the profile its installation loads. Another installation loading the
-    # same bundles.info reads that profile too, so its running EDT holds this one as well: the entry
-    # becomes 'running' and SharedWith names the installations whose processes hold it.
-    function Set-SharedProfileHolder($plan) {
+    # A director writes into the area its installation loads. Every other installation the report
+    # names as loading that area reads the same profile - it records nothing there of its own, so
+    # only the consumers list names it - and its running EDT holds this one as well: the entry
+    # becomes 'running' and SharedWith names each such installation with its processes.
+    function Set-SharedProfileHolder($plan, $consumers, [scriptblock]$processesOf) {
         foreach ($p in @($plan)) {
             if (-not $p.Active) { continue }
-            foreach ($q in @($plan)) {
-                if ([object]::ReferenceEquals($p, $q) -or $q.Active -ne $p.Active -or @($q.Running).Count -eq 0) { continue }
+            foreach ($c in @($consumers)) {
+                if ((Get-NormalPath $c.install) -eq (Get-NormalPath $p.Install)) { continue }
+                if ((Get-NormalPath $c.loads) -ne $p.Active) { continue }
+                $held = @(& $processesOf ([string]$c.install) | Where-Object { $_ })
+                if ($held.Count -eq 0) { continue }
                 $p.Status = 'running'
-                $p.SharedWith += $q
+                $p.SharedWith += [PSCustomObject]@{ Install = [string]$c.install; Running = $held }
             }
         }
     }
@@ -635,12 +646,12 @@ if ($AllInstallations) {
             JavaFrom = $java.Source
             Launch   = [string]$entry.launcher
             Selected = $false
-            Active   = Get-ActiveBundlesInfo $entry.records
+            Active   = Get-ActiveArea $entry.records
             SharedWith = @()
         }
     }
 
-    Set-SharedProfileHolder $plan
+    Set-SharedProfileHolder $plan @($report.consumers) { param($dir) Get-InstallationProcess $dir }
 
     Write-Step "Found $($plan.Count) installation(s) recording $BundleSymbolicName; repository has $repoVersion"
     foreach ($p in $plan) {

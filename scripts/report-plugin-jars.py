@@ -300,8 +300,39 @@ def installations(roots, bundle, depth=8):
     return found, unclaimed, unreadable
 
 
+def loaded_area(install_dir, areas):
+    """The configuration area an installation's launcher loads bundles from, normalised.
+
+    The order is the one ``active_record`` follows: an area the installation's ini names with
+    ``-configuration``; otherwise a profile area laid out for this installation path among the areas
+    found; otherwise the configuration area inside the installation directory. It is answered for an
+    installation whether or not that area records the bundle, because an installation that loads an
+    area another one owns records nothing there of its own and still holds it open while it runs.
+    """
+    named = configured_area(install_dir)
+    if named is not None:
+        return named
+    for area in areas:
+        if profile_owner(area, [install_dir]):
+            return os.path.normcase(os.path.normpath(str(area)))
+    return os.path.normcase(os.path.normpath(str(Path(install_dir) / "configuration")))
+
+
+def consumers(roots, depth=8):
+    """Every installation under the roots with the configuration area it loads, as data."""
+    areas = sorted({config_area_of(info) for info in find_files(roots, "bundles.info", depth)})
+    return [{"install": str(install), "launcher": str(launcher_in(install)),
+             "loads": loaded_area(install, areas)}
+            for install in sorted(find_installations(roots, depth))]
+
+
 def installation_report(roots, bundle):
-    """The installations recording the bundle as data, for a caller that installs into them."""
+    """The installations recording the bundle as data, for a caller that installs into them.
+
+    ``consumers`` names every installation found with the area it loads, including those that
+    record nothing: two installations loading one area hold one profile, and a caller installing
+    into it has to know about the other one.
+    """
     found, unclaimed, unreadable = installations(roots, bundle)
     return {
         "bundle": bundle,
@@ -309,6 +340,7 @@ def installation_report(roots, bundle):
         "installations": found,
         "unclaimed": unclaimed,
         "unreadable": unreadable,
+        "consumers": consumers(roots),
     }
 
 

@@ -21,6 +21,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -365,6 +366,57 @@ class TheJsonReportCarriesTheInstallations(unittest.TestCase):
         self.assertEqual([str(install)], [entry["install"] for entry in payload["installations"]])
         self.assertEqual(["0.2.57"], payload["installations"][0]["records"][0]["versions"])
         self.assertEqual([], payload["unclaimed"])
+
+
+class EveryInstallationNamesTheAreaItLoads(unittest.TestCase):
+    """An installation that loads an area another one owns records nothing there and still holds it.
+
+    The records of a bundles.info go to one owner, so the installation whose ini points at that
+    area is absent from the installations list. The consumers list names it with the area it loads,
+    which is what a caller installing into that area compares against.
+    """
+
+    def test_an_ini_pointing_at_another_installations_area_is_a_consumer_of_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            owner = make_installation(root / "installs" / "edt-a")
+            borrower = make_installation(root / "installs" / "edt-b")
+            write_bundles_info(owner / "configuration",
+                               [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
+            write_ini(borrower, ["-configuration", str(owner / "configuration")])
+            found, _, _ = REPORT.installations([root], BUNDLE)
+            listed = {entry["install"]: entry["loads"] for entry in REPORT.consumers([root])}
+        self.assertEqual([str(owner)], [entry["install"] for entry in found])
+        self.assertEqual(listed[str(owner)], listed[str(borrower)])
+
+    def test_a_profile_laid_out_for_an_installation_is_the_area_it_loads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration", ["other.bundle,1.0,plugins/o.jar,4,false"])
+            profile = write_profile(root, install, "4.38.0",
+                                    [BUNDLE + ",0.2.58,plugins/" + BUNDLE + "_0.2.58.jar,4,false"])
+            listed = REPORT.consumers([root])
+        self.assertEqual(os.path.normcase(os.path.normpath(str(profile / "configuration"))),
+                         listed[0]["loads"])
+
+    def test_an_installation_without_a_profile_loads_its_own_area(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install = make_installation(pathlib.Path(directory) / "edt")
+            listed = REPORT.consumers([pathlib.Path(directory)])
+        self.assertEqual(os.path.normcase(os.path.normpath(str(install / "configuration"))),
+                         listed[0]["loads"])
+
+    def test_the_json_report_carries_the_consumers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            make_installation(root / "edt")
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                REPORT.main(["--json", "--root", str(root)])
+        payload = json.loads(out.getvalue())
+        self.assertEqual(1, len(payload["consumers"]))
+        self.assertEqual({"install", "launcher", "loads"}, set(payload["consumers"][0]))
 
 
 if __name__ == "__main__":
