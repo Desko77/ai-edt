@@ -243,9 +243,13 @@ public final class BmDefinedTypeHelper
                 destination = EcoreUtil.copy((EObject)typeDesc);
             }
             TypesResult replaced = setTypesOnDescription(destination, project, config,
-                requested, qualifierOptions, contextObject);
+                new ArrayList<>(r.finalTypes), qualifierOptions, contextObject);
             if (replaced.ok)
             {
+                // A replacement that names the stored types in another order is idempotent and
+                // writes nothing, so the answer names the composition the model holds.
+                r.finalTypes.clear();
+                r.finalTypes.addAll(readTypeDescriptionNamesInOrder(destination));
                 r.ok = true;
                 r.mutated = replaced.mutated && !preview;
                 r.idempotentSkip = replaced.idempotentSkip;

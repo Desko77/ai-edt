@@ -215,6 +215,41 @@ public class ATypeCompositionHasListModesTest
         assertEquals(50, target.getType().getStringQualifiers().getLength());
     }
 
+    /** A replacement that names a type twice stores it once and reports the second as skipped. */
+    @Test
+    public void replaceWithADuplicateStoresTheTypeOnce()
+    {
+        DefinedType target = copyPrototype();
+        String extra = "CatalogRef.Type300"; //$NON-NLS-1$
+
+        BmDefinedTypeHelper.TypesResult result = update(target, extra + "," + extra, //$NON-NLS-1$
+            ConfigurationListProperties.ListMode.REPLACE, false, null);
+
+        assertTrue(String.valueOf(result.error), result.ok);
+        assertEquals(Collections.singletonList(extra), result.skipped);
+        assertEquals(Collections.singletonList(extra),
+            BmDefinedTypeHelper.readTypeDescriptionNamesInOrder(target.getType()));
+        assertEquals(Collections.singletonList(extra), result.finalTypes);
+    }
+
+    /** A replacement that only reorders the stored types answers the composition the model holds. */
+    @Test
+    public void replaceThatReordersAnswersTheStoredComposition()
+    {
+        DefinedType target = copyPrototype();
+        String first = originalNames.get(1);
+        String second = originalNames.get(2);
+        assertTrue(update(target, first + "," + second, //$NON-NLS-1$
+            ConfigurationListProperties.ListMode.REPLACE, false, null).ok);
+
+        BmDefinedTypeHelper.TypesResult result = update(target, second + "," + first, //$NON-NLS-1$
+            ConfigurationListProperties.ListMode.REPLACE, false, null);
+
+        assertTrue(String.valueOf(result.error), result.ok);
+        assertEquals(BmDefinedTypeHelper.readTypeDescriptionNamesInOrder(target.getType()),
+            result.finalTypes);
+    }
+
     private static DefinedType copyPrototype()
     {
         return EcoreUtil.copy(prototype);
