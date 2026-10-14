@@ -279,7 +279,7 @@ function Get-InstalledPluginVersion([string]$installDir) {
     if (Test-Path -LiteralPath $dir) {
         foreach ($f in (Get-ChildItem -LiteralPath $dir -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
             $m = [regex]::Match($f.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
-            if ($m.Success -and (-not $best -or (Compare-BundleVersion $m.Groups[1].Value $best) -gt 0)) {
+            if ($m.Success -and (-not $best -or (Compare-P2Version $m.Groups[1].Value $best) -gt 0)) {
                 $best = $m.Groups[1].Value
             }
         }
@@ -304,7 +304,7 @@ function Resolve-RepoBundle([string]$repoPath) {
     foreach ($cand in (Get-ChildItem -LiteralPath (Join-Path $repoPath 'plugins') -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
         $mc = [regex]::Match($cand.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
         if (-not $mc.Success) { continue }
-        if (-not $jar -or (Compare-BundleVersion $mc.Groups[1].Value $version) -gt 0) {
+        if (-not $jar -or (Compare-P2Version $mc.Groups[1].Value $version) -gt 0) {
             $jar = $cand
             $version = $mc.Groups[1].Value
         }
