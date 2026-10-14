@@ -261,6 +261,11 @@ public class FindDeadCodeTool
         int interceptorsSkipped = 0;
         int loadFailures = 0;
         int indeterminate = 0;
+        // Methods a written-by-name call reaches: the reference index the deadness check reads
+        // carries nothing about them, so they are collected here as the scan walks the same
+        // modules. Form modules the scan excludes do not give up their calls.
+        Map<String, String> commonModules = BslCallGraphHelper.commonModuleNames(project);
+        Set<String> nameCalled = new HashSet<>();
 
         for (IFile file : bslFiles)
         {
@@ -295,6 +300,7 @@ public class FindDeadCodeTool
                 continue;
             }
             modulesScanned++;
+            collectNameCalled(module, commonModules, nameCalled);
 
             for (Method method : module.allMethods())
             {
@@ -329,7 +335,8 @@ public class FindDeadCodeTool
                 }
                 if (callers == 0)
                 {
-                    candidates.add(new Candidate(modulePath, name, startLineOf(method)));
+                    candidates.add(new Candidate(modulePath, name, startLineOf(method),
+                        BslCallGraphHelper.moduleFqn(module)));
                     if (candidates.size() >= limit)
                     {
                         break;
@@ -342,12 +349,86 @@ public class FindDeadCodeTool
             }
         }
 
+        // Left to the end: a module walked after this one can still hold the written-by-name call
+        // that keeps an earlier candidate alive, so the decision waits for the whole walk.
+        candidates = withoutNameCalled(candidates, nameCalled);
+
         return format(projectName, candidates, modulesScanned, modulesExcludedForms, exportMethods,
             handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params,
             // "candidate modules", not "modules": the count is loop entries, and a
             // form module or an unreadable one is entered and then excluded, so it
             // never reaches modulesScanned.
             watch.note("candidate modules")); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds the methods a module's text calls by name to the set of methods the scan must not
+     * report: a caller that wrote the name as a string is invisible to the reference index the
+     * deadness check reads.
+     *
+     * @param module the module whose text to read
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        reads nothing, since a module name cannot be matched
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     */
+    static void collectNameCalled(Module module, java.util.Map<String, String> commonModules,
+        java.util.Set<String> nameCalled)
+    {
+        if (commonModules == null)
+        {
+            return;
+        }
+        for (BslCallGraphHelper.NameCall call : BslCallGraphHelper.literalNameCallsOf(module,
+            commonModules))
+        {
+            String targetFqn = call.targetModuleFqn != null ? call.targetModuleFqn
+                : BslCallGraphHelper.moduleFqn(module);
+            if (targetFqn != null)
+            {
+                nameCalled.add(nameCallKey(targetFqn, call.methodName));
+            }
+        }
+    }
+
+    /**
+     * The key a written-by-name call is collected under: the target module's FQN and the method
+     * name folded to one case, so a call site spelling the name differently from its declaration
+     * still matches.
+     *
+     * @param moduleFqn the target module's FQN
+     * @param methodName the method name as the call spells it
+     * @return the key
+     */
+    static String nameCallKey(String moduleFqn, String methodName)
+    {
+        return moduleFqn + '\u0000'
+            + (methodName == null ? "" : methodName.toLowerCase(Locale.ROOT)); //$NON-NLS-1$
+    }
+
+    /**
+     * Drops the candidates a written-by-name call keeps alive.
+     *
+     * @param candidates the candidates the scan collected
+     * @param nameCalled the keys of methods a written-by-name call names
+     * @return the candidates no written-by-name call names
+     */
+    static List<Candidate> withoutNameCalled(List<Candidate> candidates,
+        java.util.Set<String> nameCalled)
+    {
+        if (nameCalled.isEmpty())
+        {
+            return candidates;
+        }
+        List<Candidate> kept = new ArrayList<>(candidates.size());
+        for (Candidate candidate : candidates)
+        {
+            if (candidate.moduleFqn == null
+                || !nameCalled.contains(nameCallKey(candidate.moduleFqn, candidate.methodName)))
+            {
+                kept.add(candidate);
+            }
+        }
+        return kept;
     }
 
     // -- = --
@@ -601,17 +682,21 @@ public class FindDeadCodeTool
     }
 
     /** A dead-code candidate: the module path, the export method name, and its declaration line. */
-    private static final class Candidate
+    static final class Candidate
     {
         final String modulePath;
         final String methodName;
         final int line;
 
-        Candidate(String modulePath, String methodName, int line)
+        /** The module's FQN as its address names it, or {@code null} when the address names none. */
+        final String moduleFqn;
+
+        Candidate(String modulePath, String methodName, int line, String moduleFqn)
         {
             this.modulePath = modulePath;
             this.methodName = methodName;
             this.line = line;
+            this.moduleFqn = moduleFqn;
         }
     }
 }

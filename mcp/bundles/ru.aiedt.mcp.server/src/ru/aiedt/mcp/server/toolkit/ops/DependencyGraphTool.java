@@ -616,6 +616,20 @@ public class DependencyGraphTool implements IMcpTool
                     direction == BmReferencesHelper.Direction.OUT
                         || direction == BmReferencesHelper.Direction.BOTH,
                     edge -> {
+                        if (edge.byName)
+                        {
+                            // A written-by-name call is an edge of the walk like any other: the
+                            // same cap on its ends, the same queueing of the module it reaches.
+                            if (!endpointsFitTheNodeCap(result, visited, edge.fromFqn, edge.toFqn,
+                                maxNodes)
+                                || !addModuleNameEdge(result, edge.fromFqn, edge.toFqn, maxEdges))
+                            {
+                                return;
+                            }
+                            addModuleNodeIfNew(result, queue, visited, lookup, edge.toFqn, maxNodes,
+                                unloaded);
+                            return;
+                        }
                         // Which half of the call graph reported this edge: the module being walked
                         // is the source of an outgoing one and the target of an incoming one.
                         BmReferencesHelper.Side side = selfFqn.equals(edge.fromFqn)
@@ -733,6 +747,47 @@ public class DependencyGraphTool implements IMcpTool
 
     /** The {@code via} of every edge of the module level. */
     private static final String CALLS = "calls"; //$NON-NLS-1$
+
+    /**
+     * Records one edge the module's text wrote by name, merging it with the same connection
+     * already recorded.
+     * <p>
+     * The reference index and the resolved links may already have named this pair of modules, and
+     * the name-written sighting then adds a row that already exists. The walk does not count the
+     * sighting into the row: the count of a merged row stands for references the index carries,
+     * and a written-by-name call is not one of them.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param fromFqn the caller's FQN
+     * @param toFqn the callee's FQN
+     * @param maxEdges the edge cap
+     * @return <code>true</code> when the edge is in the graph afterwards
+     */
+    static boolean addModuleNameEdge(BmReferencesHelper.BfsResult result, String fromFqn,
+        String toFqn, int maxEdges)
+    {
+        if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
+        {
+            return false;
+        }
+        for (BmReferencesHelper.Edge existing : result.edges)
+        {
+            if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                && CALLS.equals(existing.featureName))
+            {
+                return true;
+            }
+        }
+        if (result.edges.size() >= maxEdges)
+        {
+            result.truncated = true;
+            return false;
+        }
+        result.edges.add(new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS,
+            BmReferencesHelper.Side.FORWARD));
+        return true;
+    }
 
     /**
      * Records a module the walk has just found, and puts it in the queue so the next ring walks it.
