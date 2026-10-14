@@ -770,7 +770,7 @@ public class ATagAdminFacadeAnswersItsOperationsTest
                 assertFalse(write[0], answer.get("success").getAsBoolean()); //$NON-NLS-1$
                 assertEquals(write[0], "unreadableFile", answer.get("reason").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
                 assertTrue(write[0] + ": " + answer, //$NON-NLS-1$
-                    answer.get("error").getAsString().contains(MarkerManager.UNREADABLE_MARKER_FILE)); //$NON-NLS-1$
+                    answer.get("error").getAsString().contains(MarkerManager.UNREADABLE_MARKER_FILE + ". ")); //$NON-NLS-1$ //$NON-NLS-2$
             }
         }
         org.junit.Assert.assertArrayEquals(original, Files.readAllBytes(yaml));

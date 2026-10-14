@@ -1276,7 +1276,7 @@ public class TagAdminFacadeTool
     {
         if (unreadable != null)
         {
-            return ToolResult.error(unreadable + " No tag was written.") //$NON-NLS-1$
+            return ToolResult.error(unreadable + ". No tag was written.") //$NON-NLS-1$
                 .put("reason", MarkerWriteOutcome.UNREADABLE_FILE); //$NON-NLS-1$
         }
         if (readFailed)
