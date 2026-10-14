@@ -89,10 +89,6 @@ public class TagAdminFacadeTool
     /** The door a preset switches the unassign operation off under. */
     public static final String DOOR_UNASSIGN = "unassign_tag"; //$NON-NLS-1$
 
-    /** Every operation this facade accepts, in the order a refusal lists them. */
-    private static final String KNOWN =
-        "create_tag | update_tag | delete_tag | assign_tag | unassign_tag | help"; //$NON-NLS-1$
-
     /** The shape a color is stored in: a hash and six hex digits. */
     private static final Pattern COLOR = Pattern.compile("#[0-9A-Fa-f]{6}"); //$NON-NLS-1$
 
@@ -115,6 +111,22 @@ public class TagAdminFacadeTool
     static final String REASON_NOT_ASSIGNED = "notAssigned"; //$NON-NLS-1$
 
     private static final Map<String, String> OPS = buildOpsCatalog();
+
+    /** Every operation this facade accepts, as the schema and the refusals name them. */
+    private static final String KNOWN = knownOperations();
+
+    /**
+     * The operation list out of the catalog, so the schema, the refusals and the help all read
+     * one source and cannot drift apart.
+     *
+     * @return the catalog's names with help last, joined with " | "
+     */
+    private static String knownOperations()
+    {
+        List<String> names = new ArrayList<>(OPS.keySet());
+        names.add("help"); //$NON-NLS-1$
+        return String.join(" | ", names); //$NON-NLS-1$
+    }
 
     /** Every help topic, in the order the catalog names them: operations, then named topics. */
     private static final List<String> HELP_TOPICS = helpTopics();
@@ -279,7 +291,8 @@ public class TagAdminFacadeTool
                 return doUnassignTag(params, dryRun);
             }
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + KNOWN + ".").toJson(); //$NON-NLS-1$
         }
     }
 

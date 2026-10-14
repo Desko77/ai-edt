@@ -84,8 +84,24 @@ public class TaskResult
      */
     public static TaskResult state(TaskDirectory.Task task, Object finishedResult, Object failure)
     {
+        return state(task, task.statusMessage, finishedResult, failure);
+    }
+
+    /**
+     * As {@link #state(TaskDirectory.Task, Object, Object)}, with the message as the caller is to
+     * read it - masked where the task's own copy is not.
+     *
+     * @param task the run being reported.
+     * @param statusMessage the sentence to answer in place of the task's own.
+     * @param finishedResult the original request's result, or {@code null} unless the task holds one.
+     * @param failure the JSON-RPC error, or {@code null} unless failed without an answer.
+     * @return the poll answer
+     */
+    public static TaskResult state(TaskDirectory.Task task, String statusMessage,
+        Object finishedResult, Object failure)
+    {
         return new TaskResult(McpServerMeta.RESULT_COMPLETE, task.taskId, task.status,
-            task.statusMessage, iso(task.createdAt), iso(task.lastUpdatedAt), task.lifetimeMs,
+            statusMessage, iso(task.createdAt), iso(task.lastUpdatedAt), task.lifetimeMs,
             TaskDirectory.POLL_INTERVAL_MS, finishedResult, failure);
     }
 

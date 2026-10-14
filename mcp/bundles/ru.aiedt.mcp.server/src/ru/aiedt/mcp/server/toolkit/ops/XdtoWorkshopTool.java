@@ -163,7 +163,7 @@ public class XdtoWorkshopTool implements IMcpTool
         if (!OPS.containsKey(op))
         {
             return ToolResult.error("Unknown operation: " + op //$NON-NLS-1$
-                + ". Available: " + String.join(", ", OPS.keySet())).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Available: " + String.join(", ", OPS.keySet()) + ", help").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
         // A preset that blocks writing is asked before the runtime is probed or the project is
         // read. The read operation and a dryRun preview (which writes nothing) go through; every
@@ -179,8 +179,7 @@ public class XdtoWorkshopTool implements IMcpTool
         }
         if (!BmXdtoHelper.xdtoApiAvailable())
         {
-            return ToolResult.error("XDTO model API (com._1c.g5.v8.dt.xdto.model) is not " //$NON-NLS-1$
-                + "reachable on this EDT runtime").toJson(); //$NON-NLS-1$
+            return apiNotReachable();
         }
         switch (op)
         {
@@ -201,7 +200,8 @@ public class XdtoWorkshopTool implements IMcpTool
             case "read": //$NON-NLS-1$
                 return opRead(params);
             default:
-                return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled op: " + op + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(", ", OPS.keySet()) + ", help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
@@ -495,6 +495,25 @@ public class XdtoWorkshopTool implements IMcpTool
     }
 
     // ---- helpers ----
+
+    /**
+     * The refusal for an EDT runtime the XDTO model API did not come with, naming the call that
+     * answers availability.
+     * <p>
+     * The facade's help ends with an {@code XDTO API: available / UNAVAILABLE} line, so the
+     * refusal names that help rather than a topic: this facade has none, its help is one document.
+     * The hint carries the call ready to send.
+     * </p>
+     *
+     * @return the refusal as a tool result document
+     */
+    static String apiNotReachable()
+    {
+        return ToolResult.error("XDTO model API (com._1c.g5.v8.dt.xdto.model) is not " //$NON-NLS-1$
+            + "reachable on this EDT runtime. operation=help answers whether it is.") //$NON-NLS-1$
+            .hint(NAME, Map.of("operation", "help")) //$NON-NLS-1$ //$NON-NLS-2$
+            .toJson();
+    }
 
     private static final class Ctx
     {

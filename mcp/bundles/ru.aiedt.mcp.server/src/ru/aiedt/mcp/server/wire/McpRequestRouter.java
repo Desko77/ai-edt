@@ -403,7 +403,16 @@ public class McpRequestRouter
             return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
                 "Failed to retrieve task: no task with id " + taskId); //$NON-NLS-1$
         }
-        return answer(requestId, TaskResult.state(task, finishedResultOf(task), failureOf(task)), era);
+        // One reading of the task, under the lock settle and cancel take: read field by field, a
+        // poll could find the result not yet there and the status already failed, and answer a
+        // terminal task with neither a result nor an error.
+        TaskResult state;
+        synchronized (task)
+        {
+            state = TaskResult.state(task, redactIfAsked(task.statusMessage, true),
+                finishedResultOf(task), failureOf(task));
+        }
+        return answer(requestId, state, era);
     }
 
     /**
@@ -475,12 +484,19 @@ public class McpRequestRouter
      * was switched off while the work ran - the text is handed over as text rather than dropped.
      * </p>
      *
+     * <p>
+     * A task that failed on the tool's own refusal still holds the tool's answer, and that answer
+     * is what the call would have returned: a result with {@code isError}, not a JSON-RPC error.
+     * </p>
+     *
      * @param task the finished task.
-     * @return the result, or null unless the task completed.
+     * @return the result, or null unless the task completed or the tool refused.
      */
     private Object finishedResultOf(TaskDirectory.Task task)
     {
-        if (!TaskDirectory.COMPLETED.equals(task.status) || task.result == null)
+        boolean answered = TaskDirectory.COMPLETED.equals(task.status)
+            || TaskDirectory.FAILED.equals(task.status);
+        if (!answered || task.result == null)
         {
             return null;
         }
@@ -530,19 +546,24 @@ public class McpRequestRouter
 
     /**
      * Builds the JSON-RPC error a failed task reports.
+     * <p>
+     * Only a run that produced no answer reports an error. A task that failed on the tool's own
+     * refusal answers that refusal as its result, see {@link #finishedResultOf}.
+     * </p>
      *
      * @param task the task.
-     * @return the error object, or null unless the task failed.
+     * @return the error object, or null unless the task failed without an answer.
      */
-    private static Object failureOf(TaskDirectory.Task task)
+    static Object failureOf(TaskDirectory.Task task)
     {
-        if (!TaskDirectory.FAILED.equals(task.status))
+        if (!TaskDirectory.FAILED.equals(task.status) || task.result != null)
         {
             return null;
         }
         Map<String, Object> error = new LinkedHashMap<>();
         error.put("code", McpServerMeta.ERROR_INTERNAL); //$NON-NLS-1$
-        error.put("message", task.failure == null ? "The task failed." : task.failure); //$NON-NLS-1$ //$NON-NLS-2$
+        error.put("message", task.failure == null ? "The task failed." //$NON-NLS-1$ //$NON-NLS-2$
+            : redactIfAsked(task.failure, true));
         return error;
     }
 

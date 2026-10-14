@@ -252,7 +252,7 @@ public class MxlWorkshopTool implements IMcpTool
         if (!OPS.containsKey(op))
         {
             return ToolResult.error("Unknown operation: " + op //$NON-NLS-1$
-                + ". Available: " + String.join(", ", OPS.keySet())).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Available: " + String.join(", ", OPS.keySet()) + ", help").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
 
         // A preset that blocks writing is asked before the project is read or a BM transaction
@@ -359,7 +359,8 @@ public class MxlWorkshopTool implements IMcpTool
                 answer = opCheckPrintWidth(params);
                 break;
             default:
-                return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled op: " + op + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(", ", OPS.keySet()) + ", help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return modelFileMismatch == null ? answer
             : addMismatchWarning(answer, modelFileMismatch);
