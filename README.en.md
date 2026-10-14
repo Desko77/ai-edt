@@ -28,6 +28,8 @@ Instead of treating an EDT workspace as a directory of XML and BSL files, an ass
 
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
+>
+> To install: in EDT open **Help → Install New Software** with the address `https://desko77.github.io/ai-edt/`, or press **Archive** and pick `AI-EDT-update-site.zip` from the [release page](https://github.com/Desko77/ai-edt/releases/latest). Step by step: [3. Install into EDT](#-3-install-into-edt).
 
 ## 🎯 Why AI-EDT
 
