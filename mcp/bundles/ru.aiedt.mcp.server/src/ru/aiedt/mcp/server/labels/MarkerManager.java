@@ -2678,7 +2678,7 @@ public class MarkerManager
      */
     public MarkerWriteOutcome fileWriteRefusalForPreview(IProject project, String subject)
     {
-        return refusalOfTheFile(fileWriteRefusalCode(markersFileAsItStands(project)), subject);
+        return refusalOfTheFile(fileWriteRefusalCode(markersFileForRead(project, false)), subject);
     }
 
     /**
@@ -2695,8 +2695,8 @@ public class MarkerManager
     }
 
     /**
-     * Reads a project's markers the way a preview reads them: from the file as it stands, and
-     * without remembering anything.
+     * Reads a project's markers the way a preview reads them: from the source a write works from,
+     * and without remembering anything.
      * <p>
      * The read and the parse run under the same hold of the lock an ordinary read takes, so a
      * carry-over such a read performs, or a save, cannot take the file out from under this one: a
@@ -2709,12 +2709,13 @@ public class MarkerManager
      * - a preview changes no state of the service - and the next ordinary read decides again.
      * </p>
      * <p>
-     * The file is the current one when it is there and otherwise the file an earlier build wrote.
-     * Neither is created, copied, renamed or refreshed, so an edit that writes nothing leaves the
-     * project's settings folder byte for byte as it found it. Nothing of this read is kept: the
-     * bytes are not remembered as the current file's fingerprint, a parse failure is not recorded
-     * and no storage is cached, so the answer is what the file holds at this moment and the next
-     * ordinary read judges the file itself.
+     * The source is the one the write path works from: the storage the service already holds for
+     * the project when it holds one, and otherwise the marker file, resolved without the carry-over
+     * an ordinary read performs. A preview promises to write nothing, so neither file is created,
+     * copied, renamed or refreshed and the settings folder is left byte for byte as it was found.
+     * Nothing of this read is kept: the bytes are not remembered as the current file's fingerprint,
+     * a parse failure is not recorded and no storage is cached, so the answer is what a write would
+     * find at this moment and the next ordinary read judges the file itself.
      * </p>
      *
      * @param project the project; may be {@code null}
@@ -2740,14 +2741,21 @@ public class MarkerManager
             }
             if (unreadable.contains(project))
             {
-                // The write is refused by this sign without reading the file again, so the preview
-                // answers that same refusal rather than judging a file the write will not read.
+                // A write is refused by this sign without reading the file again, so the preview
+                // answers that same refusal rather than judging a file the write will not look at.
                 return new PreviewRead(null, true, false);
+            }
+            MarkerStore cached = cache.get(project);
+            if (cached != null && cacheIsCurrent(project))
+            {
+                // The write works from the storage the service holds rather than from the file, so
+                // the preview answers from that same storage.
+                return new PreviewRead(cached.copy(), false, false);
             }
             byte[] bytes;
             try
             {
-                bytes = readMarkersBytes(markersFileAsItStands(project));
+                bytes = readMarkersBytes(markersFileForRead(project, false));
             }
             catch (CoreException | IOException e)
             {
@@ -2844,23 +2852,69 @@ public class MarkerManager
     }
 
     /**
-     * The marker file a preview reads: the current one when it is there, and otherwise the file an
-     * earlier build wrote, as it stands.
+     * The marker file a read of a project's markers works from, resolved the way a preview and a
+     * write both resolve it.
      * <p>
-     * Resolved without the carry-over an ordinary read performs, which copies the old file onto the
-     * current name and renames the old one away: an edit that promises to write nothing must leave
-     * both files where they are.
+     * A caller that may write takes the carry-over an ordinary read performs, which copies the file
+     * an earlier build wrote onto the current name and renames the old one away; a preview does
+     * not, because an edit that promises to write nothing must leave both files where they are.
+     * Which of the two files holds the markers is decided the same way either time, so the two
+     * kinds of caller cannot part.
+     * </p>
+     * <p>
+     * A settings folder with no location on disk is answered with the current name alone: the file
+     * an earlier build wrote cannot be read there, and the save route starts from the current name
+     * as well, so a read that fell back to the earlier file would answer from a file the write
+     * never looks at.
      * </p>
      *
      * @param project the project
-     * @return the file a preview reads, which may not exist
+     * @param carryOverLegacy whether the caller may copy the earlier file onto the current name
+     * @return the file a read works from, which may not exist
      */
-    private static IFile markersFileAsItStands(IProject project)
+    private static IFile markersFileForRead(IProject project, boolean carryOverLegacy)
     {
         IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
+        if (settingsFolder.getLocation() == null)
+        {
+            return settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
+        }
+        if (carryOverLegacy)
+        {
+            carryOverTheEarlierFile(settingsFolder, project);
+            return settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
+        }
         IFile current = settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
         IFile earlier = settingsFolder.getFile(MarkerKeys.LEGACY_MARKERS_FILE);
         return holdsAFile(current) || !holdsAFile(earlier) ? current : earlier;
+    }
+
+    /**
+     * Copies the file an earlier build wrote onto the current name, and refreshes the settings
+     * folder so the workspace holds the file the copy left.
+     *
+     * @param settingsFolder the project's settings folder, whose location on disk is known
+     * @param project the project, for the log line
+     */
+    private static void carryOverTheEarlierFile(IFolder settingsFolder, IProject project)
+    {
+        try
+        {
+            if (LegacyStorageMigration.carryOver(settingsFolder.getLocation().toFile().toPath(),
+                MarkerKeys.LEGACY_MARKERS_FILE, MarkerKeys.MARKERS_FILE))
+            {
+                // The carry-over writes straight to disk, which the workspace does not see.
+                // Without this refresh the IFile the caller takes reports itself absent, the
+                // caller reads an empty store, and the next save writes that emptiness over the
+                // markers just migrated - the upgrade would eat them.
+                settingsFolder.refreshLocal(IResource.DEPTH_ONE, null);
+            }
+        }
+        catch (java.io.IOException | CoreException e)
+        {
+            Activator.logError("Could not carry " + MarkerKeys.LEGACY_MARKERS_FILE + " over to " //$NON-NLS-1$ //$NON-NLS-2$
+                + MarkerKeys.MARKERS_FILE + " for " + project.getName(), e); //$NON-NLS-1$
+        }
     }
 
     /**
@@ -2881,45 +2935,14 @@ public class MarkerManager
     }
 
     /**
-
      * Returns the marker file handle for a project.
-
      *
-
      * @param project the project
-
      * @return the file, which may not yet exist
-
      */
-
     private IFile getMarkersFile(IProject project)
-
     {
-
-        IFolder settingsFolder = project.getFolder(MarkerKeys.SETTINGS_FOLDER);
-        IPath settingsLocation = settingsFolder.getLocation();
-        if (settingsLocation != null)
-        {
-            try
-            {
-                if (LegacyStorageMigration.carryOver(settingsLocation.toFile().toPath(),
-                    MarkerKeys.LEGACY_MARKERS_FILE, MarkerKeys.MARKERS_FILE))
-                {
-                    // The carry-over writes straight to disk, which the workspace does not see.
-                    // Without this refresh the IFile returned below reports itself absent, the
-                    // caller reads an empty store, and the next save writes that emptiness over the
-                    // markers just migrated - the upgrade would eat them.
-                    settingsFolder.refreshLocal(IResource.DEPTH_ONE, null);
-                }
-            }
-            catch (java.io.IOException | CoreException e)
-            {
-                Activator.logError("Could not carry " + MarkerKeys.LEGACY_MARKERS_FILE + " over to " //$NON-NLS-1$ //$NON-NLS-2$
-                    + MarkerKeys.MARKERS_FILE + " for " + project.getName(), e); //$NON-NLS-1$
-            }
-        }
-        return settingsFolder.getFile(MarkerKeys.MARKERS_FILE);
-
+        return markersFileForRead(project, true);
     }
 
 
