@@ -622,7 +622,8 @@ public class DependencyGraphTool implements IMcpTool
                             // same cap on its ends, the same queueing of the module it reaches.
                             if (!endpointsFitTheNodeCap(result, visited, edge.fromFqn, edge.toFqn,
                                 maxNodes)
-                                || !addModuleNameEdge(result, edge.fromFqn, edge.toFqn, maxEdges))
+                                || !addModuleNameEdge(result, edge.fromFqn, edge.toFqn, edge.file,
+                                    edge.line, maxEdges))
                             {
                                 return;
                             }
@@ -733,6 +734,8 @@ public class DependencyGraphTool implements IMcpTool
                 && CALLS.equals(existing.featureName))
             {
                 existing.observe(side);
+                // A reference the index carries resolves the pair, whatever the text also says.
+                existing.resolution = RESOLUTION_MODEL;
                 return true;
             }
         }
@@ -741,31 +744,41 @@ public class DependencyGraphTool implements IMcpTool
             result.truncated = true;
             return false;
         }
-        result.edges.add(new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, side));
+        BmReferencesHelper.Edge edge = new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, side);
+        edge.resolution = RESOLUTION_MODEL;
+        result.edges.add(edge);
         return true;
     }
 
     /** The {@code via} of every edge of the module level. */
     private static final String CALLS = "calls"; //$NON-NLS-1$
 
+    /** The resolution of an edge the reference index or a resolved link reported. */
+    static final String RESOLUTION_MODEL = "model"; //$NON-NLS-1$
+
+    /** The resolution of an edge only the module's text reported. */
+    static final String RESOLUTION_NAME = "name"; //$NON-NLS-1$
+
     /**
      * Records one edge the module's text wrote by name, merging it with the same connection
      * already recorded.
      * <p>
-     * The reference index and the resolved links may already have named this pair of modules, and
-     * the name-written sighting then adds a row that already exists. The walk does not count the
-     * sighting into the row: the count of a merged row stands for references the index carries,
-     * and a written-by-name call is not one of them.
+     * The reference index may already have named this pair of modules, and the name-written
+     * sighting then lands on a row the model resolved: the row stays model-resolved, because a
+     * reference the index carries says more about the pair than a name in the text does. A row
+     * only the text filled stays name-resolved and lists the place of every sighting.
      * </p>
      *
      * @param result the graph being built
      * @param fromFqn the caller's FQN
      * @param toFqn the callee's FQN
+     * @param file the file the call sits in
+     * @param line the line the call sits on
      * @param maxEdges the edge cap
      * @return <code>true</code> when the edge is in the graph afterwards
      */
     static boolean addModuleNameEdge(BmReferencesHelper.BfsResult result, String fromFqn,
-        String toFqn, int maxEdges)
+        String toFqn, String file, int line, int maxEdges)
     {
         if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
         {
@@ -776,6 +789,7 @@ public class DependencyGraphTool implements IMcpTool
             if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
                 && CALLS.equals(existing.featureName))
             {
+                existing.observeName(file, line);
                 return true;
             }
         }
@@ -784,8 +798,10 @@ public class DependencyGraphTool implements IMcpTool
             result.truncated = true;
             return false;
         }
-        result.edges.add(new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS,
-            BmReferencesHelper.Side.FORWARD));
+        BmReferencesHelper.Edge edge = new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, null);
+        edge.resolution = RESOLUTION_NAME;
+        edge.observeName(file, line);
+        result.edges.add(edge);
         return true;
     }
 

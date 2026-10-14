@@ -816,11 +816,20 @@ public final class BmReferencesHelper
         public final String toFqn;
         public final String featureName;
 
+        /**
+         * How the edge was resolved: {@code "model"} when a reference the index or a resolved link
+         * carried it, {@code "name"} when the module text writes the call by name, or
+         * {@code null} when the level the edge belongs to does not say.
+         */
+        public String resolution;
+
         /** How many references this one edge stands for. */
         public int count = 1;
 
         private int forwardObservations;
         private int backwardObservations;
+
+        private final List<NameSite> nameSites = new ArrayList<>();
 
         public Edge(String fromFqn, String toFqn, String featureName)
         {
@@ -831,14 +840,18 @@ public final class BmReferencesHelper
          * @param fromFqn the source end
          * @param toFqn the target end
          * @param featureName the {@code via} of the edge
-         * @param side the end that reported the first reference of this edge
+         * @param side the end that reported the first reference of this edge, or {@code null}
+         *        when no side did and the first sighting is a written-by-name call
          */
         public Edge(String fromFqn, String toFqn, String featureName, Side side)
         {
             this.fromFqn = fromFqn;
             this.toFqn = toFqn;
             this.featureName = featureName;
-            observe(side);
+            if (side != null)
+            {
+                observe(side);
+            }
         }
 
         /**
@@ -864,6 +877,46 @@ public final class BmReferencesHelper
                 forwardObservations++;
             }
             count = Math.max(forwardObservations, backwardObservations);
+        }
+
+        /**
+         * Records one more sighting of this edge as a call written by name, with the place the
+         * call sits at.
+         *
+         * @param file the file the call sits in
+         * @param line the line the call sits on
+         */
+        public void observeName(String file, int line)
+        {
+            nameSites.add(new NameSite(file, line));
+        }
+
+        /**
+         * The places the written-by-name calls of this edge sit at, in the order they were read.
+         *
+         * @return the places, each as a file and a line
+         */
+        public List<NameSite> nameSites()
+        {
+            return new ArrayList<>(nameSites);
+        }
+    }
+
+    /**
+     * The place a written-by-name call sits at: the file and the line.
+     */
+    public static final class NameSite
+    {
+        /** The file the call sits in. */
+        public final String file;
+
+        /** The 1-based line the call sits on, or 0 when the node model names none. */
+        public final int line;
+
+        NameSite(String file, int line)
+        {
+            this.file = file;
+            this.line = line;
         }
     }
 

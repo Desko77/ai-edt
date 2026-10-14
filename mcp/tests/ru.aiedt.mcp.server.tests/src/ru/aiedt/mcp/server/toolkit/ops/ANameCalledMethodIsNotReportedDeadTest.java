@@ -161,12 +161,6 @@ public class ANameCalledMethodIsNotReportedDeadTest
             }
 
             @Override
-            public List<String> calleesOf(Module module)
-            {
-                return List.of();
-            }
-
-            @Override
             public List<BslCallGraphHelper.NameCall> nameCallsOf(Module module)
             {
                 return nameCalls;

@@ -72,12 +72,15 @@ public final class BslCallGraphHelper
         /** Whether the call was read out of the module text as a written-by-name call. */
         public final boolean byName;
 
+        /** The file a written-by-name call sits in, or {@code null} for a resolved reference. */
+        public final String file;
+
         /** The 1-based line a written-by-name call sits on, or 0 when the node model names none. */
         public final int line;
 
         public ModuleEdge(String fromFqn, String toFqn, int callCount)
         {
-            this(fromFqn, toFqn, callCount, false, 0);
+            this(fromFqn, toFqn, callCount, false, null, 0);
         }
 
         /**
@@ -85,14 +88,17 @@ public final class BslCallGraphHelper
          * @param toFqn the callee's FQN
          * @param callCount how many calls the edge stands for
          * @param byName whether the call is written by name rather than resolved as a reference
+         * @param file the file a written-by-name call sits in, or {@code null} for a resolved one
          * @param line the line a written-by-name call sits on, or 0 when unknown
          */
-        public ModuleEdge(String fromFqn, String toFqn, int callCount, boolean byName, int line)
+        public ModuleEdge(String fromFqn, String toFqn, int callCount, boolean byName, String file,
+            int line)
         {
             this.fromFqn = fromFqn;
             this.toFqn = toFqn;
             this.callCount = callCount;
             this.byName = byName;
+            this.file = file;
             this.line = line;
         }
     }
@@ -563,8 +569,10 @@ public final class BslCallGraphHelper
      * Where the two halves of the module call graph come from.
      * <p>
      * The single source the module level walks: incoming edges from the reference index the
-     * {@code call_hierarchy} tool reads, outgoing edges from the module's own resolved call links.
-     * A level reading them anywhere else answers about calls differently from that tool.
+     * {@code call_hierarchy} tool reads, outgoing edges out of the module's text - a plain call
+     * into a common module and a call written by name both reach their target without a reference
+     * the index would carry. A level reading them anywhere else answers about calls differently
+     * from that tool.
      * </p>
      */
     public interface ModuleCallSource
@@ -577,23 +585,16 @@ public final class BslCallGraphHelper
         List<String> callersOf(Module module);
 
         /**
-         * @param module the module whose callees to list
-         * @return the called modules' FQNs, empty when the module calls nothing outside itself
-         */
-        List<String> calleesOf(Module module);
-
-        /**
-         * The calls the module's text writes by name: a string literal names the method, so the
-         * reference index the incoming direction reads carries nothing about them.
+         * The calls the module's text writes by name: every call into a common module written
+         * {@code ModuleName.Method(...)}, and the calls whose method name sits in the code as a
+         * string literal. The reference index the incoming direction reads carries nothing about
+         * them, so the outgoing direction of the module level is read here instead.
          *
          * @param module the module whose text to read
-         * @return the name-written calls whose target method exists, in the order the text was
-         *         read; empty when the source reads no text
+         * @return the name-written calls, each with the line it sits on; empty when the source
+         *         reads no text
          */
-        default List<NameCall> nameCallsOf(Module module)
-        {
-            return Collections.emptyList();
-        }
+        List<NameCall> nameCallsOf(Module module);
 
         /**
          * The source of a live project: the BSL reference index and the modules' resolved links.
@@ -627,12 +628,6 @@ public final class BslCallGraphHelper
         }
 
         @Override
-        public List<String> calleesOf(Module module)
-        {
-            return calleesByCommonModuleName(module, commonModuleNames());
-        }
-
-        @Override
         public List<NameCall> nameCallsOf(Module module)
         {
             java.util.Map<String, String> commonModules = commonModuleNames();
@@ -640,16 +635,27 @@ public final class BslCallGraphHelper
             {
                 return Collections.emptyList();
             }
-            // A string the project does not answer with a method is not a call: the target module
+            // A plain ModuleName.Method(...) call names a module the project holds, so it needs no
+            // target check; a string literal has to be answered by a method, and the target module
             // is loaded the way the module level loads every module it walks into.
-            return withExistingTargets(literalNameCallsOf(module, commonModules), module,
+            List<NameCall> calls = commonModuleNameCallsOf(module, commonModules);
+            if (calls == null)
+            {
+                calls = new ArrayList<>();
+            }
+            else
+            {
+                calls = new ArrayList<>(calls);
+            }
+            calls.addAll(withExistingTargets(literalNameCallsOf(module, commonModules), module,
                 fqn -> {
                     BslModuleAccess.ModulePathResolution path =
                         BslModuleAccess.resolveModulePath(project, fqn);
                     return path != null && path.isResolved()
                         ? BslModuleAccess.loadModule(project, path.getPath())
                         : null;
-                });
+                }));
+            return calls;
         }
 
         /** The project's common modules by lower-cased name, read from the source folder once. */
@@ -700,7 +706,8 @@ public final class BslCallGraphHelper
     }
 
     /**
-     * The common modules a module calls, read off the text of its call sites.
+     * The common modules a module calls, read off the text of its call sites, each call with the
+     * place it sits at.
      * <p>
      * A call into a common module is written {@code ModuleName.Method(...)}: a member access whose
      * source is a plain name. The name is matched against the project's common modules without
@@ -710,13 +717,18 @@ public final class BslCallGraphHelper
      * variable is not an edge here. The incoming direction reads the reference index and is not
      * limited this way.
      * </p>
+     * <p>
+     * Every call site is reported, not one per module: the places are what a name-resolved edge
+     * lists, and their number is the count of that edge.
+     * </p>
      *
      * @param module the module whose call sites to read
      * @param commonModules the project's common modules, lower-cased name to name; {@code null}
      *        when they could not be listed
-     * @return the called modules' FQNs, or {@code null} when the common modules are not known
+     * @return the calls, each naming the called module and the line it sits on, or {@code null}
+     *         when the common modules are not known
      */
-    static List<String> calleesByCommonModuleName(Module module,
+    static List<NameCall> commonModuleNameCallsOf(Module module,
         java.util.Map<String, String> commonModules)
     {
         if (module == null)
@@ -728,7 +740,7 @@ public final class BslCallGraphHelper
             return null;
         }
         String selfFqn = moduleFqn(module);
-        Set<String> called = new LinkedHashSet<>();
+        List<NameCall> calls = new ArrayList<>();
         // A parameter or a variable may carry the name of a common module, and a call through it
         // is a call through a variable. A name declared in a method hides the module in that method
         // only; a name declared outside every method hides it in the whole module (key null).
@@ -777,10 +789,11 @@ public final class BslCallGraphHelper
             String fqn = commonModuleFqn(name, commonModules);
             if (fqn != null && !fqn.equals(selfFqn))
             {
-                called.add(fqn);
+                calls.add(new NameCall(fqn, ((DynamicFeatureAccess)node).getName(),
+                    lineOf(holder)));
             }
         }
-        return new ArrayList<>(called);
+        return calls;
     }
 
     /** The Russian and the English spelling of the notify description type. */
@@ -1164,25 +1177,15 @@ public final class BslCallGraphHelper
         }
         if (includeOutgoing)
         {
-            // null: the called modules could not be read, so this direction is left out rather
-            // than answered as a module that calls nobody.
-            List<String> callees = source.calleesOf(module);
-            if (callees != null)
-            {
-                for (String callee : callees)
-                {
-                    visitor.visit(new ModuleEdge(selfFqn, callee, 1));
-                }
-            }
-            // A call written by name reaches a module the resolved links do not name, so it is an
-            // outgoing edge of its own: a module whose every caller wrote its name as a string
-            // still calls it, and the module level has to say so. A call naming its own module is
-            // not an edge of this level, whose ends are two modules.
+            // Every outgoing edge of the module level is read out of the text: a plain call into a
+            // common module and a call written by name both name their target without a reference
+            // the index carries, and the two readers sit behind the same method of the source. A
+            // call naming its own module is not an edge of this level, whose ends are two modules.
             for (NameCall call : source.nameCallsOf(module))
             {
                 if (call.targetModuleFqn != null && !call.targetModuleFqn.equals(selfFqn))
                 {
-                    visitor.visit(new ModuleEdge(selfFqn, call.targetModuleFqn, 1, true,
+                    visitor.visit(new ModuleEdge(selfFqn, call.targetModuleFqn, 1, true, selfFqn,
                         call.line));
                 }
             }
