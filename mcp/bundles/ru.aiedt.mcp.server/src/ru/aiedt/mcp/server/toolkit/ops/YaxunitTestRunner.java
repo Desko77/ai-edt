@@ -29,6 +29,7 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.debug.core.DebugException;
 import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunch;
 import org.eclipse.debug.core.ILaunchConfiguration;
@@ -59,6 +60,7 @@ import ru.aiedt.mcp.server.support.PendingExecutor;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.ProjectStateGuard;
+import ru.aiedt.mcp.server.support.RunNameReconciliation;
 import ru.aiedt.mcp.server.support.RunReceipts;
 import ru.aiedt.mcp.server.wire.ToolResult;
 
@@ -162,9 +164,28 @@ public final class YaxunitTestRunner
     static final String UPDATE_SKIPPED_MARK = "databaseUpdate=" //$NON-NLS-1$
         + DebugSessionStarter.DATABASE_UPDATE_SKIPPED_BY_PRESET;
 
+    /**
+     * The literal a run-mode refusal carries when the client of this run left no report of it.
+     */
+    static final String NO_REPORT_MARK = "the client ended without writing a report for this run"; //$NON-NLS-1$
+
     private static final Map<String, ILaunch> ACTIVE_LAUNCHES = new ConcurrentHashMap<>();
 
     private static final Map<String, Path> RUN_REPORT_DIRS = new ConcurrentHashMap<>();
+
+    /**
+     * The report each run launched here found in its directory at launch, by runKey.
+     * <p>
+     * The report directory is stable per launch configuration and filter set, so the report of an
+     * earlier run of the same tests lies in the same directory as this run's. The launch clears the
+     * directory and then takes this stamp, under the launch lock: normally it says no report is
+     * there, and a file the clearing could not remove is recorded with its modification time and
+     * size. A report counts as this run's when it differs from the stamp. Nothing is compared with
+     * a clock, so a file system that rounds modification times does not turn a fresh report into a
+     * stale one. Dropped when the report is handed over, which is when the run is over.
+     * </p>
+     */
+    private static final Map<String, ReportStamp> RUN_REPORT_BEFORE = new ConcurrentHashMap<>();
 
     private static final Map<String, RunContext> RUN_CONTEXTS = new ConcurrentHashMap<>();
 
@@ -300,6 +321,41 @@ public final class YaxunitTestRunner
     static void forgetUndelivered(String runKey)
     {
         UNDELIVERED_RUNS.remove(runKey);
+    }
+
+    /**
+     * Records the report a run launched here found in its directory at launch. Taken after the
+     * directory is cleared and before the client is told to run.
+     *
+     * @param runKey the run
+     * @param before the stamp of the report then in the directory, {@link ReportStamp#ABSENT} when
+     *            there was none
+     */
+    static void noteRunStarted(String runKey, ReportStamp before)
+    {
+        RUN_REPORT_BEFORE.put(runKey, before);
+    }
+
+    /**
+     * Forgets when a run started, once its report has been handed over or a test leaves the map as
+     * it found it.
+     *
+     * @param runKey the run
+     */
+    static void forgetRunStarted(String runKey)
+    {
+        RUN_REPORT_BEFORE.remove(runKey);
+    }
+
+    /**
+     * The report a run launched here found in its directory at launch.
+     *
+     * @param runKey the run
+     * @return the stamp, or <code>null</code> when this process did not launch the run
+     */
+    static ReportStamp reportBefore(String runKey)
+    {
+        return RUN_REPORT_BEFORE.get(runKey);
     }
 
     @Override
@@ -603,6 +659,210 @@ public final class YaxunitTestRunner
     }
 
     /**
+     * Whether a report lying in the run's directory was written by this run.
+     * <p>
+     * The directory is stable per launch configuration and filter set, so the report of an earlier
+     * run of the same tests lies exactly where this run's report is expected, and the names the
+     * client writes carry no run of their own. Two things tell them apart and both are needed: the
+     * report has to be there at all, and it has to differ from what the directory held when this
+     * run was launched. A report equal to the stamp is the one the launch found, so it is treated
+     * as no report of this run - reading it would hand the caller the counts of an earlier run as
+     * the result of the tests it just asked for.
+     * </p>
+     *
+     * @param now the report in the run's directory, {@link ReportStamp#ABSENT} when there is none
+     * @param before what the directory held at launch, or <code>null</code> when this process did
+     *            not launch the run
+     * @return whether the report belongs to this run
+     */
+    static boolean reportOfThisRun(ReportStamp now, ReportStamp before)
+    {
+        if (now == null || now.isAbsent())
+        {
+            return false;
+        }
+        return before == null || before.isAbsent() || !now.equals(before);
+    }
+
+    /**
+     * The refusal of a launch whose report directory still holds a report after it was cleared.
+     * <p>
+     * The clearing logs a file it cannot delete and goes on. A run launched over that file could
+     * only tell its own report from it by modification time and length, and a file system with
+     * coarse modification times can give a rewrite of the same length the same time. The launch is
+     * refused instead, naming the file, so no earlier run's report can ever be read as this run's.
+     * </p>
+     *
+     * @param reportDir the run's report directory, already cleared
+     * @return the refusal, or <code>null</code> when the directory holds no report
+     */
+    static String leftoverReportRefusal(Path reportDir)
+    {
+        File leftover = findJunitXml(reportDir);
+        if (leftover == null)
+        {
+            return null;
+        }
+        return "the report of an earlier run could not be removed before the launch: " + leftover //$NON-NLS-1$
+            + ". Close what holds it open or delete it, then run the tests again. Nothing was " //$NON-NLS-1$
+            + "launched."; //$NON-NLS-1$
+    }
+
+    /**
+     * A report file as the freshness check compares it: whether it is there, when it was last
+     * modified and how long it is.
+     */
+    static final class ReportStamp
+    {
+        /** No report in the directory. */
+        static final ReportStamp ABSENT = new ReportStamp(false, 0L, 0L);
+
+        private final boolean present;
+
+        private final long modified;
+
+        private final long length;
+
+        /**
+         * @param present whether the file is there
+         * @param modified its modification time in milliseconds since the epoch
+         * @param length its length in bytes
+         */
+        ReportStamp(boolean present, long modified, long length)
+        {
+            this.present = present;
+            this.modified = modified;
+            this.length = length;
+        }
+
+        /**
+         * The stamp of a report file.
+         *
+         * @param file the file, or <code>null</code> when the directory holds none
+         * @return its stamp, {@link #ABSENT} for <code>null</code>
+         */
+        static ReportStamp of(File file)
+        {
+            return file == null ? ABSENT : new ReportStamp(true, file.lastModified(), file.length());
+        }
+
+        /**
+         * @return whether this stamp says no report is there
+         */
+        boolean isAbsent()
+        {
+            return !present;
+        }
+
+        @Override
+        public boolean equals(Object other)
+        {
+            if (!(other instanceof ReportStamp))
+            {
+                return false;
+            }
+            ReportStamp that = (ReportStamp)other;
+            return present == that.present && modified == that.modified && length == that.length;
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Boolean.hashCode(present) * 31 * 31 + Long.hashCode(modified) * 31 + Long.hashCode(length);
+        }
+    }
+
+    /**
+     * The refusal a call gets when the client of this run has ended and left no report of it.
+     * <p>
+     * The run is over and there is no result: a result would be one of an earlier run, whose report
+     * is what the stable directory still holds, and an empty success would claim the tests ran and
+     * found nothing. The exit code of the client is what separates the two usual causes - a client
+     * that stopped on its own and wrote nothing, and one the platform closed on an error - so it is
+     * carried in the answer when the runtime recorded it.
+     * </p>
+     *
+     * @param reportDir where this run's report was expected
+     * @param exitCode the exit code of the ended client, or <code>null</code> when unknown
+     * @param launch the launch whose client ended, or <code>null</code> when this process no longer
+     *            tracks it
+     * @return the refusal
+     */
+    static String clientEndedWithoutReport(Path reportDir, Integer exitCode, ILaunch launch)
+    {
+        ToolResult refusal = ToolResult.error("**Error:** " + NO_REPORT_MARK + " - " + reportDir //$NON-NLS-1$ //$NON-NLS-2$
+            + ". The run produced no result of its own. Typical causes and fixes: (1) the YAXUnit" //$NON-NLS-1$
+            + " extension is not Active in the infobase (Configuration > Extensions); (2) a stale" //$NON-NLS-1$
+            + " build, or a duplicate / already-defined procedure after editing a test module -" //$NON-NLS-1$
+            + " rebuild (clean_project) and run again; (3) the test module has compile errors -" //$NON-NLS-1$
+            + " verify with get_project_errors. If the client was closed by hand, run the tests again.") //$NON-NLS-1$
+            .put("operation", YaxunitTestsTool.NAME) //$NON-NLS-1$
+            .put("reportDir", reportDir.toString()) //$NON-NLS-1$
+            .put("status", "NoReport") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("clientEnded", Boolean.TRUE); //$NON-NLS-1$
+        Integer known = exitCode != null ? exitCode : clientExitCode(launch);
+        if (known != null)
+        {
+            refusal.put("clientExitCode", known); //$NON-NLS-1$
+        }
+        return refusal.toJson();
+    }
+
+    /**
+     * The exit code the runtime recorded for a client that has ended.
+     *
+     * @param launch the launch whose client ended, or <code>null</code>
+     * @return the code of the last ended process, or <code>null</code> when none carries one
+     */
+    static Integer clientExitCode(ILaunch launch)
+    {
+        if (launch == null)
+        {
+            return null;
+        }
+        IProcess[] processes = launch.getProcesses();
+        if (processes == null)
+        {
+            return null;
+        }
+        for (int i = processes.length - 1; i >= 0; i--)
+        {
+            IProcess process = processes[i];
+            if (process == null || !process.isTerminated())
+            {
+                continue;
+            }
+            try
+            {
+                return Integer.valueOf(process.getExitValue());
+            }
+            catch (DebugException e)
+            {
+                Activator.logError("Could not read the exit code of the YAXUnit client", e); //$NON-NLS-1$
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The report of the run's directory when this run wrote it, and <code>null</code> otherwise.
+     *
+     * @param junitXml the report found in the directory, or <code>null</code> when none is there
+     * @param before what the directory held at launch, or <code>null</code> when this process did
+     *            not launch the run
+     * @return the report of this run, or <code>null</code> when the file is an earlier run's
+     */
+    static File reportOfThisRun(File junitXml, ReportStamp before)
+    {
+        if (junitXml == null)
+        {
+            return null;
+        }
+        return reportOfThisRun(ReportStamp.of(junitXml), before) ? junitXml : null;
+    }
+
+    /**
      * The refusal a call naming a filter this tool does not apply gets.
      * <p>
      * {@code suites}, {@code tags} and {@code contexts} were described and documented as filters
@@ -800,13 +1060,12 @@ public final class YaxunitTestRunner
                     if (existing.isTerminated())
                     {
                         ACTIVE_LAUNCHES.remove(runKey);
-                        File junitXml = findJunitXml(reportDir);
+                        File junitXml = reportOfThisRun(findJunitXml(reportDir), reportBefore(runKey));
                         if (junitXml != null)
                         {
                             return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
                         }
-                        return "**Error:** The previous launch finished, but no JUnit XML report was found in " + reportDir //$NON-NLS-1$
-                            + ". Confirm the YAXUnit extension is installed."; //$NON-NLS-1$
+                        return clientEndedWithoutReport(reportDir, null, existing);
                     }
                     return pollLaunch(existing, reportDir, pollDeadline, runKey,
                         runContext, System::currentTimeMillis, Thread::sleep);
@@ -819,6 +1078,15 @@ public final class YaxunitTestRunner
                     boolean recent = cached != null
                         && (System.currentTimeMillis() - cached.lastModified()) < CACHE_TTL_MS;
                     boolean uncollected = UNDELIVERED_RUNS.containsKey(runKey);
+                    if (uncollected)
+                    {
+                        // The pickup of a run of these tests takes only the report that run wrote.
+                        // The directory is stable per runKey, so an earlier run's report lies here
+                        // too, and handing it over as the pickup would answer the caller with the
+                        // counts of a run it never asked for. What is left of a pickup whose report
+                        // is not there is a new run, which is what the call falls through to.
+                        cached = reportOfThisRun(cached, reportBefore(runKey));
+                    }
                     if (servesFromCache(cached != null, recent, uncollected, reuseRecent))
                     {
                         // Two different calls arrive here and they must not be answered the same way. One
@@ -883,6 +1151,12 @@ public final class YaxunitTestRunner
                         }
                         cleanupTempDir(reportDir);
                         Files.createDirectories(reportDir);
+                        String leftover = leftoverReportRefusal(reportDir);
+                        if (leftover != null)
+                        {
+                            Activator.logInfo("Refusing the YAXUnit launch for " + runKey + ": " + leftover); //$NON-NLS-1$
+                            return "**Error:** " + leftover; //$NON-NLS-1$
+                        }
                         Path paramsFile = reportDir.resolve("xUnitParams.json"); //$NON-NLS-1$
                         String paramsJson = buildParamsJson(reportDir.resolve("junit.xml").toString(), //$NON-NLS-1$
                             extensions, modules, tests);
@@ -893,6 +1167,10 @@ public final class YaxunitTestRunner
                         workingCopy.setAttribute(LaunchConfigAccess.ATTR_STARTUP_OPTION, startupOption);
                         Activator.logInfo("Starting YAXUnit test launch: config=" + matchingConfig.getName() //$NON-NLS-1$
                             + ", startup=" + startupOption); //$NON-NLS-1$
+                        // What the cleared directory holds, taken before the client is told to
+                        // run: no report, since a leftover one was refused above, so any report
+                        // that appears is this run's client's.
+                        noteRunStarted(runKey, ReportStamp.of(findJunitXml(reportDir)));
                         // Published before the launch call runs, still under the lock: a second
                         // call of these tests finds the mark inside the same lock and waits
                         // instead of wiping this launch's report directory and starting a
@@ -1173,6 +1451,7 @@ public final class YaxunitTestRunner
         UNDELIVERED_RUNS.remove(runKey);
         LAUNCH_SKIP_DECISIONS.remove(runKey);
         LAUNCHES_IN_FLIGHT.remove(runKey);
+        RUN_REPORT_BEFORE.remove(runKey);
     }
 
     /**
@@ -1237,33 +1516,36 @@ public final class YaxunitTestRunner
                 clock, sleeper);
         }
         ACTIVE_LAUNCHES.remove(runKey);
-        File junitXml = awaitReportFile(reportDir, clock, sleeper);
+        File junitXml = awaitReportFile(reportDir, reportBefore(runKey), clock, sleeper);
         if (junitXml != null)
         {
             return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
         }
         forgetFailedRun(runKey);
-        return "**Error:** The previous launch finished, but no JUnit XML report was found in " //$NON-NLS-1$
-            + reportDir + ". Confirm the YAXUnit extension is installed."; //$NON-NLS-1$
+        return clientEndedWithoutReport(reportDir, null, launch);
     }
 
     /**
      * Waits briefly for the report of a launch that has just terminated: the client writes it on
-     * its way out, and a poll that reads the directory in the same moment races that write.
+     * its way out, and a poll that reads the directory in the same moment races that write. Only a
+     * report that differs from what the directory held at launch counts as its own, so an earlier
+     * run's report left in the same directory does not end the wait.
      *
      * @param reportDir where the report appears
+     * @param before what the directory held at launch, or <code>null</code> when this process did
+     *            not launch the run
      * @param clock the current-time source
      * @param sleeper the wait seam
-     * @return the report file, or <code>null</code> when none appeared within the window
+     * @return the report of this run, or <code>null</code> when none appeared within the window
      * @throws InterruptedException when the wait is interrupted
      */
-    static File awaitReportFile(Path reportDir, LongSupplier clock, Sleeper sleeper)
-        throws InterruptedException
+    static File awaitReportFile(Path reportDir, ReportStamp before, LongSupplier clock,
+        Sleeper sleeper) throws InterruptedException
     {
         long deadline = clock.getAsLong() + CLIENT_START_WAIT_MS;
         while (true)
         {
-            File junitXml = findJunitXml(reportDir);
+            File junitXml = reportOfThisRun(findJunitXml(reportDir), before);
             if (junitXml != null)
             {
                 return junitXml;
@@ -1309,15 +1591,10 @@ public final class YaxunitTestRunner
         }
         ACTIVE_LAUNCHES.remove(runKey);
         Activator.logInfo("YAXUnit tests finished for " + runKey); //$NON-NLS-1$
-        File junitXml = findJunitXml(reportDir);
+        File junitXml = reportOfThisRun(findJunitXml(reportDir), reportBefore(runKey));
         if (junitXml == null)
         {
-            return "**Error:** No JUnit XML report was found in " + reportDir //$NON-NLS-1$
-                + ". The run produced no report - most likely the test module failed to compile or failed to register." //$NON-NLS-1$
-                + " Typical causes and fixes: (1) the YAXUnit extension is not Active in the infobase" //$NON-NLS-1$
-                + " (Configuration > Extensions); (2) a stale build, or a duplicate / already-defined" //$NON-NLS-1$
-                + " procedure after editing a test module - rebuild (clean_project) and run again;" //$NON-NLS-1$
-                + " (3) the test module has compile errors - verify with get_project_errors."; //$NON-NLS-1$
+            return clientEndedWithoutReport(reportDir, null, launch);
         }
         return handOverFinishedLaunch(runKey, junitXml, runContext, RunReceipts::write);
     }
@@ -1525,6 +1802,7 @@ public final class YaxunitTestRunner
         String answer = readResults(junitXml, cacheMark, runContext, claimed, receipts);
         RUN_REPORT_DIRS.remove(runKey);
         RUN_CONTEXTS.remove(runKey);
+        forgetRunStarted(runKey);
         return answer;
     }
 
@@ -1567,11 +1845,20 @@ public final class YaxunitTestRunner
      * when asked to.
      * <p>
      * The answer is the JSON object the facade's envelope passes through untouched: the markdown
-     * report in {@code output}, the run's counters beside it, {@code cached} for the report of an
-     * earlier run, {@code databaseUpdate} for the update the preset dropped off the call the run
-     * answers, and {@code receiptPath} naming the receipt on disk - or {@code receiptError}
-     * saying why there is none, with the result fields still in place. A report that cannot be
-     * parsed at all is no result, stays markdown and files no receipt.
+     * report in {@code output}, the run's counters beside it, {@code testsInReport} for how many
+     * tests the report carries, {@code cached} for the report of an earlier run,
+     * {@code databaseUpdate} for the update the preset dropped off the call the run answers, and
+     * {@code receiptPath} naming the receipt on disk - or {@code receiptError} saying why there is
+     * none, with the result fields still in place. A report that cannot be parsed at all is no
+     * result, stays markdown and files no receipt.
+     * </p>
+     * <p>
+     * A call that named {@code tests} or {@code modules} is answered for as well: every name it
+     * gave is looked up in the report, the counts go out as {@code namedInCall} and
+     * {@code foundInReport}, and a name the report does not carry turns the answer into a
+     * discrepancy - {@code success:false}, the names in {@code missingInReport} and in the error,
+     * the counters kept - because a green report of other tests is not the result that was asked
+     * for.
      * </p>
      *
      * @param junitXml the report the run left behind
@@ -1588,6 +1875,9 @@ public final class YaxunitTestRunner
         try
         {
             JUnitRunOutcome results = JUnitXmlReader.parse(junitXml);
+            RunNameReconciliation.Result reconciliation = RunNameReconciliation.reconcile(
+                namesOf(runContext.modules), namesOf(runContext.tests),
+                results.getModuleNamesInReport(), results.getTestNamesInReport());
             String markdown = JUnitReportFormatter.format(results);
             if (cacheMark != null)
             {
@@ -1599,6 +1889,10 @@ public final class YaxunitTestRunner
                     + " (Configuration > Extensions); the extensions / modules / tests filter matches existing" //$NON-NLS-1$
                     + " tests; and, if a test module was just edited, that it compiles (get_project_errors)" //$NON-NLS-1$
                     + " and the project was rebuilt (clean_project).\n"; //$NON-NLS-1$
+            }
+            if (!reconciliation.isComplete())
+            {
+                markdown += "\n\n> **Discrepancy:** " + reconciliation.describe() + "\n"; //$NON-NLS-1$ //$NON-NLS-2$
             }
             Path reportFile = junitXml.toPath().resolveSibling("report.md"); //$NON-NLS-1$
             boolean reportWritten = false;
@@ -1624,7 +1918,21 @@ public final class YaxunitTestRunner
                 .put("failures", results.getFailures()) //$NON-NLS-1$
                 .put("errors", results.getErrors()) //$NON-NLS-1$
                 .put("skipped", results.getSkipped()) //$NON-NLS-1$
+                .put("testsInReport", results.getTotal()) //$NON-NLS-1$
                 .put("reportPath", reportPath); //$NON-NLS-1$
+            if (reconciliation.namedCount > 0)
+            {
+                answer.put("namedInCall", reconciliation.namedCount) //$NON-NLS-1$
+                    .put("foundInReport", reconciliation.foundCount); //$NON-NLS-1$
+            }
+            if (!reconciliation.isComplete())
+            {
+                // The run happened and its counters stand, but it did not answer the call: the
+                // names that were asked for are not the tests that ran, and a success here would
+                // be read as if they were.
+                answer.put("missingInReport", reconciliation.missing) //$NON-NLS-1$
+                    .demote(reconciliation.describe());
+            }
             // The one place a report-carrying answer gets the skip marker: both the run that
             // finishes inside the call and the report picked up by runKey pass through here, and
             // the field pair is the same putDatabaseUpdate the debug-mode answer goes through.
@@ -1646,6 +1954,20 @@ public final class YaxunitTestRunner
             Activator.logError("Failed to parse JUnit XML: " + junitXml, e); //$NON-NLS-1$
             return "**Error:** Could not parse the test results: " + e.getMessage(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The names one filter of the call gave, split the way the launch parameters split them, so the
+     * reconciliation reads exactly the names the run was launched with. {@code extensions} is never
+     * passed here: an extension is a container the tests live in, not a name the report writes for
+     * a test, a suite or a class.
+     *
+     * @param filter the CSV value of {@code modules} or {@code tests}, possibly <code>null</code>
+     * @return the names, possibly empty
+     */
+    static List<String> namesOf(String filter)
+    {
+        return filter == null || filter.isEmpty() ? new ArrayList<>() : splitToList(filter);
     }
 
     /**
@@ -1874,7 +2196,7 @@ public final class YaxunitTestRunner
         return GsonHolder.toJson(params);
     }
 
-    private List<String> splitToList(String value)
+    private static List<String> splitToList(String value)
     {
         List<String> result = new ArrayList<>();
         for (String part : value.split(",")) //$NON-NLS-1$

@@ -12,10 +12,12 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.io.File;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -241,7 +243,7 @@ public class AYaxunitLaunchOutlivesTheDeadlineTest
             String pending = YaxunitTestRunner.pollLaunch(launch, reportDir, 1L, runKey,
                 new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
                 now::get, now::addAndGet);
-            assertTrue(pending, pending.contains("No JUnit XML report was found")); //$NON-NLS-1$
+            assertTrue(pending, pending.contains(YaxunitTestRunner.NO_REPORT_MARK)); //$NON-NLS-1$
 
             AtomicBoolean wrote = new AtomicBoolean();
             String answer = YaxunitTestRunner.resumeRun(runKey, 1L, now::get, millis -> {
@@ -263,6 +265,81 @@ public class AYaxunitLaunchOutlivesTheDeadlineTest
             assertTrue("the late report is collected, not refused: " + collected, //$NON-NLS-1$
                 collected.get("success").getAsBoolean()); //$NON-NLS-1$
             assertEquals(1, collected.get("total").getAsInt()); //$NON-NLS-1$
+        }
+        finally
+        {
+            YaxunitTestRunner.forgetFailedRun(runKey);
+            deleteTree(reportDir);
+        }
+    }
+
+    /**
+     * A run whose client left without writing a report is refused, even though the directory still
+     * holds the report of an earlier run of the same tests: those counts are that run's and never
+     * this one's. The refusal carries the exit code of the client that ended.
+     */
+    @Test
+    public void aPreviousRunsReportDoesNotAnswerForARunThatWroteNone() throws Exception
+    {
+        AtomicBoolean terminated = new AtomicBoolean(true);
+        ILaunch launch = launchWithProcesses(new IProcess[] {exitedClient(4)}, new AtomicBoolean(),
+            terminated);
+        String runKey = "stale-" + System.nanoTime(); //$NON-NLS-1$
+        Path reportDir = Files.createTempDirectory("yaxunit-stale"); //$NON-NLS-1$
+        try
+        {
+            File earlier = writePassingReport(reportDir);
+            YaxunitTestRunner.noteRunStarted(runKey, YaxunitTestRunner.ReportStamp.of(earlier));
+
+            JsonObject refusal = JsonParser.parseString(YaxunitTestRunner.pollLaunch(launch, reportDir,
+                1L, runKey, new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
+                System::currentTimeMillis, Thread::sleep)).getAsJsonObject();
+
+            assertFalse("an earlier run's report is not this run's answer: " + refusal, //$NON-NLS-1$
+                refusal.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertTrue(refusal.get("error").getAsString(), //$NON-NLS-1$
+                refusal.get("error").getAsString().contains(YaxunitTestRunner.NO_REPORT_MARK)); //$NON-NLS-1$
+            assertEquals("NoReport", refusal.get("status").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("the exit code of the client that ended", 4, //$NON-NLS-1$
+                refusal.get("clientExitCode").getAsInt()); //$NON-NLS-1$
+            assertNull("no counts of the earlier run on a run that produced none", //$NON-NLS-1$
+                refusal.get("total")); //$NON-NLS-1$
+        }
+        finally
+        {
+            YaxunitTestRunner.forgetFailedRun(runKey);
+            deleteTree(reportDir);
+        }
+    }
+
+    /**
+     * The report a run wrote itself is handed over by that run: bound to the launch, it is neither
+     * refused as an earlier run's nor read twice.
+     */
+    @Test
+    public void theReportOfTheRunItselfIsHandedOver() throws Exception
+    {
+        AtomicBoolean terminated = new AtomicBoolean(true);
+        ILaunch launch = launchWithProcesses(new IProcess[] {process("9", true)}, new AtomicBoolean(), //$NON-NLS-1$
+            terminated);
+        String runKey = "ownreport-" + System.nanoTime(); //$NON-NLS-1$
+        Path reportDir = Files.createTempDirectory("yaxunit-own"); //$NON-NLS-1$
+        try
+        {
+            YaxunitTestRunner.noteRunStarted(runKey, YaxunitTestRunner.ReportStamp.ABSENT);
+            File written = writePassingReport(reportDir);
+            // A file system that rounds modification times can put the run's own report below the
+            // launch; the stamp, not the clock, decides.
+            Files.setLastModifiedTime(written.toPath(),
+                FileTime.fromMillis(System.currentTimeMillis() - 600_000L));
+
+            JsonObject answer = JsonParser.parseString(YaxunitTestRunner.pollLaunch(launch, reportDir,
+                1L, runKey, new YaxunitTestRunner.RunContext("Proj", null, null, null, false), //$NON-NLS-1$
+                System::currentTimeMillis, Thread::sleep)).getAsJsonObject();
+
+            assertTrue("the run's own report answers as its result: " + answer, //$NON-NLS-1$
+                answer.get("success").getAsBoolean()); //$NON-NLS-1$
+            assertEquals(1, answer.get("total").getAsInt()); //$NON-NLS-1$
         }
         finally
         {
@@ -453,14 +530,40 @@ public class AYaxunitLaunchOutlivesTheDeadlineTest
             });
     }
 
-    /** Writes the report collected by the repeat call. */
-    private static void writePassingReport(Path directory) throws Exception
+    /**
+     * Writes the report collected by the repeat call.
+     *
+     * @param directory where the report is written
+     * @return the report file
+     * @throws Exception when the file cannot be written
+     */
+    private static File writePassingReport(Path directory) throws Exception
     {
         String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" //$NON-NLS-1$
             + "<testsuite name=\"Run\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\">" //$NON-NLS-1$
             + "<testcase name=\"passes\" classname=\"Module\"/>" //$NON-NLS-1$
             + "</testsuite>"; //$NON-NLS-1$
-        Files.write(directory.resolve("junit.xml"), xml.getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+        Path report = directory.resolve("junit.xml"); //$NON-NLS-1$
+        Files.write(report, xml.getBytes(StandardCharsets.UTF_8));
+        return report.toFile();
+    }
+
+    /** Returns a fake client process that ended reporting the given exit code. */
+    private static IProcess exitedClient(int exitCode)
+    {
+        return (IProcess)Proxy.newProxyInstance(AYaxunitLaunchOutlivesTheDeadlineTest.class
+            .getClassLoader(), new Class<?>[] {IProcess.class}, (proxy, method, args) ->
+            {
+                switch (method.getName())
+                {
+                case "isTerminated": //$NON-NLS-1$
+                    return Boolean.TRUE;
+                case "getExitValue": //$NON-NLS-1$
+                    return Integer.valueOf(exitCode);
+                default:
+                    return zeroOf(method.getReturnType());
+                }
+            });
     }
 
     /** Returns a fake Eclipse process with a stable identifier. */

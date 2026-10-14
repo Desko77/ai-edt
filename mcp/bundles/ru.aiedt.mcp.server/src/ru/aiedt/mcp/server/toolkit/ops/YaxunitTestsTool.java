@@ -122,7 +122,9 @@ public class YaxunitTestsTool implements IMcpTool
             .stringProperty("applicationId", "Application ID for the project.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("extensions", "CSV: extension names to run.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modules", "CSV: common module names with tests.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("tests", "CSV: test FQNs (Module.Method).") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("tests", //$NON-NLS-1$
+                "CSV: test FQNs (Module.Method). A name in tests or modules the run's report " //$NON-NLS-1$
+                + "lacks is a discrepancy, not a pass.") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
                 "Whole-call deadline, seconds (default 60). With the client running, Pending " //$NON-NLS-1$
                     + "with runKey; an earlier expiry, an error naming the step. " //$NON-NLS-1$

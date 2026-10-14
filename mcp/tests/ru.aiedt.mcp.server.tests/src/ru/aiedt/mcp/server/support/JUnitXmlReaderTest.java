@@ -175,6 +175,34 @@ public class JUnitXmlReaderTest
     }
 
     @Test
+    public void namesOfWhatRanAreKeptForTheCallToLookItsOwnNamesUpIn() throws Exception
+    {
+        String xml = "<?xml version=\"1.0\"?>"
+            + "<testsuites>"
+            + "<testsuite name=\"LedgerChecks\" tests=\"2\" failures=\"0\" errors=\"0\" skipped=\"0\">"
+            + "<testcase classname=\"Mod_Ledger\" name=\"roundsHalfUp\"/>"
+            + "<testcase classname=\"Mod_Ledger\" name=\"keepsPrecision\"/>"
+            + "</testsuite>"
+            + "<testsuite name=\"BillingChecks\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\">"
+            + "<testcase name=\"bareCase\"/>"
+            + "</testsuite>"
+            + "</testsuites>";
+
+        JUnitRunOutcome r = parse(xml);
+
+        assertTrue(r.getModuleNamesInReport().toString(),
+            r.getModuleNamesInReport().containsAll(java.util.Arrays.asList("LedgerChecks", "BillingChecks",
+                "Mod_Ledger")));
+        assertTrue(r.getTestNamesInReport().toString(),
+            r.getTestNamesInReport().containsAll(java.util.Arrays.asList("Mod_Ledger.roundsHalfUp",
+                "Mod_Ledger.keepsPrecision", "bareCase")));
+        assertFalse("a test name is not a module name: " + r.getModuleNamesInReport(),
+            r.getModuleNamesInReport().contains("Mod_Ledger.roundsHalfUp"));
+        assertFalse("a suite name is not a test name: " + r.getTestNamesInReport(),
+            r.getTestNamesInReport().contains("LedgerChecks"));
+    }
+
+    @Test
     public void doctypeIsRejectedByXxeGuard()
     {
         String xml = "<?xml version=\"1.0\"?>"
