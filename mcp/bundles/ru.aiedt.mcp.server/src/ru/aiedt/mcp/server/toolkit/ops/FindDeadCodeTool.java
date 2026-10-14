@@ -62,6 +62,14 @@ public class FindDeadCodeTool
     /** Backstop so an accidental full-tree walk of a giant workspace cannot run unbounded. */
     private static final int MODULE_SCAN_CAP = 5000;
 
+    /**
+     * Backstop of the reads the walk makes only to collect name-written calls: form modules and
+     * modules outside the family prefix and the path filter. A configuration holds several of
+     * those for every candidate module, so this bound sits above the candidate cap rather than
+     * beside it; together the two keep the worst walk at 25000 module loads.
+     */
+    private static final int NAME_CALL_SCAN_CAP = 20000;
+
     /** Path segment that marks a module as a form module; excluded by default (form event handlers dominate). */
     private static final String FORMS_SEGMENT = "/Forms/"; //$NON-NLS-1$
 
@@ -270,19 +278,25 @@ public class FindDeadCodeTool
             BslCallGraphHelper::countCallers);
 
         return format(projectName, outcome, first, limit, params,
-            // The count names modules read, including a form module the walk read for its
-            // calls while taking no candidates from it.
+            // The count names every boundary the walk asked about - the modules read for their
+            // calls as well as the ones the candidates came from.
             watch.note("modules")); //$NON-NLS-1$
     }
 
     /**
-     * Walks the source files of one scan and reads every module the walk cap allows.
+     * Walks the source files of one scan and reads every module the walk caps allow.
      * <p>
      * The methods a written-by-name call names are collected from every module the walk reads,
      * including one whose own exports are no candidates - a form module at the default settings, a
      * module outside the family prefix or the path filter: the calls sit wherever they sit, and the
      * decision about candidates waits for the whole walk anyway, because a module walked after an
      * earlier one can still hold the written-by-name call that keeps that earlier candidate alive.
+     * </p>
+     * <p>
+     * The two walks over the same file list are bounded separately: the candidate cap counts only
+     * the modules whose exports the decision examines, and the collection reads - modules read for
+     * their name-written calls alone - have their own cap, reported on its own line. Either cap
+     * stops the walk, and an answer a cap stopped does not claim a finished scope.
      * </p>
      *
      * @param files the BSL files of the project, in walk order
@@ -304,11 +318,16 @@ public class FindDeadCodeTool
     {
         List<WalkedModule> walked = new ArrayList<>();
         int modulesScanned = 0;
+        int collectionReads = 0;
         int modulesExcludedForms = 0;
         int loadFailures = 0;
+        boolean stoppedByCandidateCap = false;
+        boolean stoppedByCollectionCap = false;
         for (IFile file : files)
         {
-            if (modulesScanned >= MODULE_SCAN_CAP || watch.stopHere())
+            // Asked before anything the file costs, so a cancel that arrived while the previous
+            // module was still loading is seen here; the cap checks below never shortcut it.
+            if (watch.stopHere())
             {
                 break;
             }
@@ -317,32 +336,53 @@ public class FindDeadCodeTool
             {
                 continue;
             }
+            boolean formModule = !includeForms && (modulePath.contains(FORMS_SEGMENT)
+                || modulePath.startsWith(COMMON_FORMS_PREFIX));
+            boolean candidate = !formModule
+                && (pathPrefix == null || modulePath.startsWith(pathPrefix))
+                && (moduleFilter == null || moduleFilter.isEmpty()
+                    || modulePath.toLowerCase(Locale.ROOT)
+                        .contains(moduleFilter.toLowerCase(Locale.ROOT)));
+            if (candidate && modulesScanned >= MODULE_SCAN_CAP)
+            {
+                stoppedByCandidateCap = true;
+                break;
+            }
+            if (!candidate && collectionReads >= NAME_CALL_SCAN_CAP)
+            {
+                stoppedByCollectionCap = true;
+                break;
+            }
             Module module = loader.apply(modulePath);
             if (module == null)
             {
                 loadFailures++;
                 continue;
             }
-            modulesScanned++;
+            if (candidate)
+            {
+                modulesScanned++;
+            }
+            else
+            {
+                collectionReads++;
+            }
             collectNameCalled(module, commonModules, nameCalled);
-            if (!includeForms && (modulePath.contains(FORMS_SEGMENT)
-                || modulePath.startsWith(COMMON_FORMS_PREFIX)))
+            if (candidate)
+            {
+                walked.add(new WalkedModule(modulePath, module));
+            }
+            else if (formModule)
             {
                 modulesExcludedForms++;
-                continue;
             }
-            if (pathPrefix != null && !modulePath.startsWith(pathPrefix))
-            {
-                continue;
-            }
-            if (moduleFilter != null && !moduleFilter.isEmpty()
-                && !modulePath.toLowerCase(Locale.ROOT).contains(moduleFilter.toLowerCase(Locale.ROOT)))
-            {
-                continue;
-            }
-            walked.add(new WalkedModule(modulePath, module));
         }
-        return new FirstPass(walked, modulesScanned, modulesExcludedForms, loadFailures);
+        // A cancel that arrived during the walk's last load has left no boundary behind it; this
+        // one question keeps the note of the stop from staying unwritten, which would read the
+        // answer as a finished scan.
+        watch.raised();
+        return new FirstPass(walked, modulesScanned, collectionReads, modulesExcludedForms,
+            loadFailures, stoppedByCandidateCap, stoppedByCollectionCap);
     }
 
     /**
@@ -578,6 +618,11 @@ public class FindDeadCodeTool
         }
         out.append("- modules scanned: ").append(first.modulesScanned); //$NON-NLS-1$
         out.append(" | export methods examined: ").append(outcome.exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (first.collectionReads > 0)
+        {
+            out.append("- name-written calls collected from ").append(first.collectionReads) //$NON-NLS-1$
+                .append(" module(s) outside the candidate scope\n"); //$NON-NLS-1$
+        }
         out.append("- skipped: ").append(outcome.handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
             .append(outcome.interceptorsSkipped).append(" interceptors, ") //$NON-NLS-1$
             .append(first.modulesExcludedForms).append(" form modules"); //$NON-NLS-1$
@@ -589,11 +634,17 @@ public class FindDeadCodeTool
         {
             out.append(", ").append(outcome.indeterminate).append(" methods indeterminate (index/finder unavailable - NOT reported as dead; run clean_project and retry)"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        if (first.modulesScanned >= MODULE_SCAN_CAP)
+        if (first.stoppedByCandidateCap)
         {
-            out.append(" (scan cap ").append(MODULE_SCAN_CAP).append(" reached)"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append(" (candidate scan cap ").append(MODULE_SCAN_CAP).append(" reached)"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        out.append("\n\n"); //$NON-NLS-1$
+        out.append("\n"); //$NON-NLS-1$
+        if (first.stoppedByCollectionCap)
+        {
+            out.append("- name-call collection stopped at its cap (").append(NAME_CALL_SCAN_CAP) //$NON-NLS-1$
+                .append(" reached): modules the walk did not reach were not read\n"); //$NON-NLS-1$
+        }
+        out.append("\n"); //$NON-NLS-1$
 
         out.append("> Heuristic candidate list, not a verdict. A method is flagged when the Xtext index " //$NON-NLS-1$
             + "reports zero BSL call sites AND its name is not a known platform/БСП event handler AND it " //$NON-NLS-1$
@@ -614,9 +665,11 @@ public class FindDeadCodeTool
 
         if (candidates.isEmpty())
         {
-            // Only sayable when the scan finished. Stopped short, an empty list means
-            // the scope was not walked, not that it holds nothing.
-            out.append(cancelled != null
+            // Only sayable when the scan finished. Stopped short - by the operator or by a cap -
+            // an empty list means the scope was not walked, not that it holds nothing.
+            boolean stopped = cancelled != null || first.stoppedByCandidateCap
+                || first.stoppedByCollectionCap;
+            out.append(stopped
                 ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
                 : "No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
             return out.toString();
@@ -831,19 +884,33 @@ public class FindDeadCodeTool
     {
         final List<WalkedModule> walked;
 
+        /** The candidate modules the walk read - the ones whose exports the decision examines. */
         final int modulesScanned;
+
+        /** The modules the walk read only for the name-written calls they hold. */
+        final int collectionReads;
 
         final int modulesExcludedForms;
 
         final int loadFailures;
 
-        FirstPass(List<WalkedModule> walked, int modulesScanned, int modulesExcludedForms,
-            int loadFailures)
+        /** Whether the candidate cap stopped the walk before the list of files ran out. */
+        final boolean stoppedByCandidateCap;
+
+        /** Whether the name-call collection cap stopped the walk before the list ran out. */
+        final boolean stoppedByCollectionCap;
+
+        FirstPass(List<WalkedModule> walked, int modulesScanned, int collectionReads,
+            int modulesExcludedForms, int loadFailures, boolean stoppedByCandidateCap,
+            boolean stoppedByCollectionCap)
         {
             this.walked = walked;
             this.modulesScanned = modulesScanned;
+            this.collectionReads = collectionReads;
             this.modulesExcludedForms = modulesExcludedForms;
             this.loadFailures = loadFailures;
+            this.stoppedByCandidateCap = stoppedByCandidateCap;
+            this.stoppedByCollectionCap = stoppedByCollectionCap;
         }
     }
 

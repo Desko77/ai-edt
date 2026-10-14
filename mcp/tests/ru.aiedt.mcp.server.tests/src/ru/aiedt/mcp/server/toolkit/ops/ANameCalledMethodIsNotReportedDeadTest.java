@@ -33,6 +33,7 @@ import com._1c.g5.v8.dt.bsl.model.StringLiteral;
 
 import ru.aiedt.mcp.server.support.BmReferencesHelper;
 import ru.aiedt.mcp.server.support.BslCallGraphHelper;
+import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.WatchForCancel;
 
 /**
@@ -217,6 +218,112 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertTrue("the form module's call keeps the export alive", outcome.candidates.isEmpty()); //$NON-NLS-1$
     }
 
+    /**
+     * Form modules ahead of the common modules do not spend the candidate cap: the walk reads
+     * them for their name-written calls alone, and a dead export behind them is still reported.
+     */
+    @Test
+    public void formModulesAheadDoNotSpendTheCandidateCap()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 5000; i++)
+        {
+            files.add(fileAt("src/CommonForms/Форма" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        files.add(fileAt("src/CommonModules/Подготовка/Module.bsl")); //$NON-NLS-1$
+        Module form = bareModule();
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+        Set<String> nameCalled = new HashSet<>();
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files,
+            path -> path.startsWith("CommonForms/") ? form : подготовка, //$NON-NLS-1$
+            false, null, null, MODULES, nameCalled, WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
+            100, List.of(), method -> 0);
+
+        assertTrue("the common module behind five thousand form modules is still walked", //$NON-NLS-1$
+            outcome.candidates.stream()
+                .anyMatch(candidate -> "НичемНеВызван".equals(candidate.methodName))); //$NON-NLS-1$
+    }
+
+    /**
+     * The collection reads are bounded on their own: past the name-call collection cap the walk
+     * stops, instead of reading a form module for every file of an unbounded tree.
+     */
+    @Test
+    public void theNameCallCollectionCapStopsTheWalk()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 20001; i++)
+        {
+            files.add(fileAt("src/CommonForms/Форма" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        Module form = bareModule();
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> form,
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+
+        assertEquals(20000, first.modulesExcludedForms);
+        assertTrue("nothing the caps refused is a candidate", first.walked.isEmpty()); //$NON-NLS-1$
+    }
+
+    /**
+     * A cancel that arrives while the walk's last module is loading is still reported: the cap
+     * checks do not shortcut the question, and the walk asks once more after its last load.
+     */
+    @Test
+    public void aCancelDuringTheLastLoadIsStillReported()
+    {
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+            Module подготовка =
+                moduleAt("CommonModules/Подготовка/Module.bsl", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(
+                List.of(fileAt("src/CommonModules/Подготовка/Module.bsl")), //$NON-NLS-1$
+                path -> {
+                    flag.cancel("the operator asked to stop"); //$NON-NLS-1$
+                    return подготовка;
+                },
+                false, null, null, MODULES, new HashSet<>(), watch);
+
+            assertEquals(1, first.walked.size());
+            assertTrue("a cancel that arrived during a load is not lost with the last question", //$NON-NLS-1$
+                watch.stopped());
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    /**
+     * An empty candidate list of a walk a cap stopped is named incomplete, not a finished scope.
+     */
+    @Test
+    public void anEmptyListACapStoppedIsNamedIncomplete()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 5001; i++)
+        {
+            files.add(fileAt("src/CommonModules/Модуль" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> bareModule(),
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked,
+            new HashSet<>(), 100, List.of(), method -> 0);
+
+        String report = new FindDeadCodeTool().format("Проект", outcome, first, 100, Map.of(), //$NON-NLS-1$
+            null);
+
+        assertTrue(report, report.contains("Nothing had been found when the scan stopped.")); //$NON-NLS-1$
+        assertFalse(report, report.contains("No dead export methods found in the scanned scope.")); //$NON-NLS-1$
+        assertTrue(report, report.contains("candidate scan cap")); //$NON-NLS-1$
+    }
+
     /** The methods a scheduled job and an event subscription name are collected and protect. */
     @Test
     public void theMethodsOfJobsAndSubscriptionsAreCollected()
@@ -380,6 +487,15 @@ public class ANameCalledMethodIsNotReportedDeadTest
         method.setName(methodName);
         method.setExport(true);
         module.getMethods().add(method);
+        return module;
+    }
+
+    /** A module whose methods hold no statements, the way a form module with no handlers reads. */
+    private static Module bareModule()
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        module.getMethods().add(factory.createProcedure());
         return module;
     }
 
