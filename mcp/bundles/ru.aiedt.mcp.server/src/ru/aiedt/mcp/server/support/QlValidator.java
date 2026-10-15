@@ -43,6 +43,7 @@ import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.ql.model.AbstractQuerySchemaSource;
 import com._1c.g5.v8.dt.ql.model.CommonExpression;
 import com._1c.g5.v8.dt.ql.model.QuerySchemaOperator;
+import com._1c.g5.v8.dt.ql.model.QuerySchemaSelectQuery;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -715,7 +716,9 @@ public final class QlValidator
      * <p>
      * A source or a field reference of a nested query reaches the nested query's own operator
      * first, which is what keeps an inner alias from being read as a declaration of the outer
-     * query.
+     * query. The walk stops at the first query it meets: an expression of the query itself rather
+     * than of one of its operators - ordering, totals, indexing - belongs to no operator scope,
+     * and a diagnostic there is never settled by an alias of an enclosing query.
      * </p>
      *
      * @param scopeIds the scopes met so far, with their ids
@@ -731,6 +734,10 @@ public final class QlValidator
             if (id != null)
             {
                 return id;
+            }
+            if (container instanceof QuerySchemaSelectQuery)
+            {
+                return null;
             }
         }
         return null;

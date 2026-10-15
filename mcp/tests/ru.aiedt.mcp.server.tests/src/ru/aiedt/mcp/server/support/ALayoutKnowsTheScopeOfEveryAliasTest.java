@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -166,6 +167,23 @@ public class ALayoutKnowsTheScopeOfEveryAliasTest
             layout.aliasResolvesByScope.get(Integer.valueOf(outer.scope)).containsKey("внутр")); //$NON-NLS-1$
         assertTrue("the nested scope declares Спр", //$NON-NLS-1$
             layout.aliasResolvesByScope.get(Integer.valueOf(inner.scope)).containsKey("спр")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anOrderingOfANestedQueryBelongsToNoOuterScope() throws Exception
+    {
+        // The ordering hangs on the nested query itself, not on its operator: a walk that climbed
+        // past the nested query would file it under the outer query, whose Спр is another table.
+        String text = "ВЫБРАТЬ Спр.Код ИЗ (ВЫБРАТЬ ПЕРВЫЕ 1 Спр.Код КАК Код ИЗ Справочник.Виды КАК Спр" //$NON-NLS-1$
+            + " УПОРЯДОЧИТЬ ПО Спр.Наименование) КАК Внутр, Справочник.Товары КАК Спр"; //$NON-NLS-1$
+        QlValidator.QueryLayout layout = layoutOf(text);
+
+        int ordering = text.indexOf("Спр.Наименование"); //$NON-NLS-1$
+        for (FieldSite site : layout.sites)
+        {
+            assertFalse("the ordering reference is filed under no scope, got scope " + site.scope, //$NON-NLS-1$
+                ordering >= site.offset && ordering < site.offset + site.length);
+        }
     }
 
     @Test
