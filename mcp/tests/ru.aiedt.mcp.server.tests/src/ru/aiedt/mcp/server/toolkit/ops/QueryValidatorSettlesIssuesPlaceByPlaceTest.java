@@ -11,6 +11,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.Test;
 
@@ -38,11 +39,35 @@ public class QueryValidatorSettlesIssuesPlaceByPlaceTest
         return new QueryValidator.QueryIssue(severity, message, line, column, offset);
     }
 
-    private static QlValidator.QueryLayout layout(String alias, Boolean resolvesElsewhere,
-        QlValidator.FieldSite... sites)
+    private static QlValidator.QueryLayout layout(int scope, String alias,
+        Boolean resolvesElsewhere, QlValidator.FieldSite... sites)
     {
         QlValidator.QueryLayout layout = new QlValidator.QueryLayout();
-        layout.aliasResolves.put(alias.toLowerCase(java.util.Locale.ROOT), resolvesElsewhere);
+        Map<String, Boolean> ofScope = new java.util.LinkedHashMap<>();
+        ofScope.put(alias.toLowerCase(java.util.Locale.ROOT), resolvesElsewhere);
+        layout.aliasResolvesByScope.put(Integer.valueOf(scope), ofScope);
+        for (QlValidator.FieldSite site : sites)
+        {
+            layout.sites.add(site);
+        }
+        return layout;
+    }
+
+    /**
+     * A layout of one scope holding several alias resolutions at once.
+     *
+     * @param scope the scope's id
+     * @param resolutions lower-case alias to whether it resolved in that model
+     * @param sites the scope's field references
+     * @return the layout
+     */
+    private static QlValidator.QueryLayout layoutOfResolutions(int scope,
+        Map<String, Boolean> resolutions, QlValidator.FieldSite... sites)
+    {
+        QlValidator.QueryLayout layout = new QlValidator.QueryLayout();
+        Map<String, Boolean> ofScope = new java.util.LinkedHashMap<>();
+        ofScope.putAll(resolutions);
+        layout.aliasResolvesByScope.put(Integer.valueOf(scope), ofScope);
         for (QlValidator.FieldSite site : sites)
         {
             layout.sites.add(site);
@@ -93,10 +118,16 @@ public class QueryValidatorSettlesIssuesPlaceByPlaceTest
         List<QueryValidator.QueryIssue> other = new ArrayList<>();
         other.add(issue("ERROR", "Таблица 'Справочник._Расшир' не найдена", 3, 5, 90)); //$NON-NLS-1$
 
-        QlValidator.QueryLayout named = layout("сег", Boolean.TRUE, //$NON-NLS-1$
-            new QlValidator.FieldSite(20, 18, 1, "Виды"), //$NON-NLS-1$
-            new QlValidator.FieldSite(40, 16, 1, "Сег")); //$NON-NLS-1$
-        QlValidator.QueryLayout configuration = layout("виды", Boolean.TRUE); //$NON-NLS-1$
+        QlValidator.QueryLayout named = layout(0, "виды", Boolean.TRUE, //$NON-NLS-1$
+            new QlValidator.FieldSite(20, 18, 1, "Виды", 0), //$NON-NLS-1$
+            new QlValidator.FieldSite(40, 16, 1, "Сег", 0)); //$NON-NLS-1$
+        // The configuration holds BOTH resolutions: the borrowed table resolves, the extension's
+        // own does not. A layout that recorded only the resolving one would never meet a source
+        // the other model cannot see, and that meeting is what these tests exist to pin.
+        Map<String, Boolean> resolutions = new java.util.LinkedHashMap<>();
+        resolutions.put("виды", Boolean.TRUE); //$NON-NLS-1$
+        resolutions.put("сег", Boolean.FALSE); //$NON-NLS-1$
+        QlValidator.QueryLayout configuration = layoutOfResolutions(0, resolutions);
 
         List<QueryValidator.QueryIssue> settled =
             QueryValidator.settledIssues(asked, other, named, configuration);
@@ -115,8 +146,8 @@ public class QueryValidatorSettlesIssuesPlaceByPlaceTest
         other.add(issue("ERROR", "Поле 'Виды.Выдумка' не найдено", 1, 32, 20)); //$NON-NLS-1$
 
         List<QueryValidator.QueryIssue> settled = QueryValidator.settledIssues(asked, other,
-            layout("виды", Boolean.TRUE, new QlValidator.FieldSite(20, 18, 1, "Виды")), //$NON-NLS-1$ //$NON-NLS-2$
-            layout("виды", Boolean.TRUE)); //$NON-NLS-1$
+            layout(0, "виды", Boolean.TRUE, new QlValidator.FieldSite(20, 18, 1, "Виды", 0)), //$NON-NLS-1$ //$NON-NLS-2$
+            layout(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
 
         assertEquals("the other model spoke at this very place", 1, settled.size()); //$NON-NLS-1$
     }

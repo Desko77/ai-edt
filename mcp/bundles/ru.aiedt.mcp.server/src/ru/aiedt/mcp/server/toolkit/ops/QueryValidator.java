@@ -981,9 +981,10 @@ public class QueryValidator
      * query neither model accounts for whole.
      * <p>
      * Delegates the keeping and the dropping to
-     * {@link QlValidator#standsAfterMerging(At, List, List, Map)}: an issue is dropped only when
-     * the other model said nothing at its very place and the source its field's alias names
-     * resolved in the other model. Everything the named model said about its own objects stands.
+     * {@link QlValidator#standsAfterMerging(At, List, List, QlValidator.QueryLayout)}: an issue is
+     * dropped only when the other model said nothing at its very place and the source its field's
+     * alias names resolved in the other model's parse of the query scope that declares the alias.
+     * Everything the named model said about its own objects stands.
      * </p>
      *
      * @param askedIssues what the named project reported
@@ -1001,13 +1002,13 @@ public class QueryValidator
             otherPlaces.add(QlValidator.At.of(other.offset, other.line, other.column));
         }
         QlValidator.QueryLayout sites = askedLayout != null ? askedLayout : new QlValidator.QueryLayout();
-        Map<String, Boolean> resolvesElsewhere = otherLayout != null ? otherLayout.aliasResolves
-            : new LinkedHashMap<String, Boolean>();
+        QlValidator.QueryLayout elsewhere =
+            otherLayout != null ? otherLayout : new QlValidator.QueryLayout();
         List<QueryIssue> kept = new ArrayList<>();
         for (QueryIssue issue : askedIssues)
         {
             QlValidator.At at = QlValidator.At.of(issue.offset, issue.line, issue.column);
-            if (QlValidator.standsAfterMerging(at, otherPlaces, sites.sites, resolvesElsewhere))
+            if (QlValidator.standsAfterMerging(at, otherPlaces, sites.sites, elsewhere))
             {
                 kept.add(issue);
             }

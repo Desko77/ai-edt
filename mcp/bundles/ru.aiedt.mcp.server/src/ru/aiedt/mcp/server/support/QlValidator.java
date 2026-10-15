@@ -10,6 +10,7 @@ import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +42,7 @@ import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import com._1c.g5.v8.dt.ql.model.AbstractQuerySchemaSource;
 import com._1c.g5.v8.dt.ql.model.CommonExpression;
+import com._1c.g5.v8.dt.ql.model.QuerySchemaOperator;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -227,36 +229,53 @@ public final class QlValidator
         public final String alias;
 
         /**
+         * The query scope that declares the alias.
+         * <p>
+         * A scope is one query of the package, one union part, or one nested query. Its id is the
+         * scope's position in the text, so two parses of the same text agree on it and a site of
+         * one model's layout names the other model's scope.
+         * </p>
+         */
+        public final int scope;
+
+        /**
          * Makes a site.
          *
          * @param offset the character offset
          * @param length the length in characters
          * @param line the 1-based starting line
          * @param alias the alias the reference begins with
+         * @param scope the id of the query scope declaring the alias
          */
-        public FieldSite(int offset, int length, int line, String alias)
+        public FieldSite(int offset, int length, int line, String alias, int scope)
         {
             this.offset = offset;
             this.length = length;
             this.line = line;
             this.alias = alias;
+            this.scope = scope;
         }
     }
 
     /**
-     * What a parsed query says about its own sources: which aliases it declared, whether each
-     * alias's table resolved in the model that parsed the query, and where its alias-headed field
-     * references sit in the text.
+     * What a parsed query says about its own sources: which aliases each query scope declared,
+     * whether each alias's table resolved in the model that parsed the query, and where its
+     * alias-headed field references sit in the text.
      * <p>
-     * Built per model: the parse is the same text, so the sites are the same in both, while
-     * resolution is a property of the model that did the parsing - the very difference the merge of
-     * two answers turns on.
+     * Built per model: the parse is the same text, so the sites and the scope ids are the same in
+     * both, while resolution is a property of the model that did the parsing - the very difference
+     * the merge of two answers turns on.
      * </p>
      */
     public static final class QueryLayout
     {
-        /** Lower-case alias to whether its source resolved in the model that parsed the query. */
-        public final Map<String, Boolean> aliasResolves = new LinkedHashMap<>();
+        /**
+         * One query scope (a batch query, a union part, a nested query) to its declared lower-case
+         * aliases and whether each resolved in the model that parsed the query. A scope that
+         * declares one alias twice with different resolvability holds no entry for it: which
+         * declaration a field of that name resolves through is not something the map can say.
+         */
+        public final Map<Integer, Map<String, Boolean>> aliasResolvesByScope = new LinkedHashMap<>();
 
         /** The alias-headed field references, in text order. */
         public final List<FieldSite> sites = new ArrayList<>();
@@ -550,7 +569,14 @@ public final class QlValidator
 
     /**
      * Reads the sources and the alias-headed field references of a parsed query, with the span each
-     * reference occupies in the text.
+     * reference occupies in the text and the query scope each alias belongs to.
+     * <p>
+     * An alias belongs to the query that declared it - one query of the package, one union part,
+     * one nested query - and a field reference settles against the declarations of its own scope
+     * only. One map for the whole batch would let a later query's same-named alias overwrite an
+     * earlier one, and a source the other model cannot see would then settle an error it was never
+     * asked about.
+     * </p>
      * <p>
      * Best-effort by design: the layout exists to settle one model's answer against another's, and
      * a query the walk cannot read yields an empty layout, which settles nothing - the conservative
@@ -565,20 +591,32 @@ public final class QlValidator
         QueryLayout layout = new QueryLayout();
         try
         {
-            Set<String> aliases = new LinkedHashSet<>();
+            // Scope ids are the scopes' positions in the text: two parses of the same text agree
+            // on them, which is what lets one model's sites name the other model's scope.
+            Map<QuerySchemaOperator, Integer> scopeIds = new IdentityHashMap<>();
+            Map<Integer, Set<String>> declared = new LinkedHashMap<>();
+            Set<String> disputed = new LinkedHashSet<>();
             for (TreeIterator<EObject> walk = EcoreUtil.getAllContents(resource, false); walk
                 .hasNext();)
             {
                 EObject next = walk.next();
-                if (next instanceof AbstractQuerySchemaSource)
+                if (next instanceof QuerySchemaOperator)
+                {
+                    Integer id = Integer.valueOf(scopeIds.size());
+                    scopeIds.put((QuerySchemaOperator)next, id);
+                    declared.put(id, new LinkedHashSet<>());
+                }
+                else if (next instanceof AbstractQuerySchemaSource)
                 {
                     AbstractQuerySchemaSource source = (AbstractQuerySchemaSource)next;
                     String alias = source.getAlias();
-                    if (alias != null && !alias.isBlank())
+                    Integer scope = scopeIdOf(scopeIds, next);
+                    if (alias != null && !alias.isBlank() && scope != null)
                     {
                         String key = alias.toLowerCase(Locale.ROOT);
-                        aliases.add(key);
-                        layout.aliasResolves.put(key, Boolean.valueOf(resolvesHere(source)));
+                        declared.get(scope).add(key);
+                        mergeAliasDeclaration(layout.aliasResolvesByScope, disputed,
+                            scope.intValue(), key, resolvesHere(source));
                     }
                 }
             }
@@ -590,7 +628,12 @@ public final class QlValidator
                 {
                     continue;
                 }
-                String alias = aliasHeaded(((CommonExpression)next).getContent(), aliases);
+                Integer scope = scopeIdOf(scopeIds, next);
+                if (scope == null)
+                {
+                    continue;
+                }
+                String alias = aliasHeaded(((CommonExpression)next).getContent(), declared.get(scope));
                 if (alias == null)
                 {
                     continue;
@@ -601,7 +644,7 @@ public final class QlValidator
                     continue;
                 }
                 layout.sites.add(new FieldSite(node.getTotalOffset(), node.getTotalLength(),
-                    node.getStartLine(), alias));
+                    node.getStartLine(), alias, scope.intValue()));
             }
         }
         catch (Exception e)
@@ -613,11 +656,70 @@ public final class QlValidator
     }
 
     /**
+     * The id of the nearest query scope enclosing a node, when there is one.
+     * <p>
+     * A source or a field reference of a nested query reaches the nested query's own operator
+     * first, which is what keeps an inner alias from being read as a declaration of the outer
+     * query.
+     * </p>
+     *
+     * @param scopeIds the scopes met so far, with their ids
+     * @param node the node
+     * @return the scope id, or <code>null</code> when the node sits in no query scope
+     */
+    private static Integer scopeIdOf(Map<QuerySchemaOperator, Integer> scopeIds, EObject node)
+    {
+        for (EObject container = node.eContainer(); container != null; container =
+            container.eContainer())
+        {
+            Integer id = scopeIds.get(container);
+            if (id != null)
+            {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Adds one alias declaration to its scope's resolution map.
+     * <p>
+     * A scope that declares one alias twice with the same resolvability keeps it; twice with
+     * different resolvability keeps neither entry - which declaration a field of that name resolves
+     * through is then not something the map can say, and a diagnostic it might have settled stays.
+     * </p>
+     *
+     * @param scopes the layout's scope map, written in place
+     * @param disputed the scope-alias pairs already found contradicting themselves
+     * @param scope the declaring scope's id
+     * @param alias the lower-case alias
+     * @param resolves whether this source resolved in the model that parsed the query
+     */
+    private static void mergeAliasDeclaration(Map<Integer, Map<String, Boolean>> scopes,
+        Set<String> disputed, int scope, String alias, boolean resolves)
+    {
+        String disputedKey = scope + "\u0000" + alias; //$NON-NLS-1$
+        if (disputed.contains(disputedKey))
+        {
+            return;
+        }
+        Map<String, Boolean> ofScope =
+            scopes.computeIfAbsent(Integer.valueOf(scope), k -> new LinkedHashMap<>());
+        Boolean previous = ofScope.put(alias, Boolean.valueOf(resolves));
+        if (previous != null && previous.booleanValue() != resolves)
+        {
+            ofScope.remove(alias);
+            disputed.add(disputedKey);
+        }
+    }
+
+    /**
      * The declared alias a written field reference begins with, when it begins with one.
      *
      * @param content the written text of the reference
-     * @param aliases the query's declared aliases, lower case
-     * @return the alias as written, or <code>null</code> when the reference names no alias
+     * @param aliases the aliases declared in the reference's own query scope, lower case
+     * @return the alias as written, or <code>null</code> when the reference names no alias of its
+     *         scope
      */
     private static String aliasHeaded(String content, Set<String> aliases)
     {
@@ -682,21 +784,23 @@ public final class QlValidator
      * <p>
      * The diagnostic is dropped only when BOTH hold: the other model said nothing at the very place
      * of the diagnostic, and the source its field's alias names resolved in the other model's
-     * parse. The first condition keeps what both models see - an invented field is reported
-     * everywhere. The second keeps what the other model was never in a position to judge: an error
-     * about an object the named project owns itself, whose table the other model does not hold. A
-     * diagnostic tied to no alias at all - a syntax complaint, a table that is not there - stands,
-     * because nothing the other model could have said bears on it.
+     * parse of the query scope that declares the alias. The first condition keeps what both models
+     * see - an invented field is reported everywhere. The second keeps what the other model was
+     * never in a position to judge: an error about an object the named project owns itself, whose
+     * table the other model does not hold, and an alias redeclared by another query of the batch,
+     * which settles nothing about the query that first declared it. A diagnostic tied to no alias
+     * at all - a syntax complaint, a table that is not there - stands, because nothing the other
+     * model could have said bears on it.
      * </p>
      *
      * @param issue the place of the diagnostic
      * @param otherIssues the places the other model reported at
      * @param sites the alias-headed field references of the parsed query
-     * @param aliasResolvesElsewhere which aliases resolved in the other model
+     * @param elsewhere the other model's layout of the same query
      * @return whether the diagnostic belongs in the settled answer
      */
     public static boolean standsAfterMerging(At issue, List<At> otherIssues, List<FieldSite> sites,
-        Map<String, Boolean> aliasResolvesElsewhere)
+        QueryLayout elsewhere)
     {
         for (At other : otherIssues)
         {
@@ -705,17 +809,23 @@ public final class QlValidator
                 return true;
             }
         }
-        String alias = aliasUnderwriting(issue, sites);
-        if (alias == null)
+        FieldSite site = aliasUnderwriting(issue, sites);
+        if (site == null)
         {
             return true;
         }
-        Boolean resolves = aliasResolvesElsewhere.get(alias.toLowerCase(Locale.ROOT));
+        Map<String, Boolean> ofScope =
+            elsewhere.aliasResolvesByScope.get(Integer.valueOf(site.scope));
+        if (ofScope == null)
+        {
+            return true;
+        }
+        Boolean resolves = ofScope.get(site.alias.toLowerCase(Locale.ROOT));
         return resolves == null || !resolves.booleanValue();
     }
 
     /**
-     * The declared alias whose field reference covers the place a diagnostic points at.
+     * The field reference whose alias covers the place a diagnostic points at.
      * <p>
      * Offsets decide when both have them; a diagnostic without one is matched by line, which is
      * where its reference starts when the two differ at all.
@@ -723,9 +833,9 @@ public final class QlValidator
      *
      * @param issue the place of the diagnostic
      * @param sites the alias-headed field references, in text order
-     * @return the alias, or <code>null</code> when no reference covers the place
+     * @return the site, or <code>null</code> when no reference covers the place
      */
-    private static String aliasUnderwriting(At issue, List<FieldSite> sites)
+    private static FieldSite aliasUnderwriting(At issue, List<FieldSite> sites)
     {
         for (FieldSite site : sites)
         {
@@ -733,12 +843,12 @@ public final class QlValidator
             {
                 if (issue.offset >= site.offset && issue.offset < site.offset + site.length)
                 {
-                    return site.alias;
+                    return site;
                 }
             }
             else if (issue.line > 0 && site.line == issue.line)
             {
-                return site.alias;
+                return site;
             }
         }
         return null;
@@ -1245,10 +1355,10 @@ public final class QlValidator
      * whole.
      * <p>
      * Every diagnostic of the named model is kept or dropped by
-     * {@link #standsAfterMerging(At, List, List, Map)}; the other model's own diagnostics - about
-     * the objects the named project declares itself - enter the answer nowhere, because the named
-     * model is the only one of the two that holds those objects. The answer names both models in
-     * {@code resolvedInProjects}.
+     * {@link #standsAfterMerging(At, List, List, QueryLayout)}; the other model's own diagnostics -
+     * about the objects the named project declares itself - enter the answer nowhere, because the
+     * named model is the only one of the two that holds those objects. The answer names both
+     * models in {@code resolvedInProjects}.
      * </p>
      *
      * @param here what the named project answered, with its layout.
@@ -1268,8 +1378,8 @@ public final class QlValidator
         List<QlIssue> kept = new ArrayList<>();
         for (QlIssue issue : here.verdict.issues)
         {
-            if (standsAfterMerging(At.of(-1, issue.line, issue.column), otherPlaces, here.layout.sites,
-                above.layout.aliasResolves))
+            if (standsAfterMerging(At.of(-1, issue.line, issue.column), otherPlaces,
+                here.layout.sites, above.layout))
             {
                 kept.add(issue);
             }
