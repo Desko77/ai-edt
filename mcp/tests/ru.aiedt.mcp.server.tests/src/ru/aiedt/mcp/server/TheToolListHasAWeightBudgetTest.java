@@ -250,8 +250,12 @@ public class TheToolListHasAWeightBudgetTest
      * which is where a client routing the operation through the facade reads it. Measured 14.10:
      * 193180.
      * </p>
+     * <p>
+     * And from 193180 to 193262 for the empty edgeKinds sentence on the dependency_graph and
+     * insights schemas. Measured 15.10: 193262.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 193180;
+    private static final int DOCUMENT_BUDGET = 193262;
 
     private LiveServer server;
 

@@ -699,6 +699,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And from 107469 to 107643 for the excludeEvents sentence on the infobase_admin schema, which
      * is where a client routing the operation through the facade reads it. Measured 14.10: 107643.
      * </p>
+     * <p>
+     * And from 107643 to 107725 for the empty edgeKinds sentence on the dependency_graph and
+     * insights schemas. Measured 15.10: 107725.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107643;
+    private static final int DOCUMENT_PROSE = 107725;
 }
