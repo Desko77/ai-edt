@@ -1639,6 +1639,10 @@ public final class QlValidator
             }
             List<Issue> semantic = validator.validate(resource, CheckMode.ALL,
                 CancelIndicator.NullImpl);
+            // The sources' tables are set while the validator links the resource, so the layout is
+            // read again once it has: read before, no alias of this model resolves, and a merge
+            // with the other model settles nothing.
+            layout = layoutOf(resource);
             for (Issue i : semantic)
             {
                 String sev;

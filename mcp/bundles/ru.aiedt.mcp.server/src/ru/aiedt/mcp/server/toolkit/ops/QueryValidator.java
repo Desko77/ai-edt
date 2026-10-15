@@ -676,6 +676,10 @@ public class QueryValidator
                     ToolResult.error("Error: no query validator is registered for this project").toJson()); //$NON-NLS-1$
             }
             List<Issue> validationIssues = validator.validate(resource, CheckMode.ALL, CancelIndicator.NullImpl);
+            // The sources' tables are set while the validator links the resource, so the layout is
+            // read again once it has: read before, no alias of this model resolves, and a merge
+            // with the other model settles nothing.
+            layout = QlValidator.layoutOf(resource);
             for (Issue issue : validationIssues)
             {
                 String severity;
