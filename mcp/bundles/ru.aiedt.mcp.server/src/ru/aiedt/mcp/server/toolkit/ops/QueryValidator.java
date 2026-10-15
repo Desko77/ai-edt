@@ -300,21 +300,27 @@ public class QueryValidator
          */
         private final boolean parserObjected;
 
-        private Collected(List<QueryIssue> issues, String failure, boolean parserObjected)
+        /** The query's sources as this model resolved them, empty when it could not be read. */
+        private final QlValidator.QueryLayout layout;
+
+        private Collected(List<QueryIssue> issues, String failure, boolean parserObjected,
+            QlValidator.QueryLayout layout)
         {
             this.issues = issues;
             this.failure = failure;
             this.parserObjected = parserObjected;
+            this.layout = layout;
         }
 
-        static Collected of(List<QueryIssue> issues, boolean parserObjected)
+        static Collected of(List<QueryIssue> issues, boolean parserObjected,
+            QlValidator.QueryLayout layout)
         {
-            return new Collected(issues, null, parserObjected);
+            return new Collected(issues, null, parserObjected, layout);
         }
 
         static Collected failed(String failure)
         {
-            return new Collected(null, failure, false);
+            return new Collected(null, failure, false, new QlValidator.QueryLayout());
         }
 
         int errors()
@@ -364,11 +370,14 @@ public class QueryValidator
         // that did find it reports a real error per bad field - and counting would then prefer the
         // one that resolved nothing, and name it in resolvedInProject as the authority.
         //
-        // Clean or not clean has no such failure mode. Neither model clean means the query is
-        // wrong somewhere, and then the answer kept is the one from the project the caller named:
-        // its diagnostics are about the objects that developer actually has in front of them. A
-        // query mixing a borrowed object's inherited field with an extension's own table fits
-        // neither model, and that is what it gets - not a clean answer nobody could stand behind.
+        // Clean or not clean has no such failure mode. Neither model clean means the query names
+        // objects only one of them holds - a borrowed object's non-adopted attribute beside the
+        // extension's own table, say - and then the two answers are settled place by place: a
+        // diagnostic of the named project stands unless the other model is silent at that very
+        // place and the source its field's alias names resolved in the other model. An invented
+        // field survives that (both models report it), an error about the extension's own object
+        // survives it (the other model cannot resolve its table), and the other model's complaints
+        // about the extension's objects never enter the answer - resolvedInProjects names both.
         // Refuse while the model is still being built, instead of answering from a half-built
         // one. Measured: for the first seconds after EDT restarts, a query naming a table that
         // certainly exists comes back "table not found", which is indistinguishable from a real
@@ -476,7 +485,8 @@ public class QueryValidator
             // configuration project holds its own objects, so its errors are settled where they
             // were found.
             attempt.answer =
-                buildResult(asked, asked, queryText, here.issues, dcsMode, describeResult, checkedAgain);
+                buildResult(asked, asked, queryText, here.issues, dcsMode, describeResult, checkedAgain,
+                    null);
             attempt.moved = askedWatch.moved();
             return attempt;
         }
@@ -517,9 +527,23 @@ public class QueryValidator
                 attempt.failure = unconfirmed("That model could not be asked."); //$NON-NLS-1$
                 return attempt;
             }
-            boolean fromAbove = above.errors() == 0;
-            attempt.answer = buildResult(fromAbove ? alternative : asked, asked, queryText,
-                fromAbove ? above.issues : here.issues, dcsMode, describeResult, checkedAgain);
+            if (above.errors() == 0)
+            {
+                attempt.answer = buildResult(alternative, asked, queryText, above.issues, dcsMode,
+                    describeResult, checkedAgain, null);
+            }
+            else
+            {
+                // Neither model clean: the query names objects only one of them holds. The answers
+                // are settled place by place - every diagnostic of the named project kept unless
+                // the other model is silent at that very place and the source its field's alias
+                // names resolved there. The other model's own complaints, which are about the
+                // objects the named project declares itself, enter the answer nowhere.
+                attempt.answer = buildResult(asked, asked, queryText,
+                    settledIssues(here.issues, above.issues, here.layout, above.layout), dcsMode,
+                    describeResult, checkedAgain,
+                    List.of(asked.getName(), alternative.getName()));
+            }
             attempt.moved = other.moved() || askedWatch.moved();
             return attempt;
         }
@@ -615,6 +639,8 @@ public class QueryValidator
                 resource.load(is, null);
             }
 
+            QlValidator.QueryLayout layout = QlValidator.layoutOf(resource);
+
             // Asked of the parser directly. The resource's error list is not syntax alone -
             // linking diagnostics land there too, and reading it as "the text does not parse"
             // would treat an unresolved name as settled and skip the model that resolves it,
@@ -625,12 +651,14 @@ public class QueryValidator
             List<QueryIssue> issues = new ArrayList<>();
             for (Resource.Diagnostic error : resource.getErrors())
             {
-                issues.add(new QueryIssue("ERROR", error.getMessage(), error.getLine(), error.getColumn(), -1)); //$NON-NLS-1$
+                issues.add(new QueryIssue("ERROR", error.getMessage(), error.getLine(), error.getColumn(), -1, //$NON-NLS-1$
+                    null));
             }
             for (Resource.Diagnostic warning : resource.getWarnings())
             {
                 issues.add(
-                    new QueryIssue("WARNING", warning.getMessage(), warning.getLine(), warning.getColumn(), -1)); //$NON-NLS-1$
+                    new QueryIssue("WARNING", warning.getMessage(), warning.getLine(), warning.getColumn(), -1, //$NON-NLS-1$
+                        null));
             }
 
             IResourceValidator validator = rsp.get(IResourceValidator.class);
@@ -641,7 +669,7 @@ public class QueryValidator
                     // The parser already settled this one, and nothing the missing checker would
                     // have said could unsettle it. Returning a generic failure here threw away an
                     // answer the caller can act on.
-                    return Collected.of(issues, true);
+                    return Collected.of(issues, true, layout);
                 }
                 // Nothing settled, and nothing to report: a generic failure is the honest shape.
                 return Collected.failed(
@@ -672,10 +700,11 @@ public class QueryValidator
                 issues.add(new QueryIssue(severity, issue.getMessage(),
                     lineNumber != null ? lineNumber.intValue() : -1,
                     column != null ? column.intValue() : -1,
-                    offset != null ? offset.intValue() : -1));
+                    offset != null ? offset.intValue() : -1,
+                    issue.getCode()));
             }
 
-            return Collected.of(issues, parserObjected);
+            return Collected.of(oneIssuePerPlace(issues), parserObjected, layout);
         }
         catch (IOException e)
         {
@@ -789,7 +818,8 @@ public class QueryValidator
     }
 
     private String buildResult(IProject project, IProject asked, String queryText,
-        List<QueryIssue> issues, boolean dcsMode, boolean describeResult, boolean checkedAgain)
+        List<QueryIssue> issues, boolean dcsMode, boolean describeResult, boolean checkedAgain,
+        List<String> resolvedInProjects)
     {
         JsonObject result = new JsonObject();
         result.addProperty("success", true); //$NON-NLS-1$
@@ -802,6 +832,17 @@ public class QueryValidator
         if (project != null && asked != null && !project.equals(asked))
         {
             result.addProperty("resolvedInProject", project.getName()); //$NON-NLS-1$
+        }
+        if (resolvedInProjects != null)
+        {
+            // A settled answer drawn from both models names both, for the same reason the single
+            // field names its one: a caller told "valid" has to know which models vouched.
+            JsonArray models = new JsonArray();
+            for (String name : resolvedInProjects)
+            {
+                models.add(name);
+            }
+            result.add("resolvedInProjects", models); //$NON-NLS-1$
         }
         if (checkedAgain)
         {
@@ -913,7 +954,74 @@ public class QueryValidator
         List<Map<String, String>> fixesApplied = new ArrayList<>();
     }
 
-    private static class QueryIssue
+    /**
+     * One issue per place: the resource's copy and the validator's copy of one finding share a
+     * severity, a line, a column and a message, and answering with both reports every place twice
+     * and doubles every count. When they do, the record that carries an offset is the one kept -
+     * it is the one a caller can turn back into a position in the text.
+     *
+     * @param raw the issues as collected
+     * @return the issues, one per place, in collection order
+     */
+    static List<QueryIssue> oneIssuePerPlace(List<QueryIssue> raw)
+    {
+        Map<String, QueryIssue> byPlace = new LinkedHashMap<>();
+        for (QueryIssue issue : raw)
+        {
+            String key = issue.severity + "\u0000" + issue.line + "\u0000" + issue.column //$NON-NLS-1$
+                + "\u0000" + issue.message; //$NON-NLS-1$
+            QueryIssue seen = byPlace.get(key);
+            if (seen == null || (seen.offset < 0 && issue.offset >= 0))
+            {
+                byPlace.put(key, issue);
+            }
+        }
+        return new ArrayList<>(byPlace.values());
+    }
+
+    /**
+     * Settles the named project's issues against the other model's answer, place by place, for a
+     * query neither model accounts for whole.
+     * <p>
+     * Delegates the keeping and the dropping to
+     * {@link QlValidator#standsAfterMerging(QlValidator.QlIssue, List, List,
+     * QlValidator.QueryLayout)}: a missing-field error is
+     * dropped only when the other model said nothing at its very place and the source its field's
+     * alias names resolved in the other model's parse of the query scope that declares the alias.
+     * Every other finding, and everything the named model said about its own objects, stands.
+     * </p>
+     *
+     * @param askedIssues what the named project reported
+     * @param otherIssues what the other model reported
+     * @param askedLayout the query's sources as the named project resolved them
+     * @param otherLayout the query's sources as the other model resolved them
+     * @return the issues that belong in the settled answer, in report order
+     */
+    static List<QueryIssue> settledIssues(List<QueryIssue> askedIssues, List<QueryIssue> otherIssues,
+        QlValidator.QueryLayout askedLayout, QlValidator.QueryLayout otherLayout)
+    {
+        List<QlValidator.At> otherPlaces = new ArrayList<>();
+        for (QueryIssue other : otherIssues)
+        {
+            otherPlaces.add(QlValidator.At.of(other.offset, other.line, other.column));
+        }
+        QlValidator.QueryLayout sites = askedLayout != null ? askedLayout : new QlValidator.QueryLayout();
+        QlValidator.QueryLayout elsewhere =
+            otherLayout != null ? otherLayout : new QlValidator.QueryLayout();
+        List<QueryIssue> kept = new ArrayList<>();
+        for (QueryIssue issue : askedIssues)
+        {
+            QlValidator.QlIssue asQl = new QlValidator.QlIssue(issue.severity, issue.message,
+                issue.line, issue.column, issue.offset, issue.code);
+            if (QlValidator.standsAfterMerging(asQl, otherPlaces, sites.sites, elsewhere))
+            {
+                kept.add(issue);
+            }
+        }
+        return kept;
+    }
+
+    static class QueryIssue
     {
         final String severity;
         final String message;
@@ -921,13 +1029,21 @@ public class QueryValidator
         final int column;
         final int offset;
 
-        QueryIssue(String severity, String message, int line, int column, int offset)
+        /**
+         * What kind of diagnostic this is, in a form that does not change with the language. Read
+         * by the settle rule, which may drop a missing-field error and nothing else; a diagnostic
+         * with no code is never dropped.
+         */
+        final String code;
+
+        QueryIssue(String severity, String message, int line, int column, int offset, String code)
         {
             this.severity = severity;
             this.message = message;
             this.line = line;
             this.column = column;
             this.offset = offset;
+            this.code = code;
         }
     }
 }

@@ -585,7 +585,7 @@ public final class QueryResultSchema
      * @param source the source, may be <code>null</code>
      * @return the model element, or <code>null</code>
      */
-    private static DbViewElement dbViewOf(AbstractQuerySchemaSource source)
+    static DbViewElement dbViewOf(AbstractQuerySchemaSource source)
     {
         if (!(source instanceof QuerySchemaTable))
         {
