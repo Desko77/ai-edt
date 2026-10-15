@@ -949,12 +949,30 @@ public final class QlValidator
             {
                 i++;
             }
-            if (i == start || i >= text.length() - 1 || text.charAt(i) != '.'
-                || !isIdentifierChar(text.charAt(i + 1)))
+            if (i == start)
             {
                 break;
             }
-            i++;
+            // The parser takes whitespace on either side of the dot, so the scan does too.
+            int dot = i;
+            while (dot < text.length() && Character.isWhitespace(text.charAt(dot)))
+            {
+                dot++;
+            }
+            if (dot >= text.length() || text.charAt(dot) != '.')
+            {
+                break;
+            }
+            int next = dot + 1;
+            while (next < text.length() && Character.isWhitespace(text.charAt(next)))
+            {
+                next++;
+            }
+            if (next >= text.length() || !isIdentifierChar(text.charAt(next)))
+            {
+                break;
+            }
+            i = next;
         }
         return Math.max(nodeLength, i - offset);
     }

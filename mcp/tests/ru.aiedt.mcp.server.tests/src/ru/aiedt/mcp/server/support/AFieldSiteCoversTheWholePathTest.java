@@ -40,6 +40,16 @@ public class AFieldSiteCoversTheWholePathTest
         assertEquals(text.indexOf(",") - offset, length); //$NON-NLS-1$
     }
 
+    /** Whitespace on either side of a dot, a line break included, stays inside the path. */
+    @Test
+    public void whitespaceAroundADotStaysInThePath()
+    {
+        String text = "ВЫБРАТЬ Т . Ссылка .\n\tКод КАК К"; //$NON-NLS-1$
+        int offset = text.indexOf(" Т "); //$NON-NLS-1$
+
+        assertEquals(text.indexOf(" КАК") - offset, QlValidator.pathLengthFrom(text, offset, 2)); //$NON-NLS-1$
+    }
+
     /** A node already longer than the path keeps its own length. */
     @Test
     public void aNodeLongerThanThePathKeepsItsLength()
