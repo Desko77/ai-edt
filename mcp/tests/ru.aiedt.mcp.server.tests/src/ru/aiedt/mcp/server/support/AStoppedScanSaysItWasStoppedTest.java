@@ -244,24 +244,3 @@ public class AStoppedScanSaysItWasStoppedTest
         }
     }
 }
-    @Test
-    public void aScopeWithAFlagThatWasNeverRaisedStopsNothing()
-    {
-        // The control. Without it the two tests above would pass just as well against a watch that
-        // stops on every boundary, which would turn every heavy call into a one-step call.
-        ToolCallScope.enter(ToolCallScope.forCancellation(new ToolCallScope.Cancellation()));
-        try
-        {
-            WatchForCancel watch = WatchForCancel.begin();
-
-            assertFalse(watch.stopHere());
-            assertFalse(watch.stopHere());
-            assertFalse(watch.stopped());
-            assertNull(watch.note("modules"));
-        }
-        finally
-        {
-            ToolCallScope.exit();
-        }
-    }
-}

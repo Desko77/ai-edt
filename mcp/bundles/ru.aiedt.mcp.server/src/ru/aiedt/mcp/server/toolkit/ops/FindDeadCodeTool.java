@@ -716,8 +716,8 @@ public class FindDeadCodeTool
             else if (nothingLoaded)
             {
                 out.append("No candidate module could be read: the modules the scan reached ") //$NON-NLS-1$
-                .append("failed to load, so no export was examined - check that the project ") //$NON-NLS-1$
-                .append("model is built and retry.\n"); //$NON-NLS-1$
+                    .append("failed to load, so no export was examined - check that the project ") //$NON-NLS-1$
+                    .append("model is built and retry.\n"); //$NON-NLS-1$
             }
             else
             {
@@ -948,10 +948,10 @@ public class FindDeadCodeTool
 
         final int loadFailures;
 
-        /** Whether the candidate cap stopped the walk before the list of files ran out. */
+        /** Whether the candidate cap refused files before the list of them ran out. */
         final boolean stoppedByCandidateCap;
 
-        /** Whether the name-call collection cap stopped the walk before the list ran out. */
+        /** Whether the name-call collection cap refused files before the list ran out. */
         final boolean stoppedByCollectionCap;
 
         FirstPass(List<WalkedModule> walked, int modulesScanned, int collectionReads,

@@ -333,7 +333,6 @@ public class ANameCalledMethodIsNotReportedDeadTest
                 .anyMatch(candidate -> "НичемНеВызван".equals(candidate.methodName))); //$NON-NLS-1$
     }
 
-
     /**
      * A cancel that arrives while the walk's last module is loading is still reported: the cap
      * checks do not shortcut the question, and the walk asks once more after its last load.
@@ -533,7 +532,6 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertFalse(report, report.contains("name-written calls collected from")); //$NON-NLS-1$
         assertFalse(report, report.contains("No dead export methods found in the scanned scope.")); //$NON-NLS-1$
     }
-
 
     /**
      * The name-written calls of a module outside the family prefix and the path filter are still
@@ -782,40 +780,6 @@ public class ANameCalledMethodIsNotReportedDeadTest
         resource.getContents().add(module);
         return module;
     }
-
-    /** A module holding one statement, the way a form module holds its handlers. */
-    private static Module moduleWithStatement(com._1c.g5.v8.dt.bsl.model.Expression expression)
-    {
-        BslFactory factory = BslFactory.eINSTANCE;
-        Module module = factory.createModule();
-        Procedure method = factory.createProcedure();
-        module.getMethods().add(method);
-        SimpleStatement statement = factory.createSimpleStatement();
-        statement.setLeft(expression);
-        method.getStatements().add(statement);
-        return module;
-    }
-
-    /**
-     * Adds an idle-handler attachment naming a method of the module itself.
-     *
-     * @param module the module
-     * @param methodName the method name the attachment spells
-     */
-    private static void idleHandlerOn(Module module, String methodName)
-    {
-        BslFactory factory = BslFactory.eINSTANCE;
-        Invocation call = factory.createInvocation();
-        call.setMethodAccess(factory.createStaticFeatureAccess());
-        ((StaticFeatureAccess)call.getMethodAccess()).setName("ПодключитьОбработчикОжидания"); //$NON-NLS-1$
-        StringLiteral literal = factory.createStringLiteral();
-        literal.getLines().add("\"" + methodName + "\""); //$NON-NLS-1$ //$NON-NLS-2$
-        call.getParams().add(literal);
-        SimpleStatement statement = factory.createSimpleStatement();
-        statement.setLeft(call);
-        module.getMethods().get(0).getStatements().add(statement);
-    }
-
 
     /** A module holding one statement, the way a form module holds its handlers. */
     private static Module moduleWithStatement(com._1c.g5.v8.dt.bsl.model.Expression expression)
