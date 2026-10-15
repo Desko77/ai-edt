@@ -345,6 +345,59 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertTrue(first.walked.isEmpty());
     }
 
+    /**
+     * The name-written calls of a module outside the family prefix and the path filter are still
+     * collected: the filters choose which modules give up candidates, not whose calls the scan
+     * reads.
+     */
+    @Test
+    public void aModuleOutsideTheFiltersStillGivesUpItsNameCalls()
+    {
+        Module caller = moduleCallingInBackground("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
+            "РассчитатьВсе", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+        Set<String> nameCalled = new HashSet<>();
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(
+            List.of(fileAt("src/Documents/Заказ/Module.bsl"), //$NON-NLS-1$
+                fileAt("src/CommonModules/Подготовка/Module.bsl")), //$NON-NLS-1$
+            path -> "Documents/Заказ/Module.bsl".equals(path) ? caller : подготовка, //$NON-NLS-1$
+            false, "CommonModules/", "Подготовка", MODULES, nameCalled, WatchForCancel.begin()); //$NON-NLS-1$ //$NON-NLS-2$
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
+            100, List.of(), method -> 0);
+
+        assertEquals("the module outside the filters was no candidate", 1, first.walked.size()); //$NON-NLS-1$
+        assertTrue("its name-written call still protects the export it names", //$NON-NLS-1$
+            nameCalled.contains(FindDeadCodeTool.nameCallKey(
+                "CommonModule.Подготовка.Module", "РассчитатьВсе"))); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(outcome.candidates.stream()
+            .allMatch(candidate -> "НичемНеВызван".equals(candidate.methodName))); //$NON-NLS-1$
+    }
+
+    /**
+     * The candidate cap note follows the stop the decision made, not the size the list happens to
+     * reach: a list the decision filled without stopping is a finished list.
+     */
+    @Test
+    public void theCandidateCapNoteFollowsTheStopTheDecisionMade()
+    {
+        FindDeadCodeTool.Candidate candidate = new FindDeadCodeTool.Candidate(
+            "CommonModules/Подготовка/Module.bsl", "НичемНеВызван", 1, null); //$NON-NLS-1$ //$NON-NLS-2$
+        FindDeadCodeTool.FirstPass first = new FindDeadCodeTool.FirstPass(List.of(), 0, 0, 0, 0,
+            false, false);
+
+        String finished = new FindDeadCodeTool().format("Проект", //$NON-NLS-1$
+            new FindDeadCodeTool.Outcome(List.of(candidate), false, 1, 0, 0, 0), first, 1,
+            Map.of(), null);
+        String stopped = new FindDeadCodeTool().format("Проект", //$NON-NLS-1$
+            new FindDeadCodeTool.Outcome(List.of(candidate), true, 1, 0, 0, 0), first, 1,
+            Map.of(), null);
+
+        assertFalse("a list of the limit's size the decision did not stop is no capped list", //$NON-NLS-1$
+            finished.contains("candidate list capped")); //$NON-NLS-1$
+        assertTrue(stopped, stopped.contains("candidate list capped")); //$NON-NLS-1$
+    }
+
     /** The methods a scheduled job and an event subscription name are collected and protect. */
     @Test
     public void theMethodsOfJobsAndSubscriptionsAreCollected()

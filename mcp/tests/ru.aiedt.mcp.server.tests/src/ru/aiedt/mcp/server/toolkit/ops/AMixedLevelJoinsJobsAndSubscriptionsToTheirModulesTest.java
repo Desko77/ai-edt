@@ -11,6 +11,9 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.eclipse.emf.ecore.EObject;
 import org.junit.Test;
 
@@ -50,8 +53,8 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         result.nodes.put(JOB, asGraphObject(job));
         result.nodes.put(SUBSCRIPTION, asGraphObject(subscription));
 
-        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
-            100, null);
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
+            absentLookup(), new ArrayList<>(), 10, 100, null);
 
         assertEquals(2, added);
         BmReferencesHelper.Edge jobEdge = edge(result, JOB);
@@ -73,8 +76,8 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         result.nodes.put(JOB, asGraphObject(job));
 
-        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
-            100, null);
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
+            absentLookup(), new ArrayList<>(), 10, 100, null);
 
         assertEquals(0, added);
         assertNull(edge(result, JOB));
@@ -93,8 +96,8 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         result.nodes.put(JOB, asGraphObject(job));
 
-        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
-            100, java.util.Set.of("attributes")); //$NON-NLS-1$
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
+            absentLookup(), new ArrayList<>(), 10, 100, java.util.Set.of("attributes")); //$NON-NLS-1$
 
         assertEquals(0, added);
         assertTrue(result.edges.isEmpty());
@@ -113,8 +116,8 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         result.nodes.put(JOB, asGraphObject(job));
 
-        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(), 10,
-            100, java.util.Set.of("РассчитатьВсе")); //$NON-NLS-1$
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
+            absentLookup(), new ArrayList<>(), 10, 100, java.util.Set.of("РассчитатьВсе")); //$NON-NLS-1$
 
         assertEquals(1, added);
         assertEquals(MODULE, edge(result, JOB).toFqn);
@@ -130,12 +133,15 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         result.nodes.put(SUBSCRIPTION, asGraphObject(subscription));
 
         assertEquals(0, DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
-            10, 100, null));
+            absentLookup(), new ArrayList<>(), 10, 100, null));
     }
 
-    /** The module node a job row adds carries the common module's own metadata object. */
+    /**
+     * The module node a job row adds holds the module the lookup loads, under the same
+     * {@code .Module} address the walk keys its own module nodes by.
+     */
     @Test
-    public void theModuleNodeCarriesTheModulesOwnObject()
+    public void theModuleNodeHoldsTheModuleTheLookupLoads()
     {
         CommonModule module = MdClassFactory.eINSTANCE.createCommonModule();
         module.setName("Подготовка"); //$NON-NLS-1$
@@ -145,10 +151,70 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
         job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
         BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
         result.nodes.put(JOB, asGraphObject(job));
+        com._1c.g5.v8.dt.bsl.model.Module loaded =
+            com._1c.g5.v8.dt.bsl.model.BslFactory.eINSTANCE.createModule();
 
-        DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration, 10, 100, null);
+        DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration,
+            fqn -> DependencyGraphTool.ModuleResolution.loaded(loaded), new ArrayList<>(), 10,
+            100, null);
 
-        assertSame(module, result.nodes.get(MODULE));
+        assertSame(loaded, result.nodes.get(MODULE));
+    }
+
+    /**
+     * A module whose file is there and whose model did not load is a node the row still reaches,
+     * and its address is named with the walk's own unloaded ones.
+     */
+    @Test
+    public void aModuleThatDidNotLoadIsNamedUnloaded()
+    {
+        ScheduledJob job = MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
+        result.nodes.put(JOB, asGraphObject(job));
+        List<String> unloaded = new ArrayList<>();
+
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
+            fqn -> DependencyGraphTool.ModuleResolution.unloaded(), unloaded, 10, 100, null);
+
+        assertEquals(1, added);
+        assertEquals(List.of(MODULE), unloaded);
+    }
+
+    /**
+     * An empty kind list keeps the rows, the way no list at all does: the set the walk is handed
+     * for an empty list is the one it is handed for no list.
+     */
+    @Test
+    public void anEmptyKindListKeepsTheJobRow()
+    {
+        ScheduledJob job = MdClassFactory.eINSTANCE.createScheduledJob();
+        job.setMethodName("Подготовка.РассчитатьВсе"); //$NON-NLS-1$
+        BmReferencesHelper.BfsResult result = new BmReferencesHelper.BfsResult();
+        result.nodes.put(JOB, asGraphObject(job));
+
+        int added = DependencyGraphTool.addJobAndSubscriptionEdges(result, configuration(),
+            absentLookup(), new ArrayList<>(), 10, 100,
+            DependencyGraphTool.keptKindsOf(List.of()));
+
+        assertEquals(1, added);
+        assertEquals(MODULE, edge(result, JOB).toFqn);
+    }
+
+    /** The kind set a walk keeps: absent and empty keep every kind, a named list keeps its own. */
+    @Test
+    public void theKeptKindSetTreatsAnEmptyListLikeAnAbsentOne()
+    {
+        assertNull(DependencyGraphTool.keptKindsOf(null));
+        assertNull(DependencyGraphTool.keptKindsOf(List.of()));
+        assertEquals(java.util.Set.of("attributes"), //$NON-NLS-1$
+            DependencyGraphTool.keptKindsOf(List.of("attributes"))); //$NON-NLS-1$
+    }
+
+    /** A lookup that answers no module. */
+    private static DependencyGraphTool.ModuleLookup absentLookup()
+    {
+        return fqn -> DependencyGraphTool.ModuleResolution.absent();
     }
 
     /** The configuration of the project, holding one common module. */

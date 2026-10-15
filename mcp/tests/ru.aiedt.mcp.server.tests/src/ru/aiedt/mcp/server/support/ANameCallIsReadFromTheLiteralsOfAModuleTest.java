@@ -345,6 +345,64 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         assertEquals(1, loads[0]);
     }
 
+    /** A module that would not load is not remembered as an answer: the next question asks again. */
+    @Test
+    public void aModuleThatWouldNotLoadIsTriedAgainOnTheNextQuestion()
+    {
+        int[] loads = {0};
+        BslCallGraphHelper.MethodNameCache cache = new BslCallGraphHelper.MethodNameCache(fqn -> {
+            loads[0]++;
+            return null;
+        });
+
+        assertTrue(!cache.hasMethodNamed("CommonModule.ДлительныеПодготовки.Module", //$NON-NLS-1$
+            "РассчитатьВсе")); //$NON-NLS-1$
+        assertTrue(!cache.hasMethodNamed("CommonModule.ДлительныеПодготовки.Module", "ДругойМетод")); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals("a failed load is not cached as an empty answer", 2, loads[0]); //$NON-NLS-1$
+    }
+
+    /** The target-module cache of a source lives in the source, not in one read of a module. */
+    @Test
+    public void theTargetModuleCacheOutlivesOneModuleRead()
+    {
+        int[] loads = {0};
+        Module target = moduleDeclaring("РассчитатьВсе"); //$NON-NLS-1$
+        BslCallGraphHelper.BslModelCallSource source = new BslCallGraphHelper.BslModelCallSource(
+            projectWithCommonModule("ДлительныеПодготовки"), null, fqn -> { //$NON-NLS-1$
+                loads[0]++;
+                return target;
+            });
+        Module firstCaller = moduleCallingInBackground("ДлительныеПодготовки.РассчитатьВсе"); //$NON-NLS-1$
+        Module secondCaller = moduleCallingInBackground("ДлительныеПодготовки.РассчитатьВсе"); //$NON-NLS-1$
+
+        source.nameCallsOf(firstCaller);
+        source.nameCallsOf(secondCaller);
+
+        assertEquals("one source loads a named target once, whatever many modules name it", 1, //$NON-NLS-1$
+            loads[0]);
+    }
+
+    /** A module that failed to load is asked for again by a later module of the same walk. */
+    @Test
+    public void aModuleThatFailedToLoadIsAskedAgainByALaterModule()
+    {
+        Module target = moduleDeclaring("РассчитатьВсе"); //$NON-NLS-1$
+        int[] loads = {0};
+        BslCallGraphHelper.BslModelCallSource source = new BslCallGraphHelper.BslModelCallSource(
+            projectWithCommonModule("ДлительныеПодготовки"), null, fqn -> { //$NON-NLS-1$
+                // The model builds while the walk runs: the first load answers nothing, the
+                // second one the module.
+                loads[0]++;
+                return loads[0] < 2 ? null : target;
+            });
+        Module firstCaller = moduleCallingInBackground("ДлительныеПодготовки.РассчитатьВсе"); //$NON-NLS-1$
+        Module secondCaller = moduleCallingInBackground("ДлительныеПодготовки.РассчитатьВсе"); //$NON-NLS-1$
+
+        assertTrue(source.nameCallsOf(firstCaller).isEmpty());
+        assertEquals(1, source.nameCallsOf(secondCaller).size());
+    }
+
     /** The method names of the calls, in their order. */
     private static List<String> names(List<BslCallGraphHelper.NameCall> calls)
     {
@@ -373,6 +431,93 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
         method.setName(methodName);
         module.getMethods().add(method);
         return module;
+    }
+
+    /** A module whose single statement runs a procedure in the background by name. */
+    private static Module moduleCallingInBackground(String moduleAndMethod)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        Procedure method = factory.createProcedure();
+        module.getMethods().add(method);
+        DynamicFeatureAccess access = factory.createDynamicFeatureAccess();
+        StaticFeatureAccess owner = factory.createStaticFeatureAccess();
+        owner.setName("ДлительныеОперации"); //$NON-NLS-1$
+        access.setSource(owner);
+        access.setName("ВыполнитьВФоне"); //$NON-NLS-1$
+        Invocation call = factory.createInvocation();
+        call.setMethodAccess(access);
+        StringLiteral text = factory.createStringLiteral();
+        text.getLines().add("\"" + moduleAndMethod + "\""); //$NON-NLS-1$ //$NON-NLS-2$
+        call.getParams().add(text);
+        SimpleStatement statement = factory.createSimpleStatement();
+        statement.setLeft(call);
+        method.getStatements().add(statement);
+        return module;
+    }
+
+    /**
+     * A project whose {@code src/CommonModules} folder holds one module folder of the given name.
+     *
+     * @param moduleName the common module's name
+     * @return the project
+     */
+    private static org.eclipse.core.resources.IProject projectWithCommonModule(String moduleName)
+    {
+        Object moduleFolder = Proxy.newProxyInstance(
+            ANameCallIsReadFromTheLiteralsOfAModuleTest.class.getClassLoader(),
+            new Class<?>[]{org.eclipse.core.resources.IFolder.class}, (p, method, args) -> {
+                if ("getName".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return moduleName;
+                }
+                return defaultAnswerOf(method.getReturnType());
+            });
+        Object src = Proxy.newProxyInstance(
+            ANameCallIsReadFromTheLiteralsOfAModuleTest.class.getClassLoader(),
+            new Class<?>[]{org.eclipse.core.resources.IFolder.class}, (p, method, args) -> {
+                if ("exists".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return Boolean.TRUE;
+                }
+                if ("members".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return new org.eclipse.core.resources.IResource[]{(org.eclipse.core.resources.IResource)moduleFolder};
+                }
+                return defaultAnswerOf(method.getReturnType());
+            });
+        return (org.eclipse.core.resources.IProject)Proxy.newProxyInstance(
+            ANameCallIsReadFromTheLiteralsOfAModuleTest.class.getClassLoader(),
+            new Class<?>[]{org.eclipse.core.resources.IProject.class}, (p, method, args) -> {
+                if ("getFolder".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return src;
+                }
+                return defaultAnswerOf(method.getReturnType());
+            });
+    }
+
+    /**
+     * The answer a proxy method of an uninteresting kind returns.
+     *
+     * @param type the method's return type
+     * @return null, or the zero value of a primitive
+     */
+    private static Object defaultAnswerOf(Class<?> type)
+    {
+        if (!type.isPrimitive() || type == void.class)
+        {
+            return null;
+        }
+        if (type == boolean.class)
+        {
+            return Boolean.FALSE;
+        }
+        if (type == long.class)
+        {
+            return Long.valueOf(0);
+        }
+        return Integer.valueOf(0);
     }
 
     /** The expression of the single statement of a module built by {@link #moduleWithStatement}. */

@@ -65,7 +65,8 @@ public class AModuleEdgeSaysHowItWasResolvedTest
         BmReferencesHelper.Edge edge = walk.edges.get(0);
         assertEquals(DependencyGraphTool.RESOLUTION_NAME, edge.resolution);
         assertEquals(1, edge.nameSites().size());
-        assertEquals(ROOT, edge.nameSites().get(0).file);
+        assertEquals("the place names the module's path, not its FQN", //$NON-NLS-1$
+            "CommonModules/Root/Module.bsl", edge.nameSites().get(0).file); //$NON-NLS-1$
         assertEquals(12, edge.nameSites().get(0).line);
         // The rendering of the walk's own answer: the count is the number of places.
         Map<String, Object> rendered = renderedEdgesOf(walk).get(0);
@@ -73,7 +74,7 @@ public class AModuleEdgeSaysHowItWasResolvedTest
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> sites = (List<Map<String, Object>>)rendered.get("sites"); //$NON-NLS-1$
         assertEquals(1, sites.size());
-        assertEquals(ROOT, sites.get(0).get("file")); //$NON-NLS-1$
+        assertEquals("CommonModules/Root/Module.bsl", sites.get(0).get("file")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /** An edge both the index and the text gave is the model one, without places. */
@@ -161,9 +162,13 @@ public class AModuleEdgeSaysHowItWasResolvedTest
         return (List<Map<String, Object>>)out.get("edges"); //$NON-NLS-1$
     }
 
-    /** A module the walk can hold, answering nothing but its own class. */
+    /** A module the walk can hold, standing at the address the assertions name. */
     private static Module module()
     {
+        org.eclipse.emf.ecore.resource.Resource resource =
+            new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl().createResource(
+                org.eclipse.emf.common.util.URI
+                    .createURI("platform:/resource/Proj/src/CommonModules/Root/Module.bsl")); //$NON-NLS-1$
         org.eclipse.emf.ecore.EClass eClass = (org.eclipse.emf.ecore.EClass)Proxy.newProxyInstance(
             AModuleEdgeSaysHowItWasResolvedTest.class.getClassLoader(),
             new Class<?>[]{org.eclipse.emf.ecore.EClass.class},
@@ -175,6 +180,10 @@ public class AModuleEdgeSaysHowItWasResolvedTest
                 if ("eClass".equals(method.getName())) //$NON-NLS-1$
                 {
                     return eClass;
+                }
+                if ("eResource".equals(method.getName())) //$NON-NLS-1$
+                {
+                    return resource;
                 }
                 Class<?> type = method.getReturnType();
                 if (!type.isPrimitive() || type == void.class)

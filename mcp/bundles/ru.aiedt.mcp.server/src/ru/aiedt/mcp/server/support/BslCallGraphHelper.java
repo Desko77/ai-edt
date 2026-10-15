@@ -605,20 +605,30 @@ public final class BslCallGraphHelper
          */
         static ModuleCallSource bslModel(IProject project, IBmModel bmModel)
         {
-            return new BslModelCallSource(project, bmModel);
+            return new BslModelCallSource(project, bmModel, fqn -> {
+                BslModuleAccess.ModulePathResolution path =
+                    BslModuleAccess.resolveModulePath(project, fqn);
+                return path != null && path.isResolved()
+                    ? BslModuleAccess.loadModule(project, path.getPath())
+                    : null;
+            });
         }
     }
 
     /** The production source, over the project's BSL reference index and resolved call links. */
-    private static final class BslModelCallSource implements ModuleCallSource
+    static final class BslModelCallSource implements ModuleCallSource
     {
         private final IProject project;
         private final IBmModel bmModel;
 
-        BslModelCallSource(IProject project, IBmModel bmModel)
+        private final java.util.function.Function<String, Module> targetModuleLoader;
+
+        BslModelCallSource(IProject project, IBmModel bmModel,
+            java.util.function.Function<String, Module> targetModuleLoader)
         {
             this.project = project;
             this.bmModel = bmModel;
+            this.targetModuleLoader = targetModuleLoader;
         }
 
         @Override
@@ -672,13 +682,7 @@ public final class BslCallGraphHelper
         {
             if (targetMethods == null)
             {
-                targetMethods = new MethodNameCache(fqn -> {
-                    BslModuleAccess.ModulePathResolution path =
-                        BslModuleAccess.resolveModulePath(project, fqn);
-                    return path != null && path.isResolved()
-                        ? BslModuleAccess.loadModule(project, path.getPath())
-                        : null;
-                });
+                targetMethods = new MethodNameCache(targetModuleLoader);
             }
             return targetMethods;
         }
@@ -1245,7 +1249,9 @@ public final class BslCallGraphHelper
          * case.
          * <p>
          * The module is read on the first question about it and remembered, also when it answered
-         * nothing or would not load.
+         * nothing. A module that would not load is not remembered: the model may still be
+         * building, so the next question about it loads it again rather than reading a cached
+         * nothing.
          * </p>
          *
          * @param fqn the module's FQN
@@ -1258,8 +1264,17 @@ public final class BslCallGraphHelper
             {
                 return false;
             }
-            Set<String> names = namesByFqn.computeIfAbsent(fqn,
-                key -> methodNamesOf(loader.apply(key)));
+            Set<String> names = namesByFqn.get(fqn);
+            if (names == null)
+            {
+                Module module = loader.apply(fqn);
+                if (module == null)
+                {
+                    return false;
+                }
+                names = methodNamesOf(module);
+                namesByFqn.put(fqn, names);
+            }
             return names.contains(methodName.toLowerCase(java.util.Locale.ROOT));
         }
     }
@@ -1399,11 +1414,40 @@ public final class BslCallGraphHelper
             // the index carries, and the two readers sit behind the same method of the source. A
             // call naming its own module is an edge of the module onto itself: the reference half
             // drops self-calls, so the text-written row is the only one that carries them.
+            // The place a sighting names is the module's src-relative path, the address every
+            // other file answer of this graph spells; an FQN here would read as a path it is not.
+            String sitePath = modulePathOf(module);
             for (NameCall call : source.nameCallsOf(module))
             {
                 String targetFqn = call.targetModuleFqn != null ? call.targetModuleFqn : selfFqn;
-                visitor.visit(new ModuleEdge(selfFqn, targetFqn, 1, true, selfFqn, call.line));
+                visitor.visit(new ModuleEdge(selfFqn, targetFqn, 1, true, sitePath, call.line));
             }
+        }
+    }
+
+    /**
+     * The path a module's own resource address names, relative to {@code src/}.
+     *
+     * @param module the module
+     * @return its path the way the module tools spell it, or {@code null} when the module has no
+     *         address to read
+     */
+    static String modulePathOf(Module module)
+    {
+        try
+        {
+            org.eclipse.emf.ecore.resource.Resource resource = module.eResource();
+            if (resource == null)
+            {
+                return null;
+            }
+            String path = resource.getURI().path();
+            int srcIdx = path == null ? -1 : path.indexOf("/src/"); //$NON-NLS-1$
+            return srcIdx < 0 ? null : path.substring(srcIdx + 5);
+        }
+        catch (Exception noResource)
+        {
+            return null;
         }
     }
 }

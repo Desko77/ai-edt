@@ -272,8 +272,7 @@ public class DependencyGraphTool implements IMcpTool
                     }
                     else
                     {
-                        Set<String> keep =
-                            edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
+                        Set<String> keep = keptKindsOf(edgeKinds);
                         if (roots.isEmpty())
                         {
                             result = new BmReferencesHelper.BfsResult();
@@ -289,8 +288,8 @@ public class DependencyGraphTool implements IMcpTool
                         {
                             // The reference walk cannot give the rows a job's method name and a
                             // subscription's handler stand for: both are plain strings.
-                            addJobAndSubscriptionEdges(result, configuration, maxNodes, maxEdges,
-                                keep);
+                            addJobAndSubscriptionEdges(result, configuration, lookup,
+                                modulesUnloaded, maxNodes, maxEdges, keep);
                         }
                     }
                     bfsRef.set(result);
@@ -342,6 +341,25 @@ public class DependencyGraphTool implements IMcpTool
     }
 
     /**
+     * The kinds the walk keeps, as the argument the call carried asks for them.
+     * <p>
+     * An absent argument keeps every kind. A list that named nothing - empty on arrival, or
+     * nothing but blanks - keeps every kind as well: a caller building the list dynamically ends
+     * up with an empty one far more often than with a deliberate "keep none", and an answer with
+     * no edges at all reads as a broken graph rather than as a filter.
+     * </p>
+     *
+     * @param requested the kinds the caller asked to keep, or {@code null} when the argument was
+     *        absent
+     * @return the set of kinds a kept edge's {@code via} must be in, or {@code null} when every
+     *         kind is kept
+     */
+    static Set<String> keptKindsOf(List<String> requested)
+    {
+        return requested == null || requested.isEmpty() ? null : new LinkedHashSet<>(requested);
+    }
+
+    /**
      * The filter of the walk a level makes.
      * <p>
      * The metadata level is a graph between metadata objects, and the mixed level shows both halves
@@ -363,9 +381,11 @@ public class DependencyGraphTool implements IMcpTool
     /**
      * The via values to keep, in the order given, with blanks and repeats dropped.
      * <p>
-     * Absent is <code>null</code> and keeps every kind. Present and empty keeps none: an empty
-     * list and a missing argument are different, and the reader of a list returns
-     * <code>null</code> for both, so the key itself is what tells them apart.
+     * Absent is <code>null</code> and keeps every kind. Present and naming nothing keeps every
+     * kind as well - the walk treats that list the way it treats no list, while still echoing it
+     * in the answer - so a list built dynamically does not turn into a graph with no edges. The
+     * reader of a list returns <code>null</code> for an absent argument and for one that is not a
+     * list at all, so the key itself is what tells the cases apart.
      * </p>
      *
      * @param params the call
@@ -776,20 +796,25 @@ public class DependencyGraphTool implements IMcpTool
      * are plain strings in the metadata, not references the BM engine records. The object is joined
      * to the module itself, with the method name as the {@code via}; the row is model-resolved,
      * because the metadata states it rather than a call site spelling it. The module node a row
-     * adds carries the common module's metadata object. A name the project does
+     * adds holds the module the lookup loads, under the same {@code .Module} address the walk keys
+     * its own module nodes by; an address whose file is there and whose model did not load is
+     * named in {@code unloaded}, the way the walk names its own. A name the project does
      * not answer with a common module gives no row, and a method the module does not declare is
      * not checked for here - the row is about the module, not the method.
      * </p>
      *
      * @param result the graph the walk filled
      * @param configuration the project configuration
+     * @param lookup the module lookup, which turns the FQN into the module to hold
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
      * @param maxNodes the node cap of the walk
      * @param maxEdges the edge cap of the walk
      * @param keepKinds the {@code via} values to keep, or {@code null} for all of them
      * @return how many rows were added
      */
     static int addJobAndSubscriptionEdges(BmReferencesHelper.BfsResult result,
-        Configuration configuration, int maxNodes, int maxEdges, Set<String> keepKinds)
+        Configuration configuration, ModuleLookup lookup, List<String> unloaded, int maxNodes,
+        int maxEdges, Set<String> keepKinds)
     {
         int added = 0;
         List<Map.Entry<String, IBmObject>> nodes = new ArrayList<>(result.nodes.entrySet());
@@ -832,9 +857,17 @@ public class DependencyGraphTool implements IMcpTool
                     result.truncated = true;
                     continue;
                 }
-                // The metadata objects the runtime builds answer the graph's node type; the
-                // double cast says so to the compiler.
-                result.nodes.put(targetFqn, (IBmObject)(Object)target);
+                // The node holds the module the method sits in, loaded the way the walk loads its
+                // own module nodes, so the key and the object agree the way they agree everywhere
+                // else in the graph. The metadata objects the runtime builds answer the graph's
+                // node type; the double cast says so to the compiler.
+                ModuleResolution resolution = lookup.byFqn(targetFqn);
+                result.nodes.put(targetFqn, (IBmObject)(Object)resolution.module);
+                if (resolution.module == null && resolution.addressPresent
+                    && !unloaded.contains(targetFqn))
+                {
+                    unloaded.add(targetFqn);
+                }
             }
             if (edgeExists(result, node.getKey(), targetFqn, parsed.methodName))
             {
