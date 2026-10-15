@@ -108,6 +108,13 @@ public final class QlValidator
         public final int column;
 
         /**
+         * The character offset of the issue in the text, or a negative number when the issue
+         * carries none. A resource's own copy of a finding names no offset; the checker's copy
+         * does, and it is the one a place in the text can be settled by.
+         */
+        public final int offset;
+
+        /**
          * What kind of diagnostic this is, in a form that does not change with the language.
          * <p>
          * The message does change: the platform localises it, so "field not found" arrives in
@@ -120,15 +127,22 @@ public final class QlValidator
 
         public QlIssue(String severity, String message, int line, int column)
         {
-            this(severity, message, line, column, null);
+            this(severity, message, line, column, -1, null);
         }
 
         public QlIssue(String severity, String message, int line, int column, String code)
+        {
+            this(severity, message, line, column, -1, code);
+        }
+
+        public QlIssue(String severity, String message, int line, int column, int offset,
+            String code)
         {
             this.severity = severity;
             this.message = message;
             this.line = line;
             this.column = column;
+            this.offset = offset;
             this.code = code;
         }
 
@@ -139,6 +153,10 @@ public final class QlValidator
             m.put("message", message); //$NON-NLS-1$
             m.put("line", line); //$NON-NLS-1$
             m.put("column", column); //$NON-NLS-1$
+            if (offset >= 0)
+            {
+                m.put("offset", Integer.valueOf(offset)); //$NON-NLS-1$
+            }
             if (code != null)
             {
                 m.put("code", code); //$NON-NLS-1$
@@ -239,6 +257,17 @@ public final class QlValidator
         public final int scope;
 
         /**
+         * The 1-based column the reference starts at, or a negative number when unknown.
+         */
+        public final int column;
+
+        /**
+         * The 1-based last column the reference occupies on its starting line, or a negative
+         * number when unknown.
+         */
+        public final int endColumn;
+
+        /**
          * Makes a site.
          *
          * @param offset the character offset
@@ -249,11 +278,30 @@ public final class QlValidator
          */
         public FieldSite(int offset, int length, int line, String alias, int scope)
         {
+            this(offset, length, line, alias, scope, -1, -1);
+        }
+
+        /**
+         * Makes a site with the columns it occupies on its starting line.
+         *
+         * @param offset the character offset
+         * @param length the length in characters
+         * @param line the 1-based starting line
+         * @param alias the alias the reference begins with
+         * @param scope the id of the query scope declaring the alias
+         * @param column the 1-based column the reference starts at, negative when unknown
+         * @param endColumn the 1-based last column on the starting line, negative when unknown
+         */
+        public FieldSite(int offset, int length, int line, String alias, int scope, int column,
+            int endColumn)
+        {
             this.offset = offset;
             this.length = length;
             this.line = line;
             this.alias = alias;
             this.scope = scope;
+            this.column = column;
+            this.endColumn = endColumn;
         }
     }
 
@@ -532,7 +580,8 @@ public final class QlValidator
     /**
      * One diagnostic per place: the resource's copy and the checker's copy of one finding share a
      * severity, a line, a column and a message, and answering with both reports every place twice
-     * and doubles every count.
+     * and doubles every count. When they do, the record that carries an offset is the one kept -
+     * it is the one a caller can turn back into a position in the text.
      *
      * @param raw the diagnostics as collected
      * @return the diagnostics, one per place, in collection order
@@ -543,7 +592,8 @@ public final class QlValidator
         for (QlIssue issue : raw)
         {
             String key = placeKey(issue.severity, issue.line, issue.column, issue.message);
-            if (!byPlace.containsKey(key))
+            QlIssue seen = byPlace.get(key);
+            if (seen == null || (seen.offset < 0 && issue.offset >= 0))
             {
                 byPlace.put(key, issue);
             }
@@ -620,6 +670,7 @@ public final class QlValidator
                     }
                 }
             }
+            String text = rootText(resource);
             for (TreeIterator<EObject> walk = EcoreUtil.getAllContents(resource, false); walk
                 .hasNext();)
             {
@@ -644,7 +695,9 @@ public final class QlValidator
                     continue;
                 }
                 layout.sites.add(new FieldSite(node.getTotalOffset(), node.getTotalLength(),
-                    node.getStartLine(), alias, scope.intValue()));
+                    node.getStartLine(), alias, scope.intValue(),
+                    columnWhere(text, node.getTotalOffset()),
+                    lastColumnWhere(text, node.getTotalOffset(), node.getTotalLength())));
             }
         }
         catch (Exception e)
@@ -711,6 +764,64 @@ public final class QlValidator
             ofScope.remove(alias);
             disputed.add(disputedKey);
         }
+    }
+
+    /**
+     * The whole text the node model holds, when it can be read.
+     *
+     * @param resource the parsed query
+     * @return the text, or <code>null</code> when the parse result carries none
+     */
+    private static String rootText(Resource resource)
+    {
+        if (resource instanceof XtextResource)
+        {
+            IParseResult parsed = ((XtextResource)resource).getParseResult();
+            if (parsed != null && parsed.getRootNode() != null)
+            {
+                return parsed.getRootNode().getText();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The 1-based column a position sits at, or a negative number when the text is unknown.
+     *
+     * @param text the whole text, may be <code>null</code>
+     * @param position the 0-based position
+     * @return the column, or a negative number when unknown
+     */
+    private static int columnWhere(String text, int position)
+    {
+        if (text == null)
+        {
+            return -1;
+        }
+        int lineStart = text.lastIndexOf('\n', Math.max(0, position - 1)) + 1;
+        return position - lineStart + 1;
+    }
+
+    /**
+     * The 1-based last column a span occupies on its starting line, or a negative number when the
+     * text is unknown. A span crossing the line end counts up to that line's end.
+     *
+     * @param text the whole text, may be <code>null</code>
+     * @param start the 0-based position the span starts at
+     * @param length the length of the span in characters
+     * @return the last column, or a negative number when unknown
+     */
+    private static int lastColumnWhere(String text, int start, int length)
+    {
+        if (text == null)
+        {
+            return -1;
+        }
+        int lineStart = text.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+        int lineEnd = text.indexOf('\n', start);
+        int spanEnd =
+            Math.min(start + Math.max(0, length), lineEnd >= 0 ? lineEnd : text.length());
+        return spanEnd <= start ? start - lineStart + 1 : spanEnd - lineStart;
     }
 
     /**
@@ -793,23 +904,24 @@ public final class QlValidator
      * model could have said bears on it.
      * </p>
      *
-     * @param issue the place of the diagnostic
+     * @param issue the diagnostic, with the place it names
      * @param otherIssues the places the other model reported at
      * @param sites the alias-headed field references of the parsed query
      * @param elsewhere the other model's layout of the same query
      * @return whether the diagnostic belongs in the settled answer
      */
-    public static boolean standsAfterMerging(At issue, List<At> otherIssues, List<FieldSite> sites,
-        QueryLayout elsewhere)
+    public static boolean standsAfterMerging(QlIssue issue, List<At> otherIssues,
+        List<FieldSite> sites, QueryLayout elsewhere)
     {
+        At place = At.of(issue.offset, issue.line, issue.column);
         for (At other : otherIssues)
         {
-            if (other.sameAs(issue))
+            if (other.sameAs(place))
             {
                 return true;
             }
         }
-        FieldSite site = aliasUnderwriting(issue, sites);
+        FieldSite site = aliasUnderwriting(place, sites);
         if (site == null)
         {
             return true;
@@ -827,31 +939,55 @@ public final class QlValidator
     /**
      * The field reference whose alias covers the place a diagnostic points at.
      * <p>
-     * Offsets decide when both have them; a diagnostic without one is matched by line, which is
-     * where its reference starts when the two differ at all.
+     * Offsets decide when both have them. A diagnostic without one is matched by line AND column,
+     * the column lying inside the reference: a line alone is not a place, because one line holds
+     * several fields and the first of them is not the others. When the place fits more than one
+     * reference - or none - the diagnostic names no alias, and a diagnostic that names no alias
+     * stands.
      * </p>
      *
      * @param issue the place of the diagnostic
      * @param sites the alias-headed field references, in text order
-     * @return the site, or <code>null</code> when no reference covers the place
+     * @return the site, or <code>null</code> when no one reference covers the place
      */
     private static FieldSite aliasUnderwriting(At issue, List<FieldSite> sites)
     {
+        FieldSite found = null;
         for (FieldSite site : sites)
         {
-            if (issue.offset >= 0 && site.offset >= 0)
+            if (!covers(issue, site))
             {
-                if (issue.offset >= site.offset && issue.offset < site.offset + site.length)
-                {
-                    return site;
-                }
+                continue;
             }
-            else if (issue.line > 0 && site.line == issue.line)
+            if (found != null)
             {
-                return site;
+                return null;
             }
+            found = site;
         }
-        return null;
+        return found;
+    }
+
+    /**
+     * Whether a diagnostic's place lies inside one field reference.
+     * <p>
+     * Offsets decide when both sides have them; otherwise the line and the column decide, the
+     * column within the columns the reference occupies on its starting line.
+     * </p>
+     *
+     * @param issue the place of the diagnostic
+     * @param site the field reference
+     * @return whether the place lies inside the reference
+     */
+    private static boolean covers(At issue, FieldSite site)
+    {
+        if (issue.offset >= 0 && site.offset >= 0)
+        {
+            return issue.offset >= site.offset && issue.offset < site.offset + site.length;
+        }
+        return issue.line > 0 && issue.column > 0 && site.line == issue.line && site.column > 0
+            && site.endColumn >= site.column && issue.column >= site.column
+            && issue.column <= site.endColumn;
     }
 
     /**
@@ -1000,7 +1136,8 @@ public final class QlValidator
     {
         if (FIELD_NOT_FOUND.equals(issue.code) && "ERROR".equals(issue.severity)) //$NON-NLS-1$
         {
-            return new QlIssue("WARNING", issue.message, issue.line, issue.column, issue.code); //$NON-NLS-1$
+            return new QlIssue("WARNING", issue.message, issue.line, issue.column, issue.offset, //$NON-NLS-1$
+                issue.code);
         }
         return issue;
     }
@@ -1355,10 +1492,10 @@ public final class QlValidator
      * whole.
      * <p>
      * Every diagnostic of the named model is kept or dropped by
-     * {@link #standsAfterMerging(At, List, List, QueryLayout)}; the other model's own diagnostics -
-     * about the objects the named project declares itself - enter the answer nowhere, because the
-     * named model is the only one of the two that holds those objects. The answer names both
-     * models in {@code resolvedInProjects}.
+     * {@link #standsAfterMerging(QlIssue, List, List, QueryLayout)}; the other model's own
+     * diagnostics - about the objects the named project declares itself - enter the answer
+     * nowhere, because the named model is the only one of the two that holds those objects. The
+     * answer names both models in {@code resolvedInProjects}.
      * </p>
      *
      * @param here what the named project answered, with its layout.
@@ -1373,13 +1510,12 @@ public final class QlValidator
         List<At> otherPlaces = new ArrayList<>();
         for (QlIssue other : above.verdict.issues)
         {
-            otherPlaces.add(At.of(-1, other.line, other.column));
+            otherPlaces.add(At.of(other.offset, other.line, other.column));
         }
         List<QlIssue> kept = new ArrayList<>();
         for (QlIssue issue : here.verdict.issues)
         {
-            if (standsAfterMerging(At.of(-1, issue.line, issue.column), otherPlaces,
-                here.layout.sites, above.layout))
+            if (standsAfterMerging(issue, otherPlaces, here.layout.sites, above.layout))
             {
                 kept.add(issue);
             }
@@ -1453,13 +1589,13 @@ public final class QlValidator
             List<QlIssue> issues = found;
             for (Resource.Diagnostic d : resource.getErrors())
             {
-                issues.add(new QlIssue("ERROR", d.getMessage(), d.getLine(), d.getColumn(), //$NON-NLS-1$
+                issues.add(new QlIssue("ERROR", d.getMessage(), d.getLine(), d.getColumn(), -1, //$NON-NLS-1$
                     kindOf(d)));
             }
             for (Resource.Diagnostic d : resource.getWarnings())
             {
                 issues.add(new QlIssue("WARNING", d.getMessage(), d.getLine(), //$NON-NLS-1$
-                    d.getColumn(), kindOf(d)));
+                    d.getColumn(), -1, kindOf(d)));
             }
             IParseResult parsed = resource.getParseResult();
             boolean parserObjected = parsed != null && parsed.hasSyntaxErrors();
@@ -1501,7 +1637,8 @@ public final class QlValidator
                 }
                 int line = i.getLineNumber() != null ? i.getLineNumber().intValue() : -1;
                 int col = i.getColumn() != null ? i.getColumn().intValue() : -1;
-                issues.add(new QlIssue(sev, i.getMessage(), line, col, i.getCode()));
+                int offset = i.getOffset() != null ? i.getOffset().intValue() : -1;
+                issues.add(new QlIssue(sev, i.getMessage(), line, col, offset, i.getCode()));
             }
             ValidationResult settled = ValidationResult.of(issues);
             settled.parserObjected = parserObjected;

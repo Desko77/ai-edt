@@ -73,4 +73,21 @@ public class ADuplicateDiagnosticIsReportedOnceTest
         assertEquals(1, settled.errorCount);
         assertEquals(1, settled.warningCount);
     }
+
+    @Test
+    public void theCopyCarryingAnOffsetWinsThePlace()
+    {
+        // The resource's copy of a finding names no offset; the checker's copy of the same finding
+        // does. The place is reported once, by the copy a caller can turn back into a position in
+        // the text - which is also the copy the merge of two answers settles by.
+        List<QlValidator.QlIssue> twice = new ArrayList<>();
+        twice.add(new QlValidator.QlIssue("ERROR", "Поле 'А' не найдено", 3, 12)); //$NON-NLS-1$ //$NON-NLS-2$
+        twice.add(new QlValidator.QlIssue("ERROR", "Поле 'А' не найдено", 3, 12, 44, null)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        QlValidator.ValidationResult settled = QlValidator.ValidationResult.of(twice);
+
+        assertEquals("one place is one issue", 1, settled.issues.size()); //$NON-NLS-1$
+        assertEquals("the record with the offset is the one kept", 44, //$NON-NLS-1$
+            settled.issues.get(0).offset);
+    }
 }

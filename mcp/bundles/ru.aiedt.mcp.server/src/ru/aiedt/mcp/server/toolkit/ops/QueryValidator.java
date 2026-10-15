@@ -981,7 +981,8 @@ public class QueryValidator
      * query neither model accounts for whole.
      * <p>
      * Delegates the keeping and the dropping to
-     * {@link QlValidator#standsAfterMerging(At, List, List, QlValidator.QueryLayout)}: an issue is
+     * {@link QlValidator#standsAfterMerging(QlValidator.QlIssue, List, List,
+     * QlValidator.QueryLayout)}: an issue is
      * dropped only when the other model said nothing at its very place and the source its field's
      * alias names resolved in the other model's parse of the query scope that declares the alias.
      * Everything the named model said about its own objects stands.
@@ -1007,8 +1008,9 @@ public class QueryValidator
         List<QueryIssue> kept = new ArrayList<>();
         for (QueryIssue issue : askedIssues)
         {
-            QlValidator.At at = QlValidator.At.of(issue.offset, issue.line, issue.column);
-            if (QlValidator.standsAfterMerging(at, otherPlaces, sites.sites, elsewhere))
+            QlValidator.QlIssue asQl = new QlValidator.QlIssue(issue.severity, issue.message,
+                issue.line, issue.column, issue.offset, null);
+            if (QlValidator.standsAfterMerging(asQl, otherPlaces, sites.sites, elsewhere))
             {
                 kept.add(issue);
             }

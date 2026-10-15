@@ -35,10 +35,21 @@ import org.junit.Test;
  */
 public class AMixedQueryIsSettledPlaceByPlaceTest
 {
+    private static QlValidator.QlIssue errorAt(int offset, int line, int column)
+    {
+        return new QlValidator.QlIssue("ERROR", "Поле не найдено", line, column, offset, null); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
     private static QlValidator.FieldSite site(int offset, int length, int line, String alias,
         int scope)
     {
         return new QlValidator.FieldSite(offset, length, line, alias, scope);
+    }
+
+    private static QlValidator.FieldSite site(int offset, int length, int line, String alias,
+        int scope, int column, int endColumn)
+    {
+        return new QlValidator.FieldSite(offset, length, line, alias, scope, column, endColumn);
     }
 
     private static QlValidator.QueryLayout elsewhere(int scope, String alias, Boolean value)
@@ -57,7 +68,7 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         // the extension did not adopt. The configuration resolves the borrowed table (the object
         // exists there) and says nothing at the attribute's place - its complaints are about the
         // extension's own table, which sits elsewhere in the text.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(20, 1, 32),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(20, 1, 32),
             List.of(QlValidator.At.of(90, 3, 5)),
             List.of(site(20, 18, 1, "Виды", 0), site(40, 16, 1, "Сег", 0)), //$NON-NLS-1$ //$NON-NLS-2$
             elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
@@ -70,7 +81,7 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
     {
         // A field neither model finds: the other model reports the very place, so the query is
         // wrong wherever it is read. Silence was the condition for settling, and there is none.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(20, 1, 32),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(20, 1, 32),
             List.of(QlValidator.At.of(20, 1, 32)),
             List.of(site(20, 18, 1, "Виды", 0)), //$NON-NLS-1$
             elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
@@ -84,7 +95,7 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         // The other model is silent at this place - it never saw the table to look at its fields -
         // but silence alone is not agreement: the alias resolves nowhere in that model, so the
         // field is settled by the one model that holds the object.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(40, 1, 8),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(40, 1, 8),
             List.of(QlValidator.At.of(90, 3, 5)),
             List.of(site(40, 16, 1, "Сег", 0)), //$NON-NLS-1$
             elsewhere(0, "сег", Boolean.FALSE)); //$NON-NLS-1$
@@ -99,7 +110,7 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         // query, a configuration object in the second. One map for the whole batch would hold the
         // second declaration alone, and the second query's table would settle an error of the
         // first - a table the other model was never asked about at that place.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(7, 1, 8),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(7, 1, 8),
             List.of(QlValidator.At.of(300, 9, 5)),
             List.of(site(7, 20, 1, "Расш", 0), site(118, 10, 1, "Расш", 1)), //$NON-NLS-1$ //$NON-NLS-2$
             layoutWithTwoScopes(0, "расш", Boolean.FALSE, 1, "расш", Boolean.TRUE)); //$NON-NLS-1$ //$NON-NLS-2$
@@ -113,7 +124,7 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         // The same shape the other way round: the FIRST query's table resolves in the other model,
         // the second query's does not. A field of the first query is then settled by it, and the
         // map of the second query must not be allowed to speak for the first.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(7, 1, 8),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(7, 1, 8),
             List.of(QlValidator.At.of(300, 9, 5)),
             List.of(site(7, 20, 1, "Расш", 0), site(118, 10, 1, "Расш", 1)), //$NON-NLS-1$ //$NON-NLS-2$
             layoutWithTwoScopes(0, "расш", Boolean.TRUE, 1, "расш", Boolean.FALSE)); //$NON-NLS-1$ //$NON-NLS-2$
@@ -127,7 +138,7 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         // Two sources of one query share an alias; one resolves in the other model, the other does
         // not. Which source a field of that name reads through is not something the layout can
         // say, so the error stays rather than being settled by whichever declaration won the map.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(7, 1, 8),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(7, 1, 8),
             List.of(QlValidator.At.of(300, 9, 5)),
             List.of(site(7, 20, 1, "Расш", 0)), //$NON-NLS-1$
             disputedElsewhere(0, "расш")); //$NON-NLS-1$
@@ -141,12 +152,68 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         // A table that is not there, a syntax complaint - a diagnostic at a place no field
         // reference covers. Nothing the other model could have said bears on it, and an alias
         // resolving in a scope of its own is the same situation read from the other end.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(300, 5, 6),
+        boolean stands = QlValidator.standsAfterMerging(errorAt(300, 5, 6),
             List.of(QlValidator.At.of(90, 3, 5)),
             List.of(site(20, 18, 1, "Виды", 0)), //$NON-NLS-1$
             elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
 
         assertTrue("a diagnostic tied to no source alias is never dropped", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void twoReferencesOnOneLineWithoutOffsetSettleByTheirOwnColumns()
+    {
+        // One line, two fields: the borrowed object's reference first, the extension's own second.
+        // An issue without an offset is tied by its COLUMN, not by which reference happens to
+        // start first on the line - the first reference's alias resolving settles nothing about
+        // the second.
+        boolean stands = QlValidator.standsAfterMerging(errorAt(-1, 1, 44),
+            List.of(QlValidator.At.of(90, 3, 5)),
+            List.of(site(20, 18, 1, "Виды", 0, 21, 38),
+                site(58, 24, 1, "Расш", 0, 59, 81)), //$NON-NLS-1$ //$NON-NLS-2$
+            resolution(0, "виды", Boolean.TRUE, "расш", Boolean.FALSE)); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue("the first reference on a line does not settle the second's error", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anIssueWithoutAColumnNamesNoReferenceOnItsLine()
+    {
+        // A diagnostic that carries a line and no column cannot be told from its neighbour on the
+        // line, so it names no alias and stands - a line is a neighbourhood, not a place.
+        boolean stands = QlValidator.standsAfterMerging(errorAt(-1, 1, -1),
+            List.of(QlValidator.At.of(90, 3, 5)),
+            List.of(site(20, 18, 1, "Виды", 0, 21, 38)), //$NON-NLS-1$
+            elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertTrue("a place without a column ties an issue to no alias", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aReferenceWithoutColumnsDoesNotSettleAnIssueWithoutAnOffset()
+    {
+        // A layout whose columns could not be read settles nothing by line alone: the column is
+        // what tells two references of one line apart, and without it the conservative answer is
+        // the one the named model gave.
+        boolean stands = QlValidator.standsAfterMerging(errorAt(-1, 1, 21),
+            List.of(),
+            List.of(site(20, 18, 1, "Виды", 0)), //$NON-NLS-1$
+            elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertTrue("a site naming no columns settles no issue without an offset", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anIssueInsideAReferencesColumnsIsSettledByThem()
+    {
+        // The positive shape: the issue carries no offset, its column lies inside one reference,
+        // and that reference's alias resolves - the error is settled away exactly as with offsets.
+        boolean stands = QlValidator.standsAfterMerging(errorAt(-1, 4, 10),
+            List.of(QlValidator.At.of(90, 3, 5)),
+            List.of(site(20, 18, 4, "Виды", 0, 9, 26)), //$NON-NLS-1$
+            elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertFalse("a column inside the reference settles the issue", stands); //$NON-NLS-1$
     }
 
     @Test
@@ -157,28 +224,18 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
 
         // Same line and column: the other model spoke at this place, so the issue stands even
         // though the alias resolves.
-        assertTrue(QlValidator.standsAfterMerging(QlValidator.At.of(-1, 4, 10),
+        assertTrue(QlValidator.standsAfterMerging(errorAt(-1, 4, 10),
             List.of(QlValidator.At.of(-1, 4, 10)), List.of(onTheLine), borrowed));
 
-        // A different column is a different place: silence there, the alias resolves, and the
-        // issue is settled away.
-        assertFalse(QlValidator.standsAfterMerging(QlValidator.At.of(-1, 4, 10),
-            List.of(QlValidator.At.of(-1, 4, 11)), List.of(onTheLine), borrowed));
+        // A different column is a different place: silence there, and the issue is settled away by
+        // the reference that covers the column.
+        assertFalse(QlValidator.standsAfterMerging(errorAt(-1, 4, 10),
+            List.of(QlValidator.At.of(-1, 4, 11)),
+            List.of(site(20, 18, 4, "Виды", 0, 9, 26)), borrowed)); //$NON-NLS-1$
 
         // A place that names neither an offset nor a line is not the same place as anything.
-        assertTrue(QlValidator.standsAfterMerging(QlValidator.At.of(-1, -1, -1),
+        assertTrue(QlValidator.standsAfterMerging(errorAt(-1, -1, -1),
             List.of(QlValidator.At.of(-1, -1, -1)), List.of(onTheLine), borrowed));
-    }
-
-    @Test
-    public void aSiteLineBacksAnIssueThatCarriesNoOffset()
-    {
-        // The resource's copy of a finding carries no offset; its reference is found by the line
-        // the site starts on.
-        boolean stands = QlValidator.standsAfterMerging(QlValidator.At.of(-1, 4, 10),
-            List.of(), List.of(site(20, 18, 4, "Виды", 0)), elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$ //$NON-NLS-2$
-
-        assertFalse("a line is enough to tie an issue to its alias", stands); //$NON-NLS-1$
     }
 
     /**
@@ -202,6 +259,27 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
         Map<String, Boolean> second = new LinkedHashMap<>();
         second.put(secondAlias.toLowerCase(java.util.Locale.ROOT), secondValue);
         layout.aliasResolvesByScope.put(Integer.valueOf(secondScope), second);
+        return layout;
+    }
+
+    /**
+     * A layout of one scope holding two alias resolutions.
+     *
+     * @param scope the scope's id
+     * @param firstAlias the first alias, as written
+     * @param firstValue whether it resolved in that model
+     * @param secondAlias the second alias, as written
+     * @param secondValue whether it resolved in that model
+     * @return the layout
+     */
+    private static QlValidator.QueryLayout resolution(int scope, String firstAlias,
+        Boolean firstValue, String secondAlias, Boolean secondValue)
+    {
+        QlValidator.QueryLayout layout = new QlValidator.QueryLayout();
+        Map<String, Boolean> ofScope = new LinkedHashMap<>();
+        ofScope.put(firstAlias.toLowerCase(java.util.Locale.ROOT), firstValue);
+        ofScope.put(secondAlias.toLowerCase(java.util.Locale.ROOT), secondValue);
+        layout.aliasResolvesByScope.put(Integer.valueOf(scope), ofScope);
         return layout;
     }
 
