@@ -197,6 +197,54 @@ public class AStoppedScanSaysItWasStoppedTest
     }
 
     @Test
+    public void aFlagRaisedAfterTheLastPollStillReachesTheNote()
+    {
+        // The last poll happened before the flag went up - a stop that landed during work the
+        // watch does not poll, such as a caller count through the reference finder. The note is
+        // the one place the answer says the work was cut, so it asks the flag itself.
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+            watch.stopHere();
+            flag.cancel("the operator asked to stop");
+
+            String note = watch.note("modules");
+
+            assertNotNull("a flag raised after the last poll is still a stop", note);
+            assertTrue(note, note.contains(" 1 modules"));
+            assertTrue("the note has to warn that the answer is partial",
+                note.contains("not the whole answer"));
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    @Test
+    public void aScopeWithAFlagThatWasNeverRaisedStopsNothing()
+    {
+        // The control. Without it the two tests above would pass just as well against a watch that
+        // stops on every boundary, which would turn every heavy call into a one-step call.
+        ToolCallScope.enter(ToolCallScope.forCancellation(new ToolCallScope.Cancellation()));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+
+            assertFalse(watch.stopHere());
+            assertFalse(watch.stopHere());
+            assertFalse(watch.stopped());
+            assertNull(watch.note("modules"));
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+}
+    @Test
     public void aScopeWithAFlagThatWasNeverRaisedStopsNothing()
     {
         // The control. Without it the two tests above would pass just as well against a watch that

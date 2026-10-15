@@ -275,7 +275,7 @@ public class FindDeadCodeTool
             new BslModuleAccess.TransientModuleReads(project), includeForms, pathPrefix,
             moduleFilter, commonModules, nameCalled, watch);
         Outcome outcome = candidatesOf(first.walked, nameCalled, limit, extraPatterns,
-            BslCallGraphHelper::countCallers);
+            BslCallGraphHelper::countCallers, watch);
 
         return format(projectName, outcome, first, limit, params,
             // The count names every boundary the walk asked about - the modules read for their
@@ -416,6 +416,11 @@ public class FindDeadCodeTool
      * is dropped here rather than at the end of the scan: it neither becomes a candidate nor
      * occupies the candidate limit, which the answer caps by the candidates it really reports.
      * </p>
+     * <p>
+     * The decision polls the cancel signal at the same module boundary the walk polls: a caller
+     * count runs through the reference finder, which a stop of the walk alone would leave
+     * running to its end without the answer saying it was cut.
+     * </p>
      *
      * @param walked the modules the first pass read
      * @param nameCalled the keys of methods a written-by-name call names
@@ -423,10 +428,12 @@ public class FindDeadCodeTool
      * @param extraPatterns extra method-name substrings to treat as called-by-name
      * @param callerCount how many call sites reference a method, or a negative number when the
      *        lookup could not run
+     * @param watch the cancel signal of the call
      * @return the candidates and the counts of the decision
      */
     static Outcome candidatesOf(List<WalkedModule> walked, Set<String> nameCalled, int limit,
-        List<String> extraPatterns, java.util.function.ToIntFunction<Method> callerCount)
+        List<String> extraPatterns, java.util.function.ToIntFunction<Method> callerCount,
+        WatchForCancel watch)
     {
         List<Candidate> candidates = new ArrayList<>();
         boolean stoppedByLimit = false;
@@ -436,6 +443,12 @@ public class FindDeadCodeTool
         int indeterminate = 0;
         walk: for (WalkedModule entry : walked)
         {
+            // Asked without counting a boundary: the count the note reports names the modules
+            // the walk read, and the decision's own steps are not more of those.
+            if (watch.raised())
+            {
+                break walk;
+            }
             for (Method method : entry.module.allMethods())
             {
                 if (!method.isExport())

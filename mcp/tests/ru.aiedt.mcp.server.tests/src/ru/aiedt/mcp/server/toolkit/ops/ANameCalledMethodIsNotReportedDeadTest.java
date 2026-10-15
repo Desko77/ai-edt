@@ -100,7 +100,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
             "CommonModule.Подготовка.Module", "ПроверитьОжидание"))); //$NON-NLS-1$ //$NON-NLS-2$
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
             List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", module)), //$NON-NLS-1$
-            nameCalled, 100, List.of(), method -> 0);
+            nameCalled, 100, List.of(), method -> 0, WatchForCancel.begin());
         assertTrue(outcome.candidates.isEmpty());
     }
 
@@ -132,7 +132,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
             FindDeadCodeTool.nameCallKey("CommonModule.Подготовка.Module", "РАССЧИТАТЬВСЕ")); //$NON-NLS-1$ //$NON-NLS-2$
 
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(walked, nameCalled, 100,
-            List.of(), method -> 0);
+            List.of(), method -> 0, WatchForCancel.begin());
 
         // A module whose address names no FQN cannot be collected under a key, so nothing
         // protects its export.
@@ -169,7 +169,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
             List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
                 подготовка)),
-            nameCalled, 1, List.of(), method -> 0);
+            nameCalled, 1, List.of(), method -> 0, WatchForCancel.begin());
 
         assertEquals(1, outcome.candidates.size());
         assertEquals("НичемНеВызван", outcome.candidates.get(0).methodName); //$NON-NLS-1$
@@ -189,7 +189,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
 
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
             List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", module)), //$NON-NLS-1$
-            nameCalled, 2, List.of(), method -> 0);
+            nameCalled, 2, List.of(), method -> 0, WatchForCancel.begin());
 
         assertEquals(1, outcome.candidates.size());
         assertFalse(outcome.stoppedByLimit);
@@ -213,7 +213,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
             false, null, null, MODULES, nameCalled, WatchForCancel.begin());
 
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
-            100, List.of(), method -> 0);
+            100, List.of(), method -> 0, WatchForCancel.begin());
 
         assertEquals(1, first.walked.size());
         assertTrue("the form module's call keeps the export alive", outcome.candidates.isEmpty()); //$NON-NLS-1$
@@ -240,7 +240,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
             path -> path.startsWith("CommonForms/") ? form : подготовка, //$NON-NLS-1$
             false, null, null, MODULES, nameCalled, WatchForCancel.begin());
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
-            100, List.of(), method -> 0);
+            100, List.of(), method -> 0, WatchForCancel.begin());
 
         assertTrue("the common module behind five thousand form modules is still walked", //$NON-NLS-1$
             outcome.candidates.stream()
@@ -368,6 +368,41 @@ public class ANameCalledMethodIsNotReportedDeadTest
     }
 
     /**
+     * A cancel that lands while the caller counts run is seen at the next module of the decision:
+     * the answer carries the stop, and the list the decision filled until then is named partial.
+     */
+    @Test
+    public void aCancelDuringTheCallerCountsIsStillReported()
+    {
+        ToolCallScope.Cancellation flag = new ToolCallScope.Cancellation();
+        ToolCallScope.enter(ToolCallScope.forCancellation(flag));
+        try
+        {
+            WatchForCancel watch = WatchForCancel.begin();
+            Module first = moduleAt("CommonModules/Первый/Module.bsl", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+            Module second = moduleAt("CommonModules/Второй/Module.bsl", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+
+            FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
+                List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Первый/Module.bsl", first), //$NON-NLS-1$
+                    new FindDeadCodeTool.WalkedModule("CommonModules/Второй/Module.bsl", second)), //$NON-NLS-1$
+                new HashSet<>(), 100, List.of(), method -> {
+                    flag.cancel("the operator asked to stop"); //$NON-NLS-1$
+                    return 0;
+                }, watch);
+
+            assertEquals("the decision stopped at the module after the cancel", 1, //$NON-NLS-1$
+                outcome.candidates.size());
+            assertTrue(watch.stopped());
+            assertTrue("the answer names the stop", //$NON-NLS-1$
+                watch.note("modules").contains("not the whole answer")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        finally
+        {
+            ToolCallScope.exit();
+        }
+    }
+
+    /**
      * A module the walk read only for its calls is dropped from the set the read put it in; a
      * module the set already held - an editor holds it - keeps its place and its contents, and a
      * candidate stays loaded for the decision.
@@ -415,7 +450,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
         FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> bareModule(),
             false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked,
-            new HashSet<>(), 100, List.of(), method -> 0);
+            new HashSet<>(), 100, List.of(), method -> 0, WatchForCancel.begin());
 
         String report = new FindDeadCodeTool().format("Проект", outcome, first, 100, Map.of(), //$NON-NLS-1$
             null);
@@ -519,7 +554,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
             path -> "Documents/Заказ/Module.bsl".equals(path) ? caller : подготовка, //$NON-NLS-1$
             false, "CommonModules/", "Подготовка", MODULES, nameCalled, WatchForCancel.begin()); //$NON-NLS-1$ //$NON-NLS-2$
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
-            100, List.of(), method -> 0);
+            100, List.of(), method -> 0, WatchForCancel.begin());
 
         assertEquals("the module outside the filters was no candidate", 1, first.walked.size()); //$NON-NLS-1$
         assertTrue("its name-written call still protects the export it names", //$NON-NLS-1$
@@ -585,7 +620,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
         FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(
             List.of(new FindDeadCodeTool.WalkedModule("CommonModules/Подготовка/Module.bsl", //$NON-NLS-1$
                 подготовка)),
-            nameCalled, 100, List.of(), method -> 0);
+            nameCalled, 100, List.of(), method -> 0, WatchForCancel.begin());
         assertEquals(1, outcome.candidates.size());
         assertEquals("НичемНеВызван", outcome.candidates.get(0).methodName); //$NON-NLS-1$
     }
