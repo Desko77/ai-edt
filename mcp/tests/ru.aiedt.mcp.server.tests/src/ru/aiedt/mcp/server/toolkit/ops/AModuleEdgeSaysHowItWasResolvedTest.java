@@ -102,6 +102,42 @@ public class AModuleEdgeSaysHowItWasResolvedTest
     }
 
     /**
+     * A module whose resource is addressed outside {@code src/} is named by the FQN the walk
+     * records it under: the place of its calls is not left blank.
+     */
+    @Test
+    public void aModuleOutsideSrcIsNamedByItsFqn()
+    {
+        Module root = moduleAt(org.eclipse.emf.common.util.URI
+            .createURI("bm:///CommonModules/Root/Module.bsl")); //$NON-NLS-1$
+        BslCallGraphHelper.NameCall self =
+            new BslCallGraphHelper.NameCall(null, "ПослеЗагрузки", 3); //$NON-NLS-1$
+
+        BmReferencesHelper.BfsResult walk = walk(root, absentLookup(),
+            BmReferencesHelper.Direction.OUT, 1, source(new IdentityHashMap<>(), List.of(self)));
+
+        assertEquals("CommonModules/Root/Module.bsl", walk.edges.get(0).nameSites().get(0).file); //$NON-NLS-1$
+    }
+
+    /** A form module with no resource at all is named by its FQN the same way. */
+    @Test
+    public void aFormModuleWithNoAddressIsNamedByItsFqn()
+    {
+        Module root = moduleWithoutAResource();
+        BslCallGraphHelper.NameCall self =
+            new BslCallGraphHelper.NameCall(null, "ПроверитьОжидание", 3); //$NON-NLS-1$
+        LinkedHashMap<String, Module> roots = new LinkedHashMap<>();
+        roots.put("Catalog.Товары.Form.ФормаЭлемента.Module", root); //$NON-NLS-1$
+
+        BmReferencesHelper.BfsResult walk = DependencyGraphTool.buildModuleGraph(roots,
+            absentLookup(), new ArrayList<>(), BmReferencesHelper.Direction.OUT, 1, 10, 100, null,
+            WatchForCancel.begin(), source(new IdentityHashMap<>(), List.of(self)));
+
+        assertEquals("Catalogs/Товары/Forms/ФормаЭлемента/Module.bsl", //$NON-NLS-1$
+            walk.edges.get(0).nameSites().get(0).file);
+    }
+
+    /**
      * Walks the module level from a root over a named source.
      *
      * @param root the module walked first
@@ -165,10 +201,37 @@ public class AModuleEdgeSaysHowItWasResolvedTest
     /** A module the walk can hold, standing at the address the assertions name. */
     private static Module module()
     {
+        return moduleAt(org.eclipse.emf.common.util.URI
+            .createURI("platform:/resource/Proj/src/CommonModules/Root/Module.bsl")); //$NON-NLS-1$
+    }
+
+    /**
+     * A module the walk can hold, standing at the address given.
+     *
+     * @param uri the address of the module's resource
+     * @return the module
+     */
+    private static Module moduleAt(org.eclipse.emf.common.util.URI uri)
+    {
         org.eclipse.emf.ecore.resource.Resource resource =
-            new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl().createResource(
-                org.eclipse.emf.common.util.URI
-                    .createURI("platform:/resource/Proj/src/CommonModules/Root/Module.bsl")); //$NON-NLS-1$
+            new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl().createResource(uri);
+        return moduleAnswering(resource);
+    }
+
+    /** A module the walk can hold, with no resource behind it at all. */
+    private static Module moduleWithoutAResource()
+    {
+        return moduleAnswering(null);
+    }
+
+    /**
+     * A module proxy bound to the given resource, or to none.
+     *
+     * @param resource the resource the module answers for, or {@code null} for none
+     * @return the module
+     */
+    private static Module moduleAnswering(org.eclipse.emf.ecore.resource.Resource resource)
+    {
         org.eclipse.emf.ecore.EClass eClass = (org.eclipse.emf.ecore.EClass)Proxy.newProxyInstance(
             AModuleEdgeSaysHowItWasResolvedTest.class.getClassLoader(),
             new Class<?>[]{org.eclipse.emf.ecore.EClass.class},

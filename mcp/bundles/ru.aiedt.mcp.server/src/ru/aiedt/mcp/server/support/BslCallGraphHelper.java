@@ -1161,6 +1161,8 @@ public final class BslCallGraphHelper
 
     /**
      * The content of a parameter that sits in the code as a string literal.
+     * <p>
+     * </p>
      *
      * @param params the expressions to read
      * @param index the parameter's position
@@ -1417,6 +1419,13 @@ public final class BslCallGraphHelper
             // The place a sighting names is the module's src-relative path, the address every
             // other file answer of this graph spells; an FQN here would read as a path it is not.
             String sitePath = modulePathOf(module);
+            if (sitePath == null)
+            {
+                // The resource is addressed some other way - or has no address at all - and the
+                // FQN the module is recorded under names the path the module tools spell, so the
+                // place is not left blank.
+                sitePath = modulePathFromFqn(selfFqn);
+            }
             for (NameCall call : source.nameCallsOf(module))
             {
                 String targetFqn = call.targetModuleFqn != null ? call.targetModuleFqn : selfFqn;
@@ -1449,5 +1458,61 @@ public final class BslCallGraphHelper
         {
             return null;
         }
+    }
+
+    /**
+     * The path an FQN names, relative to {@code src/}: the inverse of the address
+     * {@link #extractModuleFqnFromUri(URI)} reads, for a module whose resource is addressed some
+     * other way or has no address at all.
+     *
+     * @param fqn the module's FQN
+     * @return the path the module tools spell, or {@code null} when the FQN names none
+     */
+    static String modulePathFromFqn(String fqn)
+    {
+        if (fqn == null || fqn.isEmpty())
+        {
+            return null;
+        }
+        String[] parts = fqn.split("\\."); //$NON-NLS-1$
+        StringBuilder path = new StringBuilder();
+        for (int i = 0; i < parts.length; i++)
+        {
+            if (i > 0)
+            {
+                path.append('/');
+            }
+            path.append(fqnPathSegment(parts[i], i, i == parts.length - 1));
+        }
+        return path.toString();
+    }
+
+    /**
+     * One segment of an FQN as the path spells it: the type's directory, the form level's folder
+     * and the module file's {@code .bsl} suffix. Every other segment keeps the spelling it has in
+     * the FQN, which is the spelling it has on disk.
+     *
+     * @param segment the FQN segment
+     * @param index the position of the segment in the FQN
+     * @param last whether the segment is the file name
+     * @return the segment as a path spells it
+     */
+    private static String fqnPathSegment(String segment, int index, boolean last)
+    {
+        if (index == 0)
+        {
+            String directory = MetadataTypeCatalog.getDirectoryName(segment);
+            return directory == null ? segment : directory;
+        }
+        if (index == 2 && !last && BslModuleAccess.isFormKeyword(segment))
+        {
+            return MetadataPathMapper.FORMS_SEGMENT;
+        }
+        if (last && (segment.length() < 4
+            || !segment.regionMatches(true, segment.length() - 4, ".bsl", 0, 4))) //$NON-NLS-1$
+        {
+            return segment + ".bsl"; //$NON-NLS-1$
+        }
+        return segment;
     }
 }
