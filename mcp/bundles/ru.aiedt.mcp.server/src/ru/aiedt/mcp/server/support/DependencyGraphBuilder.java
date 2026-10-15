@@ -90,6 +90,9 @@ public final class DependencyGraphBuilder
         return result;
     }
 
+    /** The largest number of places a name-resolved edge lists; the rest stays in {@code count}. */
+    private static final int NAME_SITES_LISTED = 5;
+
     private static List<Map<String, Object>> buildJsonEdges(BmReferencesHelper.BfsResult bfs)
     {
         List<Map<String, Object>> result = new ArrayList<>(bfs.edges.size());
@@ -102,13 +105,49 @@ public final class DependencyGraphBuilder
             {
                 edge.put("via", e.featureName); //$NON-NLS-1$
             }
-            if (e.count > 1)
+            if (e.resolution != null)
+            {
+                edge.put("resolution", e.resolution); //$NON-NLS-1$
+            }
+            if ("name".equals(e.resolution)) //$NON-NLS-1$
+            {
+                edge.put("sites", nameSitesOf(e)); //$NON-NLS-1$
+                // The list is cut, so the count carries the full number of places.
+                edge.put("count", Integer.valueOf(e.nameSites().size())); //$NON-NLS-1$
+            }
+            else if (e.count > 1)
             {
                 edge.put("count", Integer.valueOf(e.count)); //$NON-NLS-1$
             }
             result.add(edge);
         }
         return result;
+    }
+
+    /**
+     * The places a name-resolved edge was called at: sorted by file and then line, at most
+     * {@link #NAME_SITES_LISTED} of them.
+     *
+     * @param e the name-resolved edge
+     * @return the places, each a {@code file} and a {@code line}
+     */
+    private static List<Map<String, Object>> nameSitesOf(BmReferencesHelper.Edge e)
+    {
+        List<BmReferencesHelper.NameSite> sites = e.nameSites();
+        sites.sort(java.util.Comparator
+            .comparing((BmReferencesHelper.NameSite site) -> site.file == null ? "" : site.file) //$NON-NLS-1$
+            .thenComparingInt(site -> site.line));
+        List<Map<String, Object>> rendered = new ArrayList<>(
+            Math.min(NAME_SITES_LISTED, sites.size()));
+        for (int i = 0; i < sites.size() && i < NAME_SITES_LISTED; i++)
+        {
+            BmReferencesHelper.NameSite site = sites.get(i);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("file", site.file); //$NON-NLS-1$
+            row.put("line", Integer.valueOf(site.line)); //$NON-NLS-1$
+            rendered.add(row);
+        }
+        return rendered;
     }
 
     /**

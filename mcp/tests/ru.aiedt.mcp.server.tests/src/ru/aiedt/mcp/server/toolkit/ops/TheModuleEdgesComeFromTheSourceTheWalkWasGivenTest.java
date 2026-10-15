@@ -192,10 +192,19 @@ public class TheModuleEdgesComeFromTheSourceTheWalkWasGivenTest
             }
 
             @Override
-            public List<String> calleesOf(Module module)
+            public List<BslCallGraphHelper.NameCall> nameCallsOf(Module module)
             {
                 List<String> named = callees.get(module);
-                return named == null ? List.of() : named;
+                if (named == null)
+                {
+                    return List.of();
+                }
+                List<BslCallGraphHelper.NameCall> calls = new ArrayList<>(named.size());
+                for (String callee : named)
+                {
+                    calls.add(new BslCallGraphHelper.NameCall(callee, "Метод", 0)); //$NON-NLS-1$
+                }
+                return calls;
             }
         };
     }

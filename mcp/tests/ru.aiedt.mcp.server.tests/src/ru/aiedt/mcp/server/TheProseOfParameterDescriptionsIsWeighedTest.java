@@ -705,6 +705,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And from 107643 to 107723 for the sentence on yaxunit_tests that a name in tests or modules
      * the report of the run lacks is a discrepancy, not a pass. Measured 14.10: 107723.
      * </p>
+     * <p>
+     * And from 107723 to 107805 for the empty edgeKinds sentence on the dependency_graph and
+     * insights schemas. Measured 15.10: 107805.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107723;
+    private static final int DOCUMENT_PROSE = 107805;
 }

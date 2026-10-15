@@ -254,8 +254,12 @@ public class TheToolListHasAWeightBudgetTest
      * And from 193180 to 193260 for the sentence on yaxunit_tests that a name in tests or modules
      * the report of the run lacks is a discrepancy, not a pass. Measured 14.10: 193260.
      * </p>
+     * <p>
+     * And from 193260 to 193342 for the empty edgeKinds sentence on the dependency_graph and
+     * insights schemas. Measured 15.10: 193342.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 193260;
+    private static final int DOCUMENT_BUDGET = 193342;
 
     private LiveServer server;
 

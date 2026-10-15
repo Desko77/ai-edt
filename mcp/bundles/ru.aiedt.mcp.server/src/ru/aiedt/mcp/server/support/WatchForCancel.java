@@ -131,6 +131,13 @@ public final class WatchForCancel
     {
         if (!fired)
         {
+            // A flag raised after the last boundary this watch was asked about is still a stop:
+            // the note is the one place an answer says the work was cut short, so it asks the
+            // flag itself rather than trusting the last poll.
+            raised();
+        }
+        if (!fired)
+        {
             return null;
         }
         String partial = "; what is below is what had been found by then, not the whole answer"; //$NON-NLS-1$

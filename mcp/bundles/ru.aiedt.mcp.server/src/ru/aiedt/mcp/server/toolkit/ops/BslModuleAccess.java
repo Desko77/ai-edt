@@ -305,6 +305,168 @@ public final class BslModuleAccess
     }
 
     /**
+     * The module reads of one scan: a load by {@code src/}-relative path, and the drop of a module
+     * the scan read only to collect what its text names.
+     */
+    public interface ModuleReads
+    {
+        /**
+         * Loads the module model behind a path.
+         *
+         * @param modulePath the module path relative to {@code src/}
+         * @return the module model, or {@code null} when it would not load
+         */
+        Module load(String modulePath);
+
+        /**
+         * Drops a module a read loaded only to collect from, when the read is one the drop may
+         * undo. A drop the reader cannot undo - the module was held before the load - changes
+         * nothing.
+         *
+         * @param module the module a collection read loaded
+         */
+        default void drop(Module module)
+        {
+            // A read that cannot undo itself
+        }
+    }
+
+    /**
+     * Module reads that take back what they added: a load remembers whether the module's resource
+     * was in the resource set before it, and the drop removes from the set exactly the resources
+     * these reads put there. A resource the set already held - an open editor holds it, or the
+     * builder does - is left alone, and so is a set the reads could not even ask.
+     */
+    public static final class TransientModuleReads
+        implements ModuleReads
+    {
+        private final IProject project;
+
+        private final ResourceSet set;
+
+        private final java.util.function.Function<String, Module> loader;
+
+        private final java.util.Set<Resource> added =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+        /**
+         * Reads over the project's own resource set, loading the way
+         * {@link #loadModule(IProject, String)} does.
+         *
+         * @param project the project whose modules are read
+         */
+        public TransientModuleReads(IProject project)
+        {
+            this(project, resourceSetOf(project), path -> loadModule(project, path));
+        }
+
+        /**
+         * Reads over a given set and loader.
+         *
+         * @param project the project, for the address a load reads by
+         * @param set the resource set the loads go through, or {@code null} when there is none
+         * @param loader the load itself
+         */
+        TransientModuleReads(IProject project, ResourceSet set,
+            java.util.function.Function<String, Module> loader)
+        {
+            this.project = project;
+            this.set = set;
+            this.loader = loader;
+        }
+
+        /**
+         * Loads a module and remembers whether its resource entered the set with this read.
+         *
+         * @param modulePath the module path relative to {@code src/}
+         * @return the module model, or {@code null} when it would not load
+         */
+        @Override
+        public Module load(String modulePath)
+        {
+            // A set that cannot be asked reads as holding the resource: the read then never
+            // takes it out, which is the safe side of a wrong answer.
+            boolean held = set == null || heldInSet(modulePath);
+            Module module = loader.apply(modulePath);
+            if (module != null && !held && set != null)
+            {
+                Resource resource = module.eResource();
+                if (resource != null && resource.getResourceSet() == set)
+                {
+                    added.add(resource);
+                }
+            }
+            return module;
+        }
+
+        /**
+         * Takes the module's resource back out of the set, when this read is what put it there.
+         *
+         * @param module the module a collection read loaded
+         */
+        @Override
+        public void drop(Module module)
+        {
+            Resource resource = module == null ? null : module.eResource();
+            if (set == null || resource == null || !added.remove(resource))
+            {
+                return;
+            }
+            try
+            {
+                // Out of the set first, then unloaded: the set's cache forgets the resource the
+                // same way it learned it.
+                set.getResources().remove(resource);
+                resource.unload();
+            }
+            catch (RuntimeException failed)
+            {
+                Activator.logWarning("A module read only for its calls could not be dropped from " //$NON-NLS-1$
+                    + "the resource set: " + failed.getMessage()); //$NON-NLS-1$
+            }
+        }
+
+        /**
+         * Whether the set already holds the resource a path names.
+         *
+         * @param modulePath the module path relative to {@code src/}
+         * @return whether a resource is registered under the path's address
+         */
+        private boolean heldInSet(String modulePath)
+        {
+            try
+            {
+                URI uri = URI.createPlatformResourceURI(
+                    project.getName() + "/src/" + modulePath, true); //$NON-NLS-1$
+                return set.getResource(uri, false) != null;
+            }
+            catch (RuntimeException unreadable)
+            {
+                return true;
+            }
+        }
+    }
+
+    /**
+     * The resource set of the project, or {@code null} when no provider or no set is available.
+     *
+     * @param project the project
+     * @return its resource set
+     */
+    private static ResourceSet resourceSetOf(IProject project)
+    {
+        BmAwareResourceSetProvider provider = obtainResourceSetProvider();
+        try
+        {
+            return provider == null ? null : provider.get(project);
+        }
+        catch (RuntimeException noSet)
+        {
+            return null;
+        }
+    }
+
+    /**
      * Resolves a module's cross-references, which is the step that puts types on its contents.
      * <p>
      * A variable's type is nowhere in the parse tree. It is installed by the BSL resource while it
@@ -1242,7 +1404,7 @@ public final class BslModuleAccess
      * @param token the FQN segment to test
      * @return <code>true</code> when it is one of {@code form}, {@code forms} and their Russian twins
      */
-    static boolean isFormKeyword(String token)
+    public static boolean isFormKeyword(String token)
     {
         return "form".equalsIgnoreCase(token) //$NON-NLS-1$
             || "forms".equalsIgnoreCase(token) //$NON-NLS-1$
