@@ -323,6 +323,7 @@ public class FindDeadCodeTool
         List<WalkedModule> walked = new ArrayList<>();
         int modulesScanned = 0;
         int collectionReads = 0;
+        int collectionReadsLoaded = 0;
         int modulesExcludedForms = 0;
         int loadFailures = 0;
         boolean stoppedByCandidateCap = false;
@@ -389,17 +390,21 @@ public class FindDeadCodeTool
             {
                 walked.add(new WalkedModule(modulePath, module));
             }
-            else if (formModule)
+            else
             {
-                modulesExcludedForms++;
+                collectionReadsLoaded++;
+                if (formModule)
+                {
+                    modulesExcludedForms++;
+                }
             }
         }
         // A cancel that arrived during the walk's last load has left no boundary behind it; this
         // one question keeps the note of the stop from staying unwritten, which would read the
         // answer as a finished scan.
         watch.raised();
-        return new FirstPass(walked, modulesScanned, collectionReads, modulesExcludedForms,
-            loadFailures, stoppedByCandidateCap, stoppedByCollectionCap);
+        return new FirstPass(walked, modulesScanned, collectionReads, collectionReadsLoaded,
+            modulesExcludedForms, loadFailures, stoppedByCandidateCap, stoppedByCollectionCap);
     }
 
     /**
@@ -635,9 +640,9 @@ public class FindDeadCodeTool
         }
         out.append("- modules scanned: ").append(first.modulesScanned); //$NON-NLS-1$
         out.append(" | export methods examined: ").append(outcome.exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        if (first.collectionReads > 0)
+        if (first.collectionReadsLoaded > 0)
         {
-            out.append("- name-written calls collected from ").append(first.collectionReads) //$NON-NLS-1$
+            out.append("- name-written calls collected from ").append(first.collectionReadsLoaded) //$NON-NLS-1$
                 .append(" module(s) outside the candidate scope\n"); //$NON-NLS-1$
         }
         out.append("- skipped: ").append(outcome.handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
@@ -684,12 +689,25 @@ public class FindDeadCodeTool
         if (candidates.isEmpty())
         {
             // Only sayable when the scan finished. Stopped short - by the operator or by a cap -
-            // an empty list means the scope was not walked, not that it holds nothing.
+            // an empty list means the scope was not walked, not that it holds nothing. A walk
+            // that loaded no candidate module says that rather than naming a scope it read.
             boolean stopped = cancelled != null || first.stoppedByCandidateCap
                 || first.stoppedByCollectionCap;
-            out.append(stopped
-                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
-                : "No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
+            boolean nothingLoaded = first.walked.isEmpty() && first.loadFailures > 0;
+            if (stopped)
+            {
+                out.append("Nothing had been found when the scan stopped.\n"); //$NON-NLS-1$
+            }
+            else if (nothingLoaded)
+            {
+                out.append("No candidate module could be read: the modules the scan reached ") //$NON-NLS-1$
+                .append("failed to load, so no export was examined - check that the project ") //$NON-NLS-1$
+                .append("model is built and retry.\n"); //$NON-NLS-1$
+            }
+            else
+            {
+                out.append("No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
+            }
             return out.toString();
         }
 
@@ -908,6 +926,9 @@ public class FindDeadCodeTool
         /** The loads the walk attempted only to collect name-written calls, loaded or not. */
         final int collectionReads;
 
+        /** The collection loads that returned a module: calls were read only out of these. */
+        final int collectionReadsLoaded;
+
         final int modulesExcludedForms;
 
         final int loadFailures;
@@ -919,12 +940,13 @@ public class FindDeadCodeTool
         final boolean stoppedByCollectionCap;
 
         FirstPass(List<WalkedModule> walked, int modulesScanned, int collectionReads,
-            int modulesExcludedForms, int loadFailures, boolean stoppedByCandidateCap,
-            boolean stoppedByCollectionCap)
+            int collectionReadsLoaded, int modulesExcludedForms, int loadFailures,
+            boolean stoppedByCandidateCap, boolean stoppedByCollectionCap)
         {
             this.walked = walked;
             this.modulesScanned = modulesScanned;
             this.collectionReads = collectionReads;
+            this.collectionReadsLoaded = collectionReadsLoaded;
             this.modulesExcludedForms = modulesExcludedForms;
             this.loadFailures = loadFailures;
             this.stoppedByCandidateCap = stoppedByCandidateCap;

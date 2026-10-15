@@ -412,6 +412,60 @@ public class ANameCalledMethodIsNotReportedDeadTest
     }
 
     /**
+     * A walk every load of which failed names the failures, not a finished empty scope: no module
+     * was read, so nothing was examined.
+     */
+    @Test
+    public void aWalkThatLoadedNothingNamesTheFailures()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 100; i++)
+        {
+            files.add(fileAt("src/CommonModules/Модуль" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> null,
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked,
+            new HashSet<>(), 100, List.of(), method -> 0, WatchForCancel.begin());
+
+        String report = new FindDeadCodeTool().format("Проект", outcome, first, 100, Map.of(), //$NON-NLS-1$
+            null);
+
+        assertTrue(report, report.contains("100 modules failed to load")); //$NON-NLS-1$
+        assertFalse(report, report.contains("No dead export methods found in the scanned scope.")); //$NON-NLS-1$
+        assertTrue(report, report.contains("No candidate module could be read")); //$NON-NLS-1$
+    }
+
+    /**
+     * The count of the collected name-written calls names the modules that loaded: a walk of form
+     * modules that all failed to load does not say it collected calls from them.
+     */
+    @Test
+    public void theCollectedCountNamesOnlyTheModulesThatLoaded()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 100; i++)
+        {
+            files.add(fileAt("src/CommonForms/Форма" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> null,
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked,
+            new HashSet<>(), 100, List.of(), method -> 0, WatchForCancel.begin());
+
+        String report = new FindDeadCodeTool().format("Проект", outcome, first, 100, Map.of(), //$NON-NLS-1$
+            null);
+
+        assertEquals(100, first.collectionReads);
+        assertEquals(0, first.collectionReadsLoaded);
+        assertFalse(report, report.contains("name-written calls collected from")); //$NON-NLS-1$
+        assertFalse(report, report.contains("No dead export methods found in the scanned scope.")); //$NON-NLS-1$
+    }
+
+
+    /**
      * The name-written calls of a module outside the family prefix and the path filter are still
      * collected: the filters choose which modules give up candidates, not whose calls the scan
      * reads.
@@ -450,7 +504,7 @@ public class ANameCalledMethodIsNotReportedDeadTest
         FindDeadCodeTool.Candidate candidate = new FindDeadCodeTool.Candidate(
             "CommonModules/Подготовка/Module.bsl", "НичемНеВызван", 1, null); //$NON-NLS-1$ //$NON-NLS-2$
         FindDeadCodeTool.FirstPass first = new FindDeadCodeTool.FirstPass(List.of(), 0, 0, 0, 0,
-            false, false);
+            0, false, false);
 
         String finished = new FindDeadCodeTool().format("Проект", //$NON-NLS-1$
             new FindDeadCodeTool.Outcome(List.of(candidate), false, 1, 0, 0, 0), first, 1,
