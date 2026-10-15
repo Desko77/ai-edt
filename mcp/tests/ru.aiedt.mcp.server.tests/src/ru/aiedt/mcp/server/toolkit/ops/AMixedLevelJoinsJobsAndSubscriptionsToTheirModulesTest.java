@@ -179,6 +179,12 @@ public class AMixedLevelJoinsJobsAndSubscriptionsToTheirModulesTest
 
         assertEquals(1, added);
         assertEquals(List.of(MODULE), unloaded);
+        // The node itself holds no object: putting the common module's metadata back into it
+        // would read as a loaded module the answer never read.
+        assertNull("the node holds no object when the module did not load", //$NON-NLS-1$
+            result.nodes.get(MODULE));
+        assertFalse("the node is not the common module's metadata object", //$NON-NLS-1$
+            result.nodes.get(MODULE) instanceof CommonModule);
     }
 
     /**
