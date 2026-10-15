@@ -40,6 +40,7 @@ import org.eclipse.xtext.validation.Issue;
 import com._1c.g5.v8.dt.core.platform.IExtensionProject;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
+import com._1c.g5.v8.dt.metadata.dbview.DbViewElement;
 import com._1c.g5.v8.dt.ql.model.AbstractQuerySchemaSource;
 import com._1c.g5.v8.dt.ql.model.CommonExpression;
 import com._1c.g5.v8.dt.ql.model.QuerySchemaOperator;
@@ -327,6 +328,13 @@ public final class QlValidator
          * declaration a field of that name resolves through is not something the map can say.
          */
         public final Map<Integer, Map<String, Boolean>> aliasResolvesByScope = new LinkedHashMap<>();
+
+        /**
+         * One query scope to its lower-case aliases and the text spans, as start and end offsets, of
+         * the sources that declare them. A model that reports a diagnostic inside a source's span
+         * did not resolve that source, whatever its table object says.
+         */
+        public final Map<Integer, Map<String, List<int[]>>> sourceSpansByScope = new LinkedHashMap<>();
 
         /** The alias-headed field references, in text order. */
         public final List<FieldSite> sites = new ArrayList<>();
@@ -670,6 +678,14 @@ public final class QlValidator
                         declared.get(scope).add(key);
                         mergeAliasDeclaration(layout.aliasResolvesByScope, disputed,
                             scope.intValue(), key, resolvesHere(source));
+                        ICompositeNode sourceNode = NodeModelUtils.findActualNodeFor(source);
+                        if (sourceNode != null)
+                        {
+                            layout.sourceSpansByScope.computeIfAbsent(scope, k -> new LinkedHashMap<>())
+                                .computeIfAbsent(key, k -> new ArrayList<>())
+                                .add(new int[] {sourceNode.getTotalOffset(),
+                                    sourceNode.getTotalOffset() + sourceNode.getTotalLength()});
+                        }
                     }
                 }
             }
@@ -697,10 +713,11 @@ public final class QlValidator
                 {
                     continue;
                 }
-                layout.sites.add(new FieldSite(node.getTotalOffset(), node.getTotalLength(),
+                int length = pathLengthFrom(text, node.getTotalOffset(), node.getTotalLength());
+                layout.sites.add(new FieldSite(node.getTotalOffset(), length,
                     node.getStartLine(), alias, scope.intValue(),
                     columnWhere(text, node.getTotalOffset()),
-                    lastColumnWhere(text, node.getTotalOffset(), node.getTotalLength())));
+                    lastColumnWhere(text, node.getTotalOffset(), length)));
             }
         }
         catch (Exception e)
@@ -896,7 +913,59 @@ public final class QlValidator
      */
     private static boolean resolvesHere(AbstractQuerySchemaSource source)
     {
-        return QueryResultSchema.dbViewOf(source) != null;
+        DbViewElement view = QueryResultSchema.dbViewOf(source);
+        // An unresolved table is still a reference object, a proxy, rather than nothing.
+        return view != null && !view.eIsProxy();
+    }
+
+    /**
+     * The length of a field reference read on to the end of its dotted path.
+     * <p>
+     * The node an alias-headed expression yields can cover the alias alone, while a diagnostic
+     * about the field points past the dot. The site is therefore read on through the text: the
+     * leading space, the alias, and every {@code .Name} after it.
+     * </p>
+     *
+     * @param text the query text, or {@code null}
+     * @param offset where the node starts
+     * @param nodeLength the node's own length
+     * @return the length of the whole path, never shorter than the node
+     */
+    static int pathLengthFrom(String text, int offset, int nodeLength)
+    {
+        if (text == null || offset < 0 || offset >= text.length())
+        {
+            return nodeLength;
+        }
+        int i = offset;
+        while (i < text.length() && Character.isWhitespace(text.charAt(i)))
+        {
+            i++;
+        }
+        while (true)
+        {
+            int start = i;
+            while (i < text.length() && isIdentifierChar(text.charAt(i)))
+            {
+                i++;
+            }
+            if (i == start || i >= text.length() - 1 || text.charAt(i) != '.'
+                || !isIdentifierChar(text.charAt(i + 1)))
+            {
+                break;
+            }
+            i++;
+        }
+        return Math.max(nodeLength, i - offset);
+    }
+
+    /**
+     * @param c a character
+     * @return whether it can stand inside a query identifier
+     */
+    private static boolean isIdentifierChar(char c)
+    {
+        return Character.isLetterOrDigit(c) || c == '_';
     }
 
     /**
@@ -951,7 +1020,45 @@ public final class QlValidator
             return true;
         }
         Boolean resolves = ofScope.get(site.alias.toLowerCase(Locale.ROOT));
-        return resolves == null || !resolves.booleanValue();
+        if (resolves == null || !resolves.booleanValue())
+        {
+            return true;
+        }
+        return reportedInsideTheSource(otherIssues, elsewhere, site);
+    }
+
+    /**
+     * Whether the other model reported anything inside the source that declares a site's alias.
+     * <p>
+     * A table the model does not hold still leaves a table object on the source, so the object
+     * alone does not say the source resolved. A diagnostic of that model inside the source's own
+     * text - "table not found" - does, and then the alias settles nothing.
+     * </p>
+     *
+     * @param otherIssues the places the other model reported at
+     * @param elsewhere the other model's layout of the same query
+     * @param site the field reference the diagnostic belongs to
+     * @return whether some diagnostic of the other model falls inside the source
+     */
+    static boolean reportedInsideTheSource(List<At> otherIssues, QueryLayout elsewhere, FieldSite site)
+    {
+        Map<String, List<int[]>> ofScope = elsewhere.sourceSpansByScope.get(Integer.valueOf(site.scope));
+        List<int[]> spans = ofScope == null ? null : ofScope.get(site.alias.toLowerCase(Locale.ROOT));
+        if (spans == null)
+        {
+            return false;
+        }
+        for (At other : otherIssues)
+        {
+            for (int[] span : spans)
+            {
+                if (other.offset >= span[0] && other.offset < span[1])
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
