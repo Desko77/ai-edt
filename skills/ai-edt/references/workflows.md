@@ -66,10 +66,11 @@ In an extension project the query is checked against two models: the extension's
 configuration it extends. A clean answer from the configuration settles the query whole and is
 named in `resolvedInProject`. When neither model is clean - a query mixing a borrowed object's
 non-adopted attribute with an object the extension declares itself - the two answers are settled
-place by place: a diagnostic of the extension is dropped only where the configuration is silent at
-that very place and the table the field's alias names resolves in the configuration's model within
-the query that declared the alias - one query of the package, one union part, or one nested query.
-An alias redeclared by another query of the batch settles nothing of the query that declared it
+place by place: a missing-field error of the extension is dropped only where the configuration is
+silent at that very place and the table the field's alias names resolves in the configuration's
+model within the query that declared the alias - one query of the package, one union part, or one
+nested query. Every other finding - a warning, a type mismatch, a syntax complaint - stands, and an
+alias redeclared by another query of the batch settles nothing of the query that declared it
 first. The answer then names both projects in `resolvedInProjects`, and one place is reported once.
 
 Do not batch several queries and validate at the end - a failure then costs a hunt for which one

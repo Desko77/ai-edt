@@ -70,10 +70,12 @@ public final class QlValidator
     /**
      * The code the platform gives a name that resolves to no field.
      * <p>
-     * A code, not a message: the message is localised and the code is not.
+     * A code, not a message: the message is localised and the code is not. The only diagnostic the
+     * merge of two answers may drop is an error with this code - a resolved source says a field of
+     * it exists, and says nothing about any other finding at that place.
      * </p>
      */
-    private static final String FIELD_NOT_FOUND = "Field not found"; //$NON-NLS-1$
+    static final String FIELD_NOT_FOUND = "Field not found"; //$NON-NLS-1$
 
     private static final String V8_CONFIGURATION_NATURE = "com._1c.g5.v8.dt.core.V8ConfigurationNature"; //$NON-NLS-1$
 
@@ -893,15 +895,20 @@ public final class QlValidator
     /**
      * Whether a diagnostic one model raised still stands now that the other model has answered too.
      * <p>
-     * The diagnostic is dropped only when BOTH hold: the other model said nothing at the very place
-     * of the diagnostic, and the source its field's alias names resolved in the other model's
-     * parse of the query scope that declares the alias. The first condition keeps what both models
-     * see - an invented field is reported everywhere. The second keeps what the other model was
-     * never in a position to judge: an error about an object the named project owns itself, whose
-     * table the other model does not hold, and an alias redeclared by another query of the batch,
-     * which settles nothing about the query that first declared it. A diagnostic tied to no alias
-     * at all - a syntax complaint, a table that is not there - stands, because nothing the other
-     * model could have said bears on it.
+     * The diagnostic is dropped only when ALL THREE hold: it is an error about a field that is not
+     * there, read by its code rather than its words; the other model said nothing at the very
+     * place of the diagnostic; and the source its field's alias names resolved in the other
+     * model's parse of the query scope that declares the alias.
+     * </p>
+     * <p>
+     * The first condition keeps every other finding. The second keeps what both models see - an
+     * invented field is reported everywhere. The third keeps what the other model was never in a
+     * position to judge: an error about an object the named project owns itself, whose table the
+     * other model does not hold, and an alias redeclared by another query of the batch, which
+     * settles nothing about the query that first declared it. A diagnostic that is not a missing
+     * field - a warning, a type mismatch, a syntax complaint, a table that is not there, a
+     * diagnostic arriving with no code at all - stands, because the other model's holding the
+     * table says nothing about what it found there.
      * </p>
      *
      * @param issue the diagnostic, with the place it names
@@ -913,6 +920,10 @@ public final class QlValidator
     public static boolean standsAfterMerging(QlIssue issue, List<At> otherIssues,
         List<FieldSite> sites, QueryLayout elsewhere)
     {
+        if (!"ERROR".equals(issue.severity) || !FIELD_NOT_FOUND.equals(issue.code)) //$NON-NLS-1$
+        {
+            return true;
+        }
         At place = At.of(issue.offset, issue.line, issue.column);
         for (At other : otherIssues)
         {

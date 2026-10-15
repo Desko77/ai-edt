@@ -37,7 +37,8 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
 {
     private static QlValidator.QlIssue errorAt(int offset, int line, int column)
     {
-        return new QlValidator.QlIssue("ERROR", "Поле не найдено", line, column, offset, null); //$NON-NLS-1$ //$NON-NLS-2$
+        return new QlValidator.QlIssue("ERROR", "Поле не найдено", line, column, offset, //$NON-NLS-1$ //$NON-NLS-2$
+            QlValidator.FIELD_NOT_FOUND);
     }
 
     private static QlValidator.FieldSite site(int offset, int length, int line, String alias,
@@ -158,6 +159,54 @@ public class AMixedQueryIsSettledPlaceByPlaceTest
             elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
 
         assertTrue("a diagnostic tied to no source alias is never dropped", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aTypeMismatchAtAResolvedFieldStays()
+    {
+        // The named model compared a reference with a string and found them incompatible. The
+        // other model holds the table - which settles where a FIELD is, and says nothing about
+        // what may be compared with what. A mismatch the other model never voiced stands.
+        QlValidator.QlIssue mismatch = new QlValidator.QlIssue("ERROR", //$NON-NLS-1$
+            "Несовместимые типы", 1, 32, 20, "Type mismatch"); //$NON-NLS-1$ //$NON-NLS-2$
+        boolean stands = QlValidator.standsAfterMerging(mismatch,
+            List.of(QlValidator.At.of(90, 3, 5)),
+            List.of(site(20, 18, 1, "Виды", 0)), //$NON-NLS-1$
+            elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertTrue("only a missing-field error is settled away", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void aWarningAtAResolvedFieldStays()
+    {
+        // A warning the named model raised - a field that is not indexed, say. The other model
+        // holding the table does not make the warning go away, and a warning never blocked
+        // anything anyway.
+        QlValidator.QlIssue warning = new QlValidator.QlIssue("WARNING", //$NON-NLS-1$
+            "Поле не индексировано", 1, 32, 20, QlValidator.FIELD_NOT_FOUND); //$NON-NLS-1$
+        boolean stands = QlValidator.standsAfterMerging(warning,
+            List.of(QlValidator.At.of(90, 3, 5)),
+            List.of(site(20, 18, 1, "Виды", 0)), //$NON-NLS-1$
+            elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertTrue("a warning is never settled away", stands); //$NON-NLS-1$
+    }
+
+    @Test
+    public void anErrorArrivingWithNoCodeStays()
+    {
+        // A diagnostic this check could not classify. The rule that drops a missing-field error
+        // reads the code, and an error with no code might be exactly that - or anything else.
+        // The error stands.
+        QlValidator.QlIssue codeless = new QlValidator.QlIssue("ERROR", //$NON-NLS-1$
+            "Поле не найдено", 1, 32, 20, null); //$NON-NLS-1$
+        boolean stands = QlValidator.standsAfterMerging(codeless,
+            List.of(QlValidator.At.of(90, 3, 5)),
+            List.of(site(20, 18, 1, "Виды", 0)), //$NON-NLS-1$
+            elsewhere(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertTrue("a diagnostic with no code is never settled away", stands); //$NON-NLS-1$
     }
 
     @Test

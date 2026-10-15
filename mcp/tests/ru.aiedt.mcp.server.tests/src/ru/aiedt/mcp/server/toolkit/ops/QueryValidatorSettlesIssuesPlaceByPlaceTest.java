@@ -36,7 +36,22 @@ public class QueryValidatorSettlesIssuesPlaceByPlaceTest
     private static QueryValidator.QueryIssue issue(String severity, String message, int line,
         int column, int offset)
     {
-        return new QueryValidator.QueryIssue(severity, message, line, column, offset);
+        return new QueryValidator.QueryIssue(severity, message, line, column, offset, null);
+    }
+
+    /**
+     * A missing-field error, the one finding the settle rule may drop. The code is the platform's
+     * check code, the same constant {@code QlValidator} gates the rule by.
+     *
+     * @param line the line
+     * @param column the column
+     * @param offset the offset
+     * @return the issue
+     */
+    private static QueryValidator.QueryIssue fieldNotFound(int line, int column, int offset)
+    {
+        return new QueryValidator.QueryIssue("ERROR", "Поле не найдено", line, column, offset, //$NON-NLS-1$ //$NON-NLS-2$
+            "Field not found"); //$NON-NLS-1$
     }
 
     private static QlValidator.QueryLayout layout(int scope, String alias,
@@ -113,8 +128,8 @@ public class QueryValidatorSettlesIssuesPlaceByPlaceTest
     public void aNonAdoptedAttributeLeavesTheSettledAnswer()
     {
         List<QueryValidator.QueryIssue> asked = new ArrayList<>();
-        asked.add(issue("ERROR", "Поле 'Виды.НаборСвойств' не найдено", 1, 32, 20)); //$NON-NLS-1$
-        asked.add(issue("ERROR", "Поле 'Сег.Ссылка' не найдено", 1, 8, 40)); //$NON-NLS-1$
+        asked.add(fieldNotFound(1, 32, 20));
+        asked.add(fieldNotFound(1, 8, 40));
         List<QueryValidator.QueryIssue> other = new ArrayList<>();
         other.add(issue("ERROR", "Таблица 'Справочник._Расшир' не найдена", 3, 5, 90)); //$NON-NLS-1$
 
@@ -138,12 +153,31 @@ public class QueryValidatorSettlesIssuesPlaceByPlaceTest
     }
 
     @Test
+    public void aTypeMismatchOfABorrowedObjectStays()
+    {
+        // The extension compared a borrowed object's reference with a string and found them
+        // incompatible. The configuration holds the table, which settles where a FIELD is and
+        // says nothing about what may be compared with what.
+        List<QueryValidator.QueryIssue> asked = new ArrayList<>();
+        asked.add(new QueryValidator.QueryIssue("ERROR", "Несовместимые типы", 1, 32, 20, //$NON-NLS-1$ //$NON-NLS-2$
+            "Type mismatch")); //$NON-NLS-1$
+        List<QueryValidator.QueryIssue> other = new ArrayList<>();
+        other.add(issue("ERROR", "Таблица 'Справочник._Расшир' не найдена", 3, 5, 90)); //$NON-NLS-1$
+
+        List<QueryValidator.QueryIssue> settled = QueryValidator.settledIssues(asked, other,
+            layout(0, "виды", Boolean.TRUE, new QlValidator.FieldSite(20, 18, 1, "Виды", 0)), //$NON-NLS-1$ //$NON-NLS-2$
+            layout(0, "виды", Boolean.TRUE)); //$NON-NLS-1$
+
+        assertEquals("a mismatch the other model never voiced stays", 1, settled.size()); //$NON-NLS-1$
+    }
+
+    @Test
     public void aFieldBothModelsRejectStays()
     {
         List<QueryValidator.QueryIssue> asked = new ArrayList<>();
-        asked.add(issue("ERROR", "Поле 'Виды.Выдумка' не найдено", 1, 32, 20)); //$NON-NLS-1$
+        asked.add(fieldNotFound(1, 32, 20));
         List<QueryValidator.QueryIssue> other = new ArrayList<>();
-        other.add(issue("ERROR", "Поле 'Виды.Выдумка' не найдено", 1, 32, 20)); //$NON-NLS-1$
+        other.add(fieldNotFound(1, 32, 20));
 
         List<QueryValidator.QueryIssue> settled = QueryValidator.settledIssues(asked, other,
             layout(0, "виды", Boolean.TRUE, new QlValidator.FieldSite(20, 18, 1, "Виды", 0)), //$NON-NLS-1$ //$NON-NLS-2$

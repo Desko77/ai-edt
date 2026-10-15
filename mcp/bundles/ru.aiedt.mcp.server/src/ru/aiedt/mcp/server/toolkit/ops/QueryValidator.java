@@ -651,12 +651,14 @@ public class QueryValidator
             List<QueryIssue> issues = new ArrayList<>();
             for (Resource.Diagnostic error : resource.getErrors())
             {
-                issues.add(new QueryIssue("ERROR", error.getMessage(), error.getLine(), error.getColumn(), -1)); //$NON-NLS-1$
+                issues.add(new QueryIssue("ERROR", error.getMessage(), error.getLine(), error.getColumn(), -1, //$NON-NLS-1$
+                    null));
             }
             for (Resource.Diagnostic warning : resource.getWarnings())
             {
                 issues.add(
-                    new QueryIssue("WARNING", warning.getMessage(), warning.getLine(), warning.getColumn(), -1)); //$NON-NLS-1$
+                    new QueryIssue("WARNING", warning.getMessage(), warning.getLine(), warning.getColumn(), -1, //$NON-NLS-1$
+                        null));
             }
 
             IResourceValidator validator = rsp.get(IResourceValidator.class);
@@ -698,7 +700,8 @@ public class QueryValidator
                 issues.add(new QueryIssue(severity, issue.getMessage(),
                     lineNumber != null ? lineNumber.intValue() : -1,
                     column != null ? column.intValue() : -1,
-                    offset != null ? offset.intValue() : -1));
+                    offset != null ? offset.intValue() : -1,
+                    issue.getCode()));
             }
 
             return Collected.of(oneIssuePerPlace(issues), parserObjected, layout);
@@ -982,10 +985,10 @@ public class QueryValidator
      * <p>
      * Delegates the keeping and the dropping to
      * {@link QlValidator#standsAfterMerging(QlValidator.QlIssue, List, List,
-     * QlValidator.QueryLayout)}: an issue is
+     * QlValidator.QueryLayout)}: a missing-field error is
      * dropped only when the other model said nothing at its very place and the source its field's
      * alias names resolved in the other model's parse of the query scope that declares the alias.
-     * Everything the named model said about its own objects stands.
+     * Every other finding, and everything the named model said about its own objects, stands.
      * </p>
      *
      * @param askedIssues what the named project reported
@@ -1009,7 +1012,7 @@ public class QueryValidator
         for (QueryIssue issue : askedIssues)
         {
             QlValidator.QlIssue asQl = new QlValidator.QlIssue(issue.severity, issue.message,
-                issue.line, issue.column, issue.offset, null);
+                issue.line, issue.column, issue.offset, issue.code);
             if (QlValidator.standsAfterMerging(asQl, otherPlaces, sites.sites, elsewhere))
             {
                 kept.add(issue);
@@ -1026,13 +1029,21 @@ public class QueryValidator
         final int column;
         final int offset;
 
-        QueryIssue(String severity, String message, int line, int column, int offset)
+        /**
+         * What kind of diagnostic this is, in a form that does not change with the language. Read
+         * by the settle rule, which may drop a missing-field error and nothing else; a diagnostic
+         * with no code is never dropped.
+         */
+        final String code;
+
+        QueryIssue(String severity, String message, int line, int column, int offset, String code)
         {
             this.severity = severity;
             this.message = message;
             this.line = line;
             this.column = column;
             this.offset = offset;
+            this.code = code;
         }
     }
 }
