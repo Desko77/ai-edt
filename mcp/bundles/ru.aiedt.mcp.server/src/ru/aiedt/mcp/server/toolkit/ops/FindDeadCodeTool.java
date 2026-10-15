@@ -272,7 +272,7 @@ public class FindDeadCodeTool
         collectJobAndSubscriptionCalled(configurationOf(project), nameCalled);
 
         FirstPass first = walkSources(bslFiles,
-            modulePath -> BslModuleAccess.loadModule(project, modulePath), includeForms, pathPrefix,
+            new BslModuleAccess.TransientModuleReads(project), includeForms, pathPrefix,
             moduleFilter, commonModules, nameCalled, watch);
         Outcome outcome = candidatesOf(first.walked, nameCalled, limit, extraPatterns,
             BslCallGraphHelper::countCallers);
@@ -304,8 +304,8 @@ public class FindDeadCodeTool
      * </p>
      *
      * @param files the BSL files of the project, in walk order
-     * @param loader the module model behind a {@code src/}-relative path, or {@code null} when it
-     *        would not load
+     * @param reads the module reads of the scan: the load behind a {@code src/}-relative path and
+     *        the drop of a module read only for its calls
      * @param includeForms whether form modules give up their exports as candidates
      * @param pathPrefix the family prefix a candidate module must start with, or {@code null}
      * @param moduleFilter the text a candidate module's path must contain, or {@code null}/empty
@@ -315,10 +315,9 @@ public class FindDeadCodeTool
      * @param watch the cancel signal of the call
      * @return what the walk read: the modules whose exports are candidates, and the walk's counts
      */
-    static FirstPass walkSources(Iterable<IFile> files,
-        java.util.function.Function<String, Module> loader, boolean includeForms, String pathPrefix,
-        String moduleFilter, Map<String, String> commonModules, Set<String> nameCalled,
-        WatchForCancel watch)
+    static FirstPass walkSources(Iterable<IFile> files, BslModuleAccess.ModuleReads reads,
+        boolean includeForms, String pathPrefix, String moduleFilter,
+        Map<String, String> commonModules, Set<String> nameCalled, WatchForCancel watch)
     {
         List<WalkedModule> walked = new ArrayList<>();
         int modulesScanned = 0;
@@ -368,7 +367,7 @@ public class FindDeadCodeTool
                 }
                 continue;
             }
-            Module module = loader.apply(modulePath);
+            Module module = reads.load(modulePath);
             // The attempt counts against its cap, loaded or not: a configuration whose model is
             // not built fails every load, and a walk that kept counting only successes would load
             // the whole tree for nothing before its cap said stop.
@@ -393,6 +392,9 @@ public class FindDeadCodeTool
             else
             {
                 collectionReadsLoaded++;
+                // The walk is done with a module it read only for its calls: what it named is
+                // collected, and the module itself the decision never examines.
+                reads.drop(module);
                 if (formModule)
                 {
                     modulesExcludedForms++;

@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 
 import org.eclipse.core.resources.IFile;
+import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.ecore.EObject;
 import org.junit.Test;
 
@@ -367,6 +368,40 @@ public class ANameCalledMethodIsNotReportedDeadTest
     }
 
     /**
+     * A module the walk read only for its calls is dropped from the set the read put it in; a
+     * module the set already held - an editor holds it - keeps its place and its contents, and a
+     * candidate stays loaded for the decision.
+     */
+    @Test
+    public void aCollectionReadDropsOnlyTheResourcesItAdded()
+    {
+        org.eclipse.emf.ecore.resource.ResourceSet set =
+            new org.eclipse.emf.ecore.resource.impl.ResourceSetImpl();
+        Module heldForm = moduleIn(set, "CommonForms/ФормаЗагрузки/Module.bsl"); //$NON-NLS-1$
+        org.eclipse.emf.ecore.resource.Resource held = heldForm.eResource();
+        BslModuleAccess.TransientModuleReads reads = new BslModuleAccess.TransientModuleReads(
+            proxy(IProject.class, "getName", "Proj"), set, //$NON-NLS-1$ //$NON-NLS-2$
+            path -> "CommonForms/ФормаЗагрузки/Module.bsl".equals(path) ? heldForm //$NON-NLS-1$
+                : moduleIn(set, path));
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(
+            List.of(fileAt("src/CommonForms/ФормаЗагрузки/Module.bsl"), //$NON-NLS-1$
+                fileAt("src/CommonForms/ФормаОтчета/Module.bsl"), //$NON-NLS-1$
+                fileAt("src/CommonModules/Подготовка/Module.bsl")), //$NON-NLS-1$
+            reads, false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+
+        assertEquals(1, first.walked.size());
+        assertTrue("the resource the set already held stays in it", set.getResources().contains(held)); //$NON-NLS-1$
+        assertFalse("the held module keeps its contents", held.getContents().isEmpty()); //$NON-NLS-1$
+        assertTrue("the candidate stays in the set, loaded", //$NON-NLS-1$
+            set.getResources().contains(first.walked.get(0).module.eResource()));
+        assertFalse("the collection module's resource left the set", //$NON-NLS-1$
+            set.getResources().stream().anyMatch(resource -> resource.getURI().equals(
+                org.eclipse.emf.common.util.URI.createPlatformResourceURI(
+                    "Proj/src/CommonForms/ФормаОтчета/Module.bsl", true)))); //$NON-NLS-1$
+    }
+
+    /**
      * An empty candidate list of a walk a cap stopped is named incomplete, not a finished scope.
      */
     @Test
@@ -692,6 +727,60 @@ public class ANameCalledMethodIsNotReportedDeadTest
         module.getMethods().add(factory.createProcedure());
         return module;
     }
+
+    /**
+     * A bare module attached to a resource of the given set, the way a loaded module sits in one.
+     *
+     * @param set the resource set the module's resource belongs to
+     * @param modulePath the module path relative to {@code src/}, as the address of the resource
+     * @return the module
+     */
+    private static Module moduleIn(org.eclipse.emf.ecore.resource.ResourceSet set,
+        String modulePath)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        module.getMethods().add(factory.createProcedure());
+        org.eclipse.emf.ecore.resource.Resource resource = set.createResource(
+            org.eclipse.emf.common.util.URI.createPlatformResourceURI(
+                "Proj/src/" + modulePath, true)); //$NON-NLS-1$
+        resource.getContents().add(module);
+        return module;
+    }
+
+    /** A module holding one statement, the way a form module holds its handlers. */
+    private static Module moduleWithStatement(com._1c.g5.v8.dt.bsl.model.Expression expression)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Module module = factory.createModule();
+        Procedure method = factory.createProcedure();
+        module.getMethods().add(method);
+        SimpleStatement statement = factory.createSimpleStatement();
+        statement.setLeft(expression);
+        method.getStatements().add(statement);
+        return module;
+    }
+
+    /**
+     * Adds an idle-handler attachment naming a method of the module itself.
+     *
+     * @param module the module
+     * @param methodName the method name the attachment spells
+     */
+    private static void idleHandlerOn(Module module, String methodName)
+    {
+        BslFactory factory = BslFactory.eINSTANCE;
+        Invocation call = factory.createInvocation();
+        call.setMethodAccess(factory.createStaticFeatureAccess());
+        ((StaticFeatureAccess)call.getMethodAccess()).setName("ПодключитьОбработчикОжидания"); //$NON-NLS-1$
+        StringLiteral literal = factory.createStringLiteral();
+        literal.getLines().add("\"" + methodName + "\""); //$NON-NLS-1$ //$NON-NLS-2$
+        call.getParams().add(literal);
+        SimpleStatement statement = factory.createSimpleStatement();
+        statement.setLeft(call);
+        module.getMethods().get(0).getStatements().add(statement);
+    }
+
 
     /** A module holding one statement, the way a form module holds its handlers. */
     private static Module moduleWithStatement(com._1c.g5.v8.dt.bsl.model.Expression expression)
