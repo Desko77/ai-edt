@@ -247,8 +247,9 @@ public class ANameCalledMethodIsNotReportedDeadTest
     }
 
     /**
-     * The collection reads are bounded on their own: past the name-call collection cap the walk
-     * stops, instead of reading a form module for every file of an unbounded tree.
+     * The collection reads are bounded on their own: past the name-call collection cap further
+     * collection reads are skipped, instead of reading a form module for every file of an
+     * unbounded tree.
      */
     @Test
     public void theNameCallCollectionCapStopsTheWalk()
@@ -266,6 +267,71 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertEquals(20000, first.modulesExcludedForms);
         assertTrue("nothing the caps refused is a candidate", first.walked.isEmpty()); //$NON-NLS-1$
     }
+
+    /**
+     * The candidate cap skips candidates without ending the walk: a form module behind the cap
+     * still gives up the name-written call that keeps an export of the capped candidates alive.
+     */
+    @Test
+    public void theCandidateCapSkipsCandidatesAndKeepsCollecting()
+    {
+        List<IFile> files = new ArrayList<>();
+        files.add(fileAt("src/CommonModules/Подготовка/Module.bsl")); //$NON-NLS-1$
+        for (int i = 1; i < 5000; i++)
+        {
+            files.add(fileAt("src/CommonModules/Модуль" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        files.add(fileAt("src/CommonModules/ЗаПределом/Module.bsl")); //$NON-NLS-1$
+        files.add(fileAt("src/Documents/Заказ/Forms/ФормаДокумента/Module.bsl")); //$NON-NLS-1$
+        String formPath = "Documents/Заказ/Forms/ФормаДокумента/Module.bsl"; //$NON-NLS-1$
+        Module form = moduleCallingInBackground("Подготовка.НичемНеВызван"); //$NON-NLS-1$
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+        Set<String> nameCalled = new HashSet<>();
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> formPath
+            .equals(path) ? form : "CommonModules/Подготовка/Module.bsl".equals(path) //$NON-NLS-1$
+                ? подготовка : bareModule(),
+            false, null, null, MODULES, nameCalled, WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked, nameCalled,
+            100, List.of(), method -> 0, WatchForCancel.begin());
+
+        assertTrue(first.stoppedByCandidateCap);
+        assertEquals("the form behind the candidate cap is still read for its calls", 1, //$NON-NLS-1$
+            first.collectionReads);
+        assertTrue("the call behind the cap keeps the capped export alive", //$NON-NLS-1$
+            outcome.candidates.stream()
+                .noneMatch(candidate -> "НичемНеВызван".equals(candidate.methodName))); //$NON-NLS-1$
+    }
+
+    /**
+     * The name-call collection cap skips collection reads without ending the walk: a candidate
+     * behind the cap is still loaded and its dead export still reported.
+     */
+    @Test
+    public void theCollectionCapSkipsNonCandidatesAndKeepsScanning()
+    {
+        List<IFile> files = new ArrayList<>();
+        for (int i = 0; i < 20001; i++)
+        {
+            files.add(fileAt("src/CommonForms/Форма" + i + "/Module.bsl")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        files.add(fileAt("src/CommonModules/Подготовка/Module.bsl")); //$NON-NLS-1$
+        Module подготовка = moduleAt("CommonModules/Подготовка/Module.bsl", "НичемНеВызван"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files,
+            path -> path.startsWith("CommonForms/") ? bareModule() : подготовка, //$NON-NLS-1$
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked,
+            new HashSet<>(), 100, List.of(), method -> 0, WatchForCancel.begin());
+
+        assertTrue(first.stoppedByCollectionCap);
+        assertEquals("the candidate behind the collection cap is still scanned", 1, //$NON-NLS-1$
+            first.modulesScanned);
+        assertTrue("the dead export behind the cap is still reported", //$NON-NLS-1$
+            outcome.candidates.stream()
+                .anyMatch(candidate -> "НичемНеВызван".equals(candidate.methodName))); //$NON-NLS-1$
+    }
+
 
     /**
      * A cancel that arrives while the walk's last module is loading is still reported: the cap

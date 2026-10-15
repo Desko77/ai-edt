@@ -297,8 +297,10 @@ public class FindDeadCodeTool
      * the modules whose exports the decision examines, and the collection reads - modules read for
      * their name-written calls alone - have their own cap, reported on its own line. Each cap
      * counts the loads the walk attempts, also the ones that fail, so a configuration whose model
-     * is not built stops the walk rather than loading every file for nothing. Either cap stops the
-     * walk, and an answer a cap stopped does not claim a finished scope.
+     * is not built stops the walk rather than loading every file for nothing. A cap that fires
+     * skips the files it counts and leaves the other walk to spend its own budget on the files
+     * after them; the walk ends when both caps have fired or the files run out, and an answer a
+     * cap cut does not claim a finished scope.
      * </p>
      *
      * @param files the BSL files of the project, in walk order
@@ -347,13 +349,23 @@ public class FindDeadCodeTool
                         .contains(moduleFilter.toLowerCase(Locale.ROOT)));
             if (candidate && modulesScanned >= MODULE_SCAN_CAP)
             {
+                // The cap refuses the files it counts, it does not end the walk: the reads the
+                // other budget pays for still have files behind this one to spend it on.
                 stoppedByCandidateCap = true;
-                break;
+                if (stoppedByCollectionCap)
+                {
+                    break;
+                }
+                continue;
             }
             if (!candidate && collectionReads >= NAME_CALL_SCAN_CAP)
             {
                 stoppedByCollectionCap = true;
-                break;
+                if (stoppedByCandidateCap)
+                {
+                    break;
+                }
+                continue;
             }
             Module module = loader.apply(modulePath);
             // The attempt counts against its cap, loaded or not: a configuration whose model is
@@ -641,13 +653,14 @@ public class FindDeadCodeTool
         }
         if (first.stoppedByCandidateCap)
         {
-            out.append(" (candidate scan cap ").append(MODULE_SCAN_CAP).append(" reached)"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append(" (candidate scan cap ").append(MODULE_SCAN_CAP) //$NON-NLS-1$
+                .append(" reached: further candidate modules were not read)"); //$NON-NLS-1$
         }
         out.append("\n"); //$NON-NLS-1$
         if (first.stoppedByCollectionCap)
         {
             out.append("- name-call collection stopped at its cap (").append(NAME_CALL_SCAN_CAP) //$NON-NLS-1$
-                .append(" reached): modules the walk did not reach were not read\n"); //$NON-NLS-1$
+                .append(" reached): further modules outside the candidate scope were not read\n"); //$NON-NLS-1$
         }
         out.append("\n"); //$NON-NLS-1$
 
