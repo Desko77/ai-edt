@@ -425,14 +425,16 @@ public final class BmReferencesHelper
      * The fields a dependency-graph answer adds for the kind filter, and for the objects the level
      * does not carry: an edge dropped for an end, a root dropped for being that end itself.
      * <p>
-     * No argument and nothing dropped is an empty map: the answer gains no field. On
-     * {@code modules} a supplied argument is reported as {@code notApplied} and the calls edges
-     * are left to the caller.
+     * No argument and nothing dropped is an empty map: the answer gains no field. An empty list
+     * reads as no argument - it keeps every kind and the answer writes no {@code edgeKinds}
+     * field - so a list built dynamically does not read as a filter that named nothing. On
+     * {@code modules} a supplied non-empty argument is reported as {@code notApplied} and the
+     * calls edges are left to the caller.
      * </p>
      *
      * @param level the graph level, lower case
-     * @param requested the kinds the caller asked to keep, or <code>null</code> when the argument
-     *            was absent
+     * @param requested the kinds the caller asked to keep, an empty list when the argument named
+     *            nothing, or <code>null</code> when the argument was absent
      * @param bfs the walk
      * @return the fields to add, possibly empty
      */
@@ -442,7 +444,7 @@ public final class BmReferencesHelper
         Map<String, Object> fields = new LinkedHashMap<>();
         if ("modules".equals(level)) //$NON-NLS-1$
         {
-            if (requested != null)
+            if (requested != null && !requested.isEmpty())
             {
                 fields.put("edgeKinds", "notApplied"); //$NON-NLS-1$ //$NON-NLS-2$
             }
@@ -456,7 +458,7 @@ public final class BmReferencesHelper
         {
             fields.put("internalRootsDropped", new ArrayList<>(bfs.internalRootsDropped)); //$NON-NLS-1$
         }
-        if (requested == null)
+        if (requested == null || requested.isEmpty())
         {
             return fields;
         }

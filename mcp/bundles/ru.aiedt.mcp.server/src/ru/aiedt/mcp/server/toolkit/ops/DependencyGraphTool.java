@@ -107,7 +107,8 @@ public class DependencyGraphTool implements IMcpTool
             .stringProperty("direction", "in | out | both (default both)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("edgeKinds", //$NON-NLS-1$
                 "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
-                    + "Omit to keep every kind.") //$NON-NLS-1$
+                    + "Omit - or pass an empty list - to keep every kind; the answer writes no " //$NON-NLS-1$
+                    + "edgeKinds field for an empty list.") //$NON-NLS-1$
             .integerProperty("maxNodes", "Node cap, default 200, at most 2000") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("maxEdges", "Edge cap, default 500, at most 5000") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
