@@ -708,7 +708,7 @@ public class FindDeadCodeTool
             // that loaded no candidate module says that rather than naming a scope it read.
             boolean stopped = cancelled != null || first.stoppedByCandidateCap
                 || first.stoppedByCollectionCap;
-            boolean nothingLoaded = first.walked.isEmpty() && first.loadFailures > 0;
+            boolean nothingLoaded = first.walked.isEmpty() && first.modulesScanned > 0;
             if (stopped)
             {
                 out.append("Nothing had been found when the scan stopped.\n"); //$NON-NLS-1$

@@ -507,6 +507,27 @@ public class ANameCalledMethodIsNotReportedDeadTest
     }
 
     /**
+     * A scope with no candidate module is an empty scope, not a failed read: a form module that
+     * failed to load while calls were collected does not turn it into one.
+     */
+    @Test
+    public void aFailedCollectionReadDoesNotNameAnEmptyScopeUnreadable()
+    {
+        List<IFile> files = List.of(fileAt("src/Catalogs/Товары/Forms/ФормаЭлемента/Module.bsl")); //$NON-NLS-1$
+
+        FindDeadCodeTool.FirstPass first = FindDeadCodeTool.walkSources(files, path -> null,
+            false, null, null, MODULES, new HashSet<>(), WatchForCancel.begin());
+        FindDeadCodeTool.Outcome outcome = FindDeadCodeTool.candidatesOf(first.walked,
+            new HashSet<>(), 100, List.of(), method -> 0, WatchForCancel.begin());
+
+        String report = new FindDeadCodeTool().format("Проект", outcome, first, 100, Map.of(), //$NON-NLS-1$
+            null);
+
+        assertFalse(report, report.contains("No candidate module could be read")); //$NON-NLS-1$
+        assertTrue(report, report.contains("No dead export methods found in the scanned scope.")); //$NON-NLS-1$
+    }
+
+    /**
      * The count of the collected name-written calls names the modules that loaded: a walk of form
      * modules that all failed to load does not say it collected calls from them.
      */
@@ -530,7 +551,9 @@ public class ANameCalledMethodIsNotReportedDeadTest
         assertEquals(100, first.collectionReads);
         assertEquals(0, first.collectionReadsLoaded);
         assertFalse(report, report.contains("name-written calls collected from")); //$NON-NLS-1$
-        assertFalse(report, report.contains("No dead export methods found in the scanned scope.")); //$NON-NLS-1$
+        assertTrue(report, report.contains("100 modules failed to load")); //$NON-NLS-1$
+        assertFalse("no candidate was tried, so no candidate read failed", //$NON-NLS-1$
+            report.contains("No candidate module could be read")); //$NON-NLS-1$
     }
 
     /**
