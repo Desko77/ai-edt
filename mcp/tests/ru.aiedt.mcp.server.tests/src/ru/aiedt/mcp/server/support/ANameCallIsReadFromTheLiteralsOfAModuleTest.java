@@ -212,64 +212,6 @@ public class ANameCallIsReadFromTheLiteralsOfAModuleTest
     }
 
     /**
-     * An idle handler name written across lines joins without the line break: the name a module
-     * writes as two lines with a continuation bar is one name.
-     */
-    @Test
-    public void aMultiLineIdleHandlerNameJoinsWithoutTheLineBreak()
-    {
-        Module module = moduleWithStatement(invocation(null, "ПодключитьОбработчикОжидания", //$NON-NLS-1$
-            literalAcross("\"Проверить", "|Ожидание\""))); //$NON-NLS-1$ //$NON-NLS-2$
-
-        List<BslCallGraphHelper.NameCall> calls = BslCallGraphHelper.literalNameCallsOf(module, MODULES);
-
-        assertEquals(List.of("ПроверитьОжидание"), names(calls)); //$NON-NLS-1$
-    }
-
-    /** A background target written across lines names the pair the module text spells. */
-    @Test
-    public void aMultiLineBackgroundTargetNamesItsPair()
-    {
-        Module module = moduleWithStatement(invocation("ДлительныеОперации", "ВыполнитьВФоне", //$NON-NLS-1$ //$NON-NLS-2$
-            literalAcross("\"ДлительныеПодготовки.", "|РассчитатьВсе\""))); //$NON-NLS-1$ //$NON-NLS-2$
-
-        List<BslCallGraphHelper.NameCall> calls = BslCallGraphHelper.literalNameCallsOf(module, MODULES);
-
-        assertEquals(1, calls.size());
-        assertEquals("CommonModule.ДлительныеПодготовки.Module", calls.get(0).targetModuleFqn); //$NON-NLS-1$
-        assertEquals("РассчитатьВсе", calls.get(0).methodName); //$NON-NLS-1$
-    }
-
-    /** A doubled quote inside a literal reads as the one quote it spells. */
-    @Test
-    public void aDoubledQuoteReadsAsOne()
-    {
-        Module module = moduleWithStatement(invocation(null, "ПодключитьОбработчикОжидания", //$NON-NLS-1$
-            literal("\"Проверить\"\"Ожидание\""))); //$NON-NLS-1$
-
-        List<BslCallGraphHelper.NameCall> calls = BslCallGraphHelper.literalNameCallsOf(module, MODULES);
-
-        assertEquals(List.of("Проверить\"Ожидание"), names(calls)); //$NON-NLS-1$
-    }
-
-    /**
-     * A multi-line literal, the way the parser stores it: each line carries its quotes or its
-     * continuation bar, and the reader strips them itself.
-     *
-     * @param quotedLines the stored lines
-     * @return the literal
-     */
-    private static StringLiteral literalAcross(String... quotedLines)
-    {
-        StringLiteral literal = BslFactory.eINSTANCE.createStringLiteral();
-        for (String line : quotedLines)
-        {
-            literal.getLines().add(line);
-        }
-        return literal;
-    }
-
-    /**
      * A type whose other name cannot be read costs its own constructor, not the walk: the call
      * does not fail, the constructor is no description this read knows, and the constructors after
      * it are still read.

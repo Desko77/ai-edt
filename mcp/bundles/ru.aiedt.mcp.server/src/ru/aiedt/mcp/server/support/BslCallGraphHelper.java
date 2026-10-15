@@ -1162,9 +1162,6 @@ public final class BslCallGraphHelper
     /**
      * The content of a parameter that sits in the code as a string literal.
      * <p>
-     * A literal written across lines joins without the line break: the continuation bar is
-     * already gone when the model stores its lines, and every reader here matches a name, which
-     * never carries one. A doubled quote inside the literal reads as the one quote it spells.
      * </p>
      *
      * @param params the expressions to read
@@ -1179,7 +1176,7 @@ public final class BslCallGraphHelper
             return null;
         }
         List<String> lines = ((StringLiteral)params.get(index)).lines(true);
-        return lines.isEmpty() ? null : String.join("", lines); //$NON-NLS-1$
+        return lines.isEmpty() ? null : String.join("\n", lines); //$NON-NLS-1$
     }
 
     /**
