@@ -575,6 +575,10 @@ final class ObjectOps
                     // this exists for: it fails EDT's own check the moment it appears.
                     for (Map.Entry<String, String> property : remaining.entrySet())
                     {
+                        if ("inputByString".equalsIgnoreCase(property.getKey())) //$NON-NLS-1$
+                        {
+                            continue;
+                        }
                         String refused = BmObjectHelper.setProperty(created, property.getKey(),
                             valueToApply(englishType, property.getKey(), property.getValue()));
                         if (refused != null)
@@ -617,6 +621,18 @@ final class ObjectOps
                     // attach; a regular config worked through an implicit hook).
                     String fqn = englishType + "." + name; //$NON-NLS-1$
                     tx.attachTopObject((IBmObject) created, fqn);
+                    if (creation.getObject() != null)
+                    {
+                        BmObjectHelper.fillDefaultInputByString(created);
+                    }
+                    for (Map.Entry<String, String> property : remaining.entrySet())
+                    {
+                        if ("inputByString".equalsIgnoreCase(property.getKey())) //$NON-NLS-1$
+                        {
+                            BmObjectHelper.applyCreatedInputByString(created, fqn, property.getValue(), project);
+                            applied.add(property.getKey());
+                        }
+                    }
                     // 3.8.4 + issue #15: a CommonForm needs its inner Form built AND
                     // registered as its OWN top-object in the same transaction, AFTER
                     // the wrapper has a namespace. The inner Form is a separate

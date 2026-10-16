@@ -4,12 +4,18 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.eclipse.emf.common.util.BasicEList;
+import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EcoreFactory;
 import org.junit.After;
@@ -26,6 +32,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.Document;
 import com._1c.g5.v8.dt.metadata.mdclass.DocumentNumberPeriodicity;
 import com._1c.g5.v8.dt.metadata.mdclass.DocumentNumberType;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.mcore.Field;
 import com._1c.g5.v8.dt.metadata.mdclass.Posting;
 import com._1c.g5.v8.dt.platform.version.Version;
 
@@ -279,6 +286,201 @@ public class ObjectCreationDefaultsTest
         assertNotNull(outcome.getReason());
         assertNull("no defaults warning for a name that resolves to nothing", //$NON-NLS-1$
             outcome.getDefaultsWarning());
+    }
+
+    /** Checks the reference-stage dispatch for every kind in the seven-kind comparison. */
+    @Test
+    public void onlyCatalogsAndDocumentsRunTheReferenceStage()
+    {
+        AtomicInteger calls = new AtomicInteger();
+        IModelObjectFactory factory = (IModelObjectFactory)Proxy.newProxyInstance(
+            IModelObjectFactory.class.getClassLoader(), new Class<?>[] { IModelObjectFactory.class },
+            (proxy, method, args) -> {
+                if ("fillDefaultReferences".equals(method.getName()))
+                {
+                    assertTrue(args[0] instanceof Catalog || args[0] instanceof Document);
+                    calls.incrementAndGet();
+                }
+                return null;
+            });
+        BmObjectHelper.setFactorySupplier(() -> factory);
+        for (String kind : List.of("Catalog", "Document", "Enum", "InformationRegister",
+            "AccumulationRegister", "DataProcessor", "Report", "CatalogAttribute"))
+        {
+            BmObjectHelper.fillDefaultInputByString(BmObjectHelper.createGenericObject(kind));
+        }
+        assertEquals(2, calls.get());
+    }
+
+    /** Preserves a populated list instead of invoking the additive EDT updater again. */
+    @Test
+    public void aPopulatedInputListIsNotInitializedAgain()
+    {
+        Catalog catalog = (Catalog)BmObjectHelper.createGenericObject("Catalog");
+        catalog.getInputByString().add(com._1c.g5.v8.dt.mcore.McoreFactory.eINSTANCE.createField());
+        BmObjectHelper.setFactorySupplier(() -> {
+            fail("A populated list must not ask for a factory");
+            return null;
+        });
+        BmObjectHelper.fillDefaultInputByString(catalog);
+        assertEquals(1, catalog.getInputByString().size());
+    }
+
+    /** Propagates failure so the creating transaction can roll back instead of reporting success. */
+    @Test
+    public void anUnavailableReferenceFactoryIsRefused()
+    {
+        BmObjectHelper.setFactorySupplier(() -> null);
+        try
+        {
+            BmObjectHelper.fillDefaultInputByString(BmObjectHelper.createGenericObject("Catalog"));
+            fail("Missing reference defaults must not be reported as complete");
+        }
+        catch (IllegalStateException expected)
+        {
+            assertTrue(expected.getMessage().contains("MdObjectFactory"));
+        }
+    }
+
+    /** Keeps the initializer's exception available to the transaction's failure response. */
+    @Test
+    public void aFailingReferenceUpdaterIsNotIgnored()
+    {
+        IModelObjectFactory factory = (IModelObjectFactory)Proxy.newProxyInstance(
+            IModelObjectFactory.class.getClassLoader(), new Class<?>[] { IModelObjectFactory.class },
+            (proxy, method, args) -> { throw new IllegalStateException("reference update failed"); });
+        BmObjectHelper.setFactorySupplier(() -> factory);
+        try
+        {
+            BmObjectHelper.fillDefaultInputByString(BmObjectHelper.createGenericObject("Document"));
+            fail("Reference-stage failure must reach the caller");
+        }
+        catch (IllegalStateException expected)
+        {
+            assertEquals("reference update failed", expected.getMessage());
+        }
+    }
+
+    /** Replaces rather than appends to the default fields when an explicit value was given. */
+    @Test
+    public void explicitInputFieldsReplaceTheDefaults()
+    {
+        Field code = field("Code");
+        Field description = field("Description");
+        EList<Field> selected = new BasicEList<>(List.of(code, description));
+        Catalog owner = fieldSource(selected, code, description);
+        BmObjectHelper.applyCreatedInputByString(owner, "Catalog.Example", "description", null);
+        assertEquals(1, selected.size());
+        assertSame(description, selected.get(0));
+    }
+
+    /** Rejects a partially valid value instead of silently applying only the known field. */
+    @Test
+    public void everyExplicitInputFieldMustResolve()
+    {
+        for (String names : new String[] { "", null, "Missing", "Code,Missing" })
+        {
+            Catalog owner = fieldSource(new BasicEList<>(), field("Code"));
+            try
+            {
+                BmObjectHelper.applyCreatedInputByString(owner, "Catalog.Example", names, null);
+                fail("The whole requested field list must resolve: " + names);
+            }
+            catch (IllegalArgumentException expected)
+            {
+                assertTrue(expected.getMessage().contains("Nothing was created"));
+            }
+        }
+    }
+
+    /** Selects an existing initializer proxy while derived fields are still absent. */
+    @Test
+    public void explicitInputUsesTheInitialReferencesBeforeFieldsAreBuilt()
+    {
+        Catalog owner = (Catalog)BmObjectHelper.createGenericObject("Catalog");
+        Field code = initialField("Catalog.Example", "Code");
+        Field description = initialField("Catalog.Example", "Description");
+        owner.getInputByString().addAll(List.of(code, description));
+        assertTrue(owner.getFields().isEmpty());
+        BmObjectHelper.applyCreatedInputByString(owner, "Catalog.Example", "description", null);
+        assertEquals(1, owner.getInputByString().size());
+        assertSame(description, owner.getInputByString().get(0));
+    }
+
+    /** Refuses unknown names and foreign-owner proxies without replacing the initial list. */
+    @Test
+    public void anInvalidInitialFieldSelectionKeepsTheDefaults()
+    {
+        for (String names : new String[] { "", null, "Code,Missing", "Description" })
+        {
+            Catalog owner = (Catalog)BmObjectHelper.createGenericObject("Catalog");
+            Field code = initialField("Catalog.Example", "Code");
+            Field foreign = initialField("Catalog.Another", "Description");
+            owner.getInputByString().addAll(List.of(code, foreign));
+            try
+            {
+                BmObjectHelper.applyCreatedInputByString(owner, "Catalog.Example", names, null);
+                fail("The entire initial selection must resolve on the same owner");
+            }
+            catch (IllegalArgumentException expected)
+            {
+                assertEquals(2, owner.getInputByString().size());
+                assertSame(code, owner.getInputByString().get(0));
+            }
+        }
+    }
+
+    /**
+     * Creates the same reference shape as the EDT initializer, without a live BM namespace.
+     *
+     * @param fqn the field owner
+     * @param name the standard attribute name
+     * @return the unresolved field reference
+     */
+    private static Field initialField(String fqn, String name)
+    {
+        Field field = com._1c.g5.v8.dt.mcore.McoreFactory.eINSTANCE.createField();
+        ((org.eclipse.emf.ecore.InternalEObject)field).eSetProxyURI(
+            com._1c.g5.v8.bm.core.BmUriUtil.createContainedBmObjectUri("example", fqn,
+                "/fields:" + com._1c.g5.v8.bm.core.BmUriUtil.encodeCollectionItemId("StandardAttribute:" + name)));
+        return field;
+    }
+
+    /**
+     * Creates a field-source stand-in with a writable selection and known available fields.
+     * It does not simulate attachment or persistence, which require the live BM model.
+     *
+     * @param selected the input-by-string list
+     * @param fields the available fields
+     * @return the catalog stand-in
+     */
+    private static Catalog fieldSource(EList<Field> selected, Field... fields)
+    {
+        EList<Field> available = new BasicEList<>(List.of(fields));
+        return (Catalog)Proxy.newProxyInstance(Catalog.class.getClassLoader(),
+            new Class<?>[] { Catalog.class }, (proxy, method, args) -> {
+                if ("getFields".equals(method.getName()))
+                {
+                    return available;
+                }
+                if ("getInputByString".equals(method.getName()))
+                {
+                    return selected;
+                }
+                return null;
+            });
+    }
+
+    /**
+     * Creates a field identified the way standard attributes are identified by the model.
+     *
+     * @param name the standard attribute name
+     * @return the field stand-in
+     */
+    private static Field field(String name)
+    {
+        return (Field)Proxy.newProxyInstance(Field.class.getClassLoader(), new Class<?>[] { Field.class },
+            (proxy, method, args) -> "getFieldId".equals(method.getName()) ? "StandardAttribute:" + name : null);
     }
 
     /**

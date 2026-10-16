@@ -21,9 +21,12 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.InternalEObject;
 
+import com._1c.g5.v8.bm.core.BmUriUtil;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
@@ -34,10 +37,14 @@ import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProject;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicDbObject;
+import com._1c.g5.v8.dt.metadata.mdclass.Catalog;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.Document;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.mcore.Field;
 import com._1c.g5.wiring.ServiceAccess;
 import com._1c.g5.wiring.ServiceProperties;
 
@@ -1101,6 +1108,124 @@ public final class BmObjectHelper
             return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
                 + ") failed: " + e.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Fills the wizard's input-by-string references on a new, attached catalog or document.
+     * Other kinds and an already populated list are left unchanged.
+     *
+     * @param object the new top object, after attachment in the creating BM transaction
+     * @throws IllegalStateException when the metadata factory is unavailable
+     */
+    public static void fillDefaultInputByString(MdObject object)
+    {
+        if (!(object instanceof Catalog) && !(object instanceof Document))
+        {
+            return;
+        }
+        if (!((BasicDbObject)object).getInputByString().isEmpty())
+        {
+            return;
+        }
+        IModelObjectFactory factory = modelObjectFactory();
+        if (factory == null)
+        {
+            throw new IllegalStateException("MdObjectFactory is unavailable for inputByString defaults."); //$NON-NLS-1$
+        }
+        // The reference updater requires the engine and FQN assigned by attachTopObject.
+        factory.fillDefaultReferences(object);
+    }
+
+    /**
+     * Replaces a new object's input-by-string list with exactly the requested fields.
+     * Empty or partially unresolved requests fail inside the creating transaction.
+     *
+     * @param object the attached object whose fields can be resolved
+     * @param fqn the object's fully qualified name
+     * @param names comma-separated field names
+     * @param project the owning workspace project
+     * @throws IllegalArgumentException when any requested field cannot be applied
+     */
+    public static void applyCreatedInputByString(MdObject object, String fqn, String names, IProject project)
+    {
+        if (object instanceof BasicDbObject && ((BasicDbObject)object).getFields().isEmpty())
+        {
+            applyInitialInputByString((BasicDbObject)object, fqn, names);
+            return;
+        }
+        List<String> resolved = new ArrayList<>();
+        List<String> unresolved = new ArrayList<>();
+        List<String> diagnostics = new ArrayList<>();
+        String refused = BmDefinedTypeHelper.applyInputByString(object, fqn, names, project,
+            resolved, unresolved, diagnostics);
+        if (refused != null || !unresolved.isEmpty())
+        {
+            throw new IllegalArgumentException((refused != null ? refused
+                : "inputByString: unresolved fields " + unresolved) + " Nothing was created."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Selects fields from the initializer's references before derived fields are built.
+     * No new URI is constructed and a reference to another owner is not accepted.
+     *
+     * @param object the new database object whose derived fields are still empty
+     * @param fqn the attached object's address
+     * @param names comma-separated names of the requested fields
+     * @throws IllegalArgumentException when the whole requested list cannot be resolved
+     */
+    private static void applyInitialInputByString(BasicDbObject object, String fqn, String names)
+    {
+        Map<String, Field> available = new LinkedHashMap<>();
+        for (Field field : object.getInputByString())
+        {
+            String id = null;
+            if (field.eIsProxy())
+            {
+                URI uri = ((InternalEObject)field).eProxyURI();
+                if (uri != null && BmUriUtil.isBmUri(uri) && fqn.equals(BmUriUtil.extractTopObjectFqn(uri)))
+                {
+                    String path = BmUriUtil.extractContainmentPath(uri);
+                    if (path != null && path.startsWith("/fields:")) //$NON-NLS-1$
+                    {
+                        id = BmUriUtil.decodeCollectionItemId(path.substring("/fields:".length())); //$NON-NLS-1$
+                    }
+                }
+            }
+            else
+            {
+                id = field.getFieldId();
+            }
+            if (id != null)
+            {
+                available.put(id, field);
+            }
+        }
+        List<Field> selected = new ArrayList<>();
+        for (String part : (names == null ? "" : names).split(",")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            String name = part.trim();
+            if (name.isEmpty())
+            {
+                continue;
+            }
+            Field match = available.entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(name)
+                    || entry.getKey().substring(entry.getKey().lastIndexOf(':') + 1).equalsIgnoreCase(name))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
+            if (match == null)
+            {
+                throw new IllegalArgumentException("inputByString: field '" + name //$NON-NLS-1$
+                    + "' is unavailable; initial fields: " + available.keySet() + ". Nothing was created."); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            selected.add(match);
+        }
+        if (selected.isEmpty())
+        {
+            throw new IllegalArgumentException("inputByString: give at least one field. Nothing was created."); //$NON-NLS-1$
+        }
+        object.getInputByString().clear();
+        object.getInputByString().addAll(selected);
     }
 
     /**
