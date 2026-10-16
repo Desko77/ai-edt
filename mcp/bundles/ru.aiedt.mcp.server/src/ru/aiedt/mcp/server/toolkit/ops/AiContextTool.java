@@ -87,10 +87,9 @@ public class AiContextTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Aggregate context about a 1C metadata object or module in one call. " + //$NON-NLS-1$
-               "Returns metadata details, list of BSL modules, and module structure. " + //$NON-NLS-1$
-               "Combines get_metadata_details + list_modules + get_module_structure " + //$NON-NLS-1$
-               "to reduce round-trips. Use 'depth' to control detail level."; //$NON-NLS-1$
+        return "Metadata, modules and structure of a 1C object or module; 'depth' controls detail. " + //$NON-NLS-1$
+               "Measured on five common modules: default standard replies 5,173-5,945 characters; " + //$NON-NLS-1$
+               "read_module_source replies 64,706-225,721 characters (up to 5,000 source lines)."; //$NON-NLS-1$
     }
 
     @Override

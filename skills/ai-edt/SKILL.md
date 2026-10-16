@@ -195,6 +195,9 @@ EDT runtime supports.
 ## Spending context wisely
 
 - `ai_context` with a target FQN replaces a metadata call plus a module list plus a structure call.
+  Measured on five common modules: default `depth=standard` replies were 5,173-5,945 characters;
+  `read_module_source` replies were 64,706-225,721 characters, with up to 5,000 source lines per call.
+  `standard` lists at most 30 methods per module by default (`maxMethods`).
 - `get_module_structure`, then `read_method_source` for the one method you need. This works on
   modules of tens of thousands of lines and gives exact method boundaries cheaply. Do not fall
   back to reading whole files because a module is large.
