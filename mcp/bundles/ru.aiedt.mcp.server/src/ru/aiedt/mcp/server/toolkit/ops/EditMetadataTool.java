@@ -444,8 +444,8 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("synonym", //$NON-NLS-1$
                 "Synonym for a newly created object or field.") //$NON-NLS-1$
             .objectProperty("properties", //$NON-NLS-1$
-                "create_object: a JSON object of property name to value, applied before " //$NON-NLS-1$
-                    + "the new object joins the configuration.") //$NON-NLS-1$
+                "create_object: a JSON object of property name to value, applied in " //$NON-NLS-1$
+                    + "the creating transaction.") //$NON-NLS-1$
             .booleanProperty("server", //$NON-NLS-1$
                 "create_object CommonModule: the Server context.") //$NON-NLS-1$
             .booleanProperty("externalConnection", //$NON-NLS-1$
@@ -3241,11 +3241,13 @@ public class EditMetadataTool implements IMcpTool
         sb.append("create_route_map, per point: the handler of the point's events, as an object of event name to handler name {\"before\":\"ОбработкаПеред\"} or as an array of {\"event\":<event>,\"handler\":<handler>}. The event name is the one the point kind declares (Start / Action / Condition / Completion / NestedBusinessProcess each have their own set); an event the kind does not declare is refused with the list it does have, and an empty handler name is refused. A point whose event is given no handler keeps the event with no handler, which is what the editor shows as an unbound event. The names are written into the scheme and come back in the answer's handlers[]. A handler the BusinessProcess object module does not declare yet gets a procedure there with the parameters of its event and an empty body, named in stubsWritten; one already declared is left alone and named in stubsAlreadyPresent; dryRun names the procedures it would write in stubsToWrite. get_route_map reads the handlers back as each point's events[].\n\n"); //$NON-NLS-1$
         sb.append("### properties\n\n"); //$NON-NLS-1$
         sb.append("create_object: a JSON object of property name to value, applied to the " //$NON-NLS-1$
-            + "new object before it joins the configuration - e.g. " //$NON-NLS-1$
+            + "new object in the creating transaction - e.g. " //$NON-NLS-1$
             + "{\"methodName\":\"CommonModule.A.B\",\"use\":false} on a ScheduledJob. A " //$NON-NLS-1$
             + "property the object's type does not have is refused and NOTHING is " //$NON-NLS-1$
             + "created. A property given both here and as its own argument must carry " //$NON-NLS-1$
-            + "the same value.\n\n"); //$NON-NLS-1$
+            + "the same value. Catalog inputByString defaults to Code,Description; Document to Number. " //$NON-NLS-1$
+            + "properties.inputByString replaces these fields with a comma-separated list; " //$NON-NLS-1$
+            + "every field must resolve. Reference properties are applied after attachment, before commit.\n\n"); //$NON-NLS-1$
         sb.append("### property\n\n"); //$NON-NLS-1$
         sb.append("Reference property name. For add_object_reference / remove_object_reference it is a LIST-valued reference (registerRecords on a Document = its movements, owners on a Catalog, basedOn, baseCalculationTypes on a ChartOfCalculationTypes; also registeredDocuments on a DocumentJournal, and documents / registerRecords on a Sequence - each takes a top-level object FQN in valueFqn). For set_object_reference / clear_object_reference it is a SCALAR reference (e.g. extDimensionTypes on a ChartOfAccounts = a ChartOfCharacteristicTypes; addressing / currentPerformer on a Task; mainAddressingAttribute on a Task = a child AddressingAttribute).\n\n"); //$NON-NLS-1$
         sb.append("### propertyName\n\n"); //$NON-NLS-1$

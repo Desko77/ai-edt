@@ -121,11 +121,16 @@ put the files back does not put the data back.
 - Deleting an XDTO package by FQN is not supported; remove it through the file system.
 
 `edit_metadata create_object` takes a `properties` object of property name to value, applied to the
-new object before it joins the configuration - `{"methodName": "CommonModule.A.B", "use": false}` on
+new object in the creating transaction - `{"methodName": "CommonModule.A.B", "use": false}` on
 a `ScheduledJob`, for one. A property the object's type does not have is refused and **nothing is
 created**. A property given both there and as its own argument must carry the same value. Setting
 properties this way is one call; creating and then setting them one at a time is several, and the
 object exists in between.
+
+New catalogs carry `inputByString=Code,Description`; new documents carry `inputByString=Number`.
+`properties.inputByString` replaces this list with comma-separated field names. Every requested
+field must resolve; an empty or partially unresolved list refuses creation. Reference properties
+are applied after attachment, before the creating transaction commits.
 
 ## Validation that looks wrong but is stale
 
