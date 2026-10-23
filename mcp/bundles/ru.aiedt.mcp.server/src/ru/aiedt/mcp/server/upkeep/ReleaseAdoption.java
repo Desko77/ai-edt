@@ -81,13 +81,26 @@ public final class ReleaseAdoption
     /**
      * The units an update of this plugin may add or remove.
      * <p>
-     * Three, not one: naming only the feature group would refuse the ordinary shape of our own
-     * update, because the group requires its jar and both bring the bundle.
+     * Four, not one: naming only the feature group would refuse the ordinary shape of our own
+     * update, because the group requires its jar and both bring the bundle. The ordinary-forms
+     * bundle is listed by its own id and nothing wider - a namespace or a wildcard here would
+     * adopt any bundle that ever chose to spell itself alike.
      * </p>
      */
     static final Set<String> ALLOWED_UNITS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         ReleaseFeed.FEATURE_IU, "ru.aiedt.mcp.server.feature.feature.jar", //$NON-NLS-1$
-        "ru.aiedt.mcp.server"))); //$NON-NLS-1$
+        "ru.aiedt.mcp.server", //$NON-NLS-1$
+        "ru.aiedt.mcp.oform"))); //$NON-NLS-1$
+
+    /**
+     * The units of the private ordinary-forms feature, which a profile installed from before the
+     * public bundle may still hold. They stay outside {@link #ALLOWED_UNITS} on purpose: this
+     * update neither adopts nor removes them, and a plan that touches one is refused with the
+     * removal named as a separate p2 step.
+     */
+    static final Set<String> LEGACY_UNITS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
+        "ru.aiedt.mcp.oform.feature.feature.group", //$NON-NLS-1$
+        "ru.aiedt.mcp.oform.feature.feature.jar"))); //$NON-NLS-1$
 
     /**
      * Reference-following for artifact repositories. p2 has no public constant for it - only
@@ -311,14 +324,63 @@ public final class ReleaseAdoption
     {
         Set<String> strays = new LinkedHashSet<>();
         collectStrays(plan, strays);
+        return refusalOf(strays);
+    }
+
+    /**
+     * The refusal for the units a plan wanted to change outside this plugin, or <code>null</code>
+     * when it wanted none.
+     * <p>
+     * Every unit is named, sorted. One of {@link #LEGACY_UNITS} among them is named for what it
+     * is: the removal it asks for is a separate p2 step this update does not perform, so the user
+     * reads what to uninstall instead of a bare "outside this plugin".
+     * </p>
+     *
+     * @param strays the units outside the allow-list, each as <code>id version</code>
+     * @return the refusal, or <code>null</code> when the set is empty
+     */
+    static String refusalOf(Set<String> strays)
+    {
         if (strays.isEmpty())
         {
             return null;
         }
         List<String> named = new ArrayList<>(strays);
         Collections.sort(named);
-        return "the update would also change " + String.join(", ", named) //$NON-NLS-1$ //$NON-NLS-2$
-            + ", which is outside this plugin; nothing was installed"; //$NON-NLS-1$
+        StringBuilder refusal = new StringBuilder("the update would also change ") //$NON-NLS-1$
+            .append(String.join(", ", named)) //$NON-NLS-1$
+            .append(", which is outside this plugin; nothing was installed"); //$NON-NLS-1$
+        for (String legacy : LEGACY_UNITS)
+        {
+            if (namesAUnit(named, legacy))
+            {
+                refusal.append("; ").append(legacy) //$NON-NLS-1$
+                    .append(" is the private ordinary-forms feature of an earlier installation ") //$NON-NLS-1$
+                    .append("and has to be uninstalled through p2 before this update; this update ") //$NON-NLS-1$
+                    .append("removes nothing itself"); //$NON-NLS-1$
+                break;
+            }
+        }
+        return refusal.toString();
+    }
+
+    /**
+     * Whether an entry of the stray list names this unit id.
+     *
+     * @param strays the stray entries, each <code>id version</code>
+     * @param id the unit id
+     * @return <code>true</code> when one of the entries is this id at this version
+     */
+    private static boolean namesAUnit(List<String> strays, String id)
+    {
+        for (String stray : strays)
+        {
+            if (stray.startsWith(id) && stray.length() > id.length() && stray.charAt(id.length()) == ' ')
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static void collectStrays(IProvisioningPlan plan, Set<String> strays)

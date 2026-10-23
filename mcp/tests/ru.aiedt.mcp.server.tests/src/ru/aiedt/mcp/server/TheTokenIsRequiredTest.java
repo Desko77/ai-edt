@@ -18,6 +18,7 @@ import java.net.ConnectException;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
@@ -36,6 +37,8 @@ import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.settings.McpAuth;
 import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 
 /**
  * Every request to {@code /mcp} carries the bearer token while the token is demanded, and the token
@@ -303,6 +306,48 @@ public class TheTokenIsRequiredTest
         assertTrue(full.toString(), full.contains("instance")); //$NON-NLS-1$
         assertTrue(full.toString(), full.contains("heapFreeMb")); //$NON-NLS-1$
         assertTrue(full.toString(), full.contains("uiResponding")); //$NON-NLS-1$
+    }
+
+    /** Trusted health reports actual ordinary-tool registration, not its visibility in tools/list. */
+    @Test
+    public void healthReportsTheOrdinaryToolRegistration() throws IOException
+    {
+        server = LiveServer.start();
+        McpToolCatalog catalog = McpToolCatalog.getInstance();
+        IMcpTool existing = catalog.getTool("ordinary_forms"); //$NON-NLS-1$
+        assertEquals(existing != null, health(server.bearer()).get("ordinaryFormsRegistered").getAsBoolean()); //$NON-NLS-1$
+        assertFalse(health(null).has("ordinaryFormsRegistered")); //$NON-NLS-1$
+        if (existing == null)
+        {
+            IMcpTool tool = new IMcpTool()
+            {
+                /** @return the name whose registration is reported */
+                @Override
+                public String getName() { return "ordinary_forms"; } //$NON-NLS-1$
+
+                /** @return the probe description */
+                @Override
+                public String getDescription() { return "Registration probe"; } //$NON-NLS-1$
+
+                /** @return an empty input schema */
+                @Override
+                public String getInputSchema() { return "{}"; } //$NON-NLS-1$
+
+                /** @return an empty result; this probe is never executed */
+                @Override
+                public String execute(Map<String, String> params) { return "{}"; } //$NON-NLS-1$
+            };
+            try
+            {
+                catalog.registerExternal(tool, true);
+                assertTrue(health(server.bearer()).get("ordinaryFormsRegistered").getAsBoolean()); //$NON-NLS-1$
+            }
+            finally
+            {
+                catalog.unregisterExternal(tool);
+            }
+            assertFalse(health(server.bearer()).get("ordinaryFormsRegistered").getAsBoolean()); //$NON-NLS-1$
+        }
     }
 
     // ---- 8: an empty value on Apply is a new token ------------------------------------------

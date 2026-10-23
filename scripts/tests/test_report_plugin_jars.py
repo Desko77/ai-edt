@@ -14,10 +14,17 @@ of its path, a profile left behind by a removed installation, and an installatio
 area it loads. Which of an installation's records its launcher actually reads is checked on the same
 set, and so is a bundles.info that cannot be read at all.
 
+The installed state of an area - what p2 itself resolved, as unit ids - is read from the p2 profile
+registry beside the configuration area, and is checked on made-up registries: gzip and plain
+snapshots, numeric timestamp order, a corrupt latest snapshot an older clean one must not answer
+for, the profile an area's config.ini names against several, a profile bound to another area, and
+the exact legacy unit ids of the closed ordinary-forms delivery.
+
 Run: python3 scripts/tests/test_report_plugin_jars.py
 """
 
 import contextlib
+import gzip
 import importlib.util
 import io
 import json
@@ -341,7 +348,7 @@ class ABundlesInfoThatCannotBeReadIsReported(unittest.TestCase):
             out = io.StringIO()
             with unittest.mock.patch.object(pathlib.Path, "read_text", failing):
                 with contextlib.redirect_stdout(out):
-                    REPORT.main(["--json", "--root", str(root)])
+                    REPORT.main(["--json", "--bundle", BUNDLE, "--root", str(root)])
         payload = json.loads(out.getvalue())
         self.assertEqual([str(info)], [entry["bundlesInfo"] for entry in payload["unreadable"]])
         self.assertIn("denied", payload["unreadable"][0]["reason"])
@@ -358,7 +365,7 @@ class TheJsonReportCarriesTheInstallations(unittest.TestCase):
                                [BUNDLE + ",0.2.57,../../pool/plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                REPORT.main(["--json", "--root", str(root)])
+                REPORT.main(["--json", "--bundle", BUNDLE, "--root", str(root)])
         text = out.getvalue()
         self.assertTrue(all(ord(character) < 128 for character in text), "the JSON is not ASCII")
         payload = json.loads(text)
@@ -413,10 +420,505 @@ class EveryInstallationNamesTheAreaItLoads(unittest.TestCase):
             make_installation(root / "edt")
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
-                REPORT.main(["--json", "--root", str(root)])
+                REPORT.main(["--json", "--bundle", BUNDLE, "--root", str(root)])
         payload = json.loads(out.getvalue())
         self.assertEqual(1, len(payload["consumers"]))
         self.assertEqual({"install", "launcher", "loads"}, set(payload["consumers"][0]))
+
+
+class TheSharedDeliveryIsToldApartFromTheOldOne(unittest.TestCase):
+    """A server of the shared delivery carries a second bundle; an old one never did.
+
+    From 0.2.60 on the delivery installs ru.aiedt.mcp.server and ru.aiedt.mcp.oform at one
+    version. A bundles.info recording such a server and no oform is an installation stopped
+    half way; a server older than that never carried oform, and reading its profile as
+    damaged would be wrong in the other direction.
+    """
+
+    SERVER = "ru.aiedt.mcp.server"
+    OFORM = "ru.aiedt.mcp.oform"
+
+    def states_for(self, *lines):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            make_installation(root / "edt")
+            write_bundles_info(root / "edt" / "configuration", list(lines))
+            return REPORT.shared_delivery_states([root])
+
+    def line(self, bundle, version):
+        return "%s,%s,plugins/%s_%s.jar,4,false" % (bundle, version, bundle, version)
+
+    def test_an_old_server_without_oform_is_not_damage(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.35"))
+        self.assertEqual(1, len(states))
+        self.assertIsNone(states[0]["sharedDelivery"],
+                          "before the shared delivery the oform bundle did not exist in the "
+                          "public installation")
+        self.assertNotIn("WITHOUT", "\n".join(REPORT.delivery_lines(states)))
+
+    def test_a_shared_delivery_with_both_bundles_is_whole(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60"),
+                                 self.line(self.OFORM, "0.2.60"))
+        self.assertIs(True, states[0]["sharedDelivery"])
+        self.assertIn("carries both bundles", "\n".join(REPORT.delivery_lines(states)))
+
+    def test_a_server_of_the_shared_delivery_without_oform_is_half(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60"))
+        self.assertIs(False, states[0]["sharedDelivery"])
+        self.assertIn("WITHOUT", "\n".join(REPORT.delivery_lines(states)))
+
+    def test_a_qualified_build_of_the_shared_delivery_counts_as_it(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60.v202610171200"))
+        self.assertIs(False, states[0]["sharedDelivery"],
+                      "a build OF 0.2.60 belongs to the shared delivery, qualifier or not")
+
+    def test_the_highest_server_version_decides(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.35"),
+                                 self.line(self.SERVER, "0.2.60"),
+                                 self.line(self.OFORM, "0.2.60"))
+        self.assertIs(True, states[0]["sharedDelivery"])
+
+    def test_an_oform_of_the_closed_delivery_is_not_the_new_bundle(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60"),
+                                 self.line(self.OFORM, "0.1.0"))
+        self.assertIs(False, states[0]["sharedDelivery"],
+                      "oform 0.1.0 is the closed delivery's bundle, not the one a "
+                      "0.2.60 server installs beside itself")
+        self.assertEqual(["0.1.0"], states[0]["oformVersions"])
+        self.assertIn("0.1.0", states[0]["sharedDeliveryIssue"])
+        text = "\n".join(REPORT.delivery_lines(states))
+        self.assertNotIn("carries both bundles", text)
+        self.assertIn("0.1.0", text)
+
+    def test_a_qualifier_of_another_build_is_not_a_match(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60.202610171200"),
+                                 self.line(self.OFORM, "0.2.60.202610170900"))
+        self.assertIs(False, states[0]["sharedDelivery"],
+                      "one build produces both jars; another stamp is another artifact")
+        self.assertIn("0.2.60.202610170900", states[0]["sharedDeliveryIssue"])
+
+    def test_matching_qualified_builds_are_one_delivery(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60.202610171200"),
+                                 self.line(self.OFORM, "0.2.60.202610171200"))
+        self.assertIs(True, states[0]["sharedDelivery"])
+
+    def test_an_old_oform_beside_a_matching_one_still_counts(self):
+        states = self.states_for(self.line(self.SERVER, "0.2.60"),
+                                 self.line(self.OFORM, "0.1.0"),
+                                 self.line(self.OFORM, "0.2.60"))
+        self.assertIs(True, states[0]["sharedDelivery"])
+
+    def test_a_matching_older_oform_does_not_hide_a_newer_mismatch(self):
+        """The highest ordinary-forms bundle determines delivery consistency."""
+        states = self.states_for(self.line(self.SERVER, "0.2.60"),
+                                 self.line(self.OFORM, "0.2.60"),
+                                 self.line(self.OFORM, "0.2.61"))
+        self.assertIs(False, states[0]["sharedDelivery"])
+
+    def test_a_newer_server_qualifier_cannot_match_an_older_bundle(self):
+        """Server qualifiers participate in choosing the effective version."""
+        states = self.states_for(self.line(self.SERVER, "0.2.60.202610170900"),
+                                 self.line(self.SERVER, "0.2.60.202610171200"),
+                                 self.line(self.OFORM, "0.2.60.202610170900"))
+        self.assertIs(False, states[0]["sharedDelivery"])
+
+    def test_the_highest_qualified_versions_can_match(self):
+        """Matching highest versions remain consistent in the presence of an older record."""
+        states = self.states_for(self.line(self.SERVER, "0.2.60.202610170900"),
+                                 self.line(self.SERVER, "0.2.60.202610171200"),
+                                 self.line(self.OFORM, "0.2.60.202610171200"))
+        self.assertIs(True, states[0]["sharedDelivery"])
+
+    def test_the_version_key_reads_numbers_not_text(self):
+        self.assertLess(REPORT.version_key("0.2.9"), REPORT.version_key("0.2.60"))
+        self.assertGreater(REPORT.version_key("0.2.61"), REPORT.version_key("0.2.60"))
+        self.assertEqual(REPORT.version_key("0.2.60.v1"), REPORT.version_key("0.2.60"))
+
+
+class ACallerNamesAPlaceBesideTheUsualOnes(unittest.TestCase):
+    """--also-root adds a directory to the places searched, without searching any twice.
+
+    A caller that knows one more place an installation sits - the installer of one running
+    session, which holds that installation's own directory - still needs the usual places,
+    because the area the installation loads can be the shared profile in the user's home.
+    A directory named twice would be walked twice, and every bundles.info under it would
+    then be reported twice.
+    """
+
+    def test_an_extra_root_beside_the_base_ones_is_searched(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            usual = root / "usual"
+            elsewhere = root / "elsewhere"
+            install = make_installation(elsewhere / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
+            found, _, _ = REPORT.installations(
+                REPORT.merged_roots([usual], [elsewhere]), BUNDLE)
+        self.assertEqual([str(install)], [entry["install"] for entry in found])
+
+    def test_the_json_report_carries_the_extra_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            usual = root / "usual"
+            elsewhere = root / "elsewhere"
+            install = make_installation(elsewhere / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
+            out = io.StringIO()
+            with unittest.mock.patch.object(REPORT, "default_roots", return_value=[usual]):
+                with contextlib.redirect_stdout(out):
+                    REPORT.main(["--json", "--bundle", BUNDLE, "--also-root", str(elsewhere)])
+        payload = json.loads(out.getvalue())
+        self.assertEqual([str(install)], [entry["install"] for entry in payload["installations"]])
+
+    def test_an_extra_root_equal_to_a_base_one_is_not_searched_twice(self):
+        base = [pathlib.Path("C:/usual")]
+        self.assertEqual(1, len(REPORT.merged_roots(base, [pathlib.Path("C:/usual")])))
+
+    def test_an_extra_root_inside_a_base_one_adds_nothing(self):
+        base = [pathlib.Path("C:/usual")]
+        self.assertEqual(base, REPORT.merged_roots(base, [pathlib.Path("C:/usual/edt")]))
+
+    def test_an_extra_root_covering_a_base_one_takes_over(self):
+        base = [pathlib.Path("C:/usual/inside")]
+        self.assertEqual([pathlib.Path("C:/usual")],
+                         REPORT.merged_roots(base, [pathlib.Path("C:/usual")]))
+
+
+LEGACY_GROUP_IU = "ru.aiedt.mcp.oform.feature.feature.group"
+LEGACY_JAR_IU = "ru.aiedt.mcp.oform.feature.feature.jar"
+
+
+def write_p2_profile(area_root, units=(), profile_id="DefaultProfile", timestamp="1791574315314",
+                     plain=False, config_folder=None, config_ini=None, root_id=None):
+    """A p2 profile snapshot in the registry a configuration area's root carries.
+
+    The snapshot is the XML p2 writes - root profile element, root properties binding it to
+    the area, units as id and version - gzipped the way p2 stores it, or plain for the
+    unzipped spelling. ``root_id`` writes a root profile id other than the directory's
+    (a snapshot of another profile); ``config_ini`` writes an eclipse.p2.profile line into
+    the area's configuration when given.
+    """
+    profile_dir = (pathlib.Path(area_root) / "p2" / "org.eclipse.equinox.p2.engine" /
+                   "profileRegistry" / (profile_id + ".profile"))
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    folder = config_folder if config_folder is not None else pathlib.Path(area_root) / "configuration"
+    unit_lines = "".join("<unit id='%s' version='%s'/>" % (uid, version) for uid, version in units)
+    xml = ("<?xml version='1.0' encoding='UTF-8'?>"
+           "<?profile version='1.0.0'?>"
+           "<profile id='%s' timestamp='%s'>"
+           "<properties size='2'>"
+           "<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>"
+           "<property name='org.eclipse.equinox.p2.installFolder' value='C:/edt-install'/>"
+           "</properties>"
+           "<units size='%d'>%s</units>"
+           "</profile>") % (root_id or profile_id, timestamp, folder, len(units), unit_lines)
+    name = "%s.profile%s" % (timestamp, "" if plain else ".gz")
+    target = profile_dir / name
+    if plain:
+        target.write_text(xml, encoding="utf-8")
+    else:
+        with gzip.open(target, "wb") as stream:
+            stream.write(xml.encode("utf-8"))
+    if config_ini is not None:
+        configuration = pathlib.Path(area_root) / "configuration"
+        configuration.mkdir(parents=True, exist_ok=True)
+        (configuration / "config.ini").write_text(config_ini, encoding="utf-8")
+    return target
+
+
+class TheInstalledStateIsReadFromTheP2Profile(unittest.TestCase):
+    """Installed membership is what the area's p2 profile resolved, not what a directory caches.
+
+    The profile is the registry beside the configuration area: one directory per profile id,
+    one snapshot per p2 operation, and the latest snapshot of the selected profile answers
+    by unit ids. A feature jar under features/ or plugins/ proves nothing either way, and
+    the reading here never looks at one - which is the point.
+    """
+
+    def status_for(self, area_root, config_ini=None):
+        if config_ini is not None:
+            configuration = pathlib.Path(area_root) / "configuration"
+            configuration.mkdir(parents=True, exist_ok=True)
+            (configuration / "config.ini").write_text(config_ini, encoding="utf-8")
+        return REPORT.p2_profile_status(pathlib.Path(area_root) / "configuration")
+
+    def test_a_gzip_snapshot_with_the_legacy_units_is_known(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, units=[(LEGACY_GROUP_IU, "0.1.0.202609212242"),
+                                          (LEGACY_JAR_IU, "0.1.0.202609212242")])
+            status = self.status_for(area)
+        self.assertEqual("known", status["status"])
+        self.assertEqual("DefaultProfile", status["profileId"])
+        self.assertEqual("1791574315314", status["snapshot"])
+        self.assertEqual([{"id": LEGACY_GROUP_IU, "version": "0.1.0.202609212242"},
+                          {"id": LEGACY_JAR_IU, "version": "0.1.0.202609212242"}],
+                         status["legacyUnits"])
+
+    def test_a_plain_snapshot_is_the_same_reading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, units=[(LEGACY_GROUP_IU, "0.1.0")], plain=True)
+            status = self.status_for(area)
+        self.assertEqual("known", status["status"])
+        self.assertEqual([LEGACY_GROUP_IU], [unit["id"] for unit in status["legacyUnits"]])
+
+    def test_the_latest_snapshot_decides_not_the_history_beside_it(self):
+        """Timestamps order as numbers: 10 is newer than 9, and a text order would flip them."""
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, timestamp="9", units=[(LEGACY_GROUP_IU, "0.1.0")])
+            write_p2_profile(area, timestamp="10")
+            status = self.status_for(area)
+        self.assertEqual("known", status["status"])
+        self.assertEqual([], status["legacyUnits"],
+                         "an older snapshot holding the legacy unit does not install it now")
+
+    def test_a_legacy_unit_in_the_latest_snapshot_is_detected_without_any_cached_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, timestamp="9")
+            write_p2_profile(area, timestamp="10", units=[(LEGACY_GROUP_IU, "0.1.0")])
+            status = self.status_for(area)
+        self.assertEqual([LEGACY_GROUP_IU], [unit["id"] for unit in status["legacyUnits"]])
+
+    def test_a_latest_snapshot_that_will_not_read_is_unknown_not_the_older_clean_one(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, timestamp="9")
+            profile_dir = (area / "p2" / "org.eclipse.equinox.p2.engine" /
+                           "profileRegistry" / "DefaultProfile.profile")
+            (profile_dir / "10.profile.gz").write_bytes(b"this is not a gzip stream")
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("10.profile.gz", status["reason"])
+        self.assertNotIn("legacyUnits", status,
+                         "a snapshot that will not read is not answered from an older one")
+
+    def test_a_latest_snapshot_that_is_not_a_profile_document_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            profile_dir = (area / "p2" / "org.eclipse.equinox.p2.engine" /
+                           "profileRegistry" / "DefaultProfile.profile")
+            profile_dir.mkdir(parents=True)
+            with gzip.open(profile_dir / "1.profile.gz", "wb") as stream:
+                stream.write(b"this is not xml")
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("parsed", status["reason"])
+
+    def test_a_well_formed_document_with_a_non_profile_root_is_unknown(self):
+        """A matching id and area do not make another XML document an installed profile."""
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            snapshot = write_p2_profile(area, plain=True)
+            content = snapshot.read_bytes().replace(b"<profile ", b"<other ", 1)
+            snapshot.write_bytes(content.replace(b"</profile>", b"</other>"))
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertNotIn("legacyUnits", status)
+
+    def test_a_profile_bound_to_another_area_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            other = pathlib.Path(directory) / "other-area"
+            write_p2_profile(area, units=[(LEGACY_GROUP_IU, "0.1.0")],
+                             config_folder=other / "configuration")
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("bound", status["reason"])
+
+    def test_a_profile_that_names_no_configuration_area_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            profile_dir = (area / "p2" / "org.eclipse.equinox.p2.engine" /
+                           "profileRegistry" / "DefaultProfile.profile")
+            profile_dir.mkdir(parents=True)
+            xml = ("<?xml version='1.0'?><profile id='DefaultProfile' timestamp='1'>"
+                   "<properties size='0'/><units size='0'/></profile>")
+            with gzip.open(profile_dir / "1.profile.gz", "wb") as stream:
+                stream.write(xml.encode("utf-8"))
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("does not name", status["reason"])
+
+    def test_the_profile_the_config_ini_names_is_selected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area)
+            write_p2_profile(area, profile_id="AppProfile", timestamp="2",
+                             units=[(LEGACY_GROUP_IU, "0.1.0")])
+            selected = self.status_for(
+                area, config_ini="eclipse.p2.profile=AppProfile\nosgi.bundles.defaultStartLevel=4\n")
+        self.assertEqual("known", selected["status"])
+        self.assertEqual("AppProfile", selected["profileId"])
+        self.assertEqual([LEGACY_GROUP_IU], [unit["id"] for unit in selected["legacyUnits"]])
+
+    def test_the_ini_name_decides_over_the_default_id(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, timestamp="2", units=[(LEGACY_GROUP_IU, "0.1.0")])
+            write_p2_profile(area, profile_id="AppProfile", timestamp="2")
+            selected = self.status_for(area, config_ini="eclipse.p2.profile=AppProfile\n")
+        self.assertEqual([], selected["legacyUnits"],
+                         "the profile the ini names is read even when DefaultProfile "
+                         "sits beside it holding the legacy unit")
+
+    def test_an_ini_naming_a_profile_the_registry_lacks_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area)
+            status = self.status_for(area, config_ini="eclipse.p2.profile=Gone\n")
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("Gone", status["reason"])
+
+    def test_several_profiles_with_none_named_are_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area)
+            write_p2_profile(area, profile_id="AppProfile", timestamp="2")
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("2 profiles", status["reason"])
+
+    def test_the_one_profile_of_a_registry_without_an_ini_is_used(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, profile_id="OnlyOne", units=[(LEGACY_JAR_IU, "0.1.0")])
+            status = self.status_for(area)
+        self.assertEqual("known", status["status"])
+        self.assertEqual("OnlyOne", status["profileId"])
+
+    def test_an_area_without_a_registry_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            status = self.status_for(pathlib.Path(directory) / "area")
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("no p2 profile registry", status["reason"])
+
+    def test_a_profile_without_snapshots_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            (area / "p2" / "org.eclipse.equinox.p2.engine" / "profileRegistry" /
+             "DefaultProfile.profile").mkdir(parents=True)
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("no snapshot", status["reason"])
+
+    def test_a_snapshot_of_another_profile_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, root_id="NotThisOne")
+            status = self.status_for(area, config_ini="eclipse.p2.profile=DefaultProfile\n")
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("NotThisOne", status["reason"])
+
+    def test_a_snapshot_with_a_dtd_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            profile_dir = (area / "p2" / "org.eclipse.equinox.p2.engine" /
+                           "profileRegistry" / "DefaultProfile.profile")
+            profile_dir.mkdir(parents=True)
+            xml = ("<?xml version='1.0'?><!DOCTYPE profile [<!ENTITY x 'y'>]>"
+                   "<profile id='DefaultProfile' timestamp='1'></profile>")
+            with gzip.open(profile_dir / "1.profile.gz", "wb") as stream:
+                stream.write(xml.encode("utf-8"))
+            status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("DTD", status["reason"])
+
+    def test_a_snapshot_past_the_read_cap_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, units=[(LEGACY_GROUP_IU, "0.1.0")])
+            with unittest.mock.patch.object(REPORT, "MAX_PROFILE_BYTES", 32):
+                status = self.status_for(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("cap", status["reason"])
+
+    def test_the_oform_bundle_unit_is_not_a_legacy_unit(self):
+        """The ru.aiedt.mcp.oform bundle id is the shared delivery's bundle too."""
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            write_p2_profile(area, units=[("ru.aiedt.mcp.oform", "0.2.60"),
+                                          ("ru.aiedt.mcp.server.feature.feature.group", "0.2.60")])
+            status = self.status_for(area)
+        self.assertEqual("known", status["status"])
+        self.assertEqual([], status["legacyUnits"])
+
+    def test_a_units_own_properties_do_not_read_as_root_properties(self):
+        """Real snapshots nest properties inside every unit; only root properties bind the area."""
+        with tempfile.TemporaryDirectory() as directory:
+            area = pathlib.Path(directory) / "area"
+            profile_dir = (area / "p2" / "org.eclipse.equinox.p2.engine" /
+                           "profileRegistry" / "DefaultProfile.profile")
+            profile_dir.mkdir(parents=True)
+            xml = ("<?xml version='1.0' encoding='UTF-8'?>"
+                   "<profile id='DefaultProfile' timestamp='1'>"
+                   "<properties size='1'>"
+                   "<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>"
+                   "</properties>"
+                   "<units size='1'>"
+                   "<unit id='some.bundle' version='1.0.0'>"
+                   "<properties size='1'>"
+                   "<property name='org.eclipse.equinox.p2.configurationFolder' value='C:/elsewhere'/>"
+                   "</properties></unit>"
+                   "</units></profile>") % (area / "configuration").as_posix()
+            with gzip.open(profile_dir / "1.profile.gz", "wb") as stream:
+                stream.write(xml.encode("utf-8"))
+            status = self.status_for(area)
+        self.assertEqual("known", status["status"])
+
+
+class TheJsonReportCarriesTheProfileStates(unittest.TestCase):
+    """The installer's payload gains the p2 reading beside the fields it already had."""
+
+    def payload_for(self, root, bundle=BUNDLE):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            REPORT.main(["--json", "--bundle", bundle, "--root", str(root)])
+        return json.loads(out.getvalue())
+
+    def test_the_single_bundle_shape_gains_p2_profiles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
+            write_p2_profile(install, units=[(LEGACY_GROUP_IU, "0.1.0.202609212242")])
+            payload = self.payload_for(root)
+        self.assertEqual({"bundle", "roots", "installations", "unclaimed", "unreadable",
+                          "consumers", "p2Profiles"}, set(payload))
+        key = REPORT.normalised(install)
+        self.assertEqual(["known"], [payload["p2Profiles"][key]["status"]])
+        self.assertEqual([LEGACY_GROUP_IU],
+                         [unit["id"] for unit in payload["p2Profiles"][key]["legacyUnits"]])
+
+    def test_an_area_loaded_without_a_bundles_info_is_still_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            elsewhere = root / "elsewhere" / "area"
+            write_ini(install, ["-configuration", str(elsewhere / "configuration")])
+            write_p2_profile(elsewhere)
+            payload = self.payload_for(root)
+        self.assertIn(REPORT.normalised(elsewhere), payload["p2Profiles"])
+        self.assertEqual("known", payload["p2Profiles"][REPORT.normalised(elsewhere)]["status"])
+
+    def test_the_full_shape_carries_it_per_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "edt")
+            write_bundles_info(install / "configuration",
+                               [BUNDLE + ",0.2.57,plugins/" + BUNDLE + "_0.2.57.jar,4,false"])
+            write_p2_profile(install)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                REPORT.main(["--json", "--root", str(root)])
+        payload = json.loads(out.getvalue())
+        for bundle_report in payload["bundles"]:
+            self.assertIn("p2Profiles", bundle_report)
 
 
 if __name__ == "__main__":

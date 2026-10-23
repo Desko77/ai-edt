@@ -143,12 +143,25 @@ class AnAsciiOnlyPatternMayGoUnflagged(unittest.TestCase):
     """The allowlist is a decision with a reason, not a hole: it is keyed by file and by text."""
 
     def test_the_allowlist_covers_the_site_it_names(self):
-        reason = CHECKER.excused(pathlib.Path("ValidateForExportTool.java"), "xmlns:\\w+")
+        path = pathlib.Path("settings") / "ValidateForExportTool.java"
+        reason = CHECKER.excused(path, "ru.aiedt.mcp.server", "xmlns:\\w+")
         self.assertIsNotNone(reason)
         self.assertIn("ASCII", reason)
 
     def test_the_allowlist_does_not_cover_another_file(self):
-        self.assertIsNone(CHECKER.excused(pathlib.Path("Other.java"), "xmlns:\\w+"))
+        path = pathlib.Path("settings") / "Other.java"
+        self.assertIsNone(CHECKER.excused(path, "ru.aiedt.mcp.server", "xmlns:\\w+"))
+
+    def test_the_allowlist_does_not_cover_the_same_name_in_another_bundle(self):
+        path = pathlib.Path("settings") / "ValidateForExportTool.java"
+        self.assertIsNone(CHECKER.excused(path, "ru.aiedt.mcp.oform", "xmlns:\\w+"),
+                          "an entry names one bundle's file, not that file name anywhere")
+
+    def test_an_absolute_path_outside_the_bundle_is_not_excused(self):
+        """An external file with an allowlisted suffix receives no exception."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "settings" / "ValidateForExportTool.java"
+            self.assertIsNone(CHECKER.excused(path, "ru.aiedt.mcp.server", r"xmlns:\w+"))
 
 
 if __name__ == "__main__":

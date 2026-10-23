@@ -39,15 +39,17 @@ public class ReleaseAdoptionTest
     private static final Version VERSION = Version.create("3.2.0.202609011200"); //$NON-NLS-1$
 
     @Test
-    public void anUpdateMayTouchTheFeatureItsJarAndTheBundle()
+    public void anUpdateMayTouchTheFeatureItsJarAndBothBundles()
     {
-        // Three, not one. Naming only the feature group would refuse the ordinary shape of our own
-        // update, because the group requires its jar and both bring the bundle.
+        // Four, not one. Naming only the feature group would refuse the ordinary shape of our own
+        // update, because the group requires its jar and both bring their bundle.
         assertTrue(ReleaseAdoption.ALLOWED_UNITS.contains("ru.aiedt.mcp.server.feature.feature.group")); //$NON-NLS-1$
         assertTrue(ReleaseAdoption.ALLOWED_UNITS.contains("ru.aiedt.mcp.server.feature.feature.jar")); //$NON-NLS-1$
         assertTrue(ReleaseAdoption.ALLOWED_UNITS.contains("ru.aiedt.mcp.server")); //$NON-NLS-1$
+        assertTrue("the ordinary-forms bundle is listed by its exact id", //$NON-NLS-1$
+            ReleaseAdoption.ALLOWED_UNITS.contains("ru.aiedt.mcp.oform")); //$NON-NLS-1$
         assertFalse("the allow-list must not grow silently", //$NON-NLS-1$
-            ReleaseAdoption.ALLOWED_UNITS.size() != 3);
+            ReleaseAdoption.ALLOWED_UNITS.size() != 4);
     }
 
     @Test
@@ -57,9 +59,49 @@ public class ReleaseAdoptionTest
         ReleaseAdoption.collectStrays(
             queryableOf(unit("ru.aiedt.mcp.server.feature.feature.group", "3.2.0"), //$NON-NLS-1$ //$NON-NLS-2$
                 unit("ru.aiedt.mcp.server.feature.feature.jar", "3.2.0"), //$NON-NLS-1$ //$NON-NLS-2$
-                unit("ru.aiedt.mcp.server", "3.2.0")), //$NON-NLS-1$ //$NON-NLS-2$
+                unit("ru.aiedt.mcp.server", "3.2.0"), //$NON-NLS-1$ //$NON-NLS-2$
+                unit("ru.aiedt.mcp.oform", "3.2.0")), //$NON-NLS-1$ //$NON-NLS-2$
             strays);
         assertTrue(strays.toString(), strays.isEmpty());
+        assertNull("a plan of exactly the four allowed units is not a refusal", //$NON-NLS-1$
+            ReleaseAdoption.refusalOf(strays));
+    }
+
+    @Test
+    public void theLegacyPrivateFeatureIsRefusedWithItsRemovalNamed()
+    {
+        Set<String> strays = new LinkedHashSet<>();
+        ReleaseAdoption.collectStrays(
+            queryableOf(unit("ru.aiedt.mcp.server", "3.2.0"), //$NON-NLS-1$ //$NON-NLS-2$
+                unit("ru.aiedt.mcp.oform.feature.feature.group", "0.1.0")), //$NON-NLS-1$ //$NON-NLS-2$
+            strays);
+        assertTrue(strays.toString(), strays.size() == 1);
+
+        String refusal = ReleaseAdoption.refusalOf(strays);
+        assertTrue("the legacy feature is named: " + refusal, //$NON-NLS-1$
+            refusal.contains("ru.aiedt.mcp.oform.feature.feature.group")); //$NON-NLS-1$
+        assertTrue("the refusal says what to do with it: " + refusal, //$NON-NLS-1$
+            refusal.contains("uninstalled through p2")); //$NON-NLS-1$
+        assertTrue("and that this update removes nothing itself: " + refusal, //$NON-NLS-1$
+            refusal.contains("removes nothing itself")); //$NON-NLS-1$
+    }
+
+    @Test
+    public void theLegacyFeatureJarIsTheSameLegacyAndALookAlikeIsOnlyAStray()
+    {
+        Set<String> strays = new LinkedHashSet<>();
+        ReleaseAdoption.collectStrays(
+            queryableOf(unit("ru.aiedt.mcp.oform.feature.feature.jar", "0.1.0")), //$NON-NLS-1$ //$NON-NLS-2$
+            strays);
+        assertTrue(ReleaseAdoption.refusalOf(strays).contains("uninstalled through p2")); //$NON-NLS-1$
+
+        Set<String> lookAlike = new LinkedHashSet<>();
+        ReleaseAdoption.collectStrays(
+            queryableOf(unit("ru.aiedt.mcp.oform.reporting", "9.9.9")), lookAlike); //$NON-NLS-1$ //$NON-NLS-2$
+        String plain = ReleaseAdoption.refusalOf(lookAlike);
+        assertTrue("an id merely starting with ours must not pass", plain.contains("ru.aiedt.mcp.oform.reporting")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("and it is not read as the legacy feature", //$NON-NLS-1$
+            plain.contains("uninstalled through p2")); //$NON-NLS-1$
     }
 
     @Test

@@ -740,6 +740,8 @@ public class McpHttpEndpoint
         {
             return GsonHolder.toJson(payload);
         }
+        payload.addProperty("ordinaryFormsRegistered", //$NON-NLS-1$
+            McpToolCatalog.getInstance().getTool("ordinary_forms") != null); //$NON-NLS-1$
         long started = serverStartMillis;
         payload.addProperty("uptimeSeconds", //$NON-NLS-1$
             started == 0L ? 0L : (System.currentTimeMillis() - started) / MILLIS_PER_SECOND);

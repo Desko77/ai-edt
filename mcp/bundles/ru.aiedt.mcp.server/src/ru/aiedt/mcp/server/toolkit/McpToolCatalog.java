@@ -69,7 +69,10 @@ public class McpToolCatalog
      *
      * <p>The presets name this server's own tools; a tool from outside is classified by the one
      * fact its bundle declares - whether it writes - and a preset that blocks writes switches it
-     * off with the writers it names. It stays registered across {@link #clear()}.</p>
+     * off with the writers it names. The one exception is a mixed tool that gates its own writes
+     * by named doors: it stays callable while every door is disabled, on the same terms
+     * {@link #writeDoorsAllClosed(IMcpTool)} spells out. It stays registered across
+     * {@link #clear()}.</p>
      *
      * @param tool the tool
      * @param writes whether the tool changes anything
@@ -174,14 +177,67 @@ public class McpToolCatalog
     /**
      * Whether a capability came from another bundle and writes, so a write-blocking preset
      * switches it off.
+     * <p>
+     * A <em>mixed</em> external tool - one that names the doors its writes go through, the way
+     * {@code ordinary_forms} names {@code ordinary_forms_writes} - is judged by those doors instead:
+     * with every door the preset in force actually disabled, the calls that remain are reads, so the
+     * tool stays callable. Anything less keeps the whole-tool refusal: no doors named, a blank name,
+     * or a door no preset disables - a declaration by itself is not proof that anything is protected,
+     * and a preset that leaves one door open leaves the write behind it reachable.
+     * </p>
      *
      * @param capabilityId the capability
-     * @return {@code true} when the preset in force blocks writes and this tool writes
+     * @return {@code true} when the preset in force blocks writes and this tool's writes stay
+     *         reachable through it
      */
     private boolean blockedAsExternalWriter(String capabilityId)
     {
         Boolean writes = externalWrites.get(capabilityId);
-        return writes != null && writes.booleanValue() && ToolSettingsStore.getInstance().presetBlocksWrites();
+        if (writes == null || !writes.booleanValue() || !ToolSettingsStore.getInstance().presetBlocksWrites())
+        {
+            return false;
+        }
+        return !writeDoorsAllClosed(externalTools.get(capabilityId));
+    }
+
+    /**
+     * Whether the tool names its write doors and the preset in force has every one of them
+     * disabled.
+     * <p>
+     * The answer is the preset's own disabled set, read directly: a door is closed when the active
+     * preset disables it by name, which is the same set the gate of the tool itself asks about. A
+     * null or empty declaration, a null or blank door, or one door left enabled answers
+     * {@code false} - the caller then treats the tool as a plain writer, which is the closed
+     * answer.
+     * </p>
+     *
+     * @param tool the tool; may be {@code null}
+     * @return {@code true} only when at least one door is named and none of them is enabled
+     */
+    public boolean writeDoorsAllClosed(IMcpTool tool)
+    {
+        if (tool == null)
+        {
+            return false;
+        }
+        List<String> doors = tool.getGatedWriteNames();
+        if (doors == null || doors.isEmpty())
+        {
+            return false;
+        }
+        Set<String> disabled = disabledTools();
+        for (String door : doors)
+        {
+            if (door == null || door.trim().isEmpty())
+            {
+                return false;
+            }
+            if (!disabled.contains(door))
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

@@ -39,10 +39,17 @@ from __future__ import annotations
 
 import argparse
 import os
+import pathlib
 import re
 import sys
 
-SOURCE_ROOT = os.path.join("mcp", "bundles", "ru.aiedt.mcp.server", "src")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+# Every production bundle on disk, relative to the repository root: a catch in a second
+# bundle is judged by the same rule from the day the bundle appears.
+SOURCE_ROOTS = [str(bundles.bundle_src(bundle).relative_to(bundles.REPO_ROOT)).replace(os.sep, "/")
+                for bundle in bundles.production_bundles()]
 
 CATCH = re.compile(r"catch\s*\(\s*(?:final\s+)?[\w.]+(?:\s*\|\s*[\w.]+)*\s+(\w+)\s*\)")
 
@@ -225,16 +232,17 @@ def catches_in(lines):
 
 def scan():
     findings = []
-    for dirpath, _dirs, files in os.walk(SOURCE_ROOT):
-        for name in sorted(files):
-            if not name.endswith(".java"):
-                continue
-            path = os.path.join(dirpath, name)
-            with open(path, encoding="utf-8") as handle:
-                lines = handle.read().splitlines()
-            for found in catches_in(lines):
-                found["path"] = path.replace(os.sep, "/")
-                findings.append(found)
+    for root in SOURCE_ROOTS:
+        for dirpath, _dirs, files in os.walk(root):
+            for name in sorted(files):
+                if not name.endswith(".java"):
+                    continue
+                path = os.path.join(dirpath, name)
+                with open(path, encoding="utf-8") as handle:
+                    lines = handle.read().splitlines()
+                for found in catches_in(lines):
+                    found["path"] = path.replace(os.sep, "/")
+                    findings.append(found)
     return findings
 
 

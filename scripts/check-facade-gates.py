@@ -31,8 +31,25 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-OPS = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server/toolkit/ops"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+ROOT = bundles.REPO_ROOT
+# The ops packages of every bundle. Only the server holds dispatching facades today; a
+# bundle that grows a switch of this shape is gated and read here from the day it appears.
+OPS_ROOTS = [bundles.bundle_src(bundles.SERVER) / "ru/aiedt/mcp/server/toolkit/ops"]
+_oform_ops = bundles.bundle_src(bundles.OFORM) / "ru/aiedt/mcp/oform/ops"
+if _oform_ops.is_dir():
+    OPS_ROOTS.append(_oform_ops)
+
+
+def ops_file(class_name: str) -> pathlib.Path:
+    """The file of a tool class, in whichever ops package carries it."""
+    for ops in OPS_ROOTS:
+        path = ops / f"{class_name}.java"
+        if path.is_file():
+            return path
+    return OPS_ROOTS[0] / f"{class_name}.java"
 
 
 def without_comments(source: str) -> str:
@@ -213,10 +230,15 @@ def dispatch_body(source: str) -> str:
     return source[start:]
 
 
+def ops_sources() -> list[tuple[pathlib.Path, str]]:
+    """Every java file of every ops package, with its text read once."""
+    return [(path, path.read_text(encoding="utf-8"))
+            for ops in OPS_ROOTS for path in sorted(ops.glob("*.java"))]
+
+
 def facades() -> list[tuple[pathlib.Path, int]]:
     found = []
-    for path in sorted(OPS.glob("*.java")):
-        source = path.read_text(encoding="utf-8")
+    for path, source in ops_sources():
         if not DISPATCH.search(source):
             continue
         delegations = len(DELEGATION.findall(source))
@@ -238,8 +260,7 @@ def catalog_keepers() -> list[pathlib.Path]:
     existed for exactly that mistake and was simply not pointed at the file.
     """
     found = []
-    for path in sorted(OPS.glob("*.java")):
-        source = path.read_text(encoding="utf-8")
+    for path, source in ops_sources():
         if DISPATCH.search(source) and CATALOG_GUARD.search(source):
             found.append(path)
     return found
@@ -270,8 +291,8 @@ def main() -> int:
     parser.add_argument("--list", action="store_true", help="print every facade and its verdict")
     args = parser.parse_args()
 
-    if not OPS.is_dir():
-        print(f"{OPS} is not a directory - run this from the repository", file=sys.stderr)
+    if not any(root.is_dir() for root in OPS_ROOTS):
+        print(f"{OPS_ROOTS[0]} is not a directory - run this from the repository", file=sys.stderr)
         return 2
 
     found = facades()
@@ -301,7 +322,7 @@ def main() -> int:
             if too_late:
                 verdict = "GATE TOO LATE"
             print(f"{name:<32} {delegations:>2} delegations  {verdict}")
-    constructors = [OPS / name for name in CONSTRUCTOR_FACADES]
+    constructors = [ops_file(name.removesuffix(".java")) for name in CONSTRUCTOR_FACADES]
     present = [path for path in constructors if path.exists()]
     for path in present:
         missing, too_late = constructor_verdict(path)

@@ -393,6 +393,13 @@ public class ModuleSourceWriter implements IMcpTool
             {
                 return layoutRefusal;
             }
+            // A container module must be written through its provider, not as a separate file.
+            if (!fileExists && file.getParent().getFile(new Path("Form.oform")).exists()) //$NON-NLS-1$
+            {
+                return "Error: src/" + modulePath //$NON-NLS-1$
+                    + " belongs to Form.oform, but no module source provider resolved this address. " //$NON-NLS-1$
+                    + "Enable the Form.oform module provider and retry. Nothing was written."; //$NON-NLS-1$
+            }
         }
 
         // -- outer try: steps 7-17 --

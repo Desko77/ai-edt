@@ -340,6 +340,12 @@ public class ThePollBelongsToTheCallThatResumesItTest
         assertEquals(0, hold.permits.availablePermits());
     }
 
+    /**
+     * Starts a blocked batch and waits for its published registry entry.
+     *
+     * @return the live batch holding the only permit
+     * @throws Exception if the batch cannot start or publish its entry
+     */
     private RunningBatch openBatch() throws Exception
     {
         ensure(new EditMetadataTool());
@@ -389,6 +395,9 @@ public class ThePollBelongsToTheCallThatResumesItTest
         call.start();
         assertTrue("the batch never reached its body; outcome=" + outcome.get() //$NON-NLS-1$
             + " failure=" + failure.get(), entered.await(15, TimeUnit.SECONDS)); //$NON-NLS-1$
+        // The worker can enter before computeIfAbsent publishes the entry.
+        assertTrue("the batch entry was not published", //$NON-NLS-1$
+            eventually(() -> PendingWorkRegistry.UPDATE.get(runKey) != null));
         PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.UPDATE.get(runKey);
         assertNotNull("no batch entry under the computed key", entry); //$NON-NLS-1$
         assertEquals(EditMetadataTool.NAME, entry.startedBy);

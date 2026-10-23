@@ -610,17 +610,13 @@ final class ObjectOps
                             applied.add("templateType"); //$NON-NLS-1$
                         }
                     }
-                    if (!BmObjectHelper.addToConfiguration(config, created))
+                    String fqn = englishType + "." + name; //$NON-NLS-1$
+                    if (!registerCreatedObject(config, created, englishType, fqn, tx))
                     {
                         finalErr.append("Created object but failed to attach it to the configuration. " //$NON-NLS-1$
                             + "Configuration may not have the matching collection for this type."); //$NON-NLS-1$
                         return null;
                     }
-                    // Register the new object as a top-object so BM can persist a
-                    // new .mdo file for it (extension projects require this explicit
-                    // attach; a regular config worked through an implicit hook).
-                    String fqn = englishType + "." + name; //$NON-NLS-1$
-                    tx.attachTopObject((IBmObject) created, fqn);
                     if (creation.getObject() != null)
                     {
                         BmObjectHelper.fillDefaultInputByString(created);
@@ -877,6 +873,37 @@ final class ObjectOps
         }
         return ok.toJson();
     }
+
+    /**
+     * Places a freshly created object in the configuration's collection for its
+     * type and registers it with the creating transaction. A reference-held
+     * member (catalog, subsystem, ...) is registered as its own top object so BM
+     * can persist a new .mdo file for it; an inline containment child (a
+     * Language) is attached by the collection add itself and a further
+     * attachTopObject on it is rejected by the transaction service with "The
+     * object is already attached", so none is attempted.
+     *
+     * @param config the configuration that owns the new object
+     * @param created the object the creating task has just built and filled
+     * @param englishType English singular type name of {@code created}
+     * @param fqn the address the object is known under, {@code type + "." + name}
+     * @param tx the creating BM transaction
+     * @return {@code true} when the object joined the configuration
+     */
+    static boolean registerCreatedObject(Configuration config, MdObject created, String englishType,
+        String fqn, IBmTransaction tx)
+    {
+        if (!BmObjectHelper.addToConfiguration(config, created))
+        {
+            return false;
+        }
+        if (!BmObjectHelper.isInlineConfigurationChild(englishType))
+        {
+            tx.attachTopObject((IBmObject) created, fqn);
+        }
+        return true;
+    }
+
     String opSetObjectProperty(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -1089,8 +1116,8 @@ final class ObjectOps
         }
         if (listShape[0] != null)
         {
-            // The property in its own shape - an array for a list, an object for the one property
-            // that holds lists inside it - so a caller can see what a dry run would leave behind
+            // The property's shape is an array for an ordinary list, or an object for a localized
+            // map or nested lists, so a caller can see what a dry run would leave behind
             // without reading the model back.
             r.tags.put(dryRun ? "wouldWrite" : "listValue", listShape[0]); //$NON-NLS-1$ //$NON-NLS-2$
         }

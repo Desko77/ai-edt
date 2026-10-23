@@ -65,6 +65,11 @@ public class PresetWriteBlockingTest
             "edit_form_writes", "edit_metadata_writes", "dcs_workshop_writes", "mxl_workshop_writes",
             "xdto_workshop_writes", "external_object_workshop_writes",
             "external_data_source_workshop_writes", "extension_workshop",
+            // The write door of the ordinary-forms tool another bundle publishes: with it named
+            // here, the catalogue keeps that mixed tool callable for its reads under these
+            // presets; left out, the only barrier left is the whole-tool refusal and the reads
+            // go with the writes.
+            "ordinary_forms_writes",
             // The installYaxunit pre-step of yaxunit_tests writes the infobase through this name,
             // and the one write-blocking preset that keeps the facade on (Debug & Test) keeps the
             // whole applications group on as well - the name is disabled by hand there or the

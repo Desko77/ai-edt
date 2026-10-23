@@ -9,26 +9,117 @@ step for a moment when no EDT is running.
     report-plugin-jars.py [--bundle ru.aiedt.mcp.server] [--root DIR ...]
     report-plugin-jars.py --json [--bundle ru.aiedt.mcp.server] [--root DIR ...]
 
+``--bundle`` reports one bundle and keeps the machine answer a single-bundle caller reads.
+Without it every bundle of the shared delivery is reported, and a bundles.info that records a
+server build from the shared delivery on (0.2.60+) is checked for the bundle that joined it, at
+the same full version: one build produces both jars, so an oform of another version - the 0.1.0
+bundle of the closed delivery, or a build of another stamp - is not the bundle this server's
+delivery installs, and the state reads as inconsistent rather than whole. A server of that
+version with no ru.aiedt.mcp.oform beside it is an installation stopped half way, not a delivery
+of one bundle. A server older than that carries no oform by design, and its absence is not
+damage.
+
 Without ``--root`` the usual places are searched: the Eclipse profile area in the home directory,
 the shared p2 pool, and the EDT installations of the 1C launcher and of Program Files.
+``--also-root`` names a directory searched beside them, for a caller that knows one more place an
+installation sits; a directory another named root already covers is not searched twice.
 
 ``--json`` answers a different question about the same files - which installations carry the plugin
 and where each of them reads it from, as data for a caller that installs into them. Every record
 names the installation it belongs to, so a build recorded only in an unattributed bundles.info is
 reported as such rather than silently dropped, and a bundles.info that cannot be read is reported
 instead of skipped. Each installation also carries which of its records its launcher actually
-loads, so a caller compares versions against the one that decides what runs.
+loads, so a caller compares versions against the one that decides what runs. With no ``--bundle``
+the JSON carries every bundle's payload under ``bundles`` beside the shared-delivery reading.
+
+The JSON also carries ``p2Profiles``: for every configuration area it names, the installed state
+of the p2 profile that area provisions from - the profile the area's config.ini selects (or the
+one profile of the registry when it selects none), latest numeric snapshot, gzip or plain XML,
+bound to the area by its configurationFolder property. That state is what p2 itself resolved as
+installed, which no directory of cached jars proves either way, so it is what answers whether the
+closed ordinary-forms delivery's feature is still installed in an area. A registry, snapshot or
+binding the format cannot say answers ``unknown`` with the reason rather than an empty reading.
 """
 import argparse
+import gzip
+import io
 import json
 import os
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 import re
 import sys
+import pathlib
 from pathlib import Path
+import xml.etree.ElementTree as ET
+import zlib
 
 DEFAULT_BUNDLE = "ru.aiedt.mcp.server"
+OFORM_BUNDLE = "ru.aiedt.mcp.oform"
+# The bundles a shared delivery installs, in report order.
+DELIVERY_BUNDLES = (DEFAULT_BUNDLE, OFORM_BUNDLE)
+
+# The first server version whose delivery installs the second bundle, as three numbers. A
+# bundles.info recording a server at or above it and no oform is half a delivery; below it
+# the oform bundle did not exist in the public installation at all.
+FIRST_SHARED_VERSION = (0, 2, 60)
+
+# The p2 engine lays its profile registry beside the configuration area it belongs to; each
+# profile id is a directory of snapshots, one per p2 operation, named <timestamp>.profile.gz
+# (a plain <timestamp>.profile is the same XML unzipped). The latest snapshot of the selected
+# profile is the installed state p2 itself resolved - the membership a directory of cached
+# jars or features never proves.
+P2_REGISTRY_PARTS = ("p2", "org.eclipse.equinox.p2.engine", "profileRegistry")
+SNAPSHOT_NAME = re.compile(r"^(?P<timestamp>\d+)\.profile(\.gz)?$")
+
+# A real profile of an EDT installation measures a few megabytes decompressed; one past this
+# cap is not a profile this code reads purposefully, and reading it is refused rather than
+# attempted.
+MAX_PROFILE_BYTES = 64 * 1024 * 1024
+
+# The installed unit ids of the closed ordinary-forms delivery: its feature group and the
+# artifact jar that follows the group. The ru.aiedt.mcp.oform BUNDLE id is not among them -
+# the shared delivery installs that bundle too, so its presence says nothing about the closed
+# one.
+LEGACY_OFORM_IUS = ("ru.aiedt.mcp.oform.feature.feature.group",
+                    "ru.aiedt.mcp.oform.feature.feature.jar")
+
+CONFIGURATION_FOLDER_PROPERTY = "org.eclipse.equinox.p2.configurationFolder"
+INSTALL_FOLDER_PROPERTY = "org.eclipse.equinox.p2.installFolder"
+CACHE_PROPERTY = "org.eclipse.equinox.p2.cache"
+
+
+def version_key(version):
+    """The comparable part of a bundle version: the three numeric segments, qualifier aside.
+
+    ``0.2.60.<stamp>`` is a build OF 0.2.60, so the qualifier never decides whether a record
+    belongs to a shared delivery.
+    """
+    parts = []
+    for segment in str(version).split(".")[:3]:
+        digits = ""
+        for char in segment:
+            if char.isdigit():
+                digits += char
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def full_version(version):
+    """The whole comparable form of a bundle version: the three numbers and the qualifier.
+
+    Unlike ``version_key``, the qualifier decides here: the shared delivery installs both
+    bundles from one build, so two records name the same artifact only when their
+    qualifiers are equal too - a build of another stamp with the same three numbers is a
+    different jar, not this delivery's ordinary-forms bundle.
+    """
+    segments = str(version).split(".")
+    qualifier = ".".join(segments[3:]) if len(segments) > 3 else ""
+    return version_key(version), qualifier
 
 # Names a 1C:EDT installation is launched by. The console launcher is first: it is the one a
 # headless p2 director runs from.
@@ -56,6 +147,34 @@ def default_roots():
     if program_files:
         roots.append(Path(program_files) / "1C" / "1CE" / "components")
     return [root for root in roots if root.is_dir()]
+
+
+def same_or_under(path, directory):
+    """Whether a path is a directory itself or lies under it, spelled either way round."""
+    candidate = pathlib.PurePath(os.path.normcase(os.path.normpath(str(path))))
+    base = pathlib.PurePath(os.path.normcase(os.path.normpath(str(directory))))
+    try:
+        candidate.relative_to(base)
+    except ValueError:
+        return False
+    return True
+
+
+def merged_roots(base, extras):
+    """The base search places plus the caller's, each directory once.
+
+    A directory named twice is walked twice, and every bundles.info under it is then
+    reported twice. An extra root inside a base one adds nothing, and a base root inside
+    an extra one is dropped for the extra to cover it.
+    """
+    roots = list(base)
+    for extra in extras:
+        candidate = Path(extra)
+        if any(same_or_under(candidate, root) for root in roots):
+            continue
+        roots = [root for root in roots if not same_or_under(root, candidate)]
+        roots.append(candidate)
+    return roots
 
 
 def parse_bundles_info(text, bundle):
@@ -326,21 +445,228 @@ def consumers(roots, depth=8):
             for install in sorted(find_installations(roots, depth))]
 
 
+# --- the installed state of the p2 profile of a configuration area --------------
+#
+# What p2 resolved as installed is recorded as a profile: one registry beside the configuration
+# area, one directory per profile id in it, one snapshot per p2 operation in that directory.
+# Reading the latest snapshot of the selected profile answers by unit ids and versions, which
+# no cached jar or feature directory proves either way. Every state the format cannot say -
+# no registry, several profiles none selected, a latest snapshot that will not read or parse,
+# a profile bound to another configuration area - answers "unknown" with the reason, and a
+# caller that needs legacy absence reads that as refusal rather than absence.
+
+
+def normalised(path):
+    """A path comparable across the spellings the report and its callers write it in."""
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def read_config_ini_profile_id(config_area):
+    """The profile id the area's config.ini names with eclipse.p2.profile, or None.
+
+    The value decides over the registry's own order: when several profiles share a registry,
+    the ini is the one place that says which of them this area provisions from. A config.ini
+    that is missing, unreadable or names no profile decides nothing, and the caller falls
+    back to the registry holding exactly one profile.
+    """
+    ini = Path(config_area) / "config.ini"
+    if not ini.is_file():
+        return None
+    try:
+        text = ini.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        if key.strip() == "eclipse.p2.profile":
+            return value.strip() or None
+    return None
+
+
+def read_snapshot_bytes(path, cap):
+    """A snapshot's bytes, decompressed when gzipped, refused once they pass the cap.
+
+    The cap bounds what a crafted or damaged archive can make this code hold: the answer for
+    anything larger is the caller's unknown, never an attempted parse.
+    """
+    if path.name.endswith(".gz"):
+        with gzip.open(path, "rb") as stream:
+            data = stream.read(cap + 1)
+    else:
+        with open(path, "rb") as stream:
+            data = stream.read(cap + 1)
+    if len(data) > cap:
+        raise ValueError("larger than the %d byte cap" % cap)
+    return data
+
+
+def parse_profile_snapshot(data):
+    """(root attributes, root properties, legacy units) of one snapshot's XML.
+
+    Streamed and cleared element by element: a profile of a real EDT installation carries a
+    few thousand unit elements with nested provision data, and holding the whole tree is
+    memory nobody asked for. ElementTree resolves no external entities, and a snapshot
+    carrying a DTD is refused outright - the profiles p2 writes have neither.
+    """
+    if b"<!DOCTYPE" in data or b"<!ENTITY" in data:
+        raise ValueError("carries a DTD or entity declaration")
+    root_attributes = {}
+    properties = {}
+    units = []
+    stack = []
+    for event, element in ET.iterparse(io.BytesIO(data), events=("start", "end")):
+        if event == "start":
+            stack.append(element)
+            if len(stack) == 1:
+                if element.tag != "profile":
+                    raise ValueError("root element is not a profile")
+                root_attributes = dict(element.attrib)
+            continue
+        stack.pop()
+        if len(stack) == 2:
+            # Direct children of root end with exactly root and their parent open; a unit's
+            # own nested properties end two levels deeper and are not root properties.
+            if element.tag == "property":
+                properties[element.get("name")] = element.get("value")
+            elif element.tag == "unit":
+                unit_id = element.get("id")
+                if unit_id in LEGACY_OFORM_IUS:
+                    units.append({"id": unit_id, "version": element.get("version")})
+        element.clear()
+    if not root_attributes:
+        raise ValueError("is not a profile document")
+    return root_attributes, properties, units
+
+
+def latest_snapshot(profile_dir):
+    """The newest snapshot of a profile directory, by the timestamp in its name.
+
+    Timestamps are numbers, not text: 10.profile.gz is newer than 9.profile.gz, and an
+    order by name would read them the other way round. Only the newest is returned - the
+    history beside it is what earlier operations resolved, not the installed state.
+    """
+    stamps = []
+    try:
+        for entry in Path(profile_dir).iterdir():
+            if not entry.is_file():
+                continue
+            match = SNAPSHOT_NAME.match(entry.name)
+            if match:
+                stamps.append((int(match.group("timestamp")), match.group("timestamp"), entry))
+    except OSError:
+        return None, None, "the profile directory cannot be listed"
+    if not stamps:
+        return None, None, "the profile holds no snapshot"
+    best = max(stamps, key=lambda item: item[0])
+    return best[2], best[1], None
+
+
+def p2_profile_status(config_area):
+    """The installed legacy state of one configuration area's p2 profile, as data.
+
+    ``{"status": "known", ...}`` answers from the latest snapshot of the selected profile:
+    the id the area's config.ini names, or the one profile the registry holds when the ini
+    names none. ``{"status": "unknown", "reason": ...}`` is every state the format cannot
+    say, and the known payload carries the unit ids of the closed delivery's feature with
+    their versions, the snapshot's timestamp and the folders the profile names.
+    """
+    registry = Path(config_area).parent.joinpath(*P2_REGISTRY_PARTS)
+    if not registry.is_dir():
+        return {"status": "unknown", "reason": "the area holds no p2 profile registry"}
+    try:
+        profile_dirs = [entry for entry in registry.iterdir()
+                        if entry.is_dir() and entry.name.endswith(".profile")]
+    except OSError as error:
+        return {"status": "unknown", "reason": "the p2 registry cannot be listed (%s)" % error}
+    named = read_config_ini_profile_id(config_area)
+    if named:
+        if not any(entry.name == named + ".profile" for entry in profile_dirs):
+            return {"status": "unknown",
+                    "reason": "config.ini names the %s profile and the registry holds no such one" % named}
+        selected = named
+    elif len(profile_dirs) == 1:
+        selected = profile_dirs[0].name[:-len(".profile")]
+    elif not profile_dirs:
+        return {"status": "unknown", "reason": "the p2 registry holds no profile"}
+    else:
+        return {"status": "unknown",
+                "reason": "the p2 registry holds %d profiles and the area's config.ini names none"
+                          % len(profile_dirs)}
+    snapshot, stamp, reason = latest_snapshot(registry / (selected + ".profile"))
+    if snapshot is None:
+        return {"status": "unknown", "reason": reason}
+    try:
+        data = read_snapshot_bytes(snapshot, MAX_PROFILE_BYTES)
+    except (OSError, EOFError, ValueError, zlib.error) as error:
+        return {"status": "unknown",
+                "reason": "the latest profile snapshot (%s) cannot be read: %s" % (snapshot.name, error)}
+    try:
+        root_attributes, properties, units = parse_profile_snapshot(data)
+    except (ET.ParseError, ValueError) as error:
+        return {"status": "unknown",
+                "reason": "the latest profile snapshot (%s) cannot be parsed: %s" % (snapshot.name, error)}
+    if root_attributes.get("id") != selected:
+        return {"status": "unknown",
+                "reason": "the latest snapshot is of the %s profile, not the selected %s"
+                          % (root_attributes.get("id"), selected)}
+    bound = properties.get(CONFIGURATION_FOLDER_PROPERTY)
+    if not bound:
+        return {"status": "unknown",
+                "reason": "the profile does not name the configuration area it belongs to"}
+    if normalised(bound) != normalised(config_area):
+        return {"status": "unknown",
+                "reason": "the profile is bound to %s, not this configuration area" % bound}
+    return {
+        "status": "known",
+        "profileId": selected,
+        "snapshot": stamp,
+        "installFolder": properties.get(INSTALL_FOLDER_PROPERTY),
+        "cache": properties.get(CACHE_PROPERTY),
+        "legacyUnits": units,
+    }
+
+
+def p2_profile_statuses(config_areas):
+    """The p2 status of every configuration area, keyed by its area root as normalised.
+
+    The key is the root the registry sits in - the parent of the configuration directory -
+    spelled the way a caller normalises the area it loads, so both sides meet without one
+    re-deriving the other's paths.
+    """
+    statuses = {}
+    for area in {normalised(area) for area in config_areas}:
+        statuses[normalised(Path(area).parent)] = p2_profile_status(area)
+    return statuses
+
+
 def installation_report(roots, bundle):
     """The installations recording the bundle as data, for a caller that installs into them.
 
     ``consumers`` names every installation found with the area it loads, including those that
     record nothing: two installations loading one area hold one profile, and a caller installing
-    into it has to know about the other one.
+    into it has to know about the other one. ``p2Profiles`` reads the installed state of the p2
+    profile of every area those two name, so the caller that must not install beside the closed
+    delivery's feature asks the same report for it.
     """
     found, unclaimed, unreadable = installations(roots, bundle)
+    consumer_list = consumers(roots)
+    areas = {config_area_of(entry["bundlesInfo"]) for entry in unclaimed}
+    for entry in found:
+        for record in entry["records"]:
+            areas.add(config_area_of(record["bundlesInfo"]))
+    for consumer in consumer_list:
+        areas.add(Path(consumer["loads"]))
     return {
         "bundle": bundle,
         "roots": [str(root) for root in roots],
         "installations": found,
         "unclaimed": unclaimed,
         "unreadable": unreadable,
-        "consumers": consumers(roots),
+        "consumers": consumer_list,
+        "p2Profiles": p2_profile_statuses(areas),
     }
 
 
@@ -375,22 +701,106 @@ def report(roots, bundle):
     return lines, unreferenced
 
 
+def shared_delivery_states(roots, depth=8):
+    """Per bundles.info that records the server, whether it carries the bundle that joined later.
+
+    A server build from the shared delivery on installs ``ru.aiedt.mcp.oform`` beside itself,
+    at the same full version - one build produces both jars. A bundles.info recording such a
+    server and no oform is an installation stopped half way: a caller comparing the server
+    line alone would read a whole delivery where there is half of one. An oform of another
+    version is not the bundle this delivery installs either: the reading is inconsistent
+    rather than whole, and ``sharedDeliveryIssue`` says which versions were found.
+    ``sharedDelivery`` is None for a server older than the shared delivery - that
+    installation never carried oform and is not damaged for lacking it.
+    """
+    states = []
+    for info in sorted(find_files(roots, "bundles.info", depth)):
+        try:
+            text = info.read_text(encoding="utf-8", errors="replace")
+        except OSError as error:
+            states.append({"bundlesInfo": str(info), "error": str(error)})
+            continue
+        recorded = parse_bundles_info(text, DEFAULT_BUNDLE)
+        if not recorded:
+            continue
+        server_versions = [version for version, _ in recorded]
+        best = max(server_versions, key=full_version)
+        entry = {"bundlesInfo": str(info), "serverVersions": server_versions}
+        if version_key(best) < FIRST_SHARED_VERSION:
+            entry["sharedDelivery"] = None
+            states.append(entry)
+            continue
+        oform = parse_bundles_info(text, OFORM_BUNDLE)
+        entry["oformVersions"] = [version for version, _ in oform]
+        effective_oform = max(entry["oformVersions"], key=full_version, default=None)
+        if effective_oform is not None and full_version(effective_oform) == full_version(best):
+            entry["sharedDelivery"] = True
+        elif oform:
+            entry["sharedDelivery"] = False
+            entry["sharedDeliveryIssue"] = (
+                "%s %s does not match server %s - one build of the shared delivery installs "
+                "both bundles at one version" % (OFORM_BUNDLE,
+                                                 ", ".join(entry["oformVersions"]), best))
+        else:
+            entry["sharedDelivery"] = False
+            entry["sharedDeliveryIssue"] = (
+                "carries server %s WITHOUT %s - a shared delivery installs both"
+                % (best, OFORM_BUNDLE))
+        states.append(entry)
+    return states
+
+
+def delivery_lines(states):
+    """The shared-delivery reading as report lines."""
+    lines = ["shared delivery (server %s and %s from version %s on):"
+             % (DEFAULT_BUNDLE, OFORM_BUNDLE, ".".join(str(n) for n in FIRST_SHARED_VERSION))]
+    counted = [state for state in states if state.get("sharedDelivery") is not None]
+    if not counted:
+        lines.append("  no bundles.info records a server of the shared delivery or later")
+        return lines
+    for state in counted:
+        if state["sharedDelivery"]:
+            lines.append("  %s: carries both bundles (server %s, oform %s)"
+                         % (state["bundlesInfo"], ", ".join(state["serverVersions"]),
+                            ", ".join(state["oformVersions"])))
+        else:
+            lines.append("  %s: %s" % (state["bundlesInfo"], state["sharedDeliveryIssue"]))
+    return lines
+
+
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--bundle", default=DEFAULT_BUNDLE)
+    parser.add_argument("--bundle", default=None,
+                        help="one bundle to report; without it, every bundle of the delivery")
     parser.add_argument("--root", action="append", default=[])
     # For a caller that installs, so it reads the same directory rules this report does. The default
     # escaping keeps the document ASCII whatever a directory is called: PowerShell 5.1 reads the
     # output of a native command in the console code page, where a path outside it arrives mangled.
+    parser.add_argument("--also-root", action="append", default=[],
+                        help="a directory searched beside the usual places or the named roots")
     parser.add_argument("--json", action="store_true", help="print installations as JSON")
     args = parser.parse_args(argv)
-    roots = [Path(root) for root in args.root] or default_roots()
+    roots = merged_roots([Path(root) for root in args.root] or default_roots(),
+                         [Path(root) for root in args.also_root])
     if args.json:
-        print(json.dumps(installation_report(roots, args.bundle), indent=2))
+        if args.bundle:
+            # The single-bundle shape a caller installs by: unchanged, so a reader of one
+            # payload does not have to read into a wrapper.
+            print(json.dumps(installation_report(roots, args.bundle), indent=2))
+        else:
+            print(json.dumps({
+                "bundles": [installation_report(roots, bundle) for bundle in DELIVERY_BUNDLES],
+                "sharedDelivery": shared_delivery_states(roots),
+            }, indent=2))
         return 0
-    lines, _ = report(roots, args.bundle)
     print("searched: " + ", ".join(str(root) for root in roots))
-    print("\n".join(lines))
+    for bundle in ([args.bundle] if args.bundle else list(DELIVERY_BUNDLES)):
+        lines, _ = report(roots, bundle)
+        print("")
+        print("\n".join(lines))
+    if not args.bundle:
+        print("")
+        print("\n".join(delivery_lines(shared_delivery_states(roots))))
     return 0
 
 

@@ -287,7 +287,8 @@ public class ToolProfileTest
         // hand, not read back from ToolProfile, so a fourth ungrouped name still fails.
         Set<String> capabilityDoors = Set.of("edit_form_writes", "edit_metadata_writes", //$NON-NLS-1$ //$NON-NLS-2$
             "dcs_workshop_writes", "mxl_workshop_writes", "xdto_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "external_object_workshop_writes", "external_data_source_workshop_writes"); //$NON-NLS-1$ //$NON-NLS-2$
+            "external_object_workshop_writes", "external_data_source_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$
+            "ordinary_forms_writes"); //$NON-NLS-1$
         for (ToolProfile preset : ToolProfile.values())
         {
             Set<String> disabled = preset.getDisabledTools();

@@ -16,15 +16,22 @@ import pathlib
 import re
 import sys
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
 # The orphans allowed to stand. It only ever goes down: a fix lowers it, and nothing may raise it.
 # The 63 the census started with were traced to their members and put back; the floor is now zero.
 BASELINE = 0
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-SOURCES = [
-    ROOT / "mcp/bundles/ru.aiedt.mcp.server/src",
-    ROOT / "mcp/tests/ru.aiedt.mcp.server.tests/src",
-]
+ROOT = bundles.REPO_ROOT
+# Every production bundle and its test fragment on disk. A bundle without a fragment is
+# still censused: its sources stand or fall by the same rule, and a fragment that arrives
+# later changes nothing about the orphans already there.
+SOURCES = []
+for _bundle, src, fragment in bundles.census_roots():
+    SOURCES.append(src)
+    if fragment is not None:
+        SOURCES.append(fragment)
 
 # What may legitimately stand between a javadoc block and the declaration it documents.
 BETWEEN = re.compile(r"^\s*(@\w[\w.]*(\(.*\))?\s*)+$")

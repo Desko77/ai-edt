@@ -33,7 +33,9 @@ import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
  *
  * <p>A tool another bundle published is classed by its own declared word, which the whiteboard
  * keeps in the catalogue: the presets name only this server's own tools, so without that flag an
- * external writer would be published as a read.</p>
+ * external writer would be published as a read. A mixed external tool - one whose writes its own
+ * bundle gates behind named doors - follows those doors the same way the call gate does: read
+ * hints while every door is disabled, a writer otherwise.</p>
  *
  * <p>A writer is published with the spec's default {@code destructiveHint}: the server does not
  * tell an additive write from one that removes, so it does not claim to.</p>
@@ -103,7 +105,11 @@ public final class ToolAnnotations
      * <p>The decision keys on the capability id, the identity the presets are written in, so a
      * renamed wire name does not move a tool out of its class. A tool from another bundle is
      * classed by the write flag its bundle declared to the whiteboard: the presets name only
-     * this server's own tools, so an external writer would otherwise pass for a reader.</p>
+     * this server's own tools, so an external writer would otherwise pass for a reader. A mixed
+     * external tool - one that names the doors its writes go through - is classed by those doors
+     * instead: with every door disabled it is published as a read, the same rule the call gate
+     * applies, and a declaration that is empty, blank or names no disabled door counts for
+     * nothing - it is not proof of protection.</p>
      *
      * @param tool the tool
      * @param registry the registry that says which gated write doors are enabled
@@ -119,7 +125,7 @@ public final class ToolAnnotations
         Boolean externalWrites = registry.externalWritesDeclared(capabilityId);
         if (externalWrites != null)
         {
-            return externalWrites.booleanValue();
+            return externalWrites.booleanValue() && !registry.writeDoorsAllClosed(tool);
         }
         Set<String> writers = ToolProfile.READ_ONLY.getDisabledTools();
         if (writers.contains(capabilityId) && !READS_INSIDE_WRITE_GROUPS.contains(capabilityId))
