@@ -11,6 +11,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assume.assumeTrue;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -620,6 +621,8 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
     @Test
     public void aDirectoryThatCannotBeRemovedIsLeftBehind() throws Exception
     {
+        assumeTrue("this user can delete a held file (a POSIX superuser ignores directory permissions)", //$NON-NLS-1$
+            aHeldFileCannotBeDeleted());
         byte[] before = container(PROJECT_LAYOUT, PROJECT_MODULE);
         theProjectHolds(before);
         FakeRoad road = FakeRoad.thatExports(infobaseContainer()).thatHoldsTheExportOpen();
@@ -756,6 +759,27 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
     private static Path theProjectContainerFile()
     {
         return project.getLocation().toFile().toPath().resolve("src").resolve(CONTAINER); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a file held by {@link Undeletable} survives a delete on this machine, tried on a
+     * probe outside the temporary root the tests inspect.
+     *
+     * @return {@code true} when the held file is still there after the delete
+     * @throws IOException when the probe cannot be made or cleaned up
+     */
+    private static boolean aHeldFileCannotBeDeleted() throws IOException
+    {
+        Path probe = Files.createDirectories(root.resolve("held-probe")); //$NON-NLS-1$
+        Path file = Files.write(probe.resolve("held.bin"), new byte[] { 1 }); //$NON-NLS-1$
+        boolean deleted;
+        try (Undeletable held = Undeletable.hold(file))
+        {
+            deleted = file.toFile().delete();
+        }
+        Files.deleteIfExists(file);
+        Files.delete(probe);
+        return !deleted;
     }
 
     /** Removes what a left-behind temporary directory still holds, keeping the root. */
@@ -898,7 +922,7 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
 
         private String runKey;
 
-        private InputStream held;
+        private Undeletable held;
 
         private FakeRoad(byte[] export, String answer)
         {
@@ -969,9 +993,7 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
                     }
                     if (holdTheExportOpen)
                     {
-                        // FileInputStream opens without the delete share, the way a process that
-                        // holds its output holds it: the file cannot be deleted while it is open
-                        held = new java.io.FileInputStream(bin.toFile());
+                        held = Undeletable.hold(bin);
                     }
                 }
                 catch (IOException e)
@@ -1129,6 +1151,81 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
             {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("the stand-in road was interrupted", e); //$NON-NLS-1$
+            }
+        }
+    }
+
+    /**
+     * A file held so that it cannot be deleted, the way a process holding its output holds it.
+     * Windows refuses to delete a file open without the delete share; a POSIX file system
+     * deletes an open file and refuses only when the directory holding it is not writable. The
+     * hold does both, so it keeps the file on either kind of system.
+     */
+    private static final class Undeletable implements java.io.Closeable
+    {
+        private final InputStream open;
+
+        private final Path directory;
+
+        private final java.util.Set<java.nio.file.attribute.PosixFilePermission> permissions;
+
+        private Undeletable(InputStream open, Path directory,
+            java.util.Set<java.nio.file.attribute.PosixFilePermission> permissions)
+        {
+            this.open = open;
+            this.directory = directory;
+            this.permissions = permissions;
+        }
+
+        /**
+         * Holds the file open and, where the file system keeps POSIX permissions, takes the
+         * write permission off its directory.
+         *
+         * @param file the file to hold
+         * @return the hold, released by {@link #close()}
+         * @throws IOException when the file cannot be opened or the permissions not read
+         */
+        static Undeletable hold(Path file) throws IOException
+        {
+            InputStream open = new java.io.FileInputStream(file.toFile());
+            Path directory = file.getParent();
+            var view = Files.getFileAttributeView(directory, java.nio.file.attribute.PosixFileAttributeView.class);
+            if (view == null)
+            {
+                return new Undeletable(open, null, null);
+            }
+            try
+            {
+                var permissions = view.readAttributes().permissions();
+                Files.setPosixFilePermissions(directory,
+                    java.nio.file.attribute.PosixFilePermissions.fromString("r-x------")); //$NON-NLS-1$
+                return new Undeletable(open, directory, permissions);
+            }
+            catch (IOException | RuntimeException e)
+            {
+                open.close();
+                throw e;
+            }
+        }
+
+        /**
+         * Gives the directory its permissions back and closes the file.
+         *
+         * @throws IOException when either fails
+         */
+        @Override
+        public void close() throws IOException
+        {
+            try
+            {
+                if (directory != null)
+                {
+                    Files.setPosixFilePermissions(directory, permissions);
+                }
+            }
+            finally
+            {
+                open.close();
             }
         }
     }
