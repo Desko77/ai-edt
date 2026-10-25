@@ -560,7 +560,9 @@ infobase is updated, and the answer says `nothingWasLaunchedOrUpdated`. There is
 The environment opens such an object by BUILDING it, so the object's project must have dump
 generation switched on. It is off by default on a freshly made project, and then the client starts
 with nothing open. The launch refuses and names the project; `enableExternalObjectDump=true` turns
-it on for that project and goes ahead.
+it on for that project and goes ahead. That write is gated by the `launch_debugger_writes` door:
+under Read-only, Debug & Test and Code Review `enableExternalObjectDump=true` is refused before
+anything starts, and `false` or no argument launches as before.
 
 `debugServerPort` gives this launch its own debug server port (1..65535). One machine has one
 default port between all the environments running on it, and the second one to start debugging is

@@ -64,6 +64,12 @@ public class LaunchDebuggerTool implements IMcpTool
     }
 
     @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(DebugSessionStarter.DUMP_WRITE_DOOR);
+    }
+
+    @Override
     public String getDescription()
     {
         return "Unified debugger control. Pass action=<name> plus action-specific " //$NON-NLS-1$
@@ -118,7 +124,7 @@ public class LaunchDebuggerTool implements IMcpTool
                 "launch: debug server port, 1..65535, when another 1C:EDT holds the default.") //$NON-NLS-1$
             .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
                 "launch: build the external object when its project has dumps off; without " //$NON-NLS-1$
-                    + "it the client starts empty.", false) //$NON-NLS-1$
+                    + "it the client starts empty. A preset that blocks writing refuses true.", false) //$NON-NLS-1$
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "launch: open this data processor or report in the client, so its code runs " //$NON-NLS-1$
                     + "under the debugger. A ready .epf goes in through " //$NON-NLS-1$
@@ -467,7 +473,9 @@ public class LaunchDebuggerTool implements IMcpTool
         if (topic == null || topic.isEmpty())
         {
             sb.append("# launch_debugger - actions\n\n"); //$NON-NLS-1$
-            sb.append("- **launch** - start an application in debug mode.\n"); //$NON-NLS-1$
+            sb.append("- **launch** - start an application in debug mode. enableExternalObjectDump=true " //$NON-NLS-1$
+                + "writes the external-object project's dump setting and is refused under a preset " //$NON-NLS-1$
+                + "that blocks writing.\n"); //$NON-NLS-1$
             sb.append("- **add_breakpoint / remove_breakpoint / list_breakpoints**. " //$NON-NLS-1$
                 + "add_breakpoint takes condition / hitCount+hitCondition / logExpression, and " //$NON-NLS-1$
                 + "replaceModuleSet=true to make the batch a module's whole set.\n"); //$NON-NLS-1$

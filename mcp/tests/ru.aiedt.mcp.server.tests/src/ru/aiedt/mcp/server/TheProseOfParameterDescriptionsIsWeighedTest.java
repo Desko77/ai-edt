@@ -709,6 +709,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And from 107723 to 107805 for the empty edgeKinds sentence on the dependency_graph and
      * insights schemas. Measured 15.10: 107805.
      * </p>
+     * <p>
+     * And from 107805 to 107843 for the sentence on enableExternalObjectDump on launch_debugger:
+     * true writes the external-object project's dump setting, and a preset that blocks writing
+     * refuses it. Measured 25.10: 107843.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107805;
+    private static final int DOCUMENT_PROSE = 107843;
 }

@@ -61,6 +61,13 @@ public final class DebugSessionStarter implements IMcpTool
 {
     public static final String NAME = "debug_launch"; //$NON-NLS-1$
 
+    /**
+     * The write door of the launch: {@code enableExternalObjectDump=true} turns dump generation on
+     * in the external-object project's settings, which is a write a preset that blocks writing has
+     * to refuse while it keeps launching and debugging on.
+     */
+    public static final String DUMP_WRITE_DOOR = "launch_debugger_writes"; //$NON-NLS-1$
+
     private static final String DESC = "Back-compat alias of `launch_debugger` `action=launch`; prefer the facade for new prompts. " //$NON-NLS-1$
         + "Starts an EDT debug session. " //$NON-NLS-1$
         + "Supply launchConfigurationName to run any existing EDT debug configuration by its name " //$NON-NLS-1$
@@ -158,6 +165,12 @@ public final class DebugSessionStarter implements IMcpTool
     }
 
     @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(DUMP_WRITE_DOOR);
+    }
+
+    @Override
     public String getDescription()
     {
         return DESC;
@@ -188,7 +201,7 @@ public final class DebugSessionStarter implements IMcpTool
                 "Turn on dump generation for the external-object project when it is off. The " //$NON-NLS-1$
                     + "environment opens such an object by building it, and with the setting off " //$NON-NLS-1$
                     + "the client starts empty. Default false: the launch is refused instead, " //$NON-NLS-1$
-                    + "because this changes the project.", //$NON-NLS-1$
+                    + "because this changes the project. A preset that blocks writing refuses true.", //$NON-NLS-1$
                 false)
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
@@ -295,6 +308,19 @@ public final class DebugSessionStarter implements IMcpTool
         }
         boolean enableDump =
             JsonUtils.extractBooleanArgument(params, "enableExternalObjectDump", false); //$NON-NLS-1$
+        if (enableDump)
+        {
+            String gate = ToolGate.gateWriteDoor(DUMP_WRITE_DOOR);
+            if (gate != null)
+            {
+                return ToolResult.error(gate + " enableExternalObjectDump=true changes the " //$NON-NLS-1$
+                    + "external-object project's dump setting; retry without it to launch against " //$NON-NLS-1$
+                    + "the setting as it stands. Nothing was launched or updated.") //$NON-NLS-1$
+                    .put("enableExternalObjectDump", "blocked by preset") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
+        }
         String externalObjectName = JsonUtils.extractStringArgument(params, "externalObjectName"); //$NON-NLS-1$
         String externalObjectProject = JsonUtils.extractStringArgument(params, "externalObjectProject"); //$NON-NLS-1$
         String startupOption = JsonUtils.extractStringArgument(params, "startupOption"); //$NON-NLS-1$
@@ -1482,6 +1508,24 @@ public final class DebugSessionStarter implements IMcpTool
         {
             return null;
         }
+        return dumpReadiness(objectProject, enableDump, dumps);
+    }
+
+    /**
+     * {@link #dumpReadiness(IProject, boolean)} over a given dump service.
+     * <p>
+     * The write door is asked again right before the setting is switched on, so no route into this
+     * method writes the setting under a preset that blocks writing.
+     * </p>
+     *
+     * @param objectProject the external-object project.
+     * @param enableDump whether the caller allowed turning generation on.
+     * @param dumps the dump service of the environment.
+     * @return what is wrong, or <code>null</code> when the environment is ready to build the dump
+     */
+    static String dumpReadiness(IProject objectProject, boolean enableDump,
+        IExternalObjectDumpSupport dumps)
+    {
         if (!dumps.isEnabled(objectProject))
         {
             if (!enableDump)
@@ -1491,6 +1535,11 @@ public final class DebugSessionStarter implements IMcpTool
                     + "launched client by building that dump. With the setting off the client starts " //$NON-NLS-1$
                     + "with nothing open. Pass enableExternalObjectDump=true to turn it on for this " //$NON-NLS-1$
                     + "project, or turn it on in the project's properties. Nothing was launched."; //$NON-NLS-1$
+            }
+            String gate = ToolGate.gateWriteDoor(DUMP_WRITE_DOOR);
+            if (gate != null)
+            {
+                return gate;
             }
             dumps.setEnabled(objectProject, true);
         }

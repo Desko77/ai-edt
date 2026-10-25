@@ -288,7 +288,7 @@ public class ToolProfileTest
         Set<String> capabilityDoors = Set.of("edit_form_writes", "edit_metadata_writes", //$NON-NLS-1$ //$NON-NLS-2$
             "dcs_workshop_writes", "mxl_workshop_writes", "xdto_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "external_object_workshop_writes", "external_data_source_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$
-            "ordinary_forms_writes"); //$NON-NLS-1$
+            "ordinary_forms_writes", "launch_debugger_writes"); //$NON-NLS-1$ //$NON-NLS-2$
         for (ToolProfile preset : ToolProfile.values())
         {
             Set<String> disabled = preset.getDisabledTools();
