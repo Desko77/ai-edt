@@ -208,10 +208,12 @@ public final class DebugSessionStarter implements IMcpTool
                     + "runs under the debugger. The object is one this workspace holds as an " //$NON-NLS-1$
                     + "external-object project; a ready .epf / .erf from elsewhere goes in first " //$NON-NLS-1$
                     + "through external_object_workshop operation=import_external_object. Omit to " //$NON-NLS-1$
-                    + "open nothing.") //$NON-NLS-1$
+                    + "open nothing. An Attach configuration starts no client, so the argument is " //$NON-NLS-1$
+                    + "refused there.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
                 "The external-object project holding externalObjectName. Omit when the project has " //$NON-NLS-1$
-                    + "one object and its name is unambiguous in the workspace.") //$NON-NLS-1$
+                    + "one object and its name is unambiguous in the workspace. Refused with an " //$NON-NLS-1$
+                    + "Attach configuration.") //$NON-NLS-1$
             .stringProperty("startupOption", //$NON-NLS-1$
                 "The /C startup string for the client that starts, written to this launch's own " //$NON-NLS-1$
                     + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
@@ -486,6 +488,19 @@ public final class DebugSessionStarter implements IMcpTool
                     + "launched.") //$NON-NLS-1$
                     .put("launchConfiguration", config.getName()) //$NON-NLS-1$
                     .put("attach", true) //$NON-NLS-1$
+                    .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
+                    .toJson();
+            }
+
+            String attachObject = attachExternalObjectRefusal(isAttach, externalObjectName,
+                externalObjectProject);
+            if (attachObject != null)
+            {
+                return ToolResult.error(attachObject)
+                    .put("launchConfiguration", config.getName()) //$NON-NLS-1$
+                    .put("attach", true) //$NON-NLS-1$
+                    .put("externalObjectName", externalObjectName) //$NON-NLS-1$
+                    .put("externalObjectProject", externalObjectProject) //$NON-NLS-1$
                     .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                     .toJson();
             }
@@ -1480,6 +1495,33 @@ public final class DebugSessionStarter implements IMcpTool
     }
 
     /**
+     * The refusal for an external object named to an Attach configuration.
+     * <p>
+     * An Attach configuration starts no client, so there is nothing to open the object in, and a
+     * launch that went ahead would answer success with the object never opened.
+     * </p>
+     *
+     * @param isAttach whether the configuration attaches rather than starts a client.
+     * @param externalObjectName the external object asked for, or <code>null</code>.
+     * @param externalObjectProject the external-object project asked for, or <code>null</code>.
+     * @return the refusal, or <code>null</code> when the arguments apply to this configuration
+     */
+    static String attachExternalObjectRefusal(boolean isAttach, String externalObjectName,
+        String externalObjectProject)
+    {
+        boolean named = externalObjectName != null && !externalObjectName.isEmpty()
+            || externalObjectProject != null && !externalObjectProject.isEmpty();
+        if (!isAttach || !named)
+        {
+            return null;
+        }
+        return "An Attach configuration starts no client, and externalObjectName and " //$NON-NLS-1$
+            + "externalObjectProject open the object in the client that starts. Name a runtime-client " //$NON-NLS-1$
+            + "configuration in launchConfigurationName, or pass projectName and applicationId " //$NON-NLS-1$
+            + "instead. Nothing was launched."; //$NON-NLS-1$
+    }
+
+    /**
      * Whether the environment can build the .epf the client needs, and what to say when it cannot.
      * <p>
      * The launch delegate reads the external-object attributes, then asks the dump service whether
@@ -1502,30 +1544,36 @@ public final class DebugSessionStarter implements IMcpTool
         catch (Exception e)
         {
             Activator.logDebug("external object dump service not reachable: " + e.getMessage()); //$NON-NLS-1$
-            return null;
-        }
-        if (dumps == null)
-        {
-            return null;
+            dumps = null;
         }
         return dumpReadiness(objectProject, enableDump, dumps);
     }
 
     /**
-     * {@link #dumpReadiness(IProject, boolean)} over a given dump service.
+     * Whether the given dump service can build the .epf the client needs, and what to say when it
+     * cannot.
      * <p>
-     * The write door is asked again right before the setting is switched on, so no route into this
-     * method writes the setting under a preset that blocks writing.
+     * The launch delegate opens the object through the same service, so an unreachable service is a
+     * refusal rather than a skipped check: the client would start with nothing open. The write door
+     * is asked again right before the setting is switched on, so no route into this method writes
+     * the setting under a preset that blocks writing.
      * </p>
      *
      * @param objectProject the external-object project.
      * @param enableDump whether the caller allowed turning generation on.
-     * @param dumps the dump service of the environment.
+     * @param dumps the dump service, or <code>null</code> when it could not be reached.
      * @return what is wrong, or <code>null</code> when the environment is ready to build the dump
      */
-    static String dumpReadiness(IProject objectProject, boolean enableDump,
-        IExternalObjectDumpSupport dumps)
+    static String dumpReadiness(IProject objectProject, boolean enableDump, IExternalObjectDumpSupport dumps)
     {
+        if (dumps == null)
+        {
+            return "The environment's external object dump service is not reachable, so whether " //$NON-NLS-1$
+                + "project '" + objectProject.getName() + "' can build the dump that opens the " //$NON-NLS-1$ //$NON-NLS-2$
+                + "object was not checked, and the client would start with nothing open. Launch " //$NON-NLS-1$
+                + "again once 1C:EDT has finished starting, or launch without externalObjectName. " //$NON-NLS-1$
+                + "Nothing was launched."; //$NON-NLS-1$
+        }
         if (!dumps.isEnabled(objectProject))
         {
             if (!enableDump)

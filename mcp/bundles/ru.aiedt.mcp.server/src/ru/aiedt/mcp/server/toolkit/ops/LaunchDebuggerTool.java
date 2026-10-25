@@ -128,7 +128,7 @@ public class LaunchDebuggerTool implements IMcpTool
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "launch: open this data processor or report in the client, so its code runs " //$NON-NLS-1$
                     + "under the debugger. A ready .epf goes in through " //$NON-NLS-1$
-                    + "external_object_workshop operation=import_external_object.") //$NON-NLS-1$
+                    + "external_object_workshop operation=import_external_object. Not for Attach.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
                 "launch: the external-object project holding externalObjectName.") //$NON-NLS-1$
             .stringProperty("startupOption", //$NON-NLS-1$
@@ -475,7 +475,9 @@ public class LaunchDebuggerTool implements IMcpTool
             sb.append("# launch_debugger - actions\n\n"); //$NON-NLS-1$
             sb.append("- **launch** - start an application in debug mode. enableExternalObjectDump=true " //$NON-NLS-1$
                 + "writes the external-object project's dump setting and is refused under a preset " //$NON-NLS-1$
-                + "that blocks writing.\n"); //$NON-NLS-1$
+                + "that blocks writing. externalObjectName opens an object only in a client that starts: " //$NON-NLS-1$
+                + "an Attach configuration refuses it, and so does a launch whose dump service is not " //$NON-NLS-1$
+                + "reachable.\n"); //$NON-NLS-1$
             sb.append("- **add_breakpoint / remove_breakpoint / list_breakpoints**. " //$NON-NLS-1$
                 + "add_breakpoint takes condition / hitCount+hitCondition / logExpression, and " //$NON-NLS-1$
                 + "replaceModuleSet=true to make the batch a module's whole set.\n"); //$NON-NLS-1$
