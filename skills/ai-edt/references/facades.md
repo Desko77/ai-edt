@@ -148,6 +148,24 @@ less is refused.
 the port that answers is read from the projects it serves, and a `project_not_found` is never
 read as the server being down when the port belongs to the other instance.
 
+Its other fields, read before a heavy call or when answers stop coming (all but `status`,
+`edt_version` and `phase` need the bearer token while the token check is on):
+
+- `phase` - `ready`, `indexing` (a build or derived data is still running), `unknown`;
+- `queueDepth`, `poolActive`, `poolSize` - requests waiting for a thread, threads busy (the
+  `/health` request is one of them), the pool limit;
+- `heavyAvailable` - free slots for heavy tools, 3 by default;
+- `heapPercent` and `heapLivePercent` (heap held after a collection and at this instant),
+  `heapFreeMb`, `heapRefusalPercent` (92 by default) - a heavy tool gets `503` with `Retry-After`
+  when both shares reach the threshold and less than 256 MB are free;
+- `uiResponding`, `blockedByDialog`, `workbenchNote` - EDT is waiting on a modal window: read it
+  with `self_status`, answer it with `project_admin answer_dialog`;
+- `instance` - the workspace this port serves; `activeCall` - the running call (`name`,
+  `ageSeconds`), absent when none runs.
+
+A call to a tool the preset or the tool settings switched off answers a tool result with
+`isError=true` naming the tool and the preference page that turns it on; it is not run.
+
 ## Tags
 
 `tag_admin` writes the project's metadata tags: a tag is a named, colored label attached to
@@ -161,17 +179,31 @@ answers the same structured refusal for an unknown project and for a failed read
 of text.
 
 The five writes each pass their own door, so a write-blocking preset refuses them before the file is
-read: `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a color the
-default gray), `update_tag` (`newName`, `color`, `description`; an omitted argument keeps the field,
-an empty `description` clears it; a rename carries the assignments and the answer names
-`movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`;
-`dryRun=true` answers the count and writes nothing), `assign_tag` (`objectFqn` plus a `tags` array;
+read; a call with `dryRun=true` writes nothing and passes the door the way the `edit_metadata`
+previews do. A preset that blocks writes is answered for the standalone name of a write before the
+call reaches the facade, so under such a preset the preview is reached as `tag_admin
+operation=create_tag` (and the other four) and the standalone names stay refused with and without
+`dryRun`. `create_tag` (`tag`, an optional `color` as `#RRGGBB` and a `description`; without a
+color the default gray), `update_tag` (`newName`, `color`, `description`; an omitted argument keeps
+the field, an empty `description` clears it; a rename carries the assignments and the answer names
+`movedAssignments`), `delete_tag` (takes the tag off every object, the answer names `assignments`),
+`assign_tag` (`objectFqn` plus a `tags` array;
 the list writes as one, so one unknown tag refuses the whole call and nothing is assigned; a blank
 or whitespace element refuses the whole call with `invalidName`), `unassign_tag` (a `tags` array; a
 tag the object does not carry is `skipped`, and nothing removed answers `isError` with
 `reason=notAssigned`). The `assign_tag` and `unassign_tag` answers name what the operation itself
 changed under its write lock: a tag a parallel call assigned or removed first reads as `skipped`,
 not as `assigned` or `removed`.
+
+Every operation takes `dryRun=true`, which answers what the call would write and changes nothing -
+not a byte of the markers file, not the service's cached storage, no change notification.
+`create_tag` answers the tag it would define (`created: false`), `update_tag` the tag before and
+after (`tag`, `tagAfter`, `movedAssignments` when the rename would carry assignments), `delete_tag`
+`{deleted: false, assignments: N}`, and `assign_tag` and `unassign_tag` the object's tags before and
+after (`tagsBefore`, `assigned` or `removed`, `skipped`, `tagsAfter`). Arguments and state are
+checked the way the write checks them, so a preview refuses exactly what the write refuses, with the
+same `reason` and the same sentence: a create of a tag already defined, a rename onto a name another
+tag carries, a removal of a tag the object does not carry.
 
 `assign_tag` checks the object against the EDT model first: an object that is not in the
 configuration is refused with `objectNotFound` and the nearest names. Nested addresses resolve
@@ -187,12 +219,14 @@ away.
 
 | Operation | Notes |
 |---|---|
-| `get_project_errors` | Problems for a project, filterable by object, severity and check. Each finding carries the line it sits on where the check reports one. `objects` is a JSON array, matched by whole FQN segments; anything else is refused rather than read as one name. |
+| `get_project_errors` | Problems for a project, filterable by object, severity and check. Each finding carries the line it sits on where the check reports one. `objects` is a JSON array, matched by whole FQN segments; anything else is refused rather than read as one name. `sinceBaseline=true` (needs `projectName`) answers only findings absent from the baseline `save_baseline` recorded for that project and adds `resolvedSinceBaseline` and the baseline's recording moment; a read that reaches the 5000-marker cap carries no `resolvedSinceBaseline` and says the resolved count is not determined; the answer opens with the unresolved-address notice the plain report opens with; without a recorded baseline the call refuses and names `save_baseline`. |
 | `get_problem_summary` | Aggregated counts instead of a full listing. |
 | `revalidate_objects` | Recomputes problems for the given objects. Run this after edits, before reading errors. |
 | `clean_project` | Full rebuild of derived state. The remedy when validation results look stale rather than wrong. |
-| `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. A `Template.mxlx` picture reference `ref="v8ui:/"` is finding `mxlx-empty-picture-ref`: one finding names the file and the count. The platform refuses to load a picture reference with an empty name. |
+| `validate_for_export` | Pre-flight for writing into an infobase or building artifacts. Findings block the operation. A `Template.mxlx` picture reference `ref="v8ui:/"` is finding `mxlx-empty-picture-ref`: one finding names the file and the count. The platform refuses to load a picture reference with an empty name. A type in an `.mdo` that composes `String` with another type and carries no length is finding `mdo-composite-string-without-length`, one per element, naming the element and the object. The finding covers the carriers whose type becomes a table column: an attribute of a database object or of its tabular section, a register dimension or resource, a constant, a common attribute, a defined type; an attribute of a report or of a data processor, in their tabular sections too, and of an external report or an external data processor are not scanned, and neither are a command parameter type, a session parameter, a form attribute, a data set field and a schema parameter. |
 | `get_check_description` | What a specific validation check means. |
+| `save_baseline` | Run `revalidate_objects` for the same scope before recording. Records the project's findings - every severity - as the baseline `sinceBaseline=true` subtracts from. `objects=[...]` narrows the record to those FQNs; a baseline so scoped leaves findings of other objects named as not compared. A collection that reaches the 5000-marker cap refuses before writing and names `objects` as the narrowing. The baseline lives in the plugin's state area, never in the project. A finding is identified by object, check and message with a count of identical ones; the line is not part of the identity, so a line shift does not make a finding new. The check filter meets a record by its symbolic id or its short code, and the record carries both. |
+| `clear_baseline` | Removes the project's recorded baseline. A project with no baseline is an answer, not an error. |
 
 ## Changing the model
 
@@ -235,6 +269,19 @@ Two things worth knowing before the first call:
   object keeps its types in the extension block, and setting a type wrote to a property it does not
   have while answering `applied:true`.
 
+### Localized object presentations
+
+`edit_metadata operation=set_object_property` writes `objectPresentation`,
+`extendedObjectPresentation`, `listPresentation`, `extendedListPresentation`, `recordPresentation`,
+`extendedRecordPresentation` and `explanation` where the object's type declares the property.
+Pass `ownerFqn`, `propertyName` and a string `propertyValue`: plain text updates the configuration's
+default language and preserves other translations; a serialized JSON object of language codes
+replaces the whole map. Omitted or blank clears it; JSON null entries become empty strings.
+An empty object, array, blank language key, object-shaped input that fails parsing or non-string/non-null
+value is refused before writing. `listMode` accepts `replace` (default) or `clear`; `dryRun=true`
+returns the resulting map in `wouldWrite`, while a write returns it in `listValue`. The object's
+UUID and other properties are preserved.
+
 ### Form operations
 
 - `create_form` builds a managed form with EDT's own form generator - the engine the New Form wizard
@@ -253,6 +300,19 @@ Two things worth knowing before the first call:
   `defaultForm` slot. A common form
   (`ownerFqn=CommonForm.<Name>`) is created through `create_object` and its inner form receives
   the same properties.
+- `create_form` with `formType=ORDINARY` routes the call to the `ordinary_forms` tool before
+  anything is written, so no managed-form artifacts are created. `ORDINARY` is matched
+  without regard to case, after trimming surrounding whitespace. Without explicit `ORDINARY`
+  the existing managed-form path applies. The
+  pass-through arguments are `projectName`, `ownerFqn`, `purpose`, `synonym`, `title`,
+  `setAsDefault`, `dryRun` and the name resolved from `formName` or `name`. The arguments that
+  belong to the ordinary creator alone - `width`, `height`, `withFields`, `withTables`,
+  `withCommands`, `columns`, `tabularSections`, `language` - and `layout` are refused through this
+  route, and the answer points at `ordinary_forms create_form`: that tool is the one that reads
+  them. A common form is routed by name and refused by the ordinary creator. When the
+  `ordinary_forms` tool is not installed, the call is refused by name instead of falling back to a
+  managed form. Later `update_database` and the gated write capability of that tool are as in
+  `ordinary-forms.md`.
 - `add_form_appearance_rule`, `list_form_appearance_rules` and `remove_form_appearance_rule` are the
   conditional appearance of a managed form. `add_form_appearance_rule` takes `itemNames` - the form
   items the rule styles, comma-separated, and the whole form when omitted - a condition (`field`,
@@ -353,7 +413,29 @@ command's path as the form file writes it: `Form.Command.X`, `Form.StandardComma
   spreadsheet file. `dryRun` writes none.
 - `add_object_attribute`, `add_tabular_section_attribute` and `set_object_type` answer
   `qualifierIgnored` when the qualifier applies to none of the types in the composition (`length` on
-  a `Number`, for one). Under `dryRun` the first two do not borrow the reference types' targets and
+  a `Number`, for one). A composition of more than one type that includes `String` is refused on a
+  carrier whose type becomes a table column unless `length` names a character count above zero: the
+  platform loads such a description and then refuses the database update. The refusal holds for an
+  attribute of a database object or of its tabular section, a register dimension or resource, a
+  constant, a common attribute and a defined type. An attribute of a report or of a data processor,
+  in their tabular sections too, and of an external report or an external data processor is not
+  refused - no table is built for them. A form attribute, a data composition schema field
+  or parameter, a command parameter type and a session parameter take the composition. Repeating
+  the composition the model already holds, naming no `length`, is not refused either: the stored
+  length stands and the answer keeps its idempotent skip. `length=0` and a composition the caller
+  changes are refused. A lone `String` without a length is a type of its own and is written.
+  `set_object_type` and `set_defined_type_types` take
+  `listMode=replace|add|remove`; add preserves the existing order and qualifiers, remove preserves
+  the order of the survivors, and both report `added`, `removed`, `skipped`, `types` and
+  `typeCount`. An existing add or absent remove is skipped. `clear` and removal of the final type
+  are refused. A dry run reports the resulting composition without writing it. A creating operation answers the
+  refusal before the element exists - after it the owner holds neither the element nor a trace of
+  it; in an extension project the refusal precedes the borrowing of the owner and of the reference
+  types' targets, so the extension holds none of them either, and `dryRun` answers the same refusal
+  (`add_object_attribute`, `add_tabular_section_attribute`,
+  `add_register_field`, `add_addressing_attribute`, `add_accounting_flag`,
+  `add_ext_dimension_accounting_flag`, and the `addressingAttributes` entries of
+  `set_task_addressing`). Under `dryRun` the first two do not borrow the reference types' targets and
   list them in `autoBorrowSkipped` (`targetFqn`, `reason: dryRun`) and do not borrow the owner either;
   outside a dry run a failed borrow of the owner is listed there as `ownerFqn` with the borrow's own
   reason. `add_metadata_attribute` reads `dryRun` as well. The adoption operations
@@ -406,7 +488,7 @@ before the project is read; `help` and `dryRun` previews keep working.
 | `set_infobase_credentials` | Stored credentials for a launch configuration. Writing EDT's infobase list keeps launch configurations bound: this operation, `create_infobase`, `delete_infobase` and `register_infobase` put each configuration's application id back after the write and answer `launchApplicationIds`. A failed write is answered with both passwords masked. |
 | `create_launch_config` | Binds an infobase to a project in the project's current association context - the branch, for a project under version control - and answers with `associationContext` and the `applicationId` the binding created. Disabled under Debug & Test, both as a direct call and as the facade operation. |
 | `start_client` | Starts a 1C client from a launch configuration, without a debugger. Use it instead of building a `1cv8.exe` command line - the client then matches what the IDE is configured for. A `projectName` + `applicationId` pair with no launch configuration gets one created and saved (`autoCreatedConfiguration`). Takes `startupOption` for a `/C` string, `clientType` / `runMode` for the client and its run mode (see `launch_debugger`), and `waitForEndpoint` / `endpointTimeoutSeconds` to wait for what the client opens. `launch_debugger action=launch` if you want the debugger, `action=terminate` to stop either. With `updateBeforeLaunch=true` under a preset that disabled `update_database` (Read-only, Debug & Test, Code Review) the start is refused before the update and before the launch, naming `updateBeforeLaunch=false`. |
-| `update_database` | Writes the configuration into the infobase. Validate for export first. An update that would drop an entity the infobase holds data for is refused before anything starts (`protectData`, on by default) - see `expected-behavior.md` for the refusal and what carries the deletion through. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`) and, when the infobase belongs to the parent configuration, its owner (`infobaseOwner`). Readiness and the export validation an update runs first are NOT checked and the answer says so: `notCheckedInDryRun` lists them and `notCheckedInDryRunNote` says why - readiness reaches the infobase synchronization cycle through a thick client and does not return while a thick-client session holds the infobase; the export validation walks the whole project, and `diagnostics operation=validate_for_export` runs it. Such a call is answered in place: no run is recorded, no `runKey` is issued and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. Before an update starts, the stored `ConfigDumpInfo.xml` format is compared with the one a rebuild recorded for this infobase, and a mismatch refuses the update naming `infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true`; `ignoreDumpInfoFormat=true` goes ahead, and `dryRun` reports it in `dumpInfoFormatCheck`. An incremental update is decided against the stored copy, and a sidecar `ConfigDumpInfo.record.properties` beside it records which infobase the copy was written for and its fingerprint; every finished update rewrites it. An incremental update is refused with `infobaseChanged` and `nextStep` (`infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true`) when the copy was written for another infobase than the one the application points at (`recordedInfobase`, `currentInfobase`) and when a `restore_database_snapshot` load replaced the infobase (`loadedFrom`, `loadedAt`); `rebuild_dump_info` clears that refusal (a sidecar it could not write is named in `copyRecord`), and `fullUpdate=true` does not read the copy and is not gated. `verifyInfobaseContent` (default false) reads the infobase's own `ConfigDumpInfo` before an incremental update, through the same Designer run `rebuild_dump_info` uses, and compares it with the copy: a mismatch refuses with `infobaseChanged`, `infobaseRecords` and `copyRecords`, a failed read refuses with the reason and the tag of that read or Designer launch failure (such as `busy`, `infobaseNotReleased`, `thickClientFailed`, `resolveFailed`), a match is named in the answer; the stored copy is not replaced. `dryRun` and `fullUpdate` do not read the infobase and say so. `infobaseChangeCheck` in the update, dry-run and `inspect_database_sync` answers names the outcome; a sidecar that could not be written is named in `infobaseChangeRecord`. With `statusOnly=true` it reads the tracked updates instead - `updates[]` with `runKey`, state and progress per run, filtered by `projectName`; it starts nothing and does not claim a finished result, and a `runKey` of another kind of work is refused. Before the state is read it refreshes the project and, for an extension, its parent from disk (`refreshWorkspace`, default true): files written outside this server (a file tool, git checkout, a pull) are invisible to the model until then, and the answer reports `workspaceRefresh.changedResources` - 0 means the model already matched. Pass `refreshWorkspace=false` only when every change went through this server. |
+| `update_database` | Writes the configuration into the infobase. Validate for export first. An update that would drop an entity the infobase holds data for is refused before anything starts (`protectData`, on by default) - see `expected-behavior.md` for the refusal and what carries the deletion through. With `dryRun=true` it starts nothing and answers the update state (`updateState`), whether an update is needed (`wouldUpdate`) and, when the infobase belongs to the parent configuration, its owner (`infobaseOwner`). Readiness and the export validation an update runs first are NOT checked and the answer says so: `notCheckedInDryRun` lists them and `notCheckedInDryRunNote` says why - readiness reaches the infobase synchronization cycle through a thick client and does not return while a thick-client session holds the infobase; the export validation walks the whole project, and `diagnostics operation=validate_for_export` runs it. Such a call is answered in place: no run is recorded, no `runKey` is issued and no infobase is claimed. The objects an update would carry are not reachable that way, and `composition` says so. Before an update starts, the stored `ConfigDumpInfo.xml` format is compared with the one a rebuild recorded for this infobase, and a mismatch refuses the update naming `infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true`; `ignoreDumpInfoFormat=true` goes ahead, and `dryRun` reports it in `dumpInfoFormatCheck`. An incremental update is decided against the stored copy, and a sidecar `ConfigDumpInfo.record.properties` beside it records which infobase the copy was written for and its fingerprint; every finished update rewrites it. An incremental update is refused with `infobaseChanged` and `nextStep` (`infobase_admin operation=sync_control syncOperation=rebuild_dump_info confirm=true`) when the copy was written for another infobase than the one the application points at (`recordedInfobase`, `currentInfobase`) and when a `restore_database_snapshot` load replaced the infobase (`loadedFrom`, `loadedAt`); `rebuild_dump_info` clears that refusal (a sidecar it could not write is named in `copyRecord`), and `fullUpdate=true` does not read the copy and is not gated. `verifyInfobaseContent` (default false) reads the infobase's own `ConfigDumpInfo` before an incremental update, through the same Designer run `rebuild_dump_info` uses, and compares it with the copy: a mismatch refuses with `infobaseChanged`, `infobaseRecords` and `copyRecords`, a failed read refuses with the reason and the tag of that read or Designer launch failure (such as `busy`, `infobaseNotReleased`, `thickClientFailed`, `resolveFailed`), a match is named in the answer; the stored copy is not replaced. `dryRun` and `fullUpdate` do not read the infobase and say so. `infobaseChangeCheck` in the update, dry-run and `inspect_database_sync` answers names the outcome; a sidecar that could not be written is named in `infobaseChangeRecord`. With `statusOnly=true` it reads the tracked updates instead - `updates[]` with `runKey`, state and progress per run, filtered by `projectName`; it starts nothing and does not claim a finished result, and a `runKey` of another kind of work is refused. Before the state is read it refreshes the project and, for an extension, its parent from disk (`refreshWorkspace`, default true): files written outside this server (a file tool, git checkout, a pull) are invisible to the model until then, and the answer reports `workspaceRefresh.changedResources` - 0 means the model already matched. Pass `refreshWorkspace=false` only when every change went through this server. Under the claim the update holds, the platform's active-flow flag is read for the infobase before the update starts: a synchronization flow of this EDT instance already running against this base refuses with `busy`, the infobase's name, `nothingStarted=true` and a retry hint; a flag that could not be read stops nothing and is named in `syncFlowCheck` ("not checked: <reason>"); a flow begun after that read does not stop the update; a flow of another EDT instance shows in the flag only on the first read for that infobase since EDT started. |
 | `branch_infobase` | Binds a git branch to a launch configuration, so `update_database` refuses to write into an infobase that belongs to another branch. For a project that is an extension the binding lives in the extension itself, not in the configuration it extends. Disabled under Debug & Test, both as a direct call and as the facade operation. |
 | `inspect_database_sync` | Reads what stands between the project and its infobase and starts nothing. Its `dataLossProtection` block carries `nextUpdateProtectsData`, `acceptDataLossDefault`, `dataLossCompared`, `pendingDataLoss`, `pendingDataLossCount`, `baseline`, `dataLossCheck` and `nextStep`, with `nothingStarted: true` beside it - the data-loss question answered before an update is attempted. `restructureConfirmationPrompt` (`on` / `off` / `unknown`) reports the infobase's own preference; this call reads it and never writes it. See `expected-behavior.md`. |
 | `export_database_snapshot`, `restore_database_snapshot` | The whole infobase as one `.dt` file. The dump takes `path` (required) and refuses a file already standing there instead of replacing it (`alreadyExists`); it is written by one thick-client launch of the platform into a temporary file beside the destination and moved over only when it is non-empty and this run's product (`outputMissing`). The load takes the `.dt` at `path` (missing or empty file - `inputMissing`) and writes a copy of what the infobase holds now first: `backupTo`, or `<stem>-backup-<time>.dt` beside the file when omitted, an existing file at the backup path refused (`alreadyExists`); the load does not start without the backup, and it replaces everything the infobase holds. Both claim the infobase monopoly for the run (snapshots of all infobases go in turn), and a `busy` refusal names the holders in `infobaseHolders` when the server sees them - the clients EDT launched and the other instances of this server on the machine. `timeoutSeconds` 5-120, default 30 (`waitSeconds` accepted as an alias): past it the answer is `Pending` with a `runKey`; poll with the `runKey`, and `cancel=true` beside it stops tracking - a launch already inside the platform is not interrupted and a load that has begun is not undone. A success answer carries `status` (`Exported` / `Loaded`), `path`, `sizeBytes`, `durationMs`, `infobase`, and for a load `backup` with `backupSizeBytes`, and a load refused after its backup was written names `backup` and `backupSizeBytes` as well; a finished load marks the stored `ConfigDumpInfo.xml` copy (`copyMarked: true`, `infobaseChangeCheck`, `nextStep`), and an incremental `update_database` is refused until `rebuild_dump_info` rewrites the copy; a mark that could not be written is `copyMarked: false` with the reason in `infobaseChangeCheck` and `nextStep`: the next incremental update does not see that load until the copy is rebuilt; a run abandoned at the 600-second launcher budget while its platform process lives holds the infobase claim, and the answer names `lockHeldForProcess`; `leftBehind` (the file the live process writes) appears when the failure fell on writing the export's temporary file or the load's backup copy. |
@@ -449,9 +531,12 @@ For an extension that borrows from its base, both imports take `baseProjectName`
 the configuration it extends. A `baseProjectName` that names no project is refused with the tag
 `projectNotFound` rather than staged against an empty infobase.
 
-`export_object` answers `outputMissing` when the platform reported a successful build and no
-`.epf` / `.erf` appeared at `outputPath`. Read that tag as the artifact not existing, whatever the
-build said.
+`export_object` requires the parent directory of `outputPath` to exist; otherwise it refuses
+with `invalidOutputPath` before building. Its temporary product ends in `.part.epf` or `.part.erf`
+according to the object's kind. It accepts only its own fresh, non-empty product and replaces
+the destination after a successful build. A build failure before final placement leaves the previous destination untouched;
+cleanup removes only this run's temporary files. `outputMissing` reports that the expected
+artifact did not appear even though the platform reported success.
 
 Operations that drive the thick client run their own designer process. Do not start a batch
 Configurator against an infobase that EDT manages - the two compete for the same lock and the
@@ -589,6 +674,39 @@ values, and no test launch follows it. `yaxunitUnsafeMode=false` leaves the flag
 Write-blocking presets refuse this pre-step through the `install_extension` door before it changes the
 infobase.
 
+For `mode=run`, `timeoutSeconds` (default 60; `timeout` and `timeoutMs` remain aliases) bounds the
+call's answer, not the run. Engine installation and the infobase update are not interrupted by it:
+they are writes, and a budget they consumed answers an error naming the step, with
+`deadlineExpired` and `clientLaunched=false`, launching nothing. Polling stops early enough to
+assemble the answer: the smaller of 5 seconds and 10 percent of the deadline. A launch held by an
+EDT modal returns `Pending` with `runKey`, `blockedByDialog=true` and `dialogs`; answer only through
+`answer_dialog`, then poll that key: the launch is tracked to its report under that same key for
+however long the dialog stands. The window waiting for the client process runs its full length from
+the launch's return. A returned launch with no client process is refused and forgotten. A client
+still running at the deadline is left running; the `Pending` answer carries its `runKey`,
+`clientStillRunning=true` and `processId` when known, and polling the key retrieves the finished
+report. Polling an issued `runKey` takes no heavy-tool slot. While a launch of the same tests has
+not become visible yet, a second call of the same configuration waits for it and joins it instead
+of starting a second client.
+
+The report directory is stable per launch configuration and filter set, so the report of an earlier
+run of the same tests lies where this run's report is expected. The launch clears the directory and
+refuses, naming the file and launching nothing, when a report could not be removed; only a report
+that appeared after the clearing is this run's own, and an earlier one answers neither as a result
+nor as a pickup. A client
+that ended without writing this run's report is refused rather than answered with the earlier run's
+counts: the refusal carries `the client ended without writing a report for this run`,
+`status=NoReport`, `clientEnded=true`, `reportDir` and `clientExitCode` when the runtime recorded
+the code the client exited with.
+
+Every run answer carries the number of tests the report holds, in `testsInReport`. When the call
+named `tests` or `modules`, each name given is looked up in the report ignoring case - a module among
+its suite and class names, a test among its test names, with or without the module;
+a name the report does not carry is listed in `missingInReport` and turns the answer into a
+discrepancy (`isError`) whose text names the absent ones as not registered in the module or not
+found, beside the counts `namedInCall` and `foundInReport`. A run whose every found test passed is
+answered the same way.
+
 Every completed run writes a receipt file under `<state-location>/run-receipts/<tool>/`, at most
 twenty, the oldest displaced first. The answer names it in `receiptPath`, or `receiptError` when it
 could not be written. A key that looks like a secret (`password`, `pwd`, `scenarioText`) is left out
@@ -596,6 +714,10 @@ of the receipt at any depth, inside lists as well. A run answered from `reuseRec
 receipt. `run_yaxunit_tests` is an alias of this tool that declares and answers JSON.
 
 `vanessa` drives scenario UI tests from the outside and photographs a form of a running 1C. The scenario comes as a file (`featurePath`), as text (`scenarioText`), or is composed from `formToOpen` - and then `openStep` carries the wording, which differs for a list form, an object form and an extension's form - or from the list arguments: `listKind` with `listName` opens the list (ten metadata kinds), `tableName` names the form's table (`Список` when it is left out), `column` with `columnValue` goes to the row (`whenSeveral`: `unique` by default demands exactly one, `first` takes the first), `buttonTitle` or `buttonName` presses the form's button, `windowTitle` names the window to wait for (without it, one whose title differs from before the click) and `windowWaitSeconds` how long (default 10, and it may not exceed `timeoutSeconds`). Once the window is open the scenario saves the frame itself - `И я сохраняю скриншот "<file>"` with an absolute path in the run's screenshots directory - on a list action and on `formToOpen` alike. The add-in draws the test client's top window into the file, so the frame is that window and not the screen, whatever covers it. The capture keys written into VAParams on both branches are `ИспользоватьКомпонентуVanessaExt`, `ИспользоватьВнешнююКомпонентуДляСкриншотов` and `СпособСнятияСкриншотовВнешнейКомпонентой` = 1 (the current test client window, which the frame step and a failure screenshot both honor), and the list arguments mix with none of the other ways of naming the scenario. `screenshots=false` is refused on this call, and `vanessaParams` may not carry `ИспользоватьКомпонентуVanessaExt`, `ИспользоватьВнешнююКомпонентуДляСкриншотов`, `СпособСнятияСкриншотовВнешнейКомпонентой` or `ТаймаутДляАсинхронныхШагов`. The answer names `sought`, and on a failed step `onScreen` - the window read out of the failing step's own text, empty where Vanessa names none. That step needs the UI-testing types, which exist only in a client started as a test manager (`testManager`); without it the step answers Тип не определен. `testClient` names the client the start step launches, `testClientPort` its port, `infobaseUser` the user to sign in as - a password is refused. On a list action and on `formToOpen` both are turned on when left out, and an explicit false of either is refused before the run starts: those scenarios open a form, so the start step activates the client this tool names (`КлиентыТестирования` with `АктивизироватьСтроку`), the one whose infobase is the project's. A client written only into `datatestclients` is not the row that step reads. The verdict is read from the `<uuid>-result.json` files Vanessa names itself.
+
+A supplied, non-empty `featurePath` that resolves to a nonexistent path is refused before
+starting Vanessa. The refusal suggests up to five
+nearby `.feature` files from one accessible directory, without a recursive search.
 
 `vanessa` writes the same receipts. Its answer names the files Vanessa wrote in `resultsDir` and `resultFiles` and, when
 the result was read from a JUnit report instead, `junitXmlPath`. A run that reaches its timeout
@@ -712,13 +834,14 @@ Not every tool belongs to a facade. These are called by name.
 | `get_command_interface` | The command interface of a subsystem: what it shows and in what order. Checks that the project is ready and reads the interface inside a model read transaction. A nested subsystem address is taken in both forms, `Subsystem.A.Subsystem.B` and `Subsystem.A.B`. |
 | `generate_event_handlers` | Handler stubs for the events of an OBJECT module - catalogs, documents, registers. Not for form handlers: those come from the form operations of `edit_metadata`. Read the stub before relying on it; the parameter lists come from a table here, not from the platform. |
 | `copy_object` | Copies an object into another project as its own, not adopted; forms, modules and presentation travel with it. |
-| `find_dead_code` | Exported methods nobody calls. |
+| `find_dead_code` | Exported methods without detected callers. First collects literal-name calls, including forms and modules outside the candidate filters, then checks candidates. Attempted-load limits are independent: 5,000 candidate modules and 20,000 outside-scope modules, including failed loads. Methods called by name do not consume the result limit. A partial, cancelled or unreadable scope is reported explicitly; an empty partial result is not proof that no candidates exist. |
 | `dcs_search` | Finds data composition schemas by what is inside them. |
 | `code_template` | Ready code patterns instead of writing a familiar shape from memory. |
 | `naparnik` | Whether 1C:Naparnik is installed, which version, and whether that version is one of the supported `1.0.7`, `1.0.8`. `status` only lists bundles. `probe=true` checks each link and starts the Naparnik UI bundle if it is not already running. `ask` sends one question to 1C:Naparnik 1.0.7 or 1.0.8 (`projectName`, `question` up to 20000 characters, `conversationId`, `replyTo` only together with `conversationId`, `maxToolRounds` 1..30 default 10 and always sent positive, `timeoutSeconds` 30..1800 default 300, `waitSeconds` 1..120 default 30, `runKey`, `cancel` only with `runKey`). The question, and whatever Naparnik's tools read, goes to the 1C:Naparnik service. The bridge (`mcpNaparnikBridgeEnabled`) is off by default. With it on, `ask` allows only the read tools, including service knowledge-base reads named `mcp__knowledge-hub__` and starting `Search_`, `Fetch_`, `Diff_` or `Get_` (`allowedServiceTools`), unless `mcpNaparnikAllToolsEnabled` is on (off by default): then the request carries no tool filter, and Naparnik may change metadata, write files and execute code in EDT. An answer with no text and no tool call is refused, with `conversationId` and `replyTo` kept for asking again; no text after tool calls is a success with `answerEmpty: true`. Read-only, Debug & Test and Code Review disable `naparnik` in both modes. One question at a time; past `waitSeconds` the answer is Pending with a `runKey`. |
 | `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. A record carries `arbitratedBy` (`tool` / `signal` - whether the operator answered the agent from the status bar instead of the tool), `deliveryStatus` (`delivered` / `failed`) and, for a signal, `signalType` and `signalNote`; `stats` carries `interrupted` and `undelivered` on top of `success` and `failure`. |
 | `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
 | `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |
+| `ordinary_forms` | The ordinary (non-managed) forms of the project, read from and written into their `Form.oform` containers. One `operation` catalogue, JSON answers, one write capability (`ordinary_forms_writes`). It is NOT an operation of `edit_metadata`; that facade routes `create_form formType=ORDINARY` to it. The operations, their arguments and the delivery are in `ordinary-forms.md`. |
 
 Three more are reached through a facade rather than by name, because the Canonical preset hides
 them: `extension_workshop operation=list_interceptors`, `project_admin operation=self_upkeep` and
@@ -766,12 +889,28 @@ separate question the platform only answers when asked.
 |---|---|
 | `dcs_workshop` | Data composition schemas. Validates query text and expressions before writing. `repair_schema` (through the facade: `edit_metadata operation=repair_report_schema`) puts the schema a `.dcs` holds back into a model that lost it - the template opens in EDT with the schema unavailable while the file is intact. Arguments `projectName`, `objectName`, `templateName` (by default the owner's main schema, named in the language of the configuration), `overwriteModel`, `dryRun`. The file is never written. `outcome`: `restored` (the model held none), `matched` (the model already serializes to the file, nothing changed), `refused_model_differs` (the model holds another schema - replaced only with `overwriteModel=true`, and then its serialization is written to `backupPath` beside the `.dcs`), `replaced`, `file_changed` (the file changed between the read and the attach - repeat), `no_template`, `no_file`. `success` is true only with `confirmed=true` - the model read back after the commit serializes to the file; otherwise `confirmation` says why. `dryRun=true` decides and answers without changing anything. An Object dataset requires `dataObjectName` on `add_dataset` and on `add_union_item` alike - a non-Object dataset refuses the argument. `add_total` writes `dataPath` from the expression unless `dataPath` is given. `add_appearance` builds a filter from `field` with `conditionValue` (a partial condition is refused with the argument named) and takes `appearance` as `Name=Value;Name=Value` - a JSON object or array is refused, it corrupts the file. The same arguments are on the `edit_metadata operation=add_conditional_appearance` alias. A write to report settings answers `settingsWarnings`: a filter that compares against nothing (`emptyFilterValue`) and a custom period without dates (`emptyPeriod`). Every operation except `help` writes the schema or the settings, and Read-only, Debug & Test and Code Review refuse it by the `dcs_workshop_writes` door before the UI thread is taken; `help` and `dryRun` keep working. |
 | `mxl_workshop` | Spreadsheet templates. Coordinates are 1-based. `check_print_width` answers from the model alone whether the print area fits the sheet by width. The content span is the column set the platform's paginator prints: the document's columns and the sets the rows carry are compared, each counted to its declared size rather than to the last cell, and the widest wins; a columns print area is measured over begin..end with the columns of row 0, not the set stored on the area; a rectangular print area is measured over x..x+width-1, the span the fit-to-width scale uses, and when the platform paginates that rectangle it takes one column more. Column widths follow the platform's inheritance: the column's own format, the format of the set of columns, the document's default format, then the platform's 72 eighths of a character. One character's width is measured in the template font (Arial 8), and `charWidthSource` names where the number came from, because a template near the edge flips its answer with the font the machine has. Page settings the model never set are taken as the platform takes them (A4, portrait, 10 mm margins, 100% scale) and are listed in `assumed`; a paper declared by its own dimensions (code -1 with pageWidth and pageHeight, millimetres) is measured by those, and any other code but A4 is measured as A4 and `assumed` says so. `verdict`: `fits`; `borderline` - over the printable width by no more than 5%, which another font moves back to `fits`; `overflows`; `smallPrint` - with `fitToPage`, the scale the content needs is below `smallScalePercent` (10..100, default 75); `empty` - no cell anywhere in the template. The answer carries `contentWidthMm`, `contentWidthCharUnits`, `printableWidthMm`, `marginMm` and `overflowMm` (one figure and its negation), `orientation`, `paper`, `printScalePercent`, and with `fitToPage` also `requiredScalePercent` and `fontSizeAfterScale`. A print scale stored in the model is reported as `printScalePercent` and is not folded into the width. Nothing is written. Writing operations are refused by Read-only, Debug & Test and Code Review through the `mxl_workshop_writes` door before the project is read; `read_template`, `list_named_areas`, `check_print_width`, `help` and `dryRun` keep working. |
-| `xdto_workshop` | XDTO package schemas. Create the package with `edit_metadata` first. Writing operations are refused by Read-only, Debug & Test and Code Review through the `xdto_workshop_writes` door before the project is read; `read`, `help` and `dryRun` keep working. |
+| `xdto_workshop` | XDTO package schemas. Create the package with `edit_metadata` first. An unavailable API returns a structured hint to `xdto_workshop operation=help`, which reports API availability. Writing operations are refused by Read-only, Debug & Test and Code Review through the `xdto_workshop_writes` door before the project is read; `read`, `help` and `dryRun` keep working. |
 | `extension_workshop` | Extension projects, borrowing objects and members, deployment, comparison, and what a new delivery does to an extension. Borrowing writes the link that makes the extension actually extend, and a borrow that cannot write it fails rather than reporting success; calling borrow again repairs an object left unlinked by an older build. `borrow_module` needs `moduleType` wherever an object has more than one module. `borrow_child` composes the child's FQN from `objectFqn` plus `childKind` and `name` - before that it borrowed the OWNER and answered "borrowed". `borrow_form_item` borrows the FORM that carries the item: a form item has no address of its own, so name the form with `formName` beside the owner or spell it in `objectFqn` (`Catalog.X.Form.ФормаЭлемента`); without a form named the call is refused and nothing is borrowed. `update_borrowed` (arguments `projectName`, optional `baseProjectName`, optional `objectFqn`, `apply` default false) reviews everything the extension borrowed against the updated base - attributes and tabular-section attributes by uuid and by the controlled type composition (Checked entries, qualifiers included), forms by item names, interceptors by handler signature - and answers one status per row: `inSync`, `baseWider` (base wider, qualifiers unchanged), `typeConflict`, `sourceGone`, `renamedInBase`, `formOutOfDate`, `handlerSignatureChanged`. `apply=true` writes only the type conflicts (the base's exact type with qualifiers, or one `AnyRef` without qualifiers when the base went composite with reference types) and updates borrowed forms through the adopt service after its `isUpdatable`; everything else lands in `notApplied` with the reason, and `stillOutOfSync` is a re-read after the writes. Read-only, Debug & Test and Code Review refuse `apply=true`. `install_extension` loads a `.cfe` into an infobase and, with `updateDatabase` (default true), applies it there (`/UpdateDBCfg -Extension`): `databaseUpdated` is set only when the Designer log confirms the update, `databaseUpdateNote` explains an update that is not confirmed, and errors in that log refuse the call with `databaseUpdateFailed`. |
 | `external_object_workshop` | External data processor and report projects, which are standalone DT projects rather than configuration objects. `import_external_object` adds an `.epf` / `.erf` to an existing container: `targetProjectName`, `inputPath`, `baseProjectName` (the configuration; the container's parent by default), `applicationId` (when the configuration has several applications - see `get_applications`). The binary is converted through the Designer of that application's infobase, the way `unpack_external_binary` does it: EDT releases the infobase and takes it back; a release that fails refuses the import (`infobaseNotReleased`), a reconnection that fails is named in `reconnectError` whatever the import's own outcome. The answer carries `hostProject` and `infobaseName`. Both operations write the workspace, and Read-only, Debug & Test and Code Review refuse them by the `external_object_workshop_writes` door before the workspace is read; `help` keeps working. |
 | `external_data_source_workshop` | Tables, fields and functions of an external data source. Writing operations are refused by Read-only, Debug & Test and Code Review through the `external_data_source_workshop_writes` door before the project is read; `list`, `help` and `dryRun` keep working. |
 
+`create_object_command` takes `group`: a standard token or friendly alias, or `CommandGroup.<name>`.
+The default is `FormCommandBarImportant`. A command with `commandParameterType` accepts a form
+or custom group; a non-form standard group is refused. The group is written to the command.
+
+`create_web_service` assigns XSD `string` to its initial operation. `add_web_service_operation`
+uses the same default when `returningValueType` is omitted; this operation accepts an explicit
+`{nsUri}localName` or a bare local name with `returningValueTypeNs`. Read `returningValueType.applied`, `nsUri` and `localName` in the response;
+`returningValueTypeWarnings` reports application warnings.
+
 **An open editor outranks the file.** `read_module_source` returns the editor's unsaved text and marks it in the answer; `write_module_source` refuses while such an editor holds the file. What is read and what is written then describe one state rather than two.
+
+**A write goes only where the layout has a place for it.** When creating a new file-backed module, `write_module_source` checks `modulePath` against the layout before creating the file, `dryRun=true` included: the first segment has to be the kind folder as the layout spells it (`CommonModules`, not `CommonModule` - the refusal names the canonical path in full), every folder of the path has to exist, because a module is not created for an object, a form, a command or a nested object such as a table of an external data source that the configuration does not hold (the module file itself may be new, `ManagerModule.bsl` included), and the file name has to be a module name of the place the path reaches, not of the kind it opens with: a common module takes `Module.bsl` alone, a catalog takes `ObjectModule.bsl` and `ManagerModule.bsl`, a register takes `RecordSetModule.bsl` with its manager module, a constant takes `ValueManagerModule.bsl`, a form takes `Module.bsl`, a command takes `CommandModule.bsl`, a table of an external data source takes its object, record set and manager modules, a dimension table of a cube takes its object and manager modules, and a recalculation of a calculation register takes `RecordSetModule.bsl` alone. The refusal lists the names of the place when the file name is not one of them; a level folder the place above it does not hold, and a kind that owns no module of its own, are refused with the levels that place holds. An existing file skips these additional layout checks while retaining generic safety checks; a provider-held module is resolved by its provider rather than this file layout. The configuration root's own modules (`Configuration/SessionModule.bsl` and its three kin) keep their place beside the kind folders. Reading is unchanged apart from the wording: when the file is missing and the first segment spells the kind rather than its folder, the refusal names the canonical path.
+
+If the final bytes equal a synchronized file's contents, `write_module_source` returns
+`unchanged:true` without rewriting or force-exporting the module. An out-of-sync or unreadable
+file is not classified as unchanged. A provider write that leaves its contents unchanged also
+returns this flag.
 
 `dcs_workshop` in detail. `add_field` writes `title`, `type` and one `property`/`value` pair, reading
 `property=type` as the type; an unknown property or a type the field cannot take is refused before
@@ -807,6 +946,9 @@ settings of a dynamic list go into `Attributes/<name>/ExtInfo/ListSettings.dcss`
 will not write is reported as `persistWarning`. An answer to `dryRun=true` carries `"dryRun": true`,
 on success and on refusal alike.
 
+Writes extend the declared document height and column-set size to cover the content.
+`read_template` returns `rowCount` and `colCount`.
+
 `mxl_workshop` in detail. `set_cell` takes `fillType` and `parameter`; `format_cells` takes borders,
 font, colours, pattern and print parameters, and a call carrying print parameters alone needs no
 range. `textOrientation` is degrees from 0 to 360, and `read_template` answers the angle in degrees.
@@ -818,10 +960,11 @@ kept. `set_cell` refuses text together with `parameter`, and a parameter name wi
 take fractional numbers.
 
 `insert_rows`, `delete_rows` and `copy_rows` work in whole rows. `insert_rows` puts `count` rows
-before `row` (the last row + 1 appends) and shifts everything from that row down - the rows with
-their cells and notes, the merges and whole-row merges, the named areas, the row groups, the
-drawings, the print and repeat areas, the declared height and the saved view rows; a merge, an area,
-a group or a drawing the point falls inside grows instead of moving. `formatFrom` says where the new
+before `row` (the first row past the end of the table appends) and shifts everything from that row
+down - the rows with their cells and notes, the merges and whole-row merges, the named areas, the
+row groups, the drawings, the print and repeat areas, the declared height and the saved view rows; a
+merge, an area, a group or a drawing the point falls inside grows instead of moving. `formatFrom`
+says where the new
 rows take the row format and the cell formats from - above (the default, and none at row 1), below
 or none - and text, parameters and details are never copied. `delete_rows` removes `count` rows from
 `row`; merges, named areas and drawings lying entirely inside the range go with them and are named in
@@ -831,8 +974,13 @@ merges fully inside the source repeated over the target while the merges fully i
 target come off first. There is no shift, an overlap of the two ranges is refused, named areas are
 neither copied nor moved, and the target may run past the current end. The answer carries
 `shiftedRows`, `resizedMerges`, `removedMerges`, `resizedNamedAreas`, `removedNamedAreas`,
-`removedDrawings`, `removedDataSources` and `lastRow`; a drawing that goes takes its data source
-with it and the count is in `removedDataSources`.
+`removedDrawings`, `removedDataSources`, `lastRow` - the last row that carries content after the
+operation, where content is a text, a parameter, a parameter or template fill, turned text, a detail,
+a picture, a note, a row height set on the row, and every holder of a row number (merges and unmerges,
+named areas, row groups, drawings with the areas they read from, the print and repeat areas); a row a
+write created and left empty is not it - and `appendRow`, the row `insert_rows` appends at (one past
+the end the row number is checked against); a drawing that goes takes its data source with
+it and the count is in `removedDataSources`.
 
 `insert_columns`, `delete_columns` and `copy_columns` work in whole columns. `insert_columns` puts
 `count` columns before `col` (the last column + 1 appends) and shifts everything from that column

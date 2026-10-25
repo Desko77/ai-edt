@@ -246,7 +246,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         {
             return ToolResult.error("Unknown operation: " + op //$NON-NLS-1$
                 + ". Available: " + String.join(", ", OPS.keySet()) //$NON-NLS-1$ //$NON-NLS-2$
-                + ". Call operation=help for details.").toJson(); //$NON-NLS-1$
+                + ", help. Call operation=help for details.").toJson(); //$NON-NLS-1$
         }
         switch (op)
         {
@@ -295,7 +295,8 @@ public class ExtensionWorkshopTool implements IMcpTool
             case "check_platform_verdict": //$NON-NLS-1$
                 return checkPlatformVerdict(params);
             default:
-                return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled op: " + op + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(", ", OPS.keySet()) + ", help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 

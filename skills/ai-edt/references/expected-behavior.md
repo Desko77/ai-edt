@@ -121,11 +121,16 @@ put the files back does not put the data back.
 - Deleting an XDTO package by FQN is not supported; remove it through the file system.
 
 `edit_metadata create_object` takes a `properties` object of property name to value, applied to the
-new object before it joins the configuration - `{"methodName": "CommonModule.A.B", "use": false}` on
+new object in the creating transaction - `{"methodName": "CommonModule.A.B", "use": false}` on
 a `ScheduledJob`, for one. A property the object's type does not have is refused and **nothing is
 created**. A property given both there and as its own argument must carry the same value. Setting
 properties this way is one call; creating and then setting them one at a time is several, and the
 object exists in between.
+
+New catalogs carry `inputByString=Code,Description`; new documents carry `inputByString=Number`.
+`properties.inputByString` replaces this list with comma-separated field names. Every requested
+field must resolve; an empty or partially unresolved list refuses creation. Reference properties
+are applied after attachment, before the creating transaction commits.
 
 ## Validation that looks wrong but is stale
 
@@ -178,7 +183,12 @@ from the person at the status bar. Either way the tool is not interrupted mid-un
 
 A cancelled task turns `cancelled`, and its `statusMessage` says what stopping came to: the work
 stopped; it was told to stop and had not ("It may still be running and still writing"); or only the
-waiting stopped, because a Designer-mode process cannot be interrupted once started. The run key is held until the body of the call finishes, so the same
+waiting stopped, because a Designer-mode process cannot be interrupted once started. The outcome is
+said together with the last step the run announced (`failed at <step>: ...` / `cancelled at <step>:
+...`). A run that answers a refusal (the answer a synchronous call would mark `isError: true`)
+settles the task as `failed`, and `tasks/result` returns that refusal as a result with
+`isError: true`; only a task with no answer - the body threw, or the server no longer holds the
+run - reports a JSON-RPC error. The run key is held until the body of the call finishes, so the same
 work asked for again inside that window answers `stillStopping: true` instead of starting a second
 run - that is the cancel being allowed to finish, not a failure to act on. `get_tasks` names the
 closed projects it did not read.
@@ -206,11 +216,11 @@ reports it (`internalEdgesDropped` when any were, counted once per edge; on `met
 a BSL module is dropped the same way). A root of a kind the level does not carry is no node either,
 and `internalRootsDropped` names it. Repeated edges of the same `from`, `to` and `via` are one edge,
 and `count` is the number of references between that pair - one reference met from both sides stays
-one - and is written when it is greater than 1. `edgeKinds` keeps only the named `via` values; a kind
-the walk never saw is `unmatchedKinds`, not a refusal. On `level=modules` the argument is not applied
-(`edgeKinds: notApplied`) and `calls` edges merge the same way.
+one - and is written when it is greater than 1. `edgeKinds` keeps only the named `via` values - an empty list keeps every kind, the way an
+absent argument does, and the answer writes no `edgeKinds` field for it; a kind the walk never saw is `unmatchedKinds`, not a refusal. On `level=modules` a non-empty argument is not applied
+(`edgeKinds: notApplied`) and `calls` edges merge the same way. On `level=mixed` a scheduled job and an event subscription each give an edge to the common module their method reference names (`CommonModule.Method` in the job's method name property and in the subscription's handler), with the method name as `via` and `resolution=model`; a name the project answers with no common module gives no edge. These rows pass `edgeKinds` like the rows of the walk, and a refused kind is counted in `edgesDroppedByKind`.
 
-On `level=modules` an incoming edge (`direction=in`) is any call the reference index holds, and an outgoing edge (`direction=out`) is a call written `CommonModuleName.Method(...)`: calls through a manager, an object or a variable are not outgoing edges. With `direction=both` the incoming edges are collected first and may fill `maxNodes` before the outgoing ones.
+On `level=modules` an incoming edge (`direction=in`) is any call the reference index holds, and an outgoing edge (`direction=out`) is a call written `CommonModuleName.Method(...)`: calls through a manager, an object or a variable are not outgoing edges. An outgoing edge also comes from a call written as a string: `"CommonModuleName.MethodName"` as the first argument of `ДлительныеОперации.ВыполнитьВФоне` and `ФоновыеЗадания.Выполнить` (`BackgroundJobs.Execute`) and as the second argument of `ДлительныеОперации.ВыполнитьФункцию` and `ВыполнитьПроцедуру`, which take their execution parameters first, when that common module exists, a method name literal in a `New NotifyDescription` (`ОписаниеОповещения`) whose source is `ThisObject` (`ЭтотОбъект`) or a common module name, and `AttachIdleHandler` (`ПодключитьОбработчикОжидания`) naming a method of its own module. A string-written call naming the module the call sits in is an edge of that module onto itself. A name the method declares as its parameter or variable hides the module of that name in the string-written calls the same way as in the plain ones. The method name has to be a string literal, and a string the target does not answer with that method gives no edge. Every edge of the module level carries `resolution`: `model` for an edge the reference index gave, `name` for one the text gave, and an edge both gave is `model`. A `name` edge carries `sites` - the places of its calls as `{file, line}`, sorted by file then line, at most 5, with `file` the calling module's path relative to `src/`, read off the resource address or, when that address names no `src/` path, derived from the module's FQN - and its `count` is the full number of places, always written; a `model` edge has no `sites` and keeps the reference count. With `direction=both` the incoming edges are collected first and may fill `maxNodes` before the outgoing ones.
 
 ## Cancelling an update that never gave you a runKey
 

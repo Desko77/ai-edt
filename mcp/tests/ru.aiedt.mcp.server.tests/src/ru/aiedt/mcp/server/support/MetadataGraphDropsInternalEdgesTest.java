@@ -512,4 +512,30 @@ public class MetadataGraphDropsInternalEdgesTest
         assertEquals("calls", calls.edges.get(0).featureName);
         assertEquals(1, calls.edges.get(0).count);
     }
+
+    /**
+     * An empty list reads as no argument, on every level: every kind stays and the answer writes
+     * no {@code edgeKinds} field, so an empty list does not read as a filter that named nothing.
+     */
+    @Test
+    public void anEmptyListReadsAsNoArgumentOnEveryLevel()
+    {
+        IBmObject goods = object(Kind.METADATA, "Catalog.Goods");
+        IBmObject currencies = object(Kind.METADATA, "Catalog.Currencies");
+        BmReferencesHelper.BfsResult result = walk(goods);
+        edge(result, goods, currencies, "types", 100, policy());
+
+        assertEquals(1, result.edges.size());
+        Map<String, Object> fields = BmReferencesHelper.edgeKindFields("metadata", List.of(),
+            result);
+        assertFalse(fields.containsKey("edgeKinds"));
+        assertFalse(fields.containsKey("edgesDroppedByKind"));
+        assertFalse(fields.containsKey("unmatchedKinds"));
+
+        BmReferencesHelper.BfsResult calls = new BmReferencesHelper.BfsResult();
+        calls.edges.add(new BmReferencesHelper.Edge("CommonModule.A", "CommonModule.B", "calls"));
+
+        assertFalse("an empty list on modules is not a supplied filter", //$NON-NLS-1$
+            BmReferencesHelper.edgeKindFields("modules", List.of(), calls).containsKey("edgeKinds")); //$NON-NLS-1$
+    }
 }

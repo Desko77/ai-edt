@@ -96,6 +96,12 @@ public class MxlWorkshopTool implements IMcpTool
     }
 
     @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(WRITE_DOOR);
+    }
+
+    @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
@@ -246,7 +252,7 @@ public class MxlWorkshopTool implements IMcpTool
         if (!OPS.containsKey(op))
         {
             return ToolResult.error("Unknown operation: " + op //$NON-NLS-1$
-                + ". Available: " + String.join(", ", OPS.keySet())).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Available: " + String.join(", ", OPS.keySet()) + ", help").toJson(); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
 
         // A preset that blocks writing is asked before the project is read or a BM transaction
@@ -353,7 +359,8 @@ public class MxlWorkshopTool implements IMcpTool
                 answer = opCheckPrintWidth(params);
                 break;
             default:
-                return ToolResult.error("Unhandled op: " + op).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled op: " + op + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(", ", OPS.keySet()) + ", help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
         return modelFileMismatch == null ? answer
             : addMismatchWarning(answer, modelFileMismatch);
@@ -1514,6 +1521,7 @@ public class MxlWorkshopTool implements IMcpTool
         tags.put("removedDrawings", outcome.removedDrawings); //$NON-NLS-1$
         tags.put("removedDataSources", Integer.valueOf(outcome.removedDataSources)); //$NON-NLS-1$
         tags.put("lastRow", Integer.valueOf(outcome.lastRow)); //$NON-NLS-1$
+        tags.put("appendRow", Integer.valueOf(outcome.appendRow)); //$NON-NLS-1$
     }
 
     /**
@@ -2770,18 +2778,23 @@ public class MxlWorkshopTool implements IMcpTool
                 + "drawings[{id}]. Indices are 1-based (row 1 = top, col 1 = left), the inverse of " //$NON-NLS-1$
                 + "set_cell/merge_cells - safe to round-trip a read result back into a write. " //$NON-NLS-1$
                 + "Args: ownerFqn, templateName, [language default 'ru']\n\n"); //$NON-NLS-1$
-            sb.append("- insert_rows - inserts count rows before row (1-based; the last row + 1 " //$NON-NLS-1$
-                + "appends). formatFrom: above (default, and none at row 1) / below / none - the " //$NON-NLS-1$
-                + "new rows take the row format and the cell formats, never text or parameters. " //$NON-NLS-1$
-                + "Everything at row and below shifts down: rows, merges, named areas, row " //$NON-NLS-1$
-                + "groups, drawings, the print and repeat areas\n"); //$NON-NLS-1$
+            sb.append("- insert_rows - inserts count rows before row (1-based; the first row past " //$NON-NLS-1$
+                + "the end of the table appends). formatFrom: above (default, and none at row 1) / " //$NON-NLS-1$
+                + "below / none - the new rows take the row format and the cell formats, never " //$NON-NLS-1$
+                + "text or parameters. Everything at row and below shifts down: rows, merges, " //$NON-NLS-1$
+                + "named areas, row groups, drawings, the print and repeat areas. The answer " //$NON-NLS-1$
+                + "carries lastRow - the last row that carries content (text, a parameter, a parameter " //$NON-NLS-1$
+                + "or template fill, turned text, a detail, a picture, a note, a row height, a merge, " //$NON-NLS-1$
+                + "unmerge, named area, row group, drawing with its data area, print or repeat area), which a row created empty " //$NON-NLS-1$
+                + "is not - and appendRow, the row an insert appends at\n"); //$NON-NLS-1$
             sb.append("- delete_rows - removes count rows from row (1-based); the rows below shift " //$NON-NLS-1$
                 + "up. Merges, named areas and drawings lying entirely inside the range go with " //$NON-NLS-1$
-                + "them and are named in the answer; partial overlaps shrink\n"); //$NON-NLS-1$
+                + "them and are named in the answer; partial overlaps shrink. Answers lastRow - the " //$NON-NLS-1$
+                + "last row that carries content - and appendRow, the row an insert appends at\n"); //$NON-NLS-1$
             sb.append("- copy_rows - replaces count rows at toRow with a copy of the rows at " //$NON-NLS-1$
                 + "fromRow: row format, cells with text, parameter, detail and format, and the " //$NON-NLS-1$
                 + "merges inside the source. No shift; source and target ranges must not overlap; " //$NON-NLS-1$
-                + "named areas are neither copied nor moved\n"); //$NON-NLS-1$
+                + "named areas are neither copied nor moved. Answers lastRow and appendRow\n"); //$NON-NLS-1$
             sb.append("- insert_columns - inserts count columns before col (1-based; the last " //$NON-NLS-1$
                 + "column + 1 appends). formatFrom: left (default, and none at col 1) / right / " //$NON-NLS-1$
                 + "none - the new columns take the column format and the cell formats, never text " //$NON-NLS-1$

@@ -25,6 +25,7 @@ import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.McpHttpEndpoint;
 import ru.aiedt.mcp.server.wire.GsonHolder;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -40,6 +41,9 @@ import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.MetadataGuards;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
+import ru.aiedt.mcp.server.toolkit.IToolRoad;
+import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
+import ru.aiedt.mcp.server.toolkit.ToolRoadOutcome;
 
 /**
  * Form-creation cluster of {@code edit_metadata}: {@code create_form} and its
@@ -54,7 +58,9 @@ import ru.aiedt.mcp.server.support.ProjectResolver;
  * mainTypeFqnForOwner, ensureObjectFormContent, resolveFormFactory, applyAdjustableCommon,
  * createAdjustableBooleanCommon, invokeNoArg, isBoxedMatch, attachGeneratedForm) are private
  * here. The CommonForm
- * redirect delegates to {@link ObjectOps#opCreateObject} via a local ObjectOps ref.
+ * redirect delegates to {@link ObjectOps#opCreateObject} via a local ObjectOps ref. An explicit
+ * {@code formType=ORDINARY} is routed to the ordinary-forms tool through the tool road
+ * ({@link #routeToOrdinaryForms}) before any managed path is taken.
  */
 final class FormCreateOps
 {
@@ -107,9 +113,11 @@ final class FormCreateOps
      * A managed form without an explicit {@code layout=empty} is built by EDT's own
      * {@code IFormGenerator} - the engine the New Form wizard drives - inside the same BM
      * read-write transaction that creates the wrapper: main attribute, default field layout,
-     * command interface. {@code formType=ORDINARY} and an explicit {@code layout=empty} skip
-     * the generator; the form is then created by the empty path (inner form, base properties,
-     * deterministic main attribute).
+     * command interface. An explicit {@code layout=empty} skips the generator; the form is
+     * then created by the empty path (inner form, base properties, deterministic main
+     * attribute). An explicit {@code formType=ORDINARY} never reaches either path: it is
+     * handed to the ordinary-forms tool through the tool road before any managed work
+     * (see {@link #routeToOrdinaryForms}).
      * <p>
      * When the generator was asked for and did not deliver a form - no generator on this
      * runtime, no field tree, an exception, a form that would not attach - the whole operation
@@ -169,6 +177,14 @@ final class FormCreateOps
         if (project == null)
         {
             return ProjectResolver.notFound(projectName).toJson();
+        }
+        // An explicit ORDINARY form is the ordinary-forms tool's own creation: routed before
+        // the CommonForm shortcut and the BM transaction, so no managed Form.form or Module.bsl
+        // is written. Only the exact ORDINARY token routes; a missing formType and every legacy
+        // purpose value keep the managed path below.
+        if (explicitOrdinary(formTypeRaw))
+        {
+            return routeToOrdinaryForms(params, formName);
         }
         // CommonForm overload: a common form is itself a top-level form and has
         // no Forms collection, so create_form cannot attach a child form to it
@@ -777,6 +793,190 @@ final class FormCreateOps
         return result.toJson();
     }
 
+    // -----------------------------------------------------------------------
+    // ORDINARY routing (create_form -> ordinary_forms through the tool road)
+    // -----------------------------------------------------------------------
+
+    /** The ordinary-forms tool of the oform bundle, reached by its wire name. */
+    private static final String ORDINARY_FORMS_TOOL = "ordinary_forms"; //$NON-NLS-1$
+
+    /** The bundle this server is, named as the origin of the internal call the routing makes. */
+    private static final String OWN_BUNDLE = "ru.aiedt.mcp.server"; //$NON-NLS-1$
+
+    /**
+     * The create_form arguments the routing forwards to the ordinary creation, as they arrived.
+     * The list is the shared vocabulary - every name the edit_metadata schema declares that the
+     * ordinary creation also reads. {@code name} is handled on its own because create_form accepts
+     * it under its {@code formName} alias; {@code formType} is consumed by the routing decision;
+     * {@code layout} has no ordinary meaning and is refused instead of dropped. The arguments the
+     * ordinary creation takes beyond this list - {@code width}, {@code height}, {@code columns}
+     * and the rest - are not edit_metadata arguments: a caller who needs them calls
+     * ordinary_forms itself.
+     */
+    private static final List<String> ORDINARY_PASSTHROUGH = List.of(
+        "projectName", //$NON-NLS-1$
+        "ownerFqn", //$NON-NLS-1$
+        "purpose", //$NON-NLS-1$
+        "synonym", //$NON-NLS-1$
+        "title", //$NON-NLS-1$
+        "setAsDefault", //$NON-NLS-1$
+        "dryRun"); //$NON-NLS-1$
+
+    /** Arguments available only on ordinary_forms, rejected by the narrower metadata route. */
+    private static final List<String> ORDINARY_ONLY_ARGUMENTS = List.of(
+        "width", "height", "withFields", "withTables", "withCommands", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+        "columns", "tabularSections", "language"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+
+    /**
+     * Whether the caller explicitly asked for an ordinary form. The same judgement
+     * {@link #normalizeFormType(String)} makes when it maps everything else - a missing value, a
+     * legacy purpose spelling - onto the managed literal: only the exact {@code ORDINARY} token
+     * (either letter case) names the ordinary model.
+     *
+     * @param raw the caller-supplied formType; may be null/empty
+     * @return true only for the explicit ordinary token
+     */
+    static boolean explicitOrdinary(String raw)
+    {
+        return raw != null && "ORDINARY".equalsIgnoreCase(raw.trim()); //$NON-NLS-1$
+    }
+
+    /**
+     * Hands an explicit {@code formType=ORDINARY} creation to the ordinary-forms tool, through
+     * the tool road.
+     * <p>
+     * The road - not a direct {@code execute} on the tool - is what makes the routed call honest:
+     * the preset gate, the cancellation scope of the caller, the heap gate and the heavy-tool
+     * permits all apply to it exactly as they apply to a call from an agent, and the answer is the
+     * tool's own document with a {@code routedTo} marker added. Nothing is written by this method
+     * and nothing is written by the managed machinery behind it: the caller asked for an ordinary
+     * form, and a managed Form.form with an external Module.bsl is not one.
+     * </p>
+     * <p>
+     * An argument the ordinary creation cannot represent is refused here, before the call:
+     * {@code layout} names the managed form's layout policy and has no ordinary meaning, and
+     * silently dropping it would tell the caller their value was applied. A missing tool or road
+     * is refused by name rather than fallen back from - falling back would create a managed form
+     * under an ORDINARY request, which is the one outcome this routing exists to prevent.
+     * </p>
+     *
+     * @param params the create_form arguments as they arrived
+     * @param formName the form name create_form resolved ({@code formName}, or {@code name} as
+     *            its alias); may be null, the tool refuses that in its own words
+     * @return the routed answer, or the refusal that kept the call from happening
+     */
+    private String routeToOrdinaryForms(Map<String, String> params, String formName)
+    {
+        for (String argument : ORDINARY_ONLY_ARGUMENTS)
+        {
+            if (params.containsKey(argument))
+            {
+                return ToolResult.error("create_form formType=ORDINARY does not accept '" + argument //$NON-NLS-1$
+                    + "' through edit_metadata; call ordinary_forms create_form for this argument. " //$NON-NLS-1$
+                    + "Nothing was created.") //$NON-NLS-1$
+                    .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                    .put("routedTo", ORDINARY_FORMS_TOOL) //$NON-NLS-1$
+                    .toJson();
+            }
+        }
+        String layout = JsonUtils.extractStringArgument(params, "layout"); //$NON-NLS-1$
+        if (layout != null && !layout.trim().isEmpty())
+        {
+            return ToolResult.error("create_form formType=ORDINARY does not take a layout: '" //$NON-NLS-1$
+                + layout + "'. An ordinary form carries its own layout; pass the layout " //$NON-NLS-1$
+                + "arguments of ordinary_forms create_form instead.") //$NON-NLS-1$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("routedTo", ORDINARY_FORMS_TOOL) //$NON-NLS-1$
+                .toJson();
+        }
+        if (McpToolCatalog.getInstance().getTool(ORDINARY_FORMS_TOOL) == null)
+        {
+            return ToolResult.error("create_form formType=ORDINARY is served by the '" //$NON-NLS-1$
+                + ORDINARY_FORMS_TOOL + "' tool, which is not available in this installation. An " //$NON-NLS-1$
+                + "ordinary form was not created and the managed path was not taken.") //$NON-NLS-1$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
+        }
+        IToolRoad road = ordinaryFormsRoad();
+        if (road == null)
+        {
+            return ToolResult.error("create_form formType=ORDINARY needs the tool road, which is " //$NON-NLS-1$
+                + "not available; nothing was created.") //$NON-NLS-1$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .toJson();
+        }
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        arguments.put("operation", "create_form"); //$NON-NLS-1$ //$NON-NLS-2$
+        for (String key : ORDINARY_PASSTHROUGH)
+        {
+            String value = params.get(key);
+            if (value != null)
+            {
+                arguments.put(key, value);
+            }
+        }
+        if (formName != null && !formName.isEmpty())
+        {
+            arguments.put("name", formName); //$NON-NLS-1$
+        }
+        ToolRoadOutcome outcome = road.call(ORDINARY_FORMS_TOOL, arguments, OWN_BUNDLE);
+        if (outcome.refused())
+        {
+            return ToolResult.error("The ordinary form was not created: " + outcome.refusal()) //$NON-NLS-1$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("routedTo", ORDINARY_FORMS_TOOL) //$NON-NLS-1$
+                .toJson();
+        }
+        if (outcome.failed())
+        {
+            return ToolResult.error("The ordinary form creation failed: " + outcome.failure()) //$NON-NLS-1$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("routedTo", ORDINARY_FORMS_TOOL) //$NON-NLS-1$
+                .toJson();
+        }
+        String text = outcome.text();
+        if (text == null || text.isEmpty())
+        {
+            return ToolResult.error("The ordinary form creation answered nothing.") //$NON-NLS-1$
+                .put("operation", "create_form") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("routedTo", ORDINARY_FORMS_TOOL) //$NON-NLS-1$
+                .toJson();
+        }
+        // The tool's own document, with the routing marked the way the CommonForm redirect marks
+        // its redirect - an agent reading the answer can tell where it came from, and a Pending
+        // envelope keeps its runKey intact because the marker is additive.
+        try
+        {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> answer = GsonHolder.fromJson(text, Map.class);
+            if (answer != null)
+            {
+                answer.put("routedTo", ORDINARY_FORMS_TOOL); //$NON-NLS-1$
+                return GsonHolder.toJson(answer);
+            }
+        }
+        catch (Exception notJson)
+        {
+            Activator.logWarning("create_form ORDINARY routing: the ordinary answer was not " //$NON-NLS-1$
+                + "a JSON document and is handed back verbatim: " + notJson.getMessage()); //$NON-NLS-1$
+        }
+        return text;
+    }
+
+    /**
+     * The tool road of this server, or {@code null} when there is no server to hold one - a
+     * bundle that has not started, or one being stopped. The caller refuses on null rather than
+     * calling the tool directly: a call that bypasses the road bypasses its gates.
+     *
+     * @return the road, or {@code null}
+     */
+    private static IToolRoad ordinaryFormsRoad()
+    {
+        Activator activator = Activator.getDefault();
+        McpHttpEndpoint server = activator == null ? null : activator.getMcpServer();
+        return server == null ? null : server.getToolRoad();
+    }
+
     /**
      * CommonForm overload for {@link #opCreateForm}: a common form has no Forms
      * collection (it <em>is</em> the form), so we create it as a top-level
@@ -787,6 +987,12 @@ final class FormCreateOps
      * {@code formName}. A pre-check rejects an already existing common form with
      * an actionable hint, because {@code create_object} does not guard against
      * duplicates.
+     * <p>
+     * Reached only for a managed form: an explicit {@code formType=ORDINARY} is
+     * routed to the ordinary-forms tool before this overload is considered (see
+     * {@link #routeToOrdinaryForms}), so an ordinary common form is refused by
+     * that tool in its own words rather than created here as a managed pair of
+     * Form.form and Module.bsl.
      * <p>
      * TODO (form generator): this path still routes through
      * {@code create_object -> BmCommonFormPostCreate.createInnerForm}, i.e. the

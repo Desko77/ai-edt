@@ -75,7 +75,7 @@ public enum ToolProfile
      * </p>
      */
     DEBUG_AND_TEST("Debug & Test", //$NON-NLS-1$
-        "Read + debug ops + breakpoints + yaxunit_tests. No write / refactoring / constructors, " //$NON-NLS-1$
+        "Read + debug ops + breakpoints + yaxunit_tests. No write / refactoring / constructor writes, " //$NON-NLS-1$
             + "and nothing that creates, deletes or overwrites an infobase.", //$NON-NLS-1$
         debugAndTestDisabled(),
         Collections.emptySet()),
@@ -453,14 +453,18 @@ public enum ToolProfile
      * the facade, its reads included, is off.
      * </p>
      * <p>
-     * The seven {@code *_writes} names are capability names, not tools: nothing registers them and
-     * no group lists them, so they have no checkbox and no wire name. Each is the write half of a
+     * The eight {@code *_writes} names are capability names, not tools: nothing registers them and
+     * no group lists them, so they have no checkbox and no wire name. Seven are the write half of a
      * constructor facade - the reads of that facade and its {@code dryRun} previews stay on under
      * every preset, and the facade asks {@code ToolGate.gateIfPresetDisabled} about the name before
      * its first write, which is what keeps Code Review's promise while it leaves the constructors
-     * group on to read what they would produce. They are deliberately not separate door tools: a
-     * door tool is a callable name a client can be told about, and these carry no operation of
-     * their own.
+     * group on to read what they would produce. The eighth, {@code ordinary_forms_writes}, is the
+     * write door of the ordinary-forms tool another bundle publishes: the catalogue keeps that tool
+     * callable as a mixed one while this name is disabled, and the tool itself refuses its writing
+     * operations on it, so a preset that leaves the name out would leave those writes reachable
+     * through a tool the catalogue no longer blocks as a whole. They are deliberately not separate
+     * door tools: a door tool is a callable name a client can be told about, and these carry no
+     * operation of their own.
      * </p>
      *
      * @return the names no write-blocking preset may leave enabled
@@ -485,6 +489,11 @@ public enum ToolProfile
         names.add("xdto_workshop_writes"); //$NON-NLS-1$
         names.add("external_object_workshop_writes"); //$NON-NLS-1$
         names.add("external_data_source_workshop_writes"); //$NON-NLS-1$
+        // The write door of the ordinary-forms tool the oform bundle publishes. With it disabled,
+        // the catalogue keeps that mixed external tool callable for its reading operations and the
+        // tool refuses its writes on this name; with it left out, the whole-tool refusal would be
+        // the only barrier and a mixed declaration would have bought nothing.
+        names.add("ordinary_forms_writes"); //$NON-NLS-1$
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$
@@ -513,12 +522,13 @@ public enum ToolProfile
     }
 
     /**
-     * @return everything that writes, launches or debugs
+     * @return everything that writes, launches or debugs - the constructors' help, reads and dryRun
+     *         previews excepted; their writes are the {@code *_writes} capability names and
+     *         {@code extension_workshop}, which {@link #writersOutsideWriteGroups()} adds
      */
     private static Set<String> readOnlyDisabled()
     {
-        Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING,
-            ToolCategory.CONSTRUCTORS);
+        Set<String> disabled = toolsOf(ToolCategory.APPLICATIONS, ToolCategory.DEBUG, ToolCategory.REFACTORING);
         disabled.addAll(writersOutsideWriteGroups());
         // Returns a snippet and writes nothing, but a preset this strict is expected to hand back
         // nothing that reads like generated code either.
@@ -528,11 +538,12 @@ public enum ToolProfile
 
     /**
      * @return everything that changes the sources or the metadata, plus everything destructive - but
-     *         not the rest of the applications group, which is what there is to debug
+     *         not the rest of the applications group, which is what there is to debug, and not the
+     *         constructors' help, reads and dryRun previews, whose writes are gated by name
      */
     private static Set<String> debugAndTestDisabled()
     {
-        Set<String> disabled = toolsOf(ToolCategory.REFACTORING, ToolCategory.CONSTRUCTORS);
+        Set<String> disabled = toolsOf(ToolCategory.REFACTORING);
         disabled.addAll(destructiveTools());
         disabled.addAll(writersOutsideWriteGroups());
         return disabled;

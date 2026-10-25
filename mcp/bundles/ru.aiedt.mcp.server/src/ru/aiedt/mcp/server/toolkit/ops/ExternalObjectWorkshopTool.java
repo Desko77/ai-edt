@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.List;
 import java.util.Map;
 
 import org.eclipse.core.resources.IProject;
@@ -61,6 +62,12 @@ public class ExternalObjectWorkshopTool implements IMcpTool
             + "with edit_metadata (add_object_attribute / add_tabular_section / add_template / create_form) " //$NON-NLS-1$
             + "and edit_form, write its ObjectModule with write_module_source, then build the .epf/.erf with " //$NON-NLS-1$
             + "export_object. No manual file editing needed."; //$NON-NLS-1$
+    }
+
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(WRITE_DOOR);
     }
 
     @Override

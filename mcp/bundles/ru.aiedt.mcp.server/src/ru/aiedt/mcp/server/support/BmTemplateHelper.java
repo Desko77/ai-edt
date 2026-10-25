@@ -3646,8 +3646,9 @@ public final class BmTemplateHelper
      * What a row operation did, and what it left behind.
      * <p>
      * The shared counters say what the shift resized and removed; the row ones say how many rows
-     * changed their number and where the document now ends. {@code lastRow} is 1-based, after the
-     * operation.
+     * changed their number and where the document now ends. Both row numbers are 1-based, after the
+     * operation: {@code lastRow} is the last row that carries content, {@code appendRow} the row an
+     * insert appends at - one past the end the row operations measure a row number against.
      * </p>
      */
     public static final class RowOutcome extends ShiftOutcome
@@ -3655,8 +3656,11 @@ public final class BmTemplateHelper
         /** Rows that changed their number. */
         public int shiftedRows;
 
-        /** The document's last row, 1-based, after the operation. */
+        /** The last row that carries content, 1-based, after the operation; 0 when none does. */
         public int lastRow;
+
+        /** The row insert_rows appends at, 1-based, after the operation: one past the end of the document. */
+        public int appendRow;
     }
 
     /**
@@ -3843,7 +3847,8 @@ public final class BmTemplateHelper
         moveViewPointers(doc, true, at, count, Axis.ROW);
         moveHeight(doc, true, at, count);
         settleExtent(doc);
-        outcome.lastRow = lastRowOf(doc);
+        outcome.lastRow = contentRowOf(doc);
+        outcome.appendRow = lastRowOf(doc) + 1;
         return outcome;
     }
 
@@ -3898,7 +3903,8 @@ public final class BmTemplateHelper
         moveViewPointers(doc, false, first, count, Axis.ROW);
         moveHeight(doc, false, first, count);
         settleExtent(doc);
-        outcome.lastRow = lastRowOf(doc);
+        outcome.lastRow = contentRowOf(doc);
+        outcome.appendRow = lastRowOf(doc) + 1;
         return outcome;
     }
 
@@ -3983,7 +3989,8 @@ public final class BmTemplateHelper
             doc.setHeight(Math.max(doc.getHeight(), targetFirst + count));
         }
         settleExtent(doc);
-        outcome.lastRow = lastRowOf(doc);
+        outcome.lastRow = contentRowOf(doc);
+        outcome.appendRow = lastRowOf(doc) + 1;
         return outcome;
     }
 
@@ -4341,6 +4348,41 @@ public final class BmTemplateHelper
     }
 
     /**
+     * The row a row operation answers as the document's last one: the highest row that holds
+     * something a reader sees or reaches.
+     * <p>
+     * The content here is the cell content the file carries - a text, a parameter, a deciphering, a
+     * picture, a cell a parameter or template fill or a turned text marks - the note of a row's
+     * own, a row whose format declares a height, and every holder of a row number outside the rows
+     * themselves: the merges and whole-row merges, the named areas, the row groups, the drawings
+     * with the areas they read their data from, the print and repeat areas. A row a write created
+     * and left empty is not the end of the table: naming it sends the caller that appends past the
+     * rows it can see, and the file does not hold a table there either. The declared height is not
+     * folded in - it is a number of its own, counted by {@link #lastRowOf(SpreadsheetDocument)} and
+     * answered beside this one.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @return the last row that carries content, 1-based; 0 when no row does
+     */
+    private static int contentRowOf(SpreadsheetDocument doc)
+    {
+        int maxKey = -1;
+        for (Map.Entry<Integer, Row> held : doc.getRows())
+        {
+            if (held == null || held.getKey() == null)
+            {
+                continue;
+            }
+            if (rowCarriesVisibleContent(doc, held.getValue()))
+            {
+                maxKey = Math.max(maxKey, held.getKey().intValue());
+            }
+        }
+        return Math.max(maxKey, holderFarRow(doc)) + 1;
+    }
+
+    /**
      * The document's last row, 1-based: the highest row anything of the model reaches, by the
      * measure the caller names.
      *
@@ -4365,6 +4407,29 @@ public final class BmTemplateHelper
                 maxKey = Math.max(maxKey, held.getKey().intValue());
             }
         }
+        maxKey = Math.max(maxKey, holderFarRow(doc));
+        if (!readableOnly && doc.getHeight() > maxKey + 1)
+        {
+            maxKey = doc.getHeight() - 1;
+        }
+        return maxKey + 1;
+    }
+
+    /**
+     * The highest row anything but a row entry itself reaches, 0-based.
+     * <p>
+     * The holders of a row number outside the rows: the merges and whole-row merges, the row
+     * groups, the drawings with the ends of their positions, the areas the drawings read their data
+     * from, the named areas, the print and repeat areas. Every measure of the last row reads the
+     * same holders, so they are read in one place.
+     * </p>
+     *
+     * @param doc the spreadsheet
+     * @return the highest row a holder reaches, 0-based; -1 when no holder reaches any row
+     */
+    private static int holderFarRow(SpreadsheetDocument doc)
+    {
+        int maxKey = -1;
         maxKey = Math.max(maxKey, rectFarEdgeOf(doc.getMerges(), Axis.ROW));
         maxKey = Math.max(maxKey, rectFarEdgeOf(doc.getUnmerges(), Axis.ROW));
         for (RowMerge merge : doc.getRowMerges())
@@ -4408,11 +4473,7 @@ public final class BmTemplateHelper
         }
         maxKey = Math.max(maxKey, spanFarEdgeOf(doc.getPrintArea(), Axis.ROW));
         maxKey = Math.max(maxKey, spanFarEdgeOf(doc.getRepeatRows(), Axis.ROW));
-        if (!readableOnly && doc.getHeight() > maxKey + 1)
-        {
-            maxKey = doc.getHeight() - 1;
-        }
-        return maxKey + 1;
+        return maxKey;
     }
 
     /**
@@ -4493,9 +4554,75 @@ public final class BmTemplateHelper
     }
 
     /**
-     * Whether a row entry holds anything a reader could see: a row format of its own, cells, or
-     * a column set with a declared size or entries. A row with none of the three is the
-     * placeholder an empty template file carries, not content.
+     * Whether a row holds something a reader sees or reaches: a cell with a text, a parameter, a
+     * deciphering, a picture, a fill or a turned text, a note, or a row format that declares a
+     * height of its own.
+     *
+     * @param doc the spreadsheet, for the format a cell or the row points at
+     * @param row the row, or <code>null</code>
+     * @return <code>true</code> when the row carries content
+     */
+    private static boolean rowCarriesVisibleContent(SpreadsheetDocument doc, Row row)
+    {
+        if (row == null)
+        {
+            return false;
+        }
+        Format format = formatAt(doc, row.getFormatIndex());
+        if (format != null && format.isSetHeight())
+        {
+            return true;
+        }
+        for (Cell cell : row.getCells().values())
+        {
+            if (cellCarriesVisibleContent(doc, cell))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether a cell holds something a reader sees or reaches: everything a read lists, plus the
+     * parts of a cell a read passes over - a deciphering, a picture and a note. A cell the model
+     * carries with none of them is what an empty write left behind.
+     *
+     * @param doc the spreadsheet, for the format the cell points at
+     * @param cell the cell, or <code>null</code>
+     * @return <code>true</code> when the cell carries content
+     */
+    private static boolean cellCarriesVisibleContent(SpreadsheetDocument doc, Cell cell)
+    {
+        if (cell == null)
+        {
+            return false;
+        }
+        if (cellCarriesReadableContent(doc, cell))
+        {
+            return true;
+        }
+        String detail = cell.getDetailParameter();
+        if (detail != null && !detail.isEmpty())
+        {
+            return true;
+        }
+        String picture = cell.getPictureParameter();
+        if (picture != null && !picture.isEmpty())
+        {
+            return true;
+        }
+        if (cell.getDetailValue() != null || cell.getValue() != null)
+        {
+            return true;
+        }
+        return cell.getNoteDrawing() != null;
+    }
+
+    /**
+     * Whether a row entry holds anything a reader could see: a row format of its own, cells, or a
+     * column set with a declared size or entries. A row with none of the three is the placeholder
+     * an empty template file carries, not content.
      *
      * @param row the row, or <code>null</code>
      * @return <code>true</code> when the row carries content

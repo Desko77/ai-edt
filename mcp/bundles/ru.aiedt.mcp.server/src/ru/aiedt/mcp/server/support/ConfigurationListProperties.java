@@ -7,6 +7,7 @@
 package ru.aiedt.mcp.server.support;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -171,7 +172,8 @@ public final class ConfigurationListProperties
      * <p>
      * Everything is parsed and checked first, so a refusal leaves the model untouched. The value
      * handed back is the property in its own shape: an array for a list, an object for the one
-     * property that holds lists inside it.
+     * property that holds lists inside it, an object of language codes for a property that holds
+     * one text per language.
      * </p>
      *
      * @param owner the object carrying the property.
@@ -198,6 +200,11 @@ public final class ConfigurationListProperties
         if (!feature.isMany())
         {
             return Outcome.refused("'" + propertyName + "' holds one value, not a list"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (holdsOneTextPerLanguage(owner, feature))
+        {
+            return applyLocalisedText(owner, feature, rawValue, mode, dryRun,
+                propertyName, defaultLanguageCode);
         }
         return applyToList(feature, listOf(owner, feature), rawValue, mode, dryRun,
             propertyName, defaultLanguageCode);
@@ -436,6 +443,194 @@ public final class ConfigurationListProperties
             live.addAll(after);
         }
         return Outcome.done(describeValues(feature, after), note);
+    }
+
+    // ---------------------------------------------------------------------
+    // The properties that hold one text per language
+    // ---------------------------------------------------------------------
+
+    /**
+     * Whether a feature holds one text per language - a map of language code to text, the shape a
+     * synonym has.
+     * <p>
+     * Read off the model, not off a list of names: the feature must be many-valued and typed by an
+     * entry class of {@code java.util.Map$Entry} whose key and value are both single strings, and
+     * the value it holds must really be an {@code EMap}. A list of literals or of keyed objects is
+     * not this, and neither is an entry list the model does not expose as a map.
+     * </p>
+     *
+     * @param owner the object carrying the feature.
+     * @param feature the feature being asked about.
+     * @return true when the feature is a map of language code to text
+     */
+    private static boolean holdsOneTextPerLanguage(EObject owner, EStructuralFeature feature)
+    {
+        if (!feature.isMany() || !(feature.getEType() instanceof EClass))
+        {
+            return false;
+        }
+        EClass entry = (EClass)feature.getEType();
+        if (!"java.util.Map$Entry".equals(entry.getInstanceClassName())) //$NON-NLS-1$
+        {
+            return false;
+        }
+        EStructuralFeature key = fieldNamed(entry, "key"); //$NON-NLS-1$
+        EStructuralFeature value = fieldNamed(entry, "value"); //$NON-NLS-1$
+        if (key == null || value == null || key.isMany() || value.isMany())
+        {
+            return false;
+        }
+        return String.class.equals(key.getEType().getInstanceClass())
+            && String.class.equals(value.getEType().getInstanceClass())
+            && owner.eGet(feature) instanceof EMap;
+    }
+
+    /**
+     * Writes a property that holds one text per language, the way a synonym is written.
+     * <p>
+     * A plain string puts the text under the default language and leaves every other language
+     * alone, a JSON object of language code to text replaces the whole map, and a blank or missing
+     * value clears it. A value that opens like an object or an array is read as JSON and refused
+     * when it is not one - it is not stored as literal text. Everything is read into a temporary
+     * map before the live one is touched, so a refusal changes nothing, and the map is filled in
+     * place. The value handed back is the map as an object of language codes.
+     * </p>
+     *
+     * @param owner the object carrying the property.
+     * @param feature the many-valued feature that holds the map.
+     * @param rawValue the JSON text the caller passed; blank or <code>null</code> clears.
+     * @param mode what to do; only replace and clear are localized-map operations.
+     * @param dryRun when true nothing is written and the value shows what would have been.
+     * @param label the property name, for the messages a caller reads.
+     * @param defaultLanguageCode the language a text without one belongs to.
+     * @return what was done, or why it was not
+     */
+    @SuppressWarnings("unchecked")
+    private static Outcome applyLocalisedText(EObject owner, EStructuralFeature feature,
+        String rawValue, ListMode mode, boolean dryRun, String label, String defaultLanguageCode)
+    {
+        if (mode == ListMode.ADD || mode == ListMode.REMOVE)
+        {
+            return Outcome.refused("'" + label + "' holds one text per language, which has no " //$NON-NLS-1$
+                + "entries to add or remove: pass a plain text or a JSON object of language codes"); //$NON-NLS-1$
+        }
+        EMap<String, String> live = (EMap<String, String>)owner.eGet(feature);
+        Map<String, String> after = new LinkedHashMap<>();
+        String trimmed = rawValue == null ? "" : rawValue.trim(); //$NON-NLS-1$
+        String note;
+        if (mode == ListMode.CLEAR || trimmed.isEmpty())
+        {
+            note = label + " cleared, " + live.size() + " removed"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else if (trimmed.charAt(0) == '{')
+        {
+            String refusal = readLanguageObject(trimmed, after, label);
+            if (refusal != null)
+            {
+                return Outcome.refused(refusal);
+            }
+            note = label + " set to " + after.size() + " language(s)"; //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        else if (trimmed.charAt(0) == '[')
+        {
+            return Outcome.refused("'" + label + "' holds one text per language: a JSON array of " //$NON-NLS-1$
+                + "entries is not one of its two forms; pass a plain text or a JSON object " //$NON-NLS-1$
+                + "of language codes"); //$NON-NLS-1$
+        }
+        else
+        {
+            for (Map.Entry<String, String> held : live.entrySet())
+            {
+                after.put(held.getKey(), held.getValue());
+            }
+            String code = defaultLanguageCode == null || defaultLanguageCode.isEmpty() ? "ru" //$NON-NLS-1$
+                : defaultLanguageCode;
+            after.put(code, trimmed);
+            note = label + " set for " + code; //$NON-NLS-1$
+        }
+        if (!dryRun)
+        {
+            live.clear();
+            for (Map.Entry<String, String> entry : after.entrySet())
+            {
+                live.put(entry.getKey(), entry.getValue());
+            }
+        }
+        return Outcome.done(describeLocalised(after), note);
+    }
+
+    /**
+     * Reads and validates a JSON object of language code to text into a temporary map.
+     * <p>
+     * A language key must be non-empty, a value must be a string - JSON null counts as the empty
+     * string - and an object that names no language is refused. The caller discards the temporary
+     * map on refusal, leaving the live property untouched.
+     * </p>
+     *
+     * @param json the text the caller passed, which opened like a JSON object.
+     * @param byLanguage receives parsed entries; discard them when a refusal is returned.
+     * @param label the property name, for the messages a caller reads.
+     * @return why the text was refused, or <code>null</code> when it was read whole
+     */
+    private static String readLanguageObject(String json, Map<String, String> byLanguage,
+        String label)
+    {
+        JsonObject obj;
+        try
+        {
+            obj = JsonParser.parseString(json).getAsJsonObject();
+        }
+        catch (RuntimeException notJson)
+        {
+            return "'" + label + "' looks like a JSON object of language codes but is not valid " //$NON-NLS-1$
+                + "JSON: " //$NON-NLS-1$
+                + (notJson.getMessage() != null ? notJson.getMessage()
+                    : notJson.getClass().getSimpleName());
+        }
+        for (Map.Entry<String, JsonElement> entry : obj.entrySet())
+        {
+            String code = entry.getKey() != null ? entry.getKey().trim() : ""; //$NON-NLS-1$
+            if (code.isEmpty())
+            {
+                return "'" + label + "' names an empty language code. Nothing was written."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            JsonElement value = entry.getValue();
+            if (value.isJsonNull())
+            {
+                byLanguage.put(code, ""); //$NON-NLS-1$
+            }
+            else if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString())
+            {
+                byLanguage.put(code, value.getAsString());
+            }
+            else
+            {
+                return "'" + label + "' for language '" + code //$NON-NLS-1$ //$NON-NLS-2$
+                    + "' is not a string: " + value + ". Nothing was written."; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        if (byLanguage.isEmpty())
+        {
+            return "'" + label + "' is an empty JSON object: it names no language. " //$NON-NLS-1$
+                + "Nothing was written."; //$NON-NLS-1$
+        }
+        return null;
+    }
+
+    /**
+     * A map of language code to text as the object a caller reads.
+     *
+     * @param texts the texts, in the order they are held.
+     * @return an object with one member per language
+     */
+    private static JsonObject describeLocalised(Map<String, String> texts)
+    {
+        JsonObject out = new JsonObject();
+        for (Map.Entry<String, String> entry : texts.entrySet())
+        {
+            out.addProperty(entry.getKey(), entry.getValue());
+        }
+        return out;
     }
 
     // ---------------------------------------------------------------------
@@ -769,6 +964,31 @@ public final class ConfigurationListProperties
             if (feature.getName().equalsIgnoreCase(propertyName))
             {
                 return feature;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds a field of a class by name, with the same tolerance the write path applies to property
+     * names: the exact name first, then any casing of it.
+     *
+     * @param ownerClass the class being asked.
+     * @param name the field name.
+     * @return the field, or <code>null</code> when the class does not carry it
+     */
+    private static EStructuralFeature fieldNamed(EClass ownerClass, String name)
+    {
+        EStructuralFeature exact = ownerClass.getEStructuralFeature(name);
+        if (exact != null)
+        {
+            return exact;
+        }
+        for (EStructuralFeature field : ownerClass.getEAllStructuralFeatures())
+        {
+            if (field.getName().equalsIgnoreCase(name))
+            {
+                return field;
             }
         }
         return null;

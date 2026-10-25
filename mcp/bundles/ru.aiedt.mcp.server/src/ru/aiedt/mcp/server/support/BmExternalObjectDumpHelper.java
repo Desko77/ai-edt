@@ -54,6 +54,12 @@ public final class BmExternalObjectDumpHelper
         "com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumper"; //$NON-NLS-1$
     private static final String INJECTOR_IFACE = "com.google.inject.Injector"; //$NON-NLS-1$
 
+    /** Prefix of the temporary file a dump run builds into. */
+    private static final String TEMP_PREFIX = ".aiedt-dump-"; //$NON-NLS-1$
+
+    /** Base suffix of the temporary file, before any object kind extension. */
+    private static final String TEMP_PART = ".part"; //$NON-NLS-1$
+
     private BmExternalObjectDumpHelper()
     {
     }
@@ -80,8 +86,26 @@ public final class BmExternalObjectDumpHelper
         public boolean ok;
         /** Actionable failure message (non-null when {@code !ok}). */
         public String error;
-        /** Failure category tag: runtimeNotFound / noInfobase / dumpFailed / serviceUnavailable / invocation. */
+        /** Failure category tag: invalidOutputPath / runtimeNotFound / noInfobase / dumpFailed /
+         * serviceUnavailable / invocation. */
         public String failureKind;
+    }
+
+    /**
+     * One dumper invocation: build the object's binary into the file it is given.
+     * <p>
+     * Exists so the whole build-and-place flow runs against a substituted call in tests:
+     * the real one is a reflective platform invocation no plain test can supply.
+     * </p>
+     */
+    @FunctionalInterface
+    interface DumpCall
+    {
+        /**
+         * @param target the temporary file the build must write
+         * @throws Throwable whatever the build threw
+         */
+        void call(Path target) throws Throwable;
     }
 
     /**
@@ -238,7 +262,7 @@ public final class BmExternalObjectDumpHelper
     /**
      * Invokes {@code dumper.dump(project, object, temp, null)} with a temporary sibling
      * of {@code outputPath}, then judges the product and moves it into place (see
-     * {@link #placeDumpResult}). The {@code dump} Method is taken from the
+     * {@link #runDump}). The {@code dump} Method is taken from the
      * {@code IExternalObjectDumper} interface class (not the x-internal impl) so the
      * reflective invoke is accessible. All throwables are captured and classified.
      */
@@ -266,25 +290,13 @@ public final class BmExternalObjectDumpHelper
             Class<?> dumperC = b.loadClass(DUMPER_FQN);
             Method dumpM = dumperC.getMethod("dump", IProject.class, EObject.class, //$NON-NLS-1$
                 Path.class, IProgressMonitor.class);
-            Path out = Paths.get(outputPath);
-            // The build writes to a temporary sibling, never to outputPath itself: the
-            // temp file exists solely because this run created it, so a non-empty fresh
-            // one IS this build's product, and a file a previous run left at outputPath
-            // can no longer be reported as this build's result (or be damaged by a
-            // failed one - the destination is touched by the final move alone).
-            java.time.Instant startedAt = java.time.Instant.now();
-            Path temp = java.nio.file.Files.createTempFile(out.toAbsolutePath().getParent(),
-                ".aiedt-dump-", ".part"); //$NON-NLS-1$ //$NON-NLS-2$
-            try
-            {
-                dumpM.invoke(dumper, project, object, temp, (IProgressMonitor) null);
-            }
-            catch (Throwable e)
-            {
-                BmInfobaseExtensionHelper.deleteQuietly(temp);
-                throw e;
-            }
-            return placeDumpResult(temp, out, startedAt);
+            // The kind extension comes from the object's own EClass, never from
+            // outputPath: the caller may name the file anything the kind check allows.
+            String kindExt = extensionForEClass(object != null && object.eClass() != null
+                ? object.eClass().getName() : null);
+            return runDump(
+                target -> dumpM.invoke(dumper, project, object, target, (IProgressMonitor) null),
+                kindExt, outputPath);
         }
         catch (InvocationTargetException ite)
         {
@@ -300,7 +312,85 @@ public final class BmExternalObjectDumpHelper
     }
 
     /**
-     * Judges the file a dump run wrote and moves it over the requested path.
+     * Runs one build through {@code call} into a temporary file beside {@code outputPath}
+     * and places the product (see {@link #placeDumpResult}).
+     * <p>
+     * The temporary name ends with the object kind extension, because the platform writes
+     * the file under the name it is given only when that name already ends with the
+     * extension of the kind it builds - a name without one makes it write a sibling with
+     * the extension appended, which this plugin then waited for under the bare name.
+     * The build writes to a temporary sibling, never to outputPath itself: the temp file
+     * exists solely because this run created it, so a non-empty fresh one IS this build's
+     * product, and a file a previous run left at outputPath can no longer be reported as
+     * this build's result (or be damaged by a failed one - the destination is touched by
+     * the final move alone).
+     * </p>
+     * <p>
+     * Package-visible: the build itself is a reflective platform call a plain test cannot
+     * supply, so tests drive the flow through a {@link DumpCall} of their own.
+     * </p>
+     *
+     * @param call the single build invocation, aimed at the temporary file it is given
+     * @param kindExt the object kind extension (".epf" / ".erf"), or null for an object
+     *            of another kind
+     * @param outputPath the file the caller asked for
+     * @return the invocation outcome: ok with the file in place, or the refusal
+     * @throws Throwable whatever {@code call} threw, after this run's temporary files
+     *             are removed
+     */
+    static DumpInvocation runDump(DumpCall call, String kindExt, String outputPath)
+        throws Throwable
+    {
+        DumpInvocation r = new DumpInvocation();
+        Path out = Paths.get(outputPath);
+        // The directory is checked before anything is asked of the build: a missing or
+        // non-directory parent is the caller's to fix, and the build must not start only
+        // to fail on a file it can never place.
+        Path dir = out.toAbsolutePath().getParent();
+        if (dir == null || !java.nio.file.Files.isDirectory(dir))
+        {
+            r.error = "The output directory does not exist or is not a directory: " //$NON-NLS-1$
+                + (dir != null ? dir : out.toAbsolutePath())
+                + ". Create the directory, then retry."; //$NON-NLS-1$
+            r.failureKind = ErrorTags.INVALID_OUTPUT_PATH.wire();
+            return r;
+        }
+        java.time.Instant startedAt = java.time.Instant.now();
+        Path temp = java.nio.file.Files.createTempFile(dir, TEMP_PREFIX,
+            kindExt != null ? TEMP_PART + kindExt : TEMP_PART);
+        Path appended = appendedCandidate(temp, kindExt);
+        try
+        {
+            call.call(temp);
+        }
+        catch (Throwable e)
+        {
+            BmInfobaseExtensionHelper.deleteQuietly(temp);
+            BmInfobaseExtensionHelper.deleteQuietly(appended);
+            throw e;
+        }
+        return placeDumpResult(temp, appended, out, startedAt);
+    }
+
+    /**
+     * The file the platform writes when it appends the object kind extension to the name
+     * it was given instead of writing under that name itself.
+     *
+     * @param temp the temporary file the build was aimed at
+     * @param kindExt the object kind extension, or null when the kind is unknown
+     * @return the appended sibling, or <code>null</code> when none is expected
+     */
+    static Path appendedCandidate(Path temp, String kindExt)
+    {
+        if (kindExt == null)
+        {
+            return null;
+        }
+        return temp.resolveSibling(temp.getFileName().toString() + kindExt);
+    }
+
+    /**
+     * Judges the files a dump run wrote and moves the product over the requested path.
      * <p>
      * The dumper returns void, so "it did not throw" says nothing about a file having
      * appeared. Its siblings in this plugin check their output and report outputMissing;
@@ -310,20 +400,40 @@ public final class BmExternalObjectDumpHelper
      * An empty file counts as no file: the platform creates one before writing into it.
      * </p>
      * <p>
+     * Exactly the two files this call can have produced are judged: the temporary file
+     * the build was aimed at, and the sibling the platform names when it appends the
+     * kind extension to a name instead of writing under it. Nothing else in the
+     * directory is read, moved or removed - a fresh temporary file another run left
+     * there is not this build's product, however much it looks like one.
+     * </p>
+     * <p>
      * Package-visible so the freshness judgement - the branch that refuses to pass a
      * previous run's file off as this build - is testable without a dumper.
      * </p>
      *
      * @param temp the temporary file the build was pointed at
+     * @param appended the sibling the platform writes when it appends the kind
+     *            extension to {@code temp}'s name, or null when there is none
      * @param out the requested output path
      * @param startedAt the moment the build started
      * @return the invocation outcome: ok with the file in place, or the refusal
      */
-    static DumpInvocation placeDumpResult(Path temp, Path out, java.time.Instant startedAt)
+    static DumpInvocation placeDumpResult(Path temp, Path appended, Path out,
+        java.time.Instant startedAt)
     {
         DumpInvocation r = new DumpInvocation();
         String problem = BmInfobaseExtensionHelper.freshExportProblem(temp, startedAt);
-        if (problem != null)
+        Path product = null;
+        if (problem == null)
+        {
+            product = temp;
+        }
+        else if (appended != null
+            && BmInfobaseExtensionHelper.freshExportProblem(appended, startedAt) == null)
+        {
+            product = appended;
+        }
+        if (product == null)
         {
             r.error = "The dump reported no error but its output did not materialize at " + out //$NON-NLS-1$
                 + ": " + problem //$NON-NLS-1$
@@ -331,14 +441,25 @@ public final class BmExternalObjectDumpHelper
                 + "writing - check the project for validation errors first."; //$NON-NLS-1$
             r.failureKind = ErrorTags.OUTPUT_MISSING.wire();
             BmInfobaseExtensionHelper.deleteQuietly(temp);
+            BmInfobaseExtensionHelper.deleteQuietly(appended);
             return r;
         }
-        String moveError = BmInfobaseExtensionHelper.moveExportIntoPlace(temp, out, true);
+        String moveError = BmInfobaseExtensionHelper.moveExportIntoPlace(product, out, true);
+        // Whichever candidate did not become the product is this run's leftover, and the
+        // destination is touched by the move alone: the leftovers go, not stay.
+        if (product != temp)
+        {
+            BmInfobaseExtensionHelper.deleteQuietly(temp);
+        }
+        if (product != appended)
+        {
+            BmInfobaseExtensionHelper.deleteQuietly(appended);
+        }
         if (moveError != null)
         {
             r.error = moveError;
             r.failureKind = ErrorTags.WRITE_FAILED.wire();
-            BmInfobaseExtensionHelper.deleteQuietly(temp);
+            BmInfobaseExtensionHelper.deleteQuietly(product);
             return r;
         }
         r.ok = true;

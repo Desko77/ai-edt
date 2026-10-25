@@ -471,8 +471,7 @@ public class VanessaTool implements IMcpTool
             featurePath = resolveFeaturePath(featurePathArg.trim(), workingDir);
             if (!featurePath.exists())
             {
-                return ToolResult.error("featurePath not found: " //$NON-NLS-1$
-                    + featurePath.getAbsolutePath()).toJson();
+                return featurePathNotFound(featurePath);
             }
         }
         final String composedScenario = hasText ? scenarioText : null;
@@ -2251,6 +2250,115 @@ public class VanessaTool implements IMcpTool
             return new File(workingDir, featurePathArg);
         }
         return f;
+    }
+
+    /** How many .feature files a not-found refusal names. */
+    private static final int FEATURE_CANDIDATES = 5;
+
+    /**
+     * The refusal for a featurePath that is not there, naming what is.
+     * <p>
+     * A path that misses by one letter reads the same as one that misses by a whole directory, so
+     * the refusal names the nearest .feature files of the directory the caller pointed into - or,
+     * when that directory does not exist either, of the nearest ancestor that does, which is said
+     * outright rather than left to be inferred from the names.
+     * </p>
+     *
+     * @param asked the resolved path the caller asked for, known not to exist; relative to the
+     *            working directory when no project resolved it
+     * @return the refusal as a tool result document
+     */
+    static String featurePathNotFound(File asked)
+    {
+        File named = asked.getAbsoluteFile();
+        StringBuilder refusal = new StringBuilder("featurePath not found: ") //$NON-NLS-1$
+            .append(named.getAbsolutePath());
+        File pointedAt = named.getParentFile();
+        File searched = nearestExistingDirectory(pointedAt);
+        if (searched != null && !searched.equals(pointedAt))
+        {
+            refusal.append(". The directory named does not exist; the nearest one that does is ") //$NON-NLS-1$
+                .append(searched.getAbsolutePath());
+        }
+        List<File> nearest = nearestFeatureFiles(named, FEATURE_CANDIDATES);
+        if (nearest.isEmpty())
+        {
+            refusal.append(". No .feature file exists there."); //$NON-NLS-1$
+        }
+        else
+        {
+            refusal.append(". Nearest .feature files: "); //$NON-NLS-1$
+            for (int i = 0; i < nearest.size(); i++)
+            {
+                if (i > 0)
+                {
+                    refusal.append(", "); //$NON-NLS-1$
+                }
+                refusal.append(nearest.get(i).getName());
+            }
+            refusal.append('.');
+        }
+        return ToolResult.error(refusal.toString()).toJson();
+    }
+
+    /**
+     * The .feature files nearest by name to one that was not found.
+     * <p>
+     * Ranked by edit distance between file names, so a misspelling is answered with what it was
+     * meant to be rather than with an alphabetical sample. Only regular files of the one directory
+     * count: a subdirectory's scenarios are not what a path into this directory was reaching for.
+     * </p>
+     *
+     * @param named the path the caller asked for, known not to exist
+     * @param limit how many names to answer with, at most
+     * @return the nearest files, nearest first; empty when the directory holds none
+     */
+    static List<File> nearestFeatureFiles(File named, int limit)
+    {
+        File searched = nearestExistingDirectory(named.getAbsoluteFile().getParentFile());
+        if (searched == null)
+        {
+            return List.of();
+        }
+        File[] files = searched.listFiles();
+        if (files == null)
+        {
+            return List.of();
+        }
+        String wanted = named.getName().toLowerCase(Locale.ROOT);
+        List<File> candidates = new ArrayList<>();
+        for (File file : files)
+        {
+            if (file.isFile() && file.getName().toLowerCase(Locale.ROOT).endsWith(".feature")) //$NON-NLS-1$
+            {
+                candidates.add(file);
+            }
+        }
+        candidates.sort((left, right) ->
+        {
+            int byDistance = Integer.compare(
+                TextSuggest.levenshtein(wanted, left.getName().toLowerCase(Locale.ROOT)),
+                TextSuggest.levenshtein(wanted, right.getName().toLowerCase(Locale.ROOT)));
+            return byDistance != 0 ? byDistance : left.getName().compareToIgnoreCase(right.getName());
+        });
+        return candidates.size() > limit ? new ArrayList<>(candidates.subList(0, limit)) : candidates;
+    }
+
+    /**
+     * The deepest ancestor of a directory that exists.
+     *
+     * @param dir the directory a path pointed into; may be {@code null}
+     * @return that directory when it exists, else its nearest existing ancestor, or {@code null}
+     *         when neither it nor any ancestor is there (a path whose every parent is missing)
+     */
+    private static File nearestExistingDirectory(File dir)
+    {
+        File searched = dir;
+        while (searched != null && !searched.isDirectory())
+        {
+            searched = searched.getParentFile();
+        }
+        return searched;
     }
 
     /**

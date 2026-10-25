@@ -18,6 +18,7 @@
 
   <modules>
     <module>ru.aiedt.mcp.server.tests</module>
+    <module>ru.aiedt.mcp.oform.tests</module>
   </modules>
 
 </project>

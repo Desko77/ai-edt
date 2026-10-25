@@ -29,6 +29,8 @@ import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
 import com._1c.g5.v8.dt.bsl.model.Pragma;
 
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BslCallGraphHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
@@ -59,6 +61,14 @@ public class FindDeadCodeTool
 
     /** Backstop so an accidental full-tree walk of a giant workspace cannot run unbounded. */
     private static final int MODULE_SCAN_CAP = 5000;
+
+    /**
+     * Backstop of the reads the walk makes only to collect name-written calls: form modules and
+     * modules outside the family prefix and the path filter. A configuration holds several of
+     * those for every candidate module, so this bound sits above the candidate cap rather than
+     * beside it; together the two keep the worst walk at 25000 module loads.
+     */
+    private static final int NAME_CALL_SCAN_CAP = 20000;
 
     /** Path segment that marks a module as a form module; excluded by default (form event handlers dominate). */
     private static final String FORMS_SEGMENT = "/Forms/"; //$NON-NLS-1$
@@ -253,18 +263,75 @@ public class FindDeadCodeTool
             return "Error: failed to walk the source tree: " + e.getMessage(); //$NON-NLS-1$
         }
 
-        List<Candidate> candidates = new ArrayList<>();
-        int modulesScanned = 0;
-        int modulesExcludedForms = 0;
-        int exportMethods = 0;
-        int handlersSkipped = 0;
-        int interceptorsSkipped = 0;
-        int loadFailures = 0;
-        int indeterminate = 0;
+        // Methods a written-by-name call reaches: the reference index the deadness check reads
+        // carries nothing about them, so they are collected as the scan walks the same modules.
+        // A scheduled job's method and an event subscription's handler are strings in the
+        // metadata, so the methods they name are collected the same way.
+        Map<String, String> commonModules = BslCallGraphHelper.commonModuleNames(project);
+        Set<String> nameCalled = new HashSet<>();
+        collectJobAndSubscriptionCalled(configurationOf(project), nameCalled);
 
-        for (IFile file : bslFiles)
+        FirstPass first = walkSources(bslFiles,
+            new BslModuleAccess.TransientModuleReads(project), includeForms, pathPrefix,
+            moduleFilter, commonModules, nameCalled, watch);
+        Outcome outcome = candidatesOf(first.walked, nameCalled, limit, extraPatterns,
+            BslCallGraphHelper::countCallers, watch);
+
+        return format(projectName, outcome, first, limit, params,
+            // The count names every boundary the walk asked about - the modules read for their
+            // calls as well as the ones the candidates came from.
+            watch.note("modules")); //$NON-NLS-1$
+    }
+
+    /**
+     * Walks the source files of one scan and reads every module the walk caps allow.
+     * <p>
+     * The methods a written-by-name call names are collected from every module the walk reads,
+     * including one whose own exports are no candidates - a form module at the default settings, a
+     * module outside the family prefix or the path filter: the calls sit wherever they sit, and the
+     * decision about candidates waits for the whole walk anyway, because a module walked after an
+     * earlier one can still hold the written-by-name call that keeps that earlier candidate alive.
+     * </p>
+     * <p>
+     * The two walks over the same file list are bounded separately: the candidate cap counts only
+     * the modules whose exports the decision examines, and the collection reads - modules read for
+     * their name-written calls alone - have their own cap, reported on its own line. Each cap
+     * counts the loads the walk attempts, also the ones that fail, so a configuration whose model
+     * is not built stops the walk rather than loading every file for nothing. A cap that fires
+     * skips the files it counts and leaves the other walk to spend its own budget on the files
+     * after them; the walk ends when both caps have fired or the files run out, and an answer a
+     * cap cut does not claim a finished scope.
+     * </p>
+     *
+     * @param files the BSL files of the project, in walk order
+     * @param reads the module reads of the scan: the load behind a {@code src/}-relative path and
+     *        the drop of a module read only for its calls
+     * @param includeForms whether form modules give up their exports as candidates
+     * @param pathPrefix the family prefix a candidate module must start with, or {@code null}
+     * @param moduleFilter the text a candidate module's path must contain, or {@code null}/empty
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        collects no call, since a module name cannot be matched
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     * @param watch the cancel signal of the call
+     * @return what the walk read: the modules whose exports are candidates, and the walk's counts
+     */
+    static FirstPass walkSources(Iterable<IFile> files, BslModuleAccess.ModuleReads reads,
+        boolean includeForms, String pathPrefix, String moduleFilter,
+        Map<String, String> commonModules, Set<String> nameCalled, WatchForCancel watch)
+    {
+        List<WalkedModule> walked = new ArrayList<>();
+        int modulesScanned = 0;
+        int collectionReads = 0;
+        int collectionReadsLoaded = 0;
+        int modulesExcludedForms = 0;
+        int loadFailures = 0;
+        boolean stoppedByCandidateCap = false;
+        boolean stoppedByCollectionCap = false;
+        for (IFile file : files)
         {
-            if (modulesScanned >= MODULE_SCAN_CAP || watch.stopHere())
+            // Asked before anything the file costs, so a cancel that arrived while the previous
+            // module was still loading is seen here; the cap checks below never shortcut it.
+            if (watch.stopHere())
             {
                 break;
             }
@@ -273,30 +340,116 @@ public class FindDeadCodeTool
             {
                 continue;
             }
-            if (!includeForms && (modulePath.contains(FORMS_SEGMENT) || modulePath.startsWith(COMMON_FORMS_PREFIX)))
+            boolean formModule = !includeForms && (modulePath.contains(FORMS_SEGMENT)
+                || modulePath.startsWith(COMMON_FORMS_PREFIX));
+            boolean candidate = !formModule
+                && (pathPrefix == null || modulePath.startsWith(pathPrefix))
+                && (moduleFilter == null || moduleFilter.isEmpty()
+                    || modulePath.toLowerCase(Locale.ROOT)
+                        .contains(moduleFilter.toLowerCase(Locale.ROOT)));
+            if (candidate && modulesScanned >= MODULE_SCAN_CAP)
             {
-                modulesExcludedForms++;
+                // The cap refuses the files it counts, it does not end the walk: the reads the
+                // other budget pays for still have files behind this one to spend it on.
+                stoppedByCandidateCap = true;
+                if (stoppedByCollectionCap)
+                {
+                    break;
+                }
                 continue;
             }
-            if (pathPrefix != null && !modulePath.startsWith(pathPrefix))
+            if (!candidate && collectionReads >= NAME_CALL_SCAN_CAP)
             {
+                stoppedByCollectionCap = true;
+                if (stoppedByCandidateCap)
+                {
+                    break;
+                }
                 continue;
             }
-            if (moduleFilter != null && !moduleFilter.isEmpty()
-                && !modulePath.toLowerCase(Locale.ROOT).contains(moduleFilter.toLowerCase(Locale.ROOT)))
+            Module module = reads.load(modulePath);
+            // The attempt counts against its cap, loaded or not: a configuration whose model is
+            // not built fails every load, and a walk that kept counting only successes would load
+            // the whole tree for nothing before its cap said stop.
+            if (candidate)
             {
-                continue;
+                modulesScanned++;
             }
-
-            Module module = BslModuleAccess.loadModule(project, modulePath);
+            else
+            {
+                collectionReads++;
+            }
             if (module == null)
             {
                 loadFailures++;
                 continue;
             }
-            modulesScanned++;
+            collectNameCalled(module, commonModules, nameCalled);
+            if (candidate)
+            {
+                walked.add(new WalkedModule(modulePath, module));
+            }
+            else
+            {
+                collectionReadsLoaded++;
+                // The walk is done with a module it read only for its calls: what it named is
+                // collected, and the module itself the decision never examines.
+                reads.drop(module);
+                if (formModule)
+                {
+                    modulesExcludedForms++;
+                }
+            }
+        }
+        // A cancel that arrived during the walk's last load has left no boundary behind it; this
+        // one question keeps the note of the stop from staying unwritten, which would read the
+        // answer as a finished scan.
+        watch.raised();
+        return new FirstPass(walked, modulesScanned, collectionReads, collectionReadsLoaded,
+            modulesExcludedForms, loadFailures, stoppedByCandidateCap, stoppedByCollectionCap);
+    }
 
-            for (Method method : module.allMethods())
+    /**
+     * Decides the dead-code candidates of the walked modules.
+     * <p>
+     * The set of written-by-name calls is complete before this runs, so a method such a call names
+     * is dropped here rather than at the end of the scan: it neither becomes a candidate nor
+     * occupies the candidate limit, which the answer caps by the candidates it really reports.
+     * </p>
+     * <p>
+     * The decision polls the cancel signal at the same module boundary the walk polls: a caller
+     * count runs through the reference finder, which a stop of the walk alone would leave
+     * running to its end without the answer saying it was cut.
+     * </p>
+     *
+     * @param walked the modules the first pass read
+     * @param nameCalled the keys of methods a written-by-name call names
+     * @param limit the candidate cap
+     * @param extraPatterns extra method-name substrings to treat as called-by-name
+     * @param callerCount how many call sites reference a method, or a negative number when the
+     *        lookup could not run
+     * @param watch the cancel signal of the call
+     * @return the candidates and the counts of the decision
+     */
+    static Outcome candidatesOf(List<WalkedModule> walked, Set<String> nameCalled, int limit,
+        List<String> extraPatterns, java.util.function.ToIntFunction<Method> callerCount,
+        WatchForCancel watch)
+    {
+        List<Candidate> candidates = new ArrayList<>();
+        boolean stoppedByLimit = false;
+        int exportMethods = 0;
+        int handlersSkipped = 0;
+        int interceptorsSkipped = 0;
+        int indeterminate = 0;
+        walk: for (WalkedModule entry : walked)
+        {
+            // Asked without counting a boundary: the count the note reports names the modules
+            // the walk read, and the decision's own steps are not more of those.
+            if (watch.raised())
+            {
+                break walk;
+            }
+            for (Method method : entry.module.allMethods())
             {
                 if (!method.isExport())
                 {
@@ -318,7 +471,12 @@ public class FindDeadCodeTool
                     handlersSkipped++;
                     continue;
                 }
-                int callers = BslCallGraphHelper.countCallers(method);
+                if (entry.moduleFqn != null
+                    && nameCalled.contains(nameCallKey(entry.moduleFqn, name)))
+                {
+                    continue;
+                }
+                int callers = callerCount.applyAsInt(method);
                 if (callers < 0)
                 {
                     // The reference index/finder was unavailable or the lookup threw - the method's
@@ -329,36 +487,163 @@ public class FindDeadCodeTool
                 }
                 if (callers == 0)
                 {
-                    candidates.add(new Candidate(modulePath, name, startLineOf(method)));
+                    candidates.add(new Candidate(entry.modulePath, name, startLineOf(method),
+                        entry.moduleFqn));
                     if (candidates.size() >= limit)
                     {
-                        break;
+                        stoppedByLimit = true;
+                        break walk;
                     }
                 }
             }
-            if (candidates.size() >= limit)
+        }
+        return new Outcome(candidates, stoppedByLimit, exportMethods, handlersSkipped,
+            interceptorsSkipped, indeterminate);
+    }
+
+    /**
+     * Adds the methods a module's text calls by name to the set of methods the scan must not
+     * report: a caller that wrote the name as a string is invisible to the reference index the
+     * deadness check reads.
+     *
+     * @param module the module whose text to read
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        reads nothing, since a module name cannot be matched
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     */
+    static void collectNameCalled(Module module, Map<String, String> commonModules,
+        Set<String> nameCalled)
+    {
+        if (commonModules == null)
+        {
+            return;
+        }
+        for (BslCallGraphHelper.NameCall call : BslCallGraphHelper.literalNameCallsOf(module,
+            commonModules))
+        {
+            String targetFqn = call.targetModuleFqn != null ? call.targetModuleFqn
+                : BslCallGraphHelper.moduleFqn(module);
+            if (targetFqn != null)
             {
-                break;
+                nameCalled.add(nameCallKey(targetFqn, call.methodName));
             }
         }
+    }
 
-        return format(projectName, candidates, modulesScanned, modulesExcludedForms, exportMethods,
-            handlersSkipped, interceptorsSkipped, loadFailures, indeterminate, limit, params,
-            // "candidate modules", not "modules": the count is loop entries, and a
-            // form module or an unreadable one is entered and then excluded, so it
-            // never reaches modulesScanned.
-            watch.note("candidate modules")); //$NON-NLS-1$
+    /**
+     * The key a written-by-name call is collected under: the target module's FQN and the method
+     * name folded to one case, so a call site spelling the name differently from its declaration
+     * still matches.
+     *
+     * @param moduleFqn the target module's FQN
+     * @param methodName the method name as the call spells it
+     * @return the key
+     */
+    static String nameCallKey(String moduleFqn, String methodName)
+    {
+        return moduleFqn + '\u0000'
+            + (methodName == null ? "" : methodName.toLowerCase(Locale.ROOT)); //$NON-NLS-1$
+    }
+
+    /**
+     * Adds the methods the scheduled jobs and the event subscriptions name to the set of methods
+     * the scan must not report: both hold their method reference as a plain string the reference
+     * index does not carry.
+     *
+     * @param configuration the project configuration, or {@code null} when it is not available
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     */
+    static void collectJobAndSubscriptionCalled(
+        com._1c.g5.v8.dt.metadata.mdclass.Configuration configuration, Set<String> nameCalled)
+    {
+        if (configuration == null)
+        {
+            return;
+        }
+        try
+        {
+            for (Object entry : configuration.getScheduledJobs())
+            {
+                if (entry instanceof com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob)
+                {
+                    collectMethodReference(
+                        ((com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob)entry).getMethodName(),
+                        configuration, nameCalled);
+                }
+            }
+            for (Object entry : configuration.getEventSubscriptions())
+            {
+                if (entry instanceof com._1c.g5.v8.dt.metadata.mdclass.EventSubscription)
+                {
+                    collectMethodReference(
+                        ((com._1c.g5.v8.dt.metadata.mdclass.EventSubscription)entry).getHandler(),
+                        configuration, nameCalled);
+                }
+            }
+        }
+        catch (Exception unreadable)
+        {
+            // An unreadable configuration protects nothing, which is what the scan said before
+            // jobs and subscriptions were read at all.
+        }
+    }
+
+    /**
+     * Adds one {@code Module.Method} reference to the collected methods.
+     *
+     * @param methodReference the string a job's method name or a subscription's handler holds
+     * @param configuration the project configuration, for the module's own spelling
+     * @param nameCalled the keys of methods a written-by-name call names, filled
+     */
+    private static void collectMethodReference(String methodReference,
+        com._1c.g5.v8.dt.metadata.mdclass.Configuration configuration, Set<String> nameCalled)
+    {
+        if (methodReference == null || methodReference.isEmpty())
+        {
+            return;
+        }
+        BmEventSubscriptionHelper.NormalizationResult parsed =
+            BmEventSubscriptionHelper.normalizeHandler(methodReference);
+        if (parsed == null)
+        {
+            return;
+        }
+        String module = BmEventSubscriptionHelper.commonModuleNamed(configuration,
+            parsed.moduleName);
+        if (module != null)
+        {
+            nameCalled.add(nameCallKey("CommonModule." + module + ".Module", parsed.methodName)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * The project's configuration, or {@code null} when the provider or the configuration is not
+     * available.
+     *
+     * @param project the project
+     * @return its configuration
+     */
+    private static com._1c.g5.v8.dt.metadata.mdclass.Configuration configurationOf(IProject project)
+    {
+        try
+        {
+            return Activator.getDefault().getConfigurationProvider() == null ? null
+                : Activator.getDefault().getConfigurationProvider().getConfiguration(project);
+        }
+        catch (Exception unavailable)
+        {
+            return null;
+        }
     }
 
     // -- = --
     // Output
     // -- = --
 
-    private String format(String projectName, List<Candidate> candidates, int modulesScanned,
-        int modulesExcludedForms, int exportMethods, int handlersSkipped, int interceptorsSkipped,
-        int loadFailures, int indeterminate, int limit, Map<String, String> params,
-        String cancelled)
+    String format(String projectName, Outcome outcome, FirstPass first, int limit,
+        Map<String, String> params, String cancelled)
     {
+        List<Candidate> candidates = outcome.candidates;
         StringBuilder out = new StringBuilder();
         out.append("# Dead-code candidates: ").append(projectName).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         out.append("**Candidates:** ").append(candidates.size()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -368,24 +653,36 @@ public class FindDeadCodeTool
             // for the whole configuration.
             out.append("**Stopped: ").append(cancelled).append("**\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        out.append("- modules scanned: ").append(modulesScanned); //$NON-NLS-1$
-        out.append(" | export methods examined: ").append(exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
-        out.append("- skipped: ").append(handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
-            .append(interceptorsSkipped).append(" interceptors, ") //$NON-NLS-1$
-            .append(modulesExcludedForms).append(" form modules"); //$NON-NLS-1$
-        if (loadFailures > 0)
+        out.append("- modules scanned: ").append(first.modulesScanned); //$NON-NLS-1$
+        out.append(" | export methods examined: ").append(outcome.exportMethods).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (first.collectionReadsLoaded > 0)
         {
-            out.append(", ").append(loadFailures).append(" modules failed to load"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append("- name-written calls collected from ").append(first.collectionReadsLoaded) //$NON-NLS-1$
+                .append(" module(s) outside the candidate scope\n"); //$NON-NLS-1$
         }
-        if (indeterminate > 0)
+        out.append("- skipped: ").append(outcome.handlersSkipped).append(" known handlers, ") //$NON-NLS-1$ //$NON-NLS-2$
+            .append(outcome.interceptorsSkipped).append(" interceptors, ") //$NON-NLS-1$
+            .append(first.modulesExcludedForms).append(" form modules"); //$NON-NLS-1$
+        if (first.loadFailures > 0)
         {
-            out.append(", ").append(indeterminate).append(" methods indeterminate (index/finder unavailable - NOT reported as dead; run clean_project and retry)"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append(", ").append(first.loadFailures).append(" modules failed to load"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        if (modulesScanned >= MODULE_SCAN_CAP)
+        if (outcome.indeterminate > 0)
         {
-            out.append(" (scan cap ").append(MODULE_SCAN_CAP).append(" reached)"); //$NON-NLS-1$ //$NON-NLS-2$
+            out.append(", ").append(outcome.indeterminate).append(" methods indeterminate (index/finder unavailable - NOT reported as dead; run clean_project and retry)"); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        out.append("\n\n"); //$NON-NLS-1$
+        if (first.stoppedByCandidateCap)
+        {
+            out.append(" (candidate scan cap ").append(MODULE_SCAN_CAP) //$NON-NLS-1$
+                .append(" reached: further candidate modules were not read)"); //$NON-NLS-1$
+        }
+        out.append("\n"); //$NON-NLS-1$
+        if (first.stoppedByCollectionCap)
+        {
+            out.append("- name-call collection stopped at its cap (").append(NAME_CALL_SCAN_CAP) //$NON-NLS-1$
+                .append(" reached): further modules outside the candidate scope were not read\n"); //$NON-NLS-1$
+        }
+        out.append("\n"); //$NON-NLS-1$
 
         out.append("> Heuristic candidate list, not a verdict. A method is flagged when the Xtext index " //$NON-NLS-1$
             + "reports zero BSL call sites AND its name is not a known platform/БСП event handler AND it " //$NON-NLS-1$
@@ -406,11 +703,26 @@ public class FindDeadCodeTool
 
         if (candidates.isEmpty())
         {
-            // Only sayable when the scan finished. Stopped short, an empty list means
-            // the scope was not walked, not that it holds nothing.
-            out.append(cancelled != null
-                ? "Nothing had been found when the scan stopped.\n" //$NON-NLS-1$
-                : "No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
+            // Only sayable when the scan finished. Stopped short - by the operator or by a cap -
+            // an empty list means the scope was not walked, not that it holds nothing. A walk
+            // that loaded no candidate module says that rather than naming a scope it read.
+            boolean stopped = cancelled != null || first.stoppedByCandidateCap
+                || first.stoppedByCollectionCap;
+            boolean nothingLoaded = first.walked.isEmpty() && first.modulesScanned > 0;
+            if (stopped)
+            {
+                out.append("Nothing had been found when the scan stopped.\n"); //$NON-NLS-1$
+            }
+            else if (nothingLoaded)
+            {
+                out.append("No candidate module could be read: the modules the scan reached ") //$NON-NLS-1$
+                    .append("failed to load, so no export was examined - check that the project ") //$NON-NLS-1$
+                    .append("model is built and retry.\n"); //$NON-NLS-1$
+            }
+            else
+            {
+                out.append("No dead export methods found in the scanned scope.\n"); //$NON-NLS-1$
+            }
             return out.toString();
         }
 
@@ -423,7 +735,7 @@ public class FindDeadCodeTool
                 .append(escape(c.methodName)).append(" | ") //$NON-NLS-1$
                 .append(c.line > 0 ? Integer.toString(c.line) : "-").append(" |\n"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
-        if (candidates.size() >= limit)
+        if (outcome.stoppedByLimit)
         {
             out.append("\n(candidate list capped at ").append(limit) //$NON-NLS-1$
                 .append("; raise `limit` or narrow the scope to see more)\n"); //$NON-NLS-1$
@@ -600,18 +912,107 @@ public class FindDeadCodeTool
         return cell.replace("|", "\\|"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /** One module the scan read, with the address it was read under. */
+    static final class WalkedModule
+    {
+        final String modulePath;
+
+        final Module module;
+
+        /** The module's FQN as its address names it, or {@code null} when the address names none. */
+        final String moduleFqn;
+
+        WalkedModule(String modulePath, Module module)
+        {
+            this.modulePath = modulePath;
+            this.module = module;
+            this.moduleFqn = BslCallGraphHelper.moduleFqn(module);
+        }
+    }
+
+    /** What the walk of the sources read: the modules and the counts of the walk itself. */
+    static final class FirstPass
+    {
+        final List<WalkedModule> walked;
+
+        /** The candidate module loads the walk attempted, whether the module loaded or not. */
+        final int modulesScanned;
+
+        /** The loads the walk attempted only to collect name-written calls, loaded or not. */
+        final int collectionReads;
+
+        /** The collection loads that returned a module: calls were read only out of these. */
+        final int collectionReadsLoaded;
+
+        final int modulesExcludedForms;
+
+        final int loadFailures;
+
+        /** Whether the candidate cap refused files before the list of them ran out. */
+        final boolean stoppedByCandidateCap;
+
+        /** Whether the name-call collection cap refused files before the list ran out. */
+        final boolean stoppedByCollectionCap;
+
+        FirstPass(List<WalkedModule> walked, int modulesScanned, int collectionReads,
+            int collectionReadsLoaded, int modulesExcludedForms, int loadFailures,
+            boolean stoppedByCandidateCap, boolean stoppedByCollectionCap)
+        {
+            this.walked = walked;
+            this.modulesScanned = modulesScanned;
+            this.collectionReads = collectionReads;
+            this.collectionReadsLoaded = collectionReadsLoaded;
+            this.modulesExcludedForms = modulesExcludedForms;
+            this.loadFailures = loadFailures;
+            this.stoppedByCandidateCap = stoppedByCandidateCap;
+            this.stoppedByCollectionCap = stoppedByCollectionCap;
+        }
+    }
+
+    /** The candidates the scan reports, with the counts of the decision that collected them. */
+    static final class Outcome
+    {
+        final List<Candidate> candidates;
+
+        /** Whether the decision stopped because the candidate count reached the limit. */
+        final boolean stoppedByLimit;
+
+        final int exportMethods;
+
+        final int handlersSkipped;
+
+        final int interceptorsSkipped;
+
+        final int indeterminate;
+
+        Outcome(List<Candidate> candidates, boolean stoppedByLimit, int exportMethods,
+            int handlersSkipped, int interceptorsSkipped, int indeterminate)
+        {
+            this.candidates = candidates;
+            this.stoppedByLimit = stoppedByLimit;
+            this.exportMethods = exportMethods;
+            this.handlersSkipped = handlersSkipped;
+            this.interceptorsSkipped = interceptorsSkipped;
+            this.indeterminate = indeterminate;
+        }
+    }
+
     /** A dead-code candidate: the module path, the export method name, and its declaration line. */
-    private static final class Candidate
+    static final class Candidate
     {
         final String modulePath;
         final String methodName;
         final int line;
 
-        Candidate(String modulePath, String methodName, int line)
+        /** The module's FQN as its address names it, or {@code null} when the address names none. */
+        final String moduleFqn;
+
+        Candidate(String modulePath, String methodName, int line, String moduleFqn)
         {
             this.modulePath = modulePath;
             this.methodName = methodName;
             this.line = line;
+            this.moduleFqn = moduleFqn;
         }
     }
 }

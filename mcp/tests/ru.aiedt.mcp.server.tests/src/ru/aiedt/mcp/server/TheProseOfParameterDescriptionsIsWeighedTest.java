@@ -289,8 +289,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // retrieve_database_changes adds replaceLocal, markSynchronized and the sentences
         // timeoutSeconds, runKey and cancel gained for that pull.
         // And for verifyInfobaseContent: an incremental update can be asked to read the infobase's
-        // own ConfigDumpInfo and refuse when it does not match the stored copy. Measured 29.09: 8364.
-        PROSE.put("infobase_admin", Integer.valueOf(8364));
+        // own ConfigDumpInfo and refuse when it does not match the stored copy. Measured 29.09:
+        // 8364. Raised to 8538 for the excludeEvents sentence on the facade schema. Measured 14.10:
+        // 8538.
+        PROSE.put("infobase_admin", Integer.valueOf(8538));
         // Raised from 3064 for the objects argument of export_infobase_objects - the three
         // address shapes a caller cannot guess - and the sentences outputPath, timeoutSeconds and
         // runKey gained naming that operation (measured 24.09: 3810). And by 924 for
@@ -348,12 +350,17 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // Raised by 121 for updateBeforeLaunch naming the preset that launches an omitted update
         // without updating (measured 07.10: 1244), and by 54 more for the sentence saying every
         // answer of the run names the drop in databaseUpdate (measured 07.10: 1298).
-        PROSE.put("yaxunit_tests", Integer.valueOf(1581));
+        // Raised to 1701 for the sentence on tests that a name in tests or modules the report of
+        // the run lacks is a discrepancy, not a pass (measured 14.10: 1701).
+        PROSE.put("yaxunit_tests", Integer.valueOf(1701));
         PROSE.put("diff_module", Integer.valueOf(960));
         PROSE.put("find_dead_code", Integer.valueOf(942));
         PROSE.put("workspace_marks", Integer.valueOf(880));
         PROSE.put("get_metadata_details", Integer.valueOf(867));
-        PROSE.put("read_event_log", Integer.valueOf(633));
+        // Raised from 633 to 806 for excludeEvents on read_event_log: the sentence tells a caller
+        // that a whole event name or the start of one may be left out, and that the exclusion
+        // runs before the limit. Measured 14.10: 806.
+        PROSE.put("read_event_log", Integer.valueOf(806));
         PROSE.put("get_form_structure", Integer.valueOf(614));
         PROSE.put("list_modules", Integer.valueOf(587));
         PROSE.put("ai_context", Integer.valueOf(581));
@@ -681,6 +688,27 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * already-installed paths, the single write and control read, the mismatch refusal, and the
      * explicit opt-out. Measured 08.10: 107202.
      * </p>
+     * <p>
+     * And by 115 for save_baseline and clear_baseline on diagnostics: the sinceBaseline sentence
+     * and the operation names the projectName sentence now carries, over the extraInfo sentence
+     * rebuilt shorter. Measured 13.10: 107340.
+     * </p>
+     * <p>
+     * And from 107340 to 107469 for excludeEvents on read_event_log: one sentence for the new
+     * argument. Measured 14.10: 107469.
+     * </p>
+     * <p>
+     * And from 107469 to 107643 for the excludeEvents sentence on the infobase_admin schema, which
+     * is where a client routing the operation through the facade reads it. Measured 14.10: 107643.
+     * </p>
+     * <p>
+     * And from 107643 to 107723 for the sentence on yaxunit_tests that a name in tests or modules
+     * the report of the run lacks is a discrepancy, not a pass. Measured 14.10: 107723.
+     * </p>
+     * <p>
+     * And from 107723 to 107805 for the empty edgeKinds sentence on the dependency_graph and
+     * insights schemas. Measured 15.10: 107805.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107202;
+    private static final int DOCUMENT_PROSE = 107805;
 }

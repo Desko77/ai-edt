@@ -182,9 +182,35 @@ public final class BmEventSubscriptionHelper
      */
     public static boolean commonModuleExists(Configuration config, String moduleName)
     {
+        return commonModuleNamed(config, moduleName) != null;
+    }
+
+    /**
+     * The common module a {@code Module.Method} reference names, in the spelling the
+     * configuration carries for it.
+     *
+     * @param config       project configuration (already resolved by caller)
+     * @param moduleName   short name (without the {@code CommonModule.} prefix)
+     * @return the module's own spelling of its name, or {@code null} when there is no such module
+     */
+    public static String commonModuleNamed(Configuration config, String moduleName)
+    {
+        MdObject module = commonModuleObject(config, moduleName);
+        return module == null ? null : module.getName();
+    }
+
+    /**
+     * The metadata object of the common module a {@code Module.Method} reference names.
+     *
+     * @param config       project configuration (already resolved by caller)
+     * @param moduleName   short name (without the {@code CommonModule.} prefix)
+     * @return the module's metadata object, or {@code null} when there is no such module
+     */
+    public static MdObject commonModuleObject(Configuration config, String moduleName)
+    {
         if (config == null || moduleName == null || moduleName.isEmpty())
         {
-            return false;
+            return null;
         }
         try
         {
@@ -193,15 +219,15 @@ public final class BmEventSubscriptionHelper
             {
                 if (o instanceof MdObject && moduleName.equalsIgnoreCase(((MdObject)o).getName()))
                 {
-                    return true;
+                    return (MdObject)o;
                 }
             }
         }
         catch (Exception e)
         {
-            Activator.logWarning("commonModuleExists failed: " + e.getMessage()); //$NON-NLS-1$
+            Activator.logWarning("commonModuleObject failed: " + e.getMessage()); //$NON-NLS-1$
         }
-        return false;
+        return null;
     }
 
     /**

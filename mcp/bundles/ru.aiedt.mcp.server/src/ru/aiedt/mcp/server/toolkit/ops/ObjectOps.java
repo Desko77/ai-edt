@@ -575,6 +575,10 @@ final class ObjectOps
                     // this exists for: it fails EDT's own check the moment it appears.
                     for (Map.Entry<String, String> property : remaining.entrySet())
                     {
+                        if ("inputByString".equalsIgnoreCase(property.getKey())) //$NON-NLS-1$
+                        {
+                            continue;
+                        }
                         String refused = BmObjectHelper.setProperty(created, property.getKey(),
                             valueToApply(englishType, property.getKey(), property.getValue()));
                         if (refused != null)
@@ -606,17 +610,25 @@ final class ObjectOps
                             applied.add("templateType"); //$NON-NLS-1$
                         }
                     }
-                    if (!BmObjectHelper.addToConfiguration(config, created))
+                    String fqn = englishType + "." + name; //$NON-NLS-1$
+                    if (!registerCreatedObject(config, created, englishType, fqn, tx))
                     {
                         finalErr.append("Created object but failed to attach it to the configuration. " //$NON-NLS-1$
                             + "Configuration may not have the matching collection for this type."); //$NON-NLS-1$
                         return null;
                     }
-                    // Register the new object as a top-object so BM can persist a
-                    // new .mdo file for it (extension projects require this explicit
-                    // attach; a regular config worked through an implicit hook).
-                    String fqn = englishType + "." + name; //$NON-NLS-1$
-                    tx.attachTopObject((IBmObject) created, fqn);
+                    if (creation.getObject() != null)
+                    {
+                        BmObjectHelper.fillDefaultInputByString(created);
+                    }
+                    for (Map.Entry<String, String> property : remaining.entrySet())
+                    {
+                        if ("inputByString".equalsIgnoreCase(property.getKey())) //$NON-NLS-1$
+                        {
+                            BmObjectHelper.applyCreatedInputByString(created, fqn, property.getValue(), project);
+                            applied.add(property.getKey());
+                        }
+                    }
                     // 3.8.4 + issue #15: a CommonForm needs its inner Form built AND
                     // registered as its OWN top-object in the same transaction, AFTER
                     // the wrapper has a namespace. The inner Form is a separate
@@ -861,6 +873,37 @@ final class ObjectOps
         }
         return ok.toJson();
     }
+
+    /**
+     * Places a freshly created object in the configuration's collection for its
+     * type and registers it with the creating transaction. A reference-held
+     * member (catalog, subsystem, ...) is registered as its own top object so BM
+     * can persist a new .mdo file for it; an inline containment child (a
+     * Language) is attached by the collection add itself and a further
+     * attachTopObject on it is rejected by the transaction service with "The
+     * object is already attached", so none is attempted.
+     *
+     * @param config the configuration that owns the new object
+     * @param created the object the creating task has just built and filled
+     * @param englishType English singular type name of {@code created}
+     * @param fqn the address the object is known under, {@code type + "." + name}
+     * @param tx the creating BM transaction
+     * @return {@code true} when the object joined the configuration
+     */
+    static boolean registerCreatedObject(Configuration config, MdObject created, String englishType,
+        String fqn, IBmTransaction tx)
+    {
+        if (!BmObjectHelper.addToConfiguration(config, created))
+        {
+            return false;
+        }
+        if (!BmObjectHelper.isInlineConfigurationChild(englishType))
+        {
+            tx.attachTopObject((IBmObject) created, fqn);
+        }
+        return true;
+    }
+
     String opSetObjectProperty(Map<String, String> params)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
@@ -1073,8 +1116,8 @@ final class ObjectOps
         }
         if (listShape[0] != null)
         {
-            // The property in its own shape - an array for a list, an object for the one property
-            // that holds lists inside it - so a caller can see what a dry run would leave behind
+            // The property's shape is an array for an ordinary list, or an object for a localized
+            // map or nested lists, so a caller can see what a dry run would leave behind
             // without reading the model back.
             r.tags.put(dryRun ? "wouldWrite" : "listValue", listShape[0]); //$NON-NLS-1$ //$NON-NLS-2$
         }
@@ -1380,6 +1423,14 @@ final class ObjectOps
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String type = JsonUtils.extractStringArgument(params, "type"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String listModeArg = JsonUtils.extractStringArgument(params, "listMode"); //$NON-NLS-1$
+        final ConfigurationListProperties.ListMode listMode =
+            ConfigurationListProperties.ListMode.parse(listModeArg);
+        if (listMode == null)
+        {
+            return ToolResult.error("listMode takes one of: " //$NON-NLS-1$
+                + ConfigurationListProperties.ListMode.spelled()).toJson();
+        }
 
         final boolean[] typeSkipped = { false };
         BmDefinedTypeHelper.QualifierOptions qualifiers = new BmDefinedTypeHelper.QualifierOptions();
@@ -1394,11 +1445,20 @@ final class ObjectOps
         qualifiers.allowedLength = JsonUtils.extractStringArgument(params, "allowedLength"); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
-            + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn") //$NON-NLS-1$
-            + EditMetadataTool.requireNonEmpty(type, "type"); //$NON-NLS-1$
+            + EditMetadataTool.requireNonEmpty(ownerFqn, "ownerFqn"); //$NON-NLS-1$
+        if (listMode != ConfigurationListProperties.ListMode.CLEAR)
+        {
+            err += EditMetadataTool.requireNonEmpty(type, "type"); //$NON-NLS-1$
+        }
         if (!err.isEmpty())
         {
             return ToolResult.error(err.trim()).toJson();
+        }
+        if (listMode == ConfigurationListProperties.ListMode.CLEAR)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "A metadata element must have at least one type; listMode=clear is not allowed.", //$NON-NLS-1$
+                "set_object_type"); //$NON-NLS-1$
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -1422,6 +1482,8 @@ final class ObjectOps
         final boolean[] typeApplied = { false };
         final List<String> typeResolved = new ArrayList<>();
         final List<String> typeUnresolved = new ArrayList<>();
+        final AtomicReference<BmDefinedTypeHelper.TypesResult> typeResult =
+            new AtomicReference<>();
 
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, topFqn, dryRun,
             (tx, owner) -> {
@@ -1447,8 +1509,10 @@ final class ObjectOps
                     }
                     target = (MdObject) child;
                 }
-                BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.setTypes(
-                    target, project, config, Collections.singletonList(type), qualifiers);
+                BmDefinedTypeHelper.TypesResult tr = BmDefinedTypeHelper.updateTypes(
+                    target, project, config, Collections.singletonList(type), qualifiers,
+                    listMode, dryRun);
+                typeResult.set(tr);
                 typeApplied[0] = tr.ok;
                 typeSkipped[0] = tr.idempotentSkip;
                 if (tr.resolved != null)
@@ -1470,6 +1534,7 @@ final class ObjectOps
 
         Map<String, Object> typeApply = new LinkedHashMap<>();
         typeApply.put("requested", type); //$NON-NLS-1$
+        typeApply.put("listMode", listMode.name().toLowerCase()); //$NON-NLS-1$
         // A type that was already what was asked for is not a type this call applied. Reporting the
         // two the same way is how a request that wrote nothing read as a success.
         typeApply.put("applied", Boolean.valueOf(typeApplied[0] && !typeSkipped[0])); //$NON-NLS-1$
@@ -1486,7 +1551,19 @@ final class ObjectOps
             typeApply.put("unresolved", typeUnresolved); //$NON-NLS-1$
         }
         r.tags.put("typeApplication", typeApply); //$NON-NLS-1$
-        List<String> ignoredQualifiers = qualifiers.ignoredFor(type);
+        BmDefinedTypeHelper.TypesResult tr = typeResult.get();
+        if (tr != null)
+        {
+            r.tags.put("added", tr.added); //$NON-NLS-1$
+            r.tags.put("removed", tr.removed); //$NON-NLS-1$
+            r.tags.put("skipped", tr.skipped); //$NON-NLS-1$
+            r.tags.put("types", tr.finalTypes); //$NON-NLS-1$
+            r.tags.put("typeCount", Integer.valueOf(tr.finalTypes.size())); //$NON-NLS-1$
+        }
+        String qualifiedTypes = listMode == ConfigurationListProperties.ListMode.ADD && tr != null
+            ? String.join(",", tr.added) //$NON-NLS-1$
+            : listMode == ConfigurationListProperties.ListMode.REPLACE ? type : null;
+        List<String> ignoredQualifiers = qualifiers.ignoredFor(qualifiedTypes);
         if (!ignoredQualifiers.isEmpty())
         {
             r.tags.put("qualifierIgnored", ignoredQualifiers); //$NON-NLS-1$
@@ -1658,6 +1735,17 @@ final class ObjectOps
             return ProjectResolver.notFound(projectName).toJson();
         }
 
+        // The composition refusal is answered before a borrowing adopts anything for a call that
+        // will be refused: an adoption commits on its own and survives the rollback the
+        // in-transaction refusal throws, so the extension would hold what it borrowed.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, null, "Attribute", name, Collections.singletonList(type), attrQualifiers); //$NON-NLS-1$
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "attribute '" + name + "': " + preBorrowRefusal, "add_object_attribute"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        }
+
         // Phase 6.6: auto-borrow referenced metadata objects when the attribute
         // type is a reference (CatalogRef.X / DocumentRef.X / etc.) inside an
         // extension project. Best-effort - failures surface as warning tags.
@@ -1761,6 +1849,16 @@ final class ObjectOps
                         + "': no compatible MdClassFactory method found " //$NON-NLS-1$
                         + "(tried create" + owner.eClass().getName() + "Attribute, " //$NON-NLS-1$ //$NON-NLS-2$
                         + "createAttribute, MdClassPackage EClass lookup)."); //$NON-NLS-1$
+                }
+                // The composition refusal is answered while the attribute is still detached:
+                // it is known from the arguments and the carrier alone, and the transaction
+                // rolls back to a refusal thrown before anything is attached.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    owner, attribute, Collections.singletonList(type), attrQualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException("attribute '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                        + compositionRefusal);
                 }
                 attribute.setName(name);
                 synonymRef.set(EditMetadataTool.applyMdObjectSynonym(attribute, synonym, name, project));
@@ -2399,6 +2497,18 @@ final class ObjectOps
             return ProjectResolver.notFound(projectName).toJson();
         }
 
+        // The composition refusal is answered before a borrowing adopts anything: an adoption
+        // commits on its own and survives the rollback the in-transaction refusal throws, so the
+        // extension would hold the owner, the tabular section and the reference targets.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, tcName, "Attribute", name, Collections.singletonList(type), tcQualifiers); //$NON-NLS-1$
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "tabular section attribute '" + name + "': " + preBorrowRefusal, //$NON-NLS-1$ //$NON-NLS-2$
+                "add_tabular_section_attribute"); //$NON-NLS-1$
+        }
+
         // Auto-borrow the referenced metadata object when a tabular-section
         // attribute's type is a reference (CatalogRef.X / DocumentRef.X / ...)
         // inside an extension project - mirrors opAddObjectAttribute. Best-effort;
@@ -2473,6 +2583,15 @@ final class ObjectOps
                         + "': no compatible MdClassFactory method found " //$NON-NLS-1$
                         + "(tried createTabularSectionAttribute and " //$NON-NLS-1$
                         + "create" + ts.eClass().getName() + "Attribute)."); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                // Answered while the attribute is still detached - the mirror of the
+                // object-attribute path above.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    ts, attribute, Collections.singletonList(type), tcQualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException("tabular section attribute '" + name + "': " //$NON-NLS-1$ //$NON-NLS-2$
+                        + compositionRefusal);
                 }
                 attribute.setName(name);
                 tcSynonymRef.set(EditMetadataTool.applyMdObjectSynonym(attribute, tcSynonym, name, project));

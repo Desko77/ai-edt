@@ -1333,6 +1333,126 @@ public class BmCommandInterfaceHelper
             + "or CommandGroup.<name> for a custom group."); //$NON-NLS-1$
     }
 
+    /** The group an object command belongs to when create_object_command names none. */
+    public static final String DEFAULT_OBJECT_COMMAND_GROUP = "FormCommandBarImportant"; //$NON-NLS-1$
+
+    /**
+     * Friendly names of the object-command groups (lower-cased) mapped to their
+     * canonical platform name. Extends the command-interface map with the five
+     * Form* groups, which exist only for object commands.
+     */
+    private static final Map<String, String> OBJECT_COMMAND_GROUP_FRIENDLY_NAMES =
+        buildObjectCommandGroupFriendlyNames();
+
+    private static Map<String, String> buildObjectCommandGroupFriendlyNames()
+    {
+        Map<String, String> m = new LinkedHashMap<>(STANDARD_GROUP_FRIENDLY_NAMES);
+        m.put("commandbar", "FormCommandBarImportant"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("basedon", "FormCommandBarCreateBasedOn"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("goto", "FormNavigationPanelGoTo"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("formimportant", "FormNavigationPanelImportant"); //$NON-NLS-1$ //$NON-NLS-2$
+        m.put("formseealso", "FormNavigationPanelSeeAlso"); //$NON-NLS-1$ //$NON-NLS-2$
+        return m;
+    }
+
+    /** The 11 canonical object-command group names, each mapped to its category. */
+    private static final Map<String, CommandGroupCategory> OBJECT_COMMAND_GROUP_CATEGORIES =
+        buildObjectCommandGroupCategories();
+
+    private static Map<String, CommandGroupCategory> buildObjectCommandGroupCategories()
+    {
+        Map<String, CommandGroupCategory> m = new LinkedHashMap<>(STANDARD_GROUP_CATEGORIES);
+        m.put("FormCommandBarImportant", CommandGroupCategory.FORM_COMMAND_BAR); //$NON-NLS-1$
+        m.put("FormCommandBarCreateBasedOn", CommandGroupCategory.FORM_COMMAND_BAR); //$NON-NLS-1$
+        m.put("FormNavigationPanelGoTo", CommandGroupCategory.FORM_NAVIGATION_PANEL); //$NON-NLS-1$
+        m.put("FormNavigationPanelImportant", CommandGroupCategory.FORM_NAVIGATION_PANEL); //$NON-NLS-1$
+        m.put("FormNavigationPanelSeeAlso", CommandGroupCategory.FORM_NAVIGATION_PANEL); //$NON-NLS-1$
+        return m;
+    }
+
+    /** Prefix marking a group argument that names a custom group by FQN. */
+    private static final String CUSTOM_GROUP_PREFIX = "CommandGroup."; //$NON-NLS-1$
+
+    /**
+     * Resolves the {@code group} argument of an object command - a friendly name
+     * (CommandBar / BasedOn / GoTo / FormImportant / FormSeeAlso, plus the
+     * command-interface names Important / Normal / SeeAlso / Create / Reports /
+     * Service), a platform token, optionally prefixed
+     * {@code StandardCommandGroup.}, all case-insensitive - to a canonical
+     * platform group name. A blank argument resolves to
+     * {@link #DEFAULT_OBJECT_COMMAND_GROUP}.
+     *
+     * @return the canonical name, or {@code null} when {@code token} carries the
+     *         {@code CommandGroup.} prefix, which marks a custom group the caller
+     *         resolves in the model
+     * @throws RuntimeException when the argument matches no known group; the
+     *         message lists the accepted names
+     */
+    public static String resolveObjectCommandGroupName(String token)
+    {
+        String t = token == null ? "" : token.trim(); //$NON-NLS-1$
+        if (t.isEmpty())
+        {
+            return DEFAULT_OBJECT_COMMAND_GROUP;
+        }
+        if (t.regionMatches(true, 0, CUSTOM_GROUP_PREFIX, 0, CUSTOM_GROUP_PREFIX.length()))
+        {
+            return null;
+        }
+        if (t.regionMatches(true, 0, "StandardCommandGroup.", 0, "StandardCommandGroup.".length())) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            t = t.substring("StandardCommandGroup.".length()); //$NON-NLS-1$
+        }
+        String friendly = OBJECT_COMMAND_GROUP_FRIENDLY_NAMES.get(t.toLowerCase(Locale.ROOT));
+        if (friendly != null)
+        {
+            return friendly;
+        }
+        for (String canonical : OBJECT_COMMAND_GROUP_CATEGORIES.keySet())
+        {
+            if (canonical.equalsIgnoreCase(t))
+            {
+                return canonical;
+            }
+        }
+        throw new RuntimeException("Unknown command group '" + token //$NON-NLS-1$
+            + "'. Object commands accept a friendly name (CommandBar / BasedOn / GoTo / FormImportant / " //$NON-NLS-1$
+            + "FormSeeAlso / Important / Normal / SeeAlso / Create / Reports / Service), a platform token " //$NON-NLS-1$
+            + "(" + String.join(" / ", OBJECT_COMMAND_GROUP_CATEGORIES.keySet()) + "), " //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            + "or CommandGroup.<name> for a custom group."); //$NON-NLS-1$
+    }
+
+    /**
+     * Tells whether a standard object-command group belongs to a form: the form command bar or the
+     * form navigation panel. A command that takes a parameter is placed only in those.
+     *
+     * @param canonicalName the canonical platform name of the group
+     * @return {@code true} for the five Form* groups, {@code false} for any other name
+     */
+    public static boolean isFormObjectCommandGroup(String canonicalName)
+    {
+        CommandGroupCategory category = OBJECT_COMMAND_GROUP_CATEGORIES.get(canonicalName);
+        return category == CommandGroupCategory.FORM_COMMAND_BAR
+            || category == CommandGroupCategory.FORM_NAVIGATION_PANEL;
+    }
+
+    /**
+     * Creates a detached StandardCommandGroup for an object command's group from
+     * its canonical platform name and that name's category.
+     *
+     * @throws RuntimeException when {@code canonicalName} is not a known
+     *         object-command group name
+     */
+    public static StandardCommandGroup createObjectCommandGroup(String canonicalName)
+    {
+        CommandGroupCategory category = OBJECT_COMMAND_GROUP_CATEGORIES.get(canonicalName);
+        if (category == null)
+        {
+            throw new RuntimeException("Not an object command group: " + canonicalName); //$NON-NLS-1$
+        }
+        return newStandardGroup(canonicalName, category, 0);
+    }
+
     /**
      * Finds an existing StandardCommandGroup already referenced by name from
      * another placement/order fragment of {@code ci} and reuses that exact
@@ -1395,13 +1515,21 @@ public class BmCommandInterfaceHelper
         {
             return existing;
         }
+        return newStandardGroup(canonicalName, category,
+            categorySibling == null ? 0 : categorySibling.getPriority());
+    }
+
+    /**
+     * Builds a detached StandardCommandGroup carrying {@code canonicalName}, its
+     * category and its priority.
+     */
+    private static StandardCommandGroup newStandardGroup(String canonicalName, CommandGroupCategory category,
+        int priority)
+    {
         StandardCommandGroup created = McoreFactory.eINSTANCE.createStandardCommandGroup();
         created.setName(canonicalName);
         created.setCategory(category);
-        if (categorySibling != null)
-        {
-            created.setPriority(categorySibling.getPriority());
-        }
+        created.setPriority(priority);
         // A detached, factory-created StandardCommandGroup is an IBmObject with no BM namespace and
         // no resource, so the BM transaction's ReferenceValueFactory cannot build a persistable
         // reference to it and the commit fails with "Failed to persist reference value". EDT's own

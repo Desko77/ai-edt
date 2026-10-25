@@ -108,6 +108,17 @@ public class YaxunitTestRunnerTest
         assertTrue("schema should declare timeoutSeconds", schema.contains("\"timeoutSeconds\""));
     }
 
+    /**
+     * The timeout is the budget of the complete call, not a polling window opened after launch.
+     */
+    @Test
+    public void schemaCallsTimeoutTheDeadlineOfTheWholeCall()
+    {
+        String schema = newTool().getInputSchema();
+        assertTrue("timeoutSeconds must describe the complete call deadline: " + schema,
+            schema.contains("entire call")); //$NON-NLS-1$
+    }
+
     @Test
     public void executeWithoutProjectNameReportsItAsRequired()
     {
@@ -239,6 +250,62 @@ public class YaxunitTestRunnerTest
     }
 
     /**
+     * A report the clearing of the directory could not remove refuses the launch and is named:
+     * a run launched over it could tell its own report from it only by time and length.
+     */
+    @Test
+    public void aReportTheClearingLeftRefusesTheLaunch() throws Exception
+    {
+        Path reportDir = Files.createTempDirectory("yaxunit-leftover"); //$NON-NLS-1$
+        try
+        {
+            assertNull("an empty directory launches", YaxunitTestRunner.leftoverReportRefusal(reportDir)); //$NON-NLS-1$
+            Path leftover = reportDir.resolve("junit.xml"); //$NON-NLS-1$
+            Files.write(leftover, "<testsuite name=\"Earlier\" tests=\"1\"/>".getBytes(StandardCharsets.UTF_8)); //$NON-NLS-1$
+            String refusal = YaxunitTestRunner.leftoverReportRefusal(reportDir);
+            assertNotNull("a report the clearing left refuses the launch", refusal); //$NON-NLS-1$
+            assertTrue(refusal, refusal.contains(leftover.toString()));
+            assertTrue(refusal, refusal.contains("Nothing was launched")); //$NON-NLS-1$
+        }
+        finally
+        {
+            try (Stream<Path> walk = Files.walk(reportDir))
+            {
+                walk.sorted(Comparator.reverseOrder()).forEach(p -> p.toFile().delete());
+            }
+        }
+    }
+
+    /**
+     * A report belongs to the run when it differs from what the directory held at launch: the
+     * report of an earlier run of the same tests lies in the same directory and carries no run of
+     * its own. No clock takes part, so a modification time rounded below the launch does not make
+     * a fresh report stale.
+     */
+    @Test
+    public void aReportThatDiffersFromTheLaunchStampIsThisRunsReport()
+    {
+        YaxunitTestRunner.ReportStamp absent = YaxunitTestRunner.ReportStamp.ABSENT;
+        YaxunitTestRunner.ReportStamp earlier = new YaxunitTestRunner.ReportStamp(true,
+            1_700_000_000_000L, 812L);
+        assertFalse("no report at all is no report of this run", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(absent, absent));
+        assertTrue("a report in a directory that held none at launch is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(earlier, absent));
+        assertFalse("the report the launch found is an earlier run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(new YaxunitTestRunner.ReportStamp(true,
+                1_700_000_000_000L, 812L), earlier));
+        assertTrue("a rewrite with a modification time rounded below the launch is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(new YaxunitTestRunner.ReportStamp(true,
+                1_699_999_998_000L, 940L), earlier));
+        assertTrue("a rewrite of the same length at another time is this run's", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(new YaxunitTestRunner.ReportStamp(true,
+                1_700_000_002_000L, 812L), earlier));
+        assertTrue("a run this process did not launch has no stamp to compare with", //$NON-NLS-1$
+            YaxunitTestRunner.reportOfThisRun(earlier, null));
+    }
+
+    /**
      * An answer taken from a report carries the mark and the run it belongs to, and the two ways
      * into the report are named apart.
      */
@@ -306,21 +373,13 @@ public class YaxunitTestRunnerTest
      * @throws Exception when the stand-in report cannot be written
      */
     @Test
-    public void theAliasAnswersJsonOnARefusalAPendingRunAndAResult() throws Exception
+    public void theAliasAnswersJsonOnARefusalAndAResult() throws Exception
     {
         JsonObject refusal = JsonParser.parseString(newTool().execute(new HashMap<String, String>()))
             .getAsJsonObject();
         assertFalse(refusal.get("success").getAsBoolean()); //$NON-NLS-1$
         assertTrue(refusal.get("error").getAsString(), //$NON-NLS-1$
             refusal.get("error").getAsString().contains("projectName")); //$NON-NLS-1$ //$NON-NLS-2$
-
-        JsonObject pending = JsonParser.parseString(
-            YaxunitTestRunner.publish(YaxunitTestRunner.pendingText(Path.of("report-dir"), false))) //$NON-NLS-1$
-            .getAsJsonObject();
-        assertTrue(pending.get("success").getAsBoolean()); //$NON-NLS-1$
-        assertTrue(pending.get("output").getAsString(), //$NON-NLS-1$
-            pending.get("output").getAsString().contains("**Pending:**")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("yaxunit_tests", pending.get("operation").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
 
         Path report = Files.createTempDirectory("yaxunit-json"); //$NON-NLS-1$
         Path receipts = report.resolve("receipts"); //$NON-NLS-1$
@@ -481,7 +540,7 @@ public class YaxunitTestRunnerTest
         try
         {
             String raw = YaxunitTestRunner.handOverFinishedLaunch(runKey, onePassingReport(root),
-                new YaxunitTestRunner.RunContext("Proj", "Ext", "Module", "Module.Test", false), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                new YaxunitTestRunner.RunContext("Proj", "Ext", "Module", "Module.passes", false), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
                 fields -> RunReceipts.writeResolving(fields, tool -> {
                     throw new IllegalStateException("plugin state is gone"); //$NON-NLS-1$
                 }));

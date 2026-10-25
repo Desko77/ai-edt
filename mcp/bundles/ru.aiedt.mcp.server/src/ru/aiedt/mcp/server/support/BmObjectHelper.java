@@ -21,9 +21,13 @@ import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.common.util.EList;
+import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
+import org.eclipse.emf.ecore.InternalEObject;
 
+import com._1c.g5.v8.bm.core.BmUriUtil;
 import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
@@ -34,10 +38,14 @@ import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IExternalObjectProject;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicDbObject;
+import com._1c.g5.v8.dt.metadata.mdclass.Catalog;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.Document;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassFactory;
 import com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.mcore.Field;
 import com._1c.g5.wiring.ServiceAccess;
 import com._1c.g5.wiring.ServiceProperties;
 
@@ -753,6 +761,152 @@ public final class BmObjectHelper
     }
 
     /**
+     * The composition refusal of a creating operation, answered before any borrowing runs.
+     * <p>
+     * A borrowing adopts its object in a commit of its own, so it survives the rollback of the
+     * transaction the refusal inside a creation throws in - answered only there, a refused call
+     * would leave the extension holding the owner and the reference targets it borrowed. The
+     * question is therefore asked first, on the owner the call can see without adopting anything:
+     * the object the address already resolves to in the project's own configuration, otherwise the
+     * base-configuration object at the same address. The two views differ in nothing the carrier
+     * decision reads - the owner's class and its chain of containers are the same - so the refusal
+     * is the one {@link BmDefinedTypeHelper#creationCompositeStringRefusal} answers once the
+     * element sits attached, asked here through the same code rather than a second copy of rules.
+     * </p>
+     * <p>
+     * Nothing answers for the owner - neither configuration holds it, or the configuration service
+     * is unreachable - and the question is left to the check inside the transaction, which stays
+     * where it is for the paths this entry cannot see.
+     * </p>
+     *
+     * @param project the project the call writes in, possibly <code>null</code>
+     * @param ownerFqn the owner the call names
+     * @param tabularSectionName the tabular section a column call names, or <code>null</code>
+     * @param childKind the kind of the element the call creates (Attribute, Dimension, ...)
+     * @param name the name the call gives the element
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable or the
+     *         question cannot be answered before the borrowing
+     */
+    public static String preBorrowCompositeStringRefusal(IProject project, String ownerFqn,
+        String tabularSectionName, String childKind, String name, List<String> typeFqns,
+        BmDefinedTypeHelper.QualifierOptions qualifierOptions)
+    {
+        if (project == null || ownerFqn == null || ownerFqn.isEmpty()
+            || childKind == null || childKind.isEmpty()
+            || typeFqns == null || typeFqns.isEmpty())
+        {
+            return null;
+        }
+        IConfigurationProvider provider = Activator.getDefault() == null
+            ? null : Activator.getDefault().getConfigurationProvider();
+        if (provider == null)
+        {
+            return null;
+        }
+        String normalized = MetadataTypeCatalog.normalizeFqn(ownerFqn);
+        String[] parts = normalized.split("\\.", 2); //$NON-NLS-1$
+        if (parts.length != 2)
+        {
+            return null;
+        }
+        Configuration config = provider.getConfiguration(project);
+        MdObject view = config == null ? null
+            : MetadataTypeCatalog.findObject(config, parts[0], parts[1]);
+        if (view == null)
+        {
+            // The base configuration holds the objects the extension did not adopt; its object at
+            // the same address answers the carrier question the adopted one would.
+            IProject parent = BmCommonModuleGuards.parentProjectOf(project);
+            Configuration baseConfig = parent == null ? null : provider.getConfiguration(parent);
+            view = baseConfig == null ? null
+                : MetadataTypeCatalog.findObject(baseConfig, parts[0], parts[1]);
+        }
+        return preBorrowCompositeStringRefusalOnView(view, tabularSectionName, childKind, name,
+            typeFqns, qualifierOptions);
+    }
+
+    /**
+     * The question of {@link #preBorrowCompositeStringRefusal} on an owner view already resolved.
+     * <p>
+     * Split out so the decision is asked without a workspace: the view is what the resolving half
+     * reads out of the configurations, and the decision below it needs nothing else. The question
+     * is asked only where the creating path inside the transaction would ask it - an element of the
+     * same name already in the collection takes the idempotent or the mismatch path instead, and a
+     * composition repeated on an existing element without a length is judged by the length the
+     * model carries, which only the transaction sees.
+     * </p>
+     *
+     * @param ownerView the owner as the call sees it, possibly <code>null</code>
+     * @param tabularSectionName the tabular section a column call names, or <code>null</code>
+     * @param childKind the kind of the element the call creates
+     * @param name the name the call gives the element
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable or the
+     *         question cannot be answered on this view
+     */
+    static String preBorrowCompositeStringRefusalOnView(MdObject ownerView,
+        String tabularSectionName, String childKind, String name, List<String> typeFqns,
+        BmDefinedTypeHelper.QualifierOptions qualifierOptions)
+    {
+        MdObject carrier = ownerView;
+        if (tabularSectionName != null && !tabularSectionName.isEmpty())
+        {
+            EList<MdObject> sections = ownerView == null ? null : getTabularSections(ownerView);
+            carrier = sections == null ? null : findByName(sections, tabularSectionName);
+            if (carrier == null)
+            {
+                return null;
+            }
+        }
+        if (carrier == null || name == null || name.isEmpty())
+        {
+            return null;
+        }
+        String getter = childKindGetter(childKind);
+        if (getter == null)
+        {
+            return null;
+        }
+        EList<MdObject> existing = listByGetter(carrier, getter);
+        if (existing != null && findByName(existing, name) != null)
+        {
+            return null;
+        }
+        MdObject child = createOwnerScopedObject(carrier, childKind);
+        if (child == null)
+        {
+            return null;
+        }
+        return BmDefinedTypeHelper.creationCompositeStringRefusal(carrier, child, typeFqns,
+            qualifierOptions);
+    }
+
+    /**
+     * Reads a containment list of an owner through one named getter, answering <code>null</code>
+     * when the owner's class has no such getter or it answers no list.
+     *
+     * @param owner the object to read
+     * @param getter the getter's name (e.g. {@code getAttributes})
+     * @return the list, or <code>null</code>
+     */
+    @SuppressWarnings("unchecked")
+    private static EList<MdObject> listByGetter(MdObject owner, String getter)
+    {
+        try
+        {
+            Object result = owner.getClass().getMethod(getter).invoke(owner);
+            return result instanceof EList ? (EList<MdObject>)result : null;
+        }
+        catch (Exception e)
+        {
+            return null;
+        }
+    }
+
+    /**
      * Resolves the root external object (ExternalDataProcessor / ExternalReport)
      * of an external-object project by name. External-object projects
      * (.epf/.erf) have no Configuration - the roots live as top objects in the
@@ -955,6 +1109,124 @@ public final class BmObjectHelper
             return CreationOutcome.factoryFailed("MdObjectFactory.create(" + typeName //$NON-NLS-1$
                 + ") failed: " + e.getMessage()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Fills the wizard's input-by-string references on a new, attached catalog or document.
+     * Other kinds and an already populated list are left unchanged.
+     *
+     * @param object the new top object, after attachment in the creating BM transaction
+     * @throws IllegalStateException when the metadata factory is unavailable
+     */
+    public static void fillDefaultInputByString(MdObject object)
+    {
+        if (!(object instanceof Catalog) && !(object instanceof Document))
+        {
+            return;
+        }
+        if (!((BasicDbObject)object).getInputByString().isEmpty())
+        {
+            return;
+        }
+        IModelObjectFactory factory = modelObjectFactory();
+        if (factory == null)
+        {
+            throw new IllegalStateException("MdObjectFactory is unavailable for inputByString defaults."); //$NON-NLS-1$
+        }
+        // The reference updater requires the engine and FQN assigned by attachTopObject.
+        factory.fillDefaultReferences(object);
+    }
+
+    /**
+     * Replaces a new object's input-by-string list with exactly the requested fields.
+     * Empty or partially unresolved requests fail inside the creating transaction.
+     *
+     * @param object the attached object whose fields can be resolved
+     * @param fqn the object's fully qualified name
+     * @param names comma-separated field names
+     * @param project the owning workspace project
+     * @throws IllegalArgumentException when any requested field cannot be applied
+     */
+    public static void applyCreatedInputByString(MdObject object, String fqn, String names, IProject project)
+    {
+        if (object instanceof BasicDbObject && ((BasicDbObject)object).getFields().isEmpty())
+        {
+            applyInitialInputByString((BasicDbObject)object, fqn, names);
+            return;
+        }
+        List<String> resolved = new ArrayList<>();
+        List<String> unresolved = new ArrayList<>();
+        List<String> diagnostics = new ArrayList<>();
+        String refused = BmDefinedTypeHelper.applyInputByString(object, fqn, names, project,
+            resolved, unresolved, diagnostics);
+        if (refused != null || !unresolved.isEmpty())
+        {
+            throw new IllegalArgumentException((refused != null ? refused
+                : "inputByString: unresolved fields " + unresolved) + " Nothing was created."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
+    /**
+     * Selects fields from the initializer's references before derived fields are built.
+     * No new URI is constructed and a reference to another owner is not accepted.
+     *
+     * @param object the new database object whose derived fields are still empty
+     * @param fqn the attached object's address
+     * @param names comma-separated names of the requested fields
+     * @throws IllegalArgumentException when the whole requested list cannot be resolved
+     */
+    private static void applyInitialInputByString(BasicDbObject object, String fqn, String names)
+    {
+        Map<String, Field> available = new LinkedHashMap<>();
+        for (Field field : object.getInputByString())
+        {
+            String id = null;
+            if (field.eIsProxy())
+            {
+                URI uri = ((InternalEObject)field).eProxyURI();
+                if (uri != null && BmUriUtil.isBmUri(uri) && fqn.equals(BmUriUtil.extractTopObjectFqn(uri)))
+                {
+                    String path = BmUriUtil.extractContainmentPath(uri);
+                    if (path != null && path.startsWith("/fields:")) //$NON-NLS-1$
+                    {
+                        id = BmUriUtil.decodeCollectionItemId(path.substring("/fields:".length())); //$NON-NLS-1$
+                    }
+                }
+            }
+            else
+            {
+                id = field.getFieldId();
+            }
+            if (id != null)
+            {
+                available.put(id, field);
+            }
+        }
+        List<Field> selected = new ArrayList<>();
+        for (String part : (names == null ? "" : names).split(",")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            String name = part.trim();
+            if (name.isEmpty())
+            {
+                continue;
+            }
+            Field match = available.entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(name)
+                    || entry.getKey().substring(entry.getKey().lastIndexOf(':') + 1).equalsIgnoreCase(name))
+                .map(Map.Entry::getValue).findFirst().orElse(null);
+            if (match == null)
+            {
+                throw new IllegalArgumentException("inputByString: field '" + name //$NON-NLS-1$
+                    + "' is unavailable; initial fields: " + available.keySet() + ". Nothing was created."); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            selected.add(match);
+        }
+        if (selected.isEmpty())
+        {
+            throw new IllegalArgumentException("inputByString: give at least one field. Nothing was created."); //$NON-NLS-1$
+        }
+        object.getInputByString().clear();
+        object.getInputByString().addAll(selected);
     }
 
     /**
@@ -1505,6 +1777,40 @@ public final class BmObjectHelper
         {
             Activator.logWarning("addToConfiguration failed for " + typeName //$NON-NLS-1$
                 + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        return false;
+    }
+
+    /**
+     * Tells whether the configuration collection this type is created into holds
+     * its members by containment. A contained member (a Language today) is
+     * serialized inline in the configuration .mdo and joins the BM namespace the
+     * moment it is added to the collection, so attaching it again as a top object
+     * is rejected by the transaction service with "The object is already
+     * attached". Reference-held collections (catalogs, subsystems, ...) answer
+     * {@code false}: their members stay free top objects until an explicit
+     * {@code IBmTransaction.attachTopObject} registers them.
+     *
+     * @param typeName English singular metadata type name, e.g. {@code "Language"}
+     * @return {@code true} when the type joins the configuration as an inline
+     *     contained child and must not be attached as a top object
+     */
+    public static boolean isInlineConfigurationChild(String typeName)
+    {
+        String collection = MetadataTypeCatalog.getConfigReferenceName(typeName);
+        if (collection == null)
+        {
+            return false;
+        }
+        // The feature name casing does not always follow the catalog spelling
+        // (xDTOPackages vs xdtoPackages), so the match is case-insensitive -
+        // the same tolerance findNoArgGetter applies to the collection getter.
+        for (EReference reference : MdClassPackage.eINSTANCE.getConfiguration().getEAllReferences())
+        {
+            if (reference.getName().equalsIgnoreCase(collection))
+            {
+                return reference.isContainment();
+            }
         }
         return false;
     }

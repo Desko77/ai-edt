@@ -71,3 +71,6 @@ __pycache__/
 hs_err_pid*
 replay_pid*
 *.log
+
+# Agent reports copied from other machines
+/docs/reports_agents/

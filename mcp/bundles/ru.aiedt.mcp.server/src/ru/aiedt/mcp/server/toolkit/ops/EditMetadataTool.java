@@ -9,6 +9,7 @@ package ru.aiedt.mcp.server.toolkit.ops;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -20,6 +21,7 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.PlatformUI;
 
@@ -34,6 +36,7 @@ import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.Subsystem;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.MdClassPackage;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.GsonHolder;
@@ -386,6 +389,12 @@ public class EditMetadataTool implements IMcpTool
     }
 
     @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of(WRITE_DOOR);
+    }
+
+    @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
@@ -419,8 +428,9 @@ public class EditMetadataTool implements IMcpTool
                 "The command to place or show: CommonCommand.X or an object command such " //$NON-NLS-1$
                     + "as Catalog.X.Command.Y.") //$NON-NLS-1$
             .stringProperty("group", //$NON-NLS-1$
-                "set_command_placement / set_command_order: the command-interface group - a friendly name, a " //$NON-NLS-1$
-                + "platform token, or CommandGroup.<name>. Full text: operation=help topic=parameters.") //$NON-NLS-1$ //$NON-NLS-1$
+                "create_object_command / set_command_placement / set_command_order: the command group - a " //$NON-NLS-1$
+                + "friendly name, a platform token, or CommandGroup.<name>. Full text: " //$NON-NLS-1$
+                + "operation=help topic=parameters.") //$NON-NLS-1$
             .stringProperty("commands", //$NON-NLS-1$
                 "set_command_order: JSON array of command FQNs in the wanted leading order. " //$NON-NLS-1$
                 + "set_excluded_commands: JSON array of standard command names, " //$NON-NLS-1$
@@ -437,8 +447,8 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("synonym", //$NON-NLS-1$
                 "Synonym for a newly created object or field.") //$NON-NLS-1$
             .objectProperty("properties", //$NON-NLS-1$
-                "create_object: a JSON object of property name to value, applied before " //$NON-NLS-1$
-                    + "the new object joins the configuration.") //$NON-NLS-1$
+                "create_object: a JSON object of property name to value, applied in " //$NON-NLS-1$
+                    + "the creating transaction.") //$NON-NLS-1$
             .booleanProperty("server", //$NON-NLS-1$
                 "create_object CommonModule: the Server context.") //$NON-NLS-1$
             .booleanProperty("externalConnection", //$NON-NLS-1$
@@ -454,10 +464,10 @@ public class EditMetadataTool implements IMcpTool
             .stringProperty("propertyName", //$NON-NLS-1$
                 "set_object_property: which property to set.") //$NON-NLS-1$
             .stringProperty("propertyValue", //$NON-NLS-1$
-                "Property value for setObjectProperty (string; coerced to setter type).") //$NON-NLS-1$
+                "Text/JSON; localized: default-language text or language map. " //$NON-NLS-1$
+                    + "help topic=parameters.") //$NON-NLS-1$
             .stringProperty("listMode", //$NON-NLS-1$
-                "set_object_property on a list-shaped property: replace (default), add, " //$NON-NLS-1$
-                    + "remove, clear.") //$NON-NLS-1$
+                "List operation: replace (default), add, remove, clear.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "Type for the attribute-creating operations and set_object_type: String / " //$NON-NLS-1$
                     + "Number / Date / Boolean / UUID, CatalogRef.X, or several comma-separated. " //$NON-NLS-1$
@@ -612,9 +622,10 @@ public class EditMetadataTool implements IMcpTool
                 "create_web_service Operation.Transactional flag. Default false.") //$NON-NLS-1$
             // 1.43.x audit A6: typed web-service operation parameters + return type.
             .stringProperty("returningValueType", //$NON-NLS-1$
-                "add_web_service_operation: XDTO return value type as a QName - either " //$NON-NLS-1$
-                + "'{nsUri}localName' or a bare local name (e.g. 'string') combined with " //$NON-NLS-1$
-                + "returningValueTypeNs (default XSD namespace). HTTP services are untyped. Optional.") //$NON-NLS-1$
+                "add_web_service_operation: XDTO return value type as QName: " //$NON-NLS-1$
+                + "'{nsUri}localName' or a bare local name with returningValueTypeNs " //$NON-NLS-1$
+                + "(default XSD namespace). Given none, the XSD string type. HTTP services " //$NON-NLS-1$
+                + "are untyped.") //$NON-NLS-1$
             .stringProperty("returningValueTypeNs", //$NON-NLS-1$
                 "add_web_service_operation: namespace URI for returningValueType when " //$NON-NLS-1$
                     + "given as a bare local name.") //$NON-NLS-1$
@@ -1903,10 +1914,12 @@ public class EditMetadataTool implements IMcpTool
      * The tail is only attempted when its first kind segment is a recognized
      * child kind, so a plain {@code Type.Name} that simply does not exist still
      * returns {@code null} rather than being mistaken for a child path.
+     * A two-segment FQN of a configuration-contained type, such as Language,
+     * resolves through {@link #resolveInlineConfigurationChild}.
      *
      * @param tx the active BM transaction
      * @param normFqn the normalized target FQN
-     * @return the resolved top-level or child object, or {@code null}
+     * @return the resolved top-level, child or inline-contained object, or {@code null}
      */
     static Object resolveReferenceTarget(IBmTransaction tx, String normFqn)
     {
@@ -1926,6 +1939,55 @@ public class EditMetadataTool implements IMcpTool
             if (parent instanceof EObject)
             {
                 return BmObjectHelper.resolveChildByPath((EObject)parent, segs, 2);
+            }
+        }
+        if (segs.length == 2)
+        {
+            return resolveInlineConfigurationChild(tx, segs[0], segs[1]);
+        }
+        return null;
+    }
+
+    /**
+     * Resolves a named configuration-contained object in the current transaction.
+     * Uses the collection's EReference type to restrict the contained-object
+     * iterator and compares metadata names without case sensitivity. Does not
+     * scan reference-held kinds or modify objects.
+     *
+     * @param tx the active BM transaction, read but never written
+     * @param typeName the normalized English singular type segment
+     * @param objectName the object name segment
+     * @return the contained object, or {@code null} when the type has no inline
+     *         containment collection, when nothing of it is contained, or when
+     *         no contained name matches
+     */
+    private static Object resolveInlineConfigurationChild(IBmTransaction tx, String typeName, String objectName)
+    {
+        String referenceName = MetadataTypeCatalog.getConfigReferenceName(typeName);
+        if (referenceName == null)
+        {
+            return null;
+        }
+        EReference collection = null;
+        for (EReference reference : MdClassPackage.eINSTANCE.getConfiguration().getEAllReferences())
+        {
+            if (reference.isContainment() && referenceName.equalsIgnoreCase(reference.getName()))
+            {
+                collection = reference;
+                break;
+            }
+        }
+        if (collection == null)
+        {
+            return null;
+        }
+        Iterator<IBmObject> contained = tx.getContainedObjectIterator(collection.getEReferenceType());
+        while (contained.hasNext())
+        {
+            Object candidate = contained.next();
+            if (candidate instanceof MdObject && objectName.equalsIgnoreCase(((MdObject)candidate).getName()))
+            {
+                return candidate;
             }
         }
         return null;
@@ -2820,6 +2882,29 @@ public class EditMetadataTool implements IMcpTool
         return err.toJson();
     }
 
+    /**
+     * The answer of a refusal thrown before the write entry ran: the error shape
+     * {@link #formatResult} gives a refusal thrown inside the transaction, with the preview tag a
+     * preview carries there.
+     *
+     * @param fqn the owner the refused call named
+     * @param dryRun whether the refused call was a preview
+     * @param error the refusal text
+     * @param op the operation's own name
+     * @return the JSON answer
+     */
+    static String refusedResult(String fqn, boolean dryRun, String error, String op)
+    {
+        BmObjectHelper.Result r = new BmObjectHelper.Result();
+        r.fqn = fqn;
+        r.error = error;
+        if (dryRun)
+        {
+            r.tags.put("dryRun", Boolean.TRUE); //$NON-NLS-1$
+        }
+        return formatResult(r, op);
+    }
+
     static void applyTags(ToolResult result, Map<String, Object> tags)
     {
         if (result == null || tags == null || tags.isEmpty())
@@ -2965,7 +3050,7 @@ public class EditMetadataTool implements IMcpTool
         reg(m, "remove_role_restriction", "Specialized", "", p -> roleOps.opRoleRestriction(p, true));
         reg(m, "add_event_subscription_handler", "Specialized", "BSL stub", p -> specializedOps.opAddEventHandler(p));
         reg(m, "set_event_subscription", "Specialized", "source + event + handler", p -> specializedOps.opSetEventSubscription(p));
-        reg(m, "create_object_command", "Specialized", "", p -> specializedOps.opCreateObjectCommand(p));
+        reg(m, "create_object_command", "Specialized", "+group", p -> specializedOps.opCreateObjectCommand(p));
         reg(m, "remove_command", "Specialized", "", p -> specializedOps.opRemoveCommand(p));
         reg(m, "add_exchange_plan_content", "Specialized", "+autoRecord", p -> contentOps.opAddExchangePlanContent(p));
         reg(m, "remove_exchange_plan_content", "Specialized", "", p -> contentOps.opRemoveExchangePlanContent(p));
@@ -3158,17 +3243,18 @@ public class EditMetadataTool implements IMcpTool
             + "CommonForm.X.Form). Used by add_form_attribute / add_form_parameter / " //$NON-NLS-1$
             + "add_field / ...\n\n"); //$NON-NLS-1$
         sb.append("### group\n\n"); //$NON-NLS-1$
-        sb.append("set_command_placement: the target command-interface group. Either a friendly name - Important / Normal / SeeAlso / Create / Reports / Service - a bare or StandardCommandGroup.-prefixed platform token (NavigationPanelImportant / NavigationPanelOrdinary / NavigationPanelSeeAlso / ActionsPanelCreate / ActionsPanelReports / ActionsPanelTools), or a custom group FQN CommandGroup.<name>. set_command_order: same group selection (one group, reordered).\n\n"); //$NON-NLS-1$
+        sb.append("set_command_placement: the target command-interface group. Either a friendly name - Important / Normal / SeeAlso / Create / Reports / Service - a bare or StandardCommandGroup.-prefixed platform token (NavigationPanelImportant / NavigationPanelOrdinary / NavigationPanelSeeAlso / ActionsPanelCreate / ActionsPanelReports / ActionsPanelTools), or a custom group FQN CommandGroup.<name>. set_command_order: same group selection (one group, reordered). create_object_command: the command-interface group of the command it creates. The platform refuses to load a configuration whose command carries no group, so a call naming none writes FormCommandBarImportant. An object command accepts those same names plus the five Form* groups - FormCommandBarImportant / FormCommandBarCreateBasedOn / FormNavigationPanelGoTo / FormNavigationPanelImportant / FormNavigationPanelSeeAlso, friendly aliases CommandBar / BasedOn / GoTo / FormImportant / FormSeeAlso - and a custom group FQN CommandGroup.<name>. A name matching none of them is refused with the accepted names before the project is read, so nothing is written.\n\n"); //$NON-NLS-1$
         sb.append("### namespace\n\n"); //$NON-NLS-1$
         sb.append("create_web_service: XML URI namespace (e.g. " //$NON-NLS-1$
             + "'http://example.com/myservice'). Required - platform rejects empty " //$NON-NLS-1$
             + "namespaces.\n\n"); //$NON-NLS-1$
         sb.append("### listMode\n\n"); //$NON-NLS-1$
-        sb.append("set_object_property on a list-shaped property: replace (default), add, " //$NON-NLS-1$
-            + "remove, clear. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
+        sb.append("set_object_property on a list-shaped property, set_object_type and " //$NON-NLS-1$
+            + "set_defined_type_types: replace (default), add, remove, clear. Type carriers " //$NON-NLS-1$
+            + "refuse clear because they must keep at least one type. Lists on the configuration root are usePurposes, " //$NON-NLS-1$
             + "requiredMobileApplicationPermissions, " //$NON-NLS-1$
             + "requiredMobileApplicationPermissions8315 and " //$NON-NLS-1$
-            + "usedMobileApplicationFunctionalities.\n\n"); //$NON-NLS-1$
+            + "usedMobileApplicationFunctionalities. Localized text maps accept replace or clear.\n\n"); //$NON-NLS-1$
         sb.append("### mainAddressingAttribute\n\n"); //$NON-NLS-1$
         sb.append("set_task_addressing: which of the Task's addressing attributes is its main one (основной реквизит адресации) - the bare name, or the full child FQN Task.<Task>.AddressingAttribute.<Name>. The attribute must be on the Task afterwards: list it in addressingAttributes to have it created in the same call, or add it first with add_addressing_attribute. set_object_reference can set the same property on its own when the attribute already exists.\n\n"); //$NON-NLS-1$
         sb.append("### isFolder\n\n"); //$NON-NLS-1$
@@ -3210,25 +3296,35 @@ public class EditMetadataTool implements IMcpTool
         sb.append("create_route_map, per point: the handler of the point's events, as an object of event name to handler name {\"before\":\"ОбработкаПеред\"} or as an array of {\"event\":<event>,\"handler\":<handler>}. The event name is the one the point kind declares (Start / Action / Condition / Completion / NestedBusinessProcess each have their own set); an event the kind does not declare is refused with the list it does have, and an empty handler name is refused. A point whose event is given no handler keeps the event with no handler, which is what the editor shows as an unbound event. The names are written into the scheme and come back in the answer's handlers[]. A handler the BusinessProcess object module does not declare yet gets a procedure there with the parameters of its event and an empty body, named in stubsWritten; one already declared is left alone and named in stubsAlreadyPresent; dryRun names the procedures it would write in stubsToWrite. get_route_map reads the handlers back as each point's events[].\n\n"); //$NON-NLS-1$
         sb.append("### properties\n\n"); //$NON-NLS-1$
         sb.append("create_object: a JSON object of property name to value, applied to the " //$NON-NLS-1$
-            + "new object before it joins the configuration - e.g. " //$NON-NLS-1$
+            + "new object in the creating transaction - e.g. " //$NON-NLS-1$
             + "{\"methodName\":\"CommonModule.A.B\",\"use\":false} on a ScheduledJob. A " //$NON-NLS-1$
             + "property the object's type does not have is refused and NOTHING is " //$NON-NLS-1$
             + "created. A property given both here and as its own argument must carry " //$NON-NLS-1$
-            + "the same value.\n\n"); //$NON-NLS-1$
+            + "the same value. Catalog inputByString defaults to Code,Description; Document to Number. " //$NON-NLS-1$
+            + "properties.inputByString replaces these fields with a comma-separated list; " //$NON-NLS-1$
+            + "every field must resolve. Reference properties are applied after attachment, before commit.\n\n"); //$NON-NLS-1$
         sb.append("### property\n\n"); //$NON-NLS-1$
         sb.append("Reference property name. For add_object_reference / remove_object_reference it is a LIST-valued reference (registerRecords on a Document = its movements, owners on a Catalog, basedOn, baseCalculationTypes on a ChartOfCalculationTypes; also registeredDocuments on a DocumentJournal, and documents / registerRecords on a Sequence - each takes a top-level object FQN in valueFqn). For set_object_reference / clear_object_reference it is a SCALAR reference (e.g. extDimensionTypes on a ChartOfAccounts = a ChartOfCharacteristicTypes; addressing / currentPerformer on a Task; mainAddressingAttribute on a Task = a child AddressingAttribute).\n\n"); //$NON-NLS-1$
         sb.append("### propertyName\n\n"); //$NON-NLS-1$
-        sb.append("Property name for setObjectProperty (coerced from propertyValue: enum literals, booleans, localized synonym / toolTip). Special: propertyName=fillValue builds a type-aware default value from the attribute's own single type: Boolean (true/false), Number, String (refused when longer than the attribute's declared length), Date as YYYY-MM-DD for the Date qualifier / YYYY-MM-DDTHH:MM:SS for DateTime / HH:MM:SS for Time, an enum value by its name (or Enum.X.EnumValue.Y) for an EnumRef type, a predefined item by its name for a reference type that has them, the literal EmptyRef (or ПустаяСсылка) for the type's empty reference, the literal StandardBeginningDate (or НачалоДаты) for the beginning of date; empty or 'Undefined' clears it. A composite type is refused. Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y). Special: a list-shaped property takes listMode - replace (default), add, remove, clear - and a JSON propertyValue. On the configuration root (ownerFqn=Configuration) those are usePurposes and requiredMobileApplicationPermissions (arrays of literals), requiredMobileApplicationPermissions8315 (array of {permission,use,description}) and usedMobileApplicationFunctionalities (an object naming its inner lists functionality and permissionMessage). A description is a string or an object of language to text. Every element is checked before anything is written, and dryRun answers with wouldWrite in the property's own shape.\n\n"); //$NON-NLS-1$
+        sb.append("Property name for set_object_property (scalar values, localized text maps or lists). Localized maps include objectPresentation, extendedObjectPresentation, listPresentation, extendedListPresentation, recordPresentation, extendedRecordPresentation and explanation where the metadata type declares them. Special: propertyName=fillValue builds a type-aware default value from the attribute's own single type: Boolean (true/false), Number, String (refused when longer than the attribute's declared length), Date as YYYY-MM-DD for the Date qualifier / YYYY-MM-DDTHH:MM:SS for DateTime / HH:MM:SS for Time, an enum value by its name (or Enum.X.EnumValue.Y) for an EnumRef type, a predefined item by its name for a reference type that has them, the literal EmptyRef (or ПустаяСсылка) for the type's empty reference, the literal StandardBeginningDate (or НачалоДаты) for the beginning of date; empty or 'Undefined' clears it. A composite type is refused. Special: propertyName=inputByString (on the object, not an attribute) sets the input-by-string fields - propertyValue is a comma-separated list of attribute names (e.g. Code,Description). propertyName=choiceParameters / choiceParameterLinks (on an attribute) take a JSON array: [{\"name\":\"Отбор.ЭтоГруппа\",\"value\":\"false\"}] / [{\"name\":\"Отбор.Владелец\",\"field\":\"Owner\"}]. Child FQNs supported (e.g. Catalog.X.Attribute.Y). Special: an ordinary list-shaped property takes listMode - replace (default), add, remove, clear - and a JSON propertyValue. On the configuration root (ownerFqn=Configuration) those are usePurposes and requiredMobileApplicationPermissions (arrays of literals), requiredMobileApplicationPermissions8315 (array of {permission,use,description}) and usedMobileApplicationFunctionalities (an object naming its inner lists functionality and permissionMessage). A description is a string or an object of language to text. Every element is checked before anything is written, and dryRun answers with wouldWrite in the property's own shape.\n\n"); //$NON-NLS-1$
         sb.append("### propertyValue\n\n"); //$NON-NLS-1$
-        sb.append("Property value for setObjectProperty (string; coerced to setter type). " //$NON-NLS-1$
-            + "For a list-shaped property it is JSON: an array of literals, an array of " //$NON-NLS-1$
-            + "objects, or an object naming inner lists.\n\n"); //$NON-NLS-1$
+        sb.append("Property value for set_object_property, encoded as a string. " //$NON-NLS-1$
+            + "For a localized presentation or explanation map, plain text writes the default language " //$NON-NLS-1$
+            + "and preserves the other languages; a JSON object of language codes replaces the " //$NON-NLS-1$
+            + "whole map. Omitted or blank clears it. Empty objects, arrays, blank language keys, " //$NON-NLS-1$
+            + "object parsing failures and non-string/non-null values are refused before " //$NON-NLS-1$
+            + "any write. JSON null entries become empty strings. listMode accepts replace " //$NON-NLS-1$
+            + "(default) or clear; dryRun returns the resulting map in wouldWrite without " //$NON-NLS-1$
+            + "changing the model. For an ordinary list-shaped property it is JSON: an array " //$NON-NLS-1$
+            + "of literals, an array of objects, or an object naming inner lists.\n\n"); //$NON-NLS-1$
         sb.append("### purpose\n\n"); //$NON-NLS-1$
         sb.append("create_form: form purpose driving the EDT form generator (renderable form with main attribute + default layout). Values: ItemForm/ObjectForm (OBJECT), ListForm (LIST), ChoiceForm (CHOICE), FolderForm (FOLDER), FolderChoiceForm (FOLDER_CHOICE), RecordSetForm (RECORD_SET), RecordForm (RECORD), Generic (GENERIC); RU synonyms accepted. When omitted the purpose is derived from the owner type and the form name (object-owning types -> OBJECT, registers -> RECORD_SET, a 'Список'/'List' name -> LIST, a 'Выбор'/'Choice' name -> CHOICE, DataProcessor/Report and ExternalDataProcessor/ExternalReport -> OBJECT (main form, Объект attr; pass purpose=Generic for a custom empty form), CommonForm -> GENERIC). Optional. Ignored for ORDINARY forms. A managed form without layout=empty is refused when the generator does not deliver (retry with layout=empty).\n\n"); //$NON-NLS-1$
         sb.append("### reuseSessions\n\n"); //$NON-NLS-1$
         sb.append("create_http_service: reuse HTTP sessions across requests. Maps to the " //$NON-NLS-1$
             + "platform SessionReuseMode enum - true -> Use, false -> DontUse; omitted " //$NON-NLS-1$
             + "leaves the platform default (AutoUse is not exposed by this boolean).\n\n"); //$NON-NLS-1$
+        sb.append("### returningValueType\n\n"); //$NON-NLS-1$
+        sb.append("add_web_service_operation: the XDTO return value type of the operation, as '{nsUri}localName' or as a bare local name combined with returningValueTypeNs. Given no type, the operation is written returning the XSD string type ({http://www.w3.org/2001/XMLSchema}string), and the answer says so under returningValueType (nsUri, localName, applied). The platform refuses to load a configuration whose WebService operation carries an empty return value type. create_web_service writes that same XSD string type on the operation it starts the service with. add_operation_parameter is not affected by the default: a parameter's valueType keeps its own meaning.\n\n"); //$NON-NLS-1$
         sb.append("### returningValueTypeNs\n\n"); //$NON-NLS-1$
         sb.append("add_web_service_operation: namespace URI for returningValueType when " //$NON-NLS-1$
             + "given as a bare local name. Default 'http://www.w3.org/2001/XMLSchema'. " //$NON-NLS-1$

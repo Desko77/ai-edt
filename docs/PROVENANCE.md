@@ -15,6 +15,16 @@ counsel. In particular:
   upstream-derived code remains** could make a licence change discussable, and that discussion belongs to
   a lawyer, not to this file.
 
+## Ordinary forms
+
+`ru.aiedt.mcp.oform` and its test fragment contain code authored by Desko77, licensed under
+AGPL-3.0-or-later. The container reader, layout parser, editors, composer and module provider
+originate from the separately maintained implementation at revision `64dcfa4`.
+
+The `.form` resources contain serialized ordinary-form records: 32 element and command templates
+and eight test layouts. Template placeholders and generic fixture names are retained with their
+serialized values. These resources are distinct from the `.form` files of EDT managed forms.
+
 ## How a file is classified
 
 Not by its copyright header. The header turned out to be unreliable: 18 files written in this fork

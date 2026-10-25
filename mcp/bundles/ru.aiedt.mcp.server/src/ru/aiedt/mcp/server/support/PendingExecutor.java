@@ -215,7 +215,6 @@ public final class PendingExecutor
         ToolResult tr = ToolResult.success()
             .put("operation", operationName) //$NON-NLS-1$
             .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
-            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
             .put("runKey", runKey) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
             .put("bodyRunningMs", entry.bodyRunningMs()) //$NON-NLS-1$
@@ -226,7 +225,7 @@ public final class PendingExecutor
         {
             pendingFields.apply(tr);
         }
-        return tr.toJson();
+        return PendingEnvelope.mark(tr).toJson();
     }
 
     /**

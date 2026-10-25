@@ -146,7 +146,8 @@ public class InsightsFacadeTool implements IMcpTool
                 "dependency_graph: in / out / both (default both).") //$NON-NLS-1$
             .stringProperty("edgeKinds", //$NON-NLS-1$
                 "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
-                    + "Omit to keep every kind.") //$NON-NLS-1$
+                    + "Omit - or pass an empty list - to keep every kind; the answer writes no " //$NON-NLS-1$
+                    + "edgeKinds field for an empty list.") //$NON-NLS-1$
             .integerProperty("maxNodes", //$NON-NLS-1$
                 "dependency_graph: node cap, default 200, at most 2000.") //$NON-NLS-1$
             .integerProperty("maxEdges", //$NON-NLS-1$
@@ -337,7 +338,8 @@ public class InsightsFacadeTool implements IMcpTool
             case "semantic_metadata_search": //$NON-NLS-1$
                 return new SemanticMetadataSearchTool().execute(params);
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(" / ", OPS.keySet()) + " / help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
@@ -550,8 +552,10 @@ public class InsightsFacadeTool implements IMcpTool
                 + "that merge. This argument keeps only the named via values; any other kind is " //$NON-NLS-1$
                 + "not queued on its own, and a target already reached by a kept kind stays. The " //$NON-NLS-1$
                 + "answer repeats edgeKinds as understood, edgesDroppedByKind, and unmatchedKinds " //$NON-NLS-1$
-                + "for a named kind the walk never saw - that is not a refusal. Omit the argument " //$NON-NLS-1$
-                + "to keep every kind. On level=modules the argument is not applied and the " //$NON-NLS-1$
+                + "for a named kind the walk never saw - that is not a refusal. Omit the argument, " //$NON-NLS-1$
+                + "or pass an empty list, to keep every kind: an empty list keeps every kind the " //$NON-NLS-1$
+                + "way an absent argument does, and the answer writes no edgeKinds field for it. " //$NON-NLS-1$
+                + "On level=modules a non-empty argument is not applied and the " //$NON-NLS-1$
                 + "answer says notApplied; calls edges merge the same way. Other operations do " //$NON-NLS-1$
                 + "not read it."); //$NON-NLS-1$
         rules.put("dependency_graph", Collections.unmodifiableMap(graph)); //$NON-NLS-1$

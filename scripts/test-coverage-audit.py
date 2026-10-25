@@ -35,6 +35,12 @@ Usage:
 
 --check exits non-zero while the untested bucket is not empty, which makes the gap a build failure
 rather than a note somebody has to remember.
+
+Every production bundle under mcp/bundles is censused against its own test fragment under
+mcp/tests, the fragment chosen by name (see scripts/bundles.py). A bundle that is not on
+disk yet is simply absent from the run: over a tree without it the answer must be exactly
+the answer over the server alone, and a zero-class reading for a bundle that IS there is a
+defect of this census, not a clean result.
 """
 
 import argparse
@@ -43,12 +49,16 @@ import os
 import re
 import sys
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(REPO_ROOT, "mcp", "bundles", "ru.aiedt.mcp.server", "src")
-TESTS = os.path.join(REPO_ROOT, "mcp", "tests", "ru.aiedt.mcp.server.tests", "src")
-DEFAULT_OUT = os.path.join(REPO_ROOT, "docs", "test-coverage.md")
-REGISTRATION = os.path.join(SRC, "ru", "aiedt", "mcp", "server", "McpHttpEndpoint.java")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+DEFAULT_OUT = os.path.join(bundles.REPO_ROOT, "docs", "test-coverage.md")
+REGISTRATION = bundles.bundle_src(bundles.SERVER) / "ru" / "aiedt" / "mcp" / "server" / "McpHttpEndpoint.java"
 SWEEP_TEST = "McpToolSchemaContractTest"
+
+# Launch targets only the server bundle carries. Scoped to that bundle so a class of the
+# same name in another one is judged by what IT is, not excused by this one.
+EXEMPT_BY_BUNDLE = {bundles.SERVER: {"Activator", "McpAutoStart"}}
 
 # A class is out of reach of a plain JUnit run when it is built on widgets, on the workbench, or on
 # an extension point that only the platform instantiates.
@@ -74,14 +84,6 @@ WORKSPACE_IMPORTS = re.compile(
     r"org\.eclipse\.debug\.|org\.eclipse\.emf\.ecore\.|com\.google\.inject\.)",
     re.M,
 )
-
-# Classes whose only job is to be a launch target for the platform. They carry no branch worth
-# asserting and are listed here so they cannot silently drift into the untested bucket.
-EXEMPT = {
-    "Activator",
-    "McpAutoStart",
-}
-
 
 def java_files(root):
     for base, _dirs, names in os.walk(root):
@@ -134,12 +136,12 @@ def test_method_count(text):
 
 def registered_tools():
     """The tool classes the server instantiates, which is exactly what the registry sweep walks."""
-    if not os.path.exists(REGISTRATION):
+    if not REGISTRATION.is_file():
         return set()
     return set(re.findall(r"new\s+([A-Z]\w*)\s*\(", read(REGISTRATION)))
 
 
-def classify(path, text, test_names, test_blob, swept):
+def classify(path, text, test_names, test_blob, swept, exempt):
     simple = os.path.splitext(os.path.basename(path))[0]
     if simple + "Test" in test_names:
         return "direct", simple
@@ -147,7 +149,7 @@ def classify(path, text, test_names, test_blob, swept):
         return "exercised", simple
     if simple in swept and SWEEP_TEST in test_names:
         return "tool-sweep", simple
-    if simple in EXEMPT:
+    if simple in exempt:
         return "ui-bound", simple
     if UI_IMPORTS.search(text) or UI_SUPERTYPES.search(text):
         return "ui-bound", simple
@@ -156,22 +158,55 @@ def classify(path, text, test_names, test_blob, swept):
     return "untested", simple
 
 
-def audit():
-    test_files = sorted(java_files(TESTS))
-    test_names = {os.path.splitext(os.path.basename(p))[0] for p in test_files}
-    test_blob = "\n".join(code_only(read(p)) for p in test_files)
-    methods_per_test = {os.path.splitext(os.path.basename(p))[0]: test_method_count(read(p))
-                        for p in test_files}
+def audit(roots=None):
+    """The census over every bundle on disk, or over the roots a caller names.
+
+    `roots` is a list of (bundle, source root, fragment root or None) and exists for the
+    tests of this script, which build fake trees; without it the layout of scripts/bundles
+    decides. Direct coverage (FooTest for Foo) is read in the bundle's OWN fragment - a
+    test class that cannot load a bundle's classes does not test them however it is named.
+    The exercised bucket reads every fragment's code at once: a test of one fragment that
+    constructs another bundle's exported class does execute it.
+    """
+    if roots is None:
+        roots = bundles.census_roots()
+    fragments = {}
+    for bundle, _src, tests in roots:
+        files = sorted(java_files(tests)) if tests else []
+        fragments[bundle] = {
+            "files": files,
+            "names": {os.path.splitext(os.path.basename(p))[0] for p in files},
+            "methods": {os.path.splitext(os.path.basename(p))[0]: test_method_count(read(p))
+                        for p in files},
+            "blob": "\n".join(code_only(read(p)) for p in files),
+        }
+    test_blob = "\n".join(part["blob"] for part in fragments.values())
+    methods_per_test = {}
+    for bundle, part in fragments.items():
+        for name, count in part["methods"].items():
+            # A same-named test class in the bundle's own fragment is the one that counts
+            # for it; another fragment's never overrides that.
+            methods_per_test.setdefault(name, count)
+    test_count = sum(len(part["files"]) for part in fragments.values())
 
     swept = registered_tools()
     buckets = {"direct": [], "exercised": [], "tool-sweep": [], "ui-bound": [],
                "workspace-bound": [], "untested": []}
-    for path in sorted(java_files(SRC)):
-        rel = os.path.relpath(path, SRC).replace(os.sep, "/")
-        bucket, simple = classify(path, read(path), test_names, test_blob, swept)
-        package = os.path.dirname(rel[len("ru/aiedt/mcp/server/"):]) or "(root)"
-        buckets[bucket].append((package, simple, rel))
-    return buckets, len(test_files), methods_per_test
+    for bundle, src, _tests in roots:
+        exempt = EXEMPT_BY_BUNDLE.get(bundle, set())
+        base = bundle.replace(".", "/") + "/"
+        short = bundle.rsplit(".", 1)[-1]
+        for path in sorted(java_files(src)):
+            rel = os.path.relpath(path, src).replace(os.sep, "/")
+            part = fragments.get(bundle) or {}
+            bucket, simple = classify(path, read(path), part.get("names", set()),
+                                      test_blob, swept, exempt)
+            package = os.path.dirname(rel[len(base):]) or "(root)"
+            if bundle != bundles.SERVER:
+                # Two bundles share package names (ops, layout); the report names whose.
+                package = "%s:%s" % (short, package)
+            buckets[bucket].append((package, simple, "%s/%s" % (bundle, rel)))
+    return buckets, test_count, methods_per_test
 
 
 def depth_rows(buckets, methods_per_test):
@@ -237,8 +272,9 @@ def write_report(buckets, test_count, out_path, methods_per_test=None, thin=2):
     lines = [
         "# Test coverage census",
         "",
-        "Generated by `scripts/test-coverage-audit.py`. Every compilation unit under the plugin",
-        "bundle lands in exactly one bucket; the buckets add up to the total.",
+        "Generated by `scripts/test-coverage-audit.py`. Every compilation unit under every plugin",
+        "bundle lands in exactly one bucket; the buckets add up to the total. Packages of a bundle",
+        "other than the server are named with the bundle in front (`oform:ops`).",
         "",
         "| Bucket | Classes | Meaning |",
         "|---|---:|---|",
@@ -290,6 +326,7 @@ def main():
 
     counters = {name: len(rows) for name, rows in buckets.items()}
     counters["total"] = sum(counters.values())
+    counters["production_bundles"] = len(bundles.production_bundles())
     counters["test_classes"] = test_count
     counters["test_methods"] = sum(methods_per_test.values())
     rows = depth_rows(buckets, methods_per_test)
@@ -299,8 +336,9 @@ def main():
         print(json.dumps(counters, indent=2))
     else:
         for name in ("direct", "exercised", "tool-sweep", "ui-bound", "workspace-bound",
-                     "untested", "total", "test_classes", "test_methods",
-                     "median_methods_per_direct_class", "thin_direct_classes"):
+                     "untested", "total", "production_bundles", "test_classes",
+                     "test_methods", "median_methods_per_direct_class",
+                     "thin_direct_classes"):
             print("%-32s %d" % (name, counters[name]))
         print("\nreport written to %s" % args.out)
 

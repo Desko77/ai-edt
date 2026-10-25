@@ -104,4 +104,117 @@ public class YaxunitHelpTest
             .anyMatch(topic -> YaxunitHelp.getTopic(topic).contains("modules=")); //$NON-NLS-1$
         assertTrue("the help no longer names any filter that works", namedSomewhere); //$NON-NLS-1$
     }
+
+    /**
+     * The writing topic teaches the registration protocol the 25.12 engine actually runs.
+     * <p>
+     * Measured: the topic showed the legacy {@code ИсполняемыеСценарии(СписокТестов)} signature,
+     * which 25.12 answers with a deprecation warning and a retry that passes {@code Неопределено} -
+     * a module written from that help registers no tests at all. The current protocol is a
+     * parameter-less {@code ИсполняемыеСценарии} that registers every test by name through
+     * {@code ЮТТесты.ДобавитьТест}.
+     * </p>
+     */
+    @Test
+    public void theWritingTopicTeachesTheCurrentRegistrationProtocol()
+    {
+        String body = YaxunitHelp.getTopic("writing"); //$NON-NLS-1$
+
+        assertTrue("the no-parameter signature is missing", body.contains("ИсполняемыеСценарии() Экспорт")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("registration through YUTTesty is missing", body.contains("ЮТТесты.ДобавитьТест(")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the legacy signature is still taught", body.contains("ИсполняемыеСценарии(СписокТестов)")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the legacy list filling is still taught", body.contains("СписокТестов.Добавить")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The writing topic says where the engine looks for test modules.
+     * <p>
+     * Measured: 25.12 scans only common modules owned by a configuration extension and skips a
+     * module whose Global or Server call flag is on. The old topic said "create a common module"
+     * without the extension, so a module of the main configuration looked right and was never run.
+     * </p>
+     */
+    @Test
+    public void theWritingTopicPlacesTestModulesInAnExtension()
+    {
+        String body = YaxunitHelp.getTopic("writing"); //$NON-NLS-1$
+
+        assertTrue("the extension placement is missing", body.contains("extension")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the Global flag rule is missing", body.contains("Global")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the Server call flag rule is missing", body.contains("Server call")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the module flags must be told to stay off", body.contains("must stay off")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The writing topic must not demand a test name prefix.
+     * <p>
+     * Measured: the old topic claimed methods "have to" start with {@code Тест_} and that such
+     * names are discovered automatically - 25.12 discovers modules by their export
+     * ИсполняемыеСценарии and runs exactly the tests registered by name; the engine's own test
+     * modules carry no prefix.
+     * </p>
+     */
+    @Test
+    public void theWritingTopicDoesNotDemandATestNamePrefix()
+    {
+        String body = YaxunitHelp.getTopic("writing"); //$NON-NLS-1$
+
+        assertTrue("the prefix optionality is missing", body.contains("prefix is optional")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the automatic discovery claim is still there", body.contains("discovers automatically")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The setup topic explains a stalled run by what the runner actually answers.
+     * <p>
+     * Measured: a launch that outlives the deadline or stands on an EDT dialog answers Pending
+     * with a runKey, and the EDT dialog is answered with answer_dialog before polling that key.
+     * The old topic told the reader to "check the client window" and never named the recovery.
+     * </p>
+     */
+    @Test
+    public void theSetupTopicNamesTheRealPendingRecovery()
+    {
+        String body = YaxunitHelp.getTopic("setup"); //$NON-NLS-1$
+
+        assertTrue("Pending is missing", body.contains("Pending")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("runKey is missing", body.contains("runKey")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("answer_dialog is missing", body.contains("answer_dialog")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the stale window advice is still there", body.contains("check the client window")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The setup topic names the update dialog causes the runner knows.
+     * <p>
+     * Measured: the client's update modal shows up when the pre-launch infobase update did not
+     * run - the call passed updateBeforeLaunch=false, or a write-blocking preset disabled
+     * update_database and every answer of that run carries databaseUpdate=SKIPPED_BY_PRESET.
+     * </p>
+     */
+    @Test
+    public void theSetupTopicNamesTheUpdateDialogCauses()
+    {
+        String body = YaxunitHelp.getTopic("setup"); //$NON-NLS-1$
+
+        assertTrue("updateBeforeLaunch=false is missing", body.contains("updateBeforeLaunch=false")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the preset cause is missing", body.contains("SKIPPED_BY_PRESET")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The setup topic explains zero tests with the causes the engine and the runner really have.
+     * <p>
+     * Measured: beyond the runner's own block (extension Active, filter names existing tests,
+     * module compiles), a run stays empty when the module is outside an extension, its Global or
+     * Server call flag is on, or registration is empty - the last is the legacy signature defect
+     * again, so the troubleshooting has to point at ЮТТесты.ДобавитьТест.
+     * </p>
+     */
+    @Test
+    public void theSetupTopicExplainsZeroTestsByRealCauses()
+    {
+        String body = YaxunitHelp.getTopic("setup"); //$NON-NLS-1$
+
+        assertTrue("the Active check is missing", body.contains("Active")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the extension-module cause is missing", body.contains("not in an extension")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the registration cause is missing", body.contains("ЮТТесты.ДобавитьТест")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
 }

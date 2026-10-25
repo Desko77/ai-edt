@@ -64,6 +64,9 @@ final class ServiceOps
 {
     private static final String XSD_NS = "http://www.w3.org/2001/XMLSchema"; //$NON-NLS-1$
 
+    /** The local name of the XSD type a web-service operation returns when none is named. */
+    private static final String DEFAULT_RETURNING_VALUE_TYPE = "string"; //$NON-NLS-1$
+
     /**
      * Checks the form of a URL template before it is written. The platform addresses a template
      * from the root of the service, so a template must start with a slash.
@@ -489,6 +492,10 @@ final class ServiceOps
 
         final IV8Project v8Project = BmObjectHelper.v8ProjectOf(project);
         final String[] defaultsLost = { null };
+        // The operation this call starts the service with carries a return value type like any
+        // other: the platform refuses to load a service whose operation returns nothing.
+        final boolean[] initRetApplied = { false };
+        final List<String> initRetWarn = new ArrayList<>();
         StringBuilder finalErr = new StringBuilder();
         try
         {
@@ -544,6 +551,8 @@ final class ServiceOps
                         {
                             applyOptionalBoolean(op, "setTransactional", fTransactional); //$NON-NLS-1$
                         }
+                        applyReturningValueType(op, resolveReturningValueType(null, null),
+                            initRetApplied, initRetWarn);
                         ops.add(op);
                     }
                     catch (Exception nestedEx)
@@ -624,11 +633,20 @@ final class ServiceOps
         {
             result.put("module", moduleInfo); //$NON-NLS-1$
         }
+        Map<String, Object> rv = new LinkedHashMap<>();
+        rv.put("applied", initRetApplied[0]); //$NON-NLS-1$
+        rv.put("nsUri", XSD_NS); //$NON-NLS-1$
+        rv.put("localName", DEFAULT_RETURNING_VALUE_TYPE); //$NON-NLS-1$
+        result.put("returningValueType", rv); //$NON-NLS-1$
+        if (!initRetWarn.isEmpty())
+        {
+            result.put("returningValueTypeWarnings", initRetWarn); //$NON-NLS-1$
+        }
         result.put("hint", //$NON-NLS-1$
             "Handler stub returns empty string. Edit it via write_module_source " //$NON-NLS-1$
                 + "with objectName=WebService." + name + " moduleType=Module. " //$NON-NLS-1$ //$NON-NLS-2$
-                + "Return type (returningValueType) is not set - EDT validator may require " //$NON-NLS-1$
-                + "it; set via set_object_property on WebService.<name>.Operation.<op>."); //$NON-NLS-1$
+                + "The operation returns the XSD string type; " //$NON-NLS-1$
+                + "add_web_service_operation with returningValueType gives it another one."); //$NON-NLS-1$
         return result.toJson();
     }
 
@@ -654,7 +672,7 @@ final class ServiceOps
         final String resolvedHandler = (handlerParam != null && !handlerParam.isEmpty())
             ? handlerParam : name;
         final Boolean fTransactional = transactional;
-        final String[] retQn = parseQNameArg(returningValueType, returningValueTypeNs);
+        final String[] retQn = resolveReturningValueType(returningValueType, returningValueTypeNs);
         final boolean[] retApplied = { false };
         final List<String> retWarn = new ArrayList<>();
         IProject project = ProjectResolver.resolve(projectName);
@@ -702,45 +720,21 @@ final class ServiceOps
                 {
                     applyOptionalBoolean(op, "setTransactional", fTransactional); //$NON-NLS-1$
                 }
-                if (retQn != null)
-                {
-                    Object qname = BmDefinedTypeHelper.createQName(retQn[0], retQn[1]);
-                    if (qname != null)
-                    {
-                        java.lang.reflect.Method setter =
-                            EditMetadataTool.findSingleArgSetter(op.getClass(), "setXdtoReturningValueType"); //$NON-NLS-1$
-                        if (setter != null)
-                        {
-                            setter.invoke(op, qname);
-                            retApplied[0] = true;
-                        }
-                        else
-                        {
-                            retWarn.add("setXdtoReturningValueType not found on Operation"); //$NON-NLS-1$
-                        }
-                    }
-                    else
-                    {
-                        retWarn.add("QName factory unreachable - return value type not set"); //$NON-NLS-1$
-                    }
-                }
+                applyReturningValueType(op, retQn, retApplied, retWarn);
                 ops.add(op);
                 return name + " -> " + resolvedHandler; //$NON-NLS-1$
             });
         if (r.ok)
         {
             r.tags.put("handler", resolvedHandler); //$NON-NLS-1$
-            if (retQn != null)
+            Map<String, Object> rv = new LinkedHashMap<>();
+            rv.put("applied", retApplied[0]); //$NON-NLS-1$
+            rv.put("nsUri", retQn[0]); //$NON-NLS-1$
+            rv.put("localName", retQn[1]); //$NON-NLS-1$
+            r.tags.put("returningValueType", rv); //$NON-NLS-1$
+            if (!retWarn.isEmpty())
             {
-                Map<String, Object> rv = new LinkedHashMap<>();
-                rv.put("applied", retApplied[0]); //$NON-NLS-1$
-                rv.put("nsUri", retQn[0]); //$NON-NLS-1$
-                rv.put("localName", retQn[1]); //$NON-NLS-1$
-                r.tags.put("returningValueType", rv); //$NON-NLS-1$
-                if (!retWarn.isEmpty())
-                {
-                    r.tags.put("returningValueTypeWarnings", retWarn); //$NON-NLS-1$
-                }
+                r.tags.put("returningValueTypeWarnings", retWarn); //$NON-NLS-1$
             }
             if (withHandlerStub && !dryRun)
             {
@@ -1314,6 +1308,52 @@ final class ServiceOps
         }
         String ns = (nsArg != null && !nsArg.trim().isEmpty()) ? nsArg.trim() : XSD_NS;
         return new String[] { ns, s };
+    }
+
+    /**
+     * The return value type of a web-service operation, as a namespace and a local name. An
+     * argument naming no type answers the XSD string type: the platform refuses to load a
+     * configuration whose WebService operation carries an empty return value type, reporting the
+     * XDTO error {@code Тип: {http://www.w3.org/2001/XMLSchema}QName}.
+     *
+     * @param typeStr the returningValueType argument, or {@code null} when none was given
+     * @param nsArg the returningValueTypeNs argument, or {@code null} when none was given
+     * @return the namespace and the local name, never {@code null}
+     */
+    static String[] resolveReturningValueType(String typeStr, String nsArg)
+    {
+        String[] parsed = parseQNameArg(typeStr, nsArg);
+        return parsed != null ? parsed
+            : new String[] { XSD_NS, DEFAULT_RETURNING_VALUE_TYPE };
+    }
+
+    /**
+     * Writes the return value type of a web-service operation.
+     *
+     * @param op the operation
+     * @param type the namespace and local name the return value type names
+     * @param applied set to true when the type was written
+     * @param warnings collects the reason the type was left unwritten, when it was
+     * @throws Exception when the reflective setter call fails
+     */
+    static void applyReturningValueType(MdObject op, String[] type, boolean[] applied,
+        List<String> warnings) throws Exception
+    {
+        Object qname = BmDefinedTypeHelper.createQName(type[0], type[1]);
+        if (qname == null)
+        {
+            warnings.add("QName factory unreachable - return value type not set"); //$NON-NLS-1$
+            return;
+        }
+        java.lang.reflect.Method setter =
+            EditMetadataTool.findSingleArgSetter(op.getClass(), "setXdtoReturningValueType"); //$NON-NLS-1$
+        if (setter == null)
+        {
+            warnings.add("setXdtoReturningValueType not found on Operation"); //$NON-NLS-1$
+            return;
+        }
+        setter.invoke(op, qname);
+        applied[0] = true;
     }
 
     private static Object resolveTransferDirection(String value)

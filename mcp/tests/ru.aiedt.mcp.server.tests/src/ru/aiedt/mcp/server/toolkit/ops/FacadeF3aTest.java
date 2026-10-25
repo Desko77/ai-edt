@@ -96,6 +96,8 @@ public class FacadeF3aTest
         assertTrue(result.contains("clean_project")); //$NON-NLS-1$
         assertTrue(result.contains("validate_for_export")); //$NON-NLS-1$
         assertTrue(result.contains("get_check_description")); //$NON-NLS-1$
+        assertTrue(result.contains("save_baseline")); //$NON-NLS-1$
+        assertTrue(result.contains("clear_baseline")); //$NON-NLS-1$
         assertTrue(result.contains("help")); //$NON-NLS-1$
     }
 
@@ -113,6 +115,8 @@ public class FacadeF3aTest
         assertTrue(result.contains("clean_project")); //$NON-NLS-1$
         assertTrue(result.contains("validate_for_export")); //$NON-NLS-1$
         assertTrue(result.contains("get_check_description")); //$NON-NLS-1$
+        assertTrue(result.contains("save_baseline")); //$NON-NLS-1$
+        assertTrue(result.contains("clear_baseline")); //$NON-NLS-1$
         assertFalse(result.contains("operation is required")); //$NON-NLS-1$
     }
 

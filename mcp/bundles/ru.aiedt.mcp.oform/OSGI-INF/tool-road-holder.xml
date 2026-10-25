@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scr:component xmlns:scr="http://www.osgi.org/xmlns/scr/v1.3.0" name="ru.aiedt.mcp.oform.tool-road-holder">
+   <implementation class="ru.aiedt.mcp.oform.ToolRoadHolder"/>
+   <reference name="ToolRoad" interface="ru.aiedt.mcp.server.toolkit.IToolRoad"
+      cardinality="0..1" policy="dynamic" bind="bind" unbind="unbind"/>
+</scr:component>

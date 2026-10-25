@@ -46,8 +46,8 @@ public class PresetSurvivesAnUpgradeTest
         }
         for (String name : ToolCategory.CONSTRUCTORS.getToolNames())
         {
-            assertTrue("Read-only should switch off every constructor, missing " + name, //$NON-NLS-1$
-                readOnly.contains(name));
+            assertTrue("Read-only should switch off the writes of every constructor, missing " + name, //$NON-NLS-1$
+                readOnly.contains(name) || readOnly.contains(name + "_writes")); //$NON-NLS-1$
         }
     }
 

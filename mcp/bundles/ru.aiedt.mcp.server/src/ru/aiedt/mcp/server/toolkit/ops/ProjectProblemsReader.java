@@ -40,6 +40,7 @@ import ru.aiedt.mcp.server.session.SessionChangeTracker;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.BmExtensionHelper;
+import ru.aiedt.mcp.server.support.DiagnosticsBaselineStore;
 import ru.aiedt.mcp.server.support.FileMarkers;
 import ru.aiedt.mcp.server.support.MetadataTypeCatalog;
 import ru.aiedt.mcp.server.support.ProjectResolver;
@@ -157,6 +158,11 @@ public class ProjectProblemsReader
                     + "attached to the marker beyond its position - model feature ids, and any " //$NON-NLS-1$
                     + "custom keys the check chose to record. Most findings carry nothing here; " //$NON-NLS-1$
                     + "use it when a message alone does not say what the check objected to.") //$NON-NLS-1$
+            .booleanProperty("sinceBaseline", //$NON-NLS-1$
+                "If true (default false), answers only with findings absent from the baseline " //$NON-NLS-1$
+                    + "recorded for this project (diagnostics operation=save_baseline) and adds " //$NON-NLS-1$
+                    + "resolvedSinceBaseline. Needs projectName; refuses when no baseline is " //$NON-NLS-1$
+                    + "recorded.") //$NON-NLS-1$
             .build();
     }
 
@@ -185,6 +191,13 @@ public class ProjectProblemsReader
         boolean waitForRefresh = JsonUtils.extractBooleanArgument(params, "waitForRefresh", true); //$NON-NLS-1$
         boolean compact = JsonUtils.extractBooleanArgument(params, "compact", false); //$NON-NLS-1$
         boolean extraInfo = JsonUtils.extractBooleanArgument(params, "extraInfo", false); //$NON-NLS-1$
+        boolean sinceBaseline = JsonUtils.extractBooleanArgument(params, "sinceBaseline", false); //$NON-NLS-1$
+        if (sinceBaseline && (projectName == null || projectName.isEmpty()))
+        {
+            // The baseline is recorded per project, so a comparison without a project has nothing
+            // to compare against - and answering the unfiltered workspace would read as one.
+            return baselineNeedsProjectRefusal();
+        }
 
         if (projectName != null && !projectName.isEmpty())
         {
@@ -207,7 +220,7 @@ public class ProjectProblemsReader
         limit = Math.max(LIMIT_MIN, Math.min(LIMIT_MAX, limit));
 
         String answer = getProjectErrors(projectName, severity, checkId, objects, limit, resolvedScope, fileFilter,
-            waitForRefresh, compact, extraInfo);
+            waitForRefresh, compact, extraInfo, sinceBaseline);
         if (answer.startsWith("# Request Failed")) //$NON-NLS-1$
         {
             return answer;
@@ -389,18 +402,19 @@ public class ProjectProblemsReader
      * @param waitForRefresh whether to poll after an empty first read
      * @param compact whether to fold the result into grouped counts
      * @param extraInfo whether to carry each marker's non-positional extra info
+     * @param sinceBaseline whether to answer only with findings absent from the recorded baseline
      * @return the markdown report, or a {@code # Error} document
      */
     public static String getProjectErrors(String projectName, String severity, String checkId,
         List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh,
-        boolean compact, boolean extraInfo)
+        boolean compact, boolean extraInfo, boolean sinceBaseline)
     {
         int[] uncomputed = UNCOMPUTED_MARKERS.get();
         uncomputed[0] = 0;
         try
         {
             String answer = collectProjectErrors(projectName, severity, checkId, objects, limit, scope,
-                fileFilter, waitForRefresh, compact, extraInfo);
+                fileFilter, waitForRefresh, compact, extraInfo, sinceBaseline);
             return answer + uncomputedNote(uncomputed[0]);
         }
         finally
@@ -410,11 +424,34 @@ public class ProjectProblemsReader
     }
 
     /**
+     * The ten-argument overload without the baseline comparison: the comparison is off.
+     *
+     * @param projectName the project to restrict to, or <code>null</code>/empty for all
+     * @param severity the severity filter argument
+     * @param checkId a check id substring to keep, or <code>null</code>/empty for any
+     * @param objects the object FQNs to keep
+     * @param limit the most rows to return, already clamped
+     * @param scope the resolved scope
+     * @param fileFilter a presentation substring to keep, or <code>null</code>/empty for any
+     * @param waitForRefresh whether to poll after an empty first read
+     * @param compact whether to fold the result into grouped counts
+     * @param extraInfo whether to carry each marker's non-positional extra info
+     * @return the markdown report, or a {@code # Error} document
+     */
+    public static String getProjectErrors(String projectName, String severity, String checkId,
+        List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh,
+        boolean compact, boolean extraInfo)
+    {
+        return getProjectErrors(projectName, severity, checkId, objects, limit, scope, fileFilter,
+            waitForRefresh, compact, extraInfo, false);
+    }
+
+    /**
      * The body of {@link #getProjectErrors}, without the count of markers that had no object data.
      */
     private static String collectProjectErrors(String projectName, String severity, String checkId,
         List<String> objects, int limit, String scope, String fileFilter, boolean waitForRefresh,
-        boolean compact, boolean extraInfo)
+        boolean compact, boolean extraInfo, boolean sinceBaseline)
     {
         try
         {
@@ -466,33 +503,26 @@ public class ProjectProblemsReader
             Filter filter =
                 new Filter(projectName, severityFilter, checkId, objectFqns, sessionFqns, sessionScope, fileFilter);
 
-            int collectLimit = compact ? Math.max(limit, COMPACT_SCAN_CAP) : limit;
+            // The comparison needs every matching marker, not a page of them: a page cut short
+            // would read the findings it never collected as resolved. Same cap the compact view
+            // already scans.
+            int collectLimit = compact || sinceBaseline ? Math.max(limit, COMPACT_SCAN_CAP) : limit;
 
-            List<ErrorInfo> collected = collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
-            if (collected.isEmpty() && waitForRefresh)
-            {
-                for (int attempt = 0; attempt < REFRESH_ATTEMPTS; attempt++)
-                {
-                    try
-                    {
-                        Thread.sleep(REFRESH_SLEEP_MS);
-                    }
-                    catch (InterruptedException e)
-                    {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                    collected = collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
-                    if (!collected.isEmpty())
-                    {
-                        break;
-                    }
-                }
-            }
+            List<ErrorInfo> collected = waitForRefresh
+                ? retryEmptyRead(
+                    () -> collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo))
+                : collectMarkers(markerManager, checkRepository, filter, collectLimit, extraInfo);
 
             if (collected.size() < collectLimit)
             {
                 collectEclipseMarkers(collected, targetProjects(projectName), filter, collectLimit);
+            }
+
+            if (sinceBaseline)
+            {
+                return renderSinceBaseline(DiagnosticsBaselineStore.stateDir(), projectName,
+                    collapseErrors(collected), collected.size(), unresolved, severityFilter, checkId,
+                    fileFilter, objectFqns, sessionScope, sessionFqns, limit, collectLimit);
             }
 
             if (compact)
@@ -574,12 +604,14 @@ public class ProjectProblemsReader
     }
 
     /**
-     * Parses the {@code objects} argument, a JSON array of strings.
+     * Parses the {@code objects} argument, a JSON array of strings. Package-visible because
+     * {@code save_baseline} narrows its baseline through the same argument and the same reading of
+     * it.
      *
      * @param raw the raw argument value
      * @return the FQNs, never <code>null</code>, empty when the argument is missing or not an array
      */
-    private static List<String> parseObjectsList(String raw)
+    static List<String> parseObjectsList(String raw)
     {
         List<String> result = new ArrayList<>();
         if (raw == null)
@@ -643,6 +675,375 @@ public class ProjectProblemsReader
         }
         return "# Request Failed\n\nobjects must be a JSON array of FQN strings, " //$NON-NLS-1$
             + "e.g. [\"Catalog.Products\", \"Document.SalesOrder\"] - got: " + raw; //$NON-NLS-1$
+    }
+
+    // --------------------------------------------------------------- baseline comparison
+
+    /**
+     * The refusal a baseline comparison gets when no project stands behind it. The baseline is
+     * recorded per project, so a comparison over the unfiltered workspace has nothing to subtract
+     * from - and answering it would read as one.
+     *
+     * @return the refusal markdown, naming the operation that records a baseline
+     */
+    static String baselineNeedsProjectRefusal()
+    {
+        return "# Request Failed\n\nsinceBaseline=true subtracts a baseline recorded for a project, " //$NON-NLS-1$
+            + "and projectName is missing. Record one first: diagnostics operation=save_baseline " //$NON-NLS-1$
+            + "projectName=<name>, then ask with projectName and sinceBaseline=true."; //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal a comparison gets when the project has no baseline recorded.
+     *
+     * @param projectName the project asked about
+     * @return the refusal markdown, naming the operation that records a baseline
+     */
+    static String baselineAbsentRefusal(String projectName)
+    {
+        return "# Request Failed\n\nProject '" + projectName + "' has no recorded baseline. " //$NON-NLS-1$ //$NON-NLS-2$
+            + "Record one first: diagnostics operation=save_baseline projectName=" + projectName //$NON-NLS-1$
+            + "."; //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal a comparison gets when the baseline file exists but this build cannot use it.
+     * <p>
+     * An unreadable file is never an empty baseline: empty says the project was clean when the
+     * baseline was taken, and a file that cannot be read says nothing of the sort.
+     * </p>
+     *
+     * @param projectName the project asked about
+     * @param why what is wrong with the file
+     * @return the refusal markdown, naming the operation that records a baseline again
+     */
+    static String baselineUnreadableRefusal(String projectName, String why)
+    {
+        return "# Request Failed\n\nThe baseline of project '" + projectName + "' cannot be read: " //$NON-NLS-1$ //$NON-NLS-2$
+            + why + ". Record it again: diagnostics operation=save_baseline projectName=" //$NON-NLS-1$
+            + projectName + "."; //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal a baseline save gets when the collection reached its cap.
+     * <p>
+     * A baseline over a truncated read would hold less than everything, and the comparison after
+     * it would name resolved the findings the save never saw. Reading without the cap is not the
+     * remedy either: the cap is what keeps one call's rows bounded, and a whole-project baseline
+     * is exactly the call that would otherwise hold every marker of a large configuration.
+     * </p>
+     *
+     * @param cap the cap the collection reached
+     * @return the refusal markdown, naming the narrowing that fits under the cap
+     */
+    static String cappedBaselineRefusal(int cap)
+    {
+        return "# Request Failed\n\nThe collection reached its cap of " + cap //$NON-NLS-1$
+            + " markers, so a baseline written now would hold less than everything - " //$NON-NLS-1$
+            + "it was not written. Narrow the area: pass objects=[...] to record the baseline " //$NON-NLS-1$
+            + "of named objects only."; //$NON-NLS-1$
+    }
+
+    /**
+     * Renders the findings that stand now and did not stand at the recorded baseline.
+     * <p>
+     * The subtraction happens inside the frame of the query - severity, check id, file filter and
+     * the object or session scope the caller asked with - so the two sides answer the same
+     * question. A baseline scoped to named objects is compared over those objects alone; the
+     * findings of anything else are named as not compared rather than left to read as new. The
+     * answer opens with the same notice about requested addresses the model does not hold that
+     * the plain report opens with: without it, a mistyped FQN reads as an empty diff - the
+     * opposite of what happened.
+     * </p>
+     * <p>
+     * A read that reached its collection cap saw only part of what stands, and every baseline
+     * record the unseen part holds would count as resolved. So a truncated read answers with its
+     * new findings - counted among the markers it did read, and says so - and carries no resolved
+     * count at all, which is what separates "not determined" from zero.
+     * </p>
+     * <p>
+     * Package-visible with its inputs already mapped, so a plain test drives the comparison
+     * without a workspace: the current findings arrive as records and the baseline directory as
+     * a path.
+     * </p>
+     *
+     * @param baselineDir the directory the baseline lives in; <code>null</code> answers a refusal
+     * @param projectName the project whose baseline is subtracted
+     * @param current the findings standing now, already collapsed and already filtered by the
+     *            query's own filters
+     * @param collectedCount how many markers the current findings were collected from
+     * @param unresolved the notice naming requested addresses the model does not hold, prefixed
+     *            to the answer exactly as the plain report prefixes it; may be empty
+     * @param severityFilter the severity set the query kept, or <code>null</code> for every level
+     * @param checkId the check-id substring of the query, or <code>null</code>/empty for any
+     * @param fileFilter the presentation substring of the query, or <code>null</code>/empty for any
+     * @param objectFqns the FQN variants of the query's object filter
+     * @param sessionScope whether the query is scoped to the session's objects
+     * @param sessionFqns the session's FQN variants; empty outside session scope
+     * @param limit the most rows to return
+     * @param collectLimit the cap the current findings were collected under
+     * @return the markdown report
+     */
+    static String renderSinceBaseline(java.nio.file.Path baselineDir, String projectName,
+        List<DiagnosticsBaselineStore.Diagnostic> current, int collectedCount, String unresolved,
+        Set<MarkerSeverity> severityFilter, String checkId, String fileFilter, Set<String> objectFqns,
+        boolean sessionScope, Set<String> sessionFqns, int limit, int collectLimit)
+    {
+        if (projectName == null || projectName.isEmpty())
+        {
+            return baselineNeedsProjectRefusal();
+        }
+        java.nio.file.Path dir = baselineDir;
+        if (dir == null)
+        {
+            return "# Request Failed\n\nThe plugin state location is unavailable, " //$NON-NLS-1$
+                + "so no baseline can be read."; //$NON-NLS-1$
+        }
+        DiagnosticsBaselineStore.Baseline baseline;
+        try
+        {
+            baseline = DiagnosticsBaselineStore.load(dir, projectName);
+        }
+        catch (DiagnosticsBaselineStore.UnreadableBaselineException unreadable)
+        {
+            return baselineUnreadableRefusal(projectName, unreadable.getMessage());
+        }
+        catch (java.io.IOException failed)
+        {
+            return "# Request Failed\n\nCould not read the baseline of project '" + projectName //$NON-NLS-1$
+                + "': " + failureText(failed); //$NON-NLS-1$
+        }
+        if (baseline == null)
+        {
+            return baselineAbsentRefusal(projectName);
+        }
+
+        // The frame applies the object set and the session set together, the way the marker
+        // filter applied them to the rows above: a record that fits only one of the two was
+        // never in the question, and counting it resolved would read a narrowing as a cure.
+        List<DiagnosticsBaselineStore.Diagnostic> framed = DiagnosticsBaselineStore.frame(
+            baseline.diagnostics, severityNamesOf(severityFilter), checkId, fileFilter, objectFqns,
+            sessionScope, sessionFqns);
+
+        List<DiagnosticsBaselineStore.Diagnostic> compared = current;
+        int notCompared = 0;
+        if (baseline.isScoped())
+        {
+            Set<String> scopeVariants = new HashSet<>();
+            for (String fqn : baseline.objects)
+            {
+                scopeVariants.addAll(MetadataTypeCatalog.getAllFqnVariants(fqn));
+            }
+            compared = DiagnosticsBaselineStore.withinObjects(current, scopeVariants);
+            notCompared = current.size() - compared.size();
+        }
+
+        DiagnosticsBaselineStore.Diff diff = DiagnosticsBaselineStore.compare(framed, compared);
+
+        boolean truncated = collectedCount >= collectLimit;
+        StringBuilder builder = new StringBuilder();
+        if (diff.appeared.isEmpty())
+        {
+            builder.append("# Nothing New Since Baseline\n\n"); //$NON-NLS-1$
+        }
+        else
+        {
+            builder.append("# Configuration Issues (since baseline)\n\n"); //$NON-NLS-1$
+        }
+        builder.append("**Baseline saved at:** ").append(baseline.savedAt).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        builder.append("**New since baseline:** ").append(diff.appearedCount()).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        if (truncated)
+        {
+            builder.append("**Scan truncated:** the scan reached its cap of ").append(collectLimit) //$NON-NLS-1$
+                .append(" markers; findings past the cap were neither listed nor compared, " //$NON-NLS-1$
+                    + "the number of resolved findings is not determined, and new findings are " //$NON-NLS-1$
+                    + "counted among the read markers only.\n"); //$NON-NLS-1$
+        }
+        else
+        {
+            builder.append("**resolvedSinceBaseline:** ").append(diff.resolvedCount).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        if (notCompared > 0)
+        {
+            builder.append("**Not compared:** the baseline covers only ") //$NON-NLS-1$
+                .append(String.join(", ", baseline.objects)).append("; ").append(notCompared) //$NON-NLS-1$
+                .append(" finding(s) of other objects stand outside the comparison.\n"); //$NON-NLS-1$
+        }
+        builder.append("\n"); //$NON-NLS-1$
+        if (diff.appeared.isEmpty())
+        {
+            return unresolved + builder.toString();
+        }
+        int shown = Math.min(diff.appeared.size(), limit);
+        builder.append("| Message | Where | Severity | Check | Count |\n"); //$NON-NLS-1$
+        builder.append("|-------------|----------|----------|------------|-------|\n"); //$NON-NLS-1$
+        for (int i = 0; i < shown; i++)
+        {
+            DiagnosticsBaselineStore.Diagnostic finding = diff.appeared.get(i);
+            builder.append("| ").append(MarkdownTableHelper.escapeForTable(finding.message)) //$NON-NLS-1$
+                .append(" | ").append(MarkdownTableHelper.escapeForTable(finding.objectPresentation)) //$NON-NLS-1$
+                .append(" | ").append(finding.severity == null ? "" : finding.severity) //$NON-NLS-1$ //$NON-NLS-2$
+                .append(" | `").append(finding.checkId).append("` | ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(finding.count)
+                .append(" |\n"); //$NON-NLS-1$
+        }
+        if (diff.appeared.size() > limit)
+        {
+            builder.append("\n_Showing ").append(limit).append(" of ") //$NON-NLS-1$ //$NON-NLS-2$
+                .append(diff.appeared.size()).append(" new finding(s) - raise limit to see the rest._\n"); //$NON-NLS-1$
+        }
+        return unresolved + builder.toString();
+    }
+
+    /**
+     * Maps the collected rows to the records a baseline is made of, collapsing identical triples.
+     * Each record carries the marker's short check code beside its identity, so a later query
+     * naming either spelling of the check meets the record, and the place the row is shown at
+     * beside the reference it is identified by, so the same query filters and prints the record
+     * the way it filters and prints the marker standing now.
+     *
+     * @param errors the collected rows
+     * @return the collapsed records, one per identical triple
+     */
+    static List<DiagnosticsBaselineStore.Diagnostic> collapseErrors(List<ErrorInfo> errors)
+    {
+        List<DiagnosticsBaselineStore.Diagnostic> findings = new ArrayList<>();
+        for (ErrorInfo error : errors)
+        {
+            findings.add(new DiagnosticsBaselineStore.Diagnostic(
+                error.objectKey == null ? "" : error.objectKey, //$NON-NLS-1$
+                checkIdentityOf(error), error.checkCode,
+                error.message == null ? "" : error.message, //$NON-NLS-1$
+                error.severityNative)
+                    .shownAt(error.objectPresentation));
+        }
+        return DiagnosticsBaselineStore.collapse(findings);
+    }
+
+    /**
+     * The check identity a row reports: its symbolic id, or its short code when there is no
+     * symbolic one - the same choice the report's Check column makes.
+     *
+     * @param error the row
+     * @return the identity, never <code>null</code>
+     */
+    private static String checkIdentityOf(ErrorInfo error)
+    {
+        if (error.checkId != null && !error.checkId.isEmpty())
+        {
+            return error.checkId;
+        }
+        return error.checkCode == null ? "" : error.checkCode; //$NON-NLS-1$
+    }
+
+    /**
+     * The native severity names a filter set stands for.
+     *
+     * @param severityFilter the parsed severity filter, or <code>null</code> for no filter
+     * @return the names, or <code>null</code> when every level passes
+     */
+    private static Set<String> severityNamesOf(Set<MarkerSeverity> severityFilter)
+    {
+        if (severityFilter == null)
+        {
+            return null;
+        }
+        Set<String> names = new HashSet<>();
+        for (MarkerSeverity severity : severityFilter)
+        {
+            names.add(severity.name());
+        }
+        return names;
+    }
+
+    /** The ceiling a baseline snapshot collects under: the compact view's own scan cap. */
+    static final int BASELINE_COLLECT_CAP = COMPACT_SCAN_CAP;
+
+    /** What a baseline snapshot holds, or the refusal that stopped it. */
+    static final class BaselineSnapshot
+    {
+        /** The refusal to answer with; <code>null</code> when the snapshot was taken. */
+        final String refusal;
+
+        /** The collapsed findings, one record per identical triple. */
+        final List<DiagnosticsBaselineStore.Diagnostic> diagnostics;
+
+        /** Whether the collection reached its cap and may hold less than everything. */
+        final boolean capped;
+
+        BaselineSnapshot(String refusal)
+        {
+            this.refusal = refusal;
+            this.diagnostics = new ArrayList<>();
+            this.capped = false;
+        }
+
+        BaselineSnapshot(List<DiagnosticsBaselineStore.Diagnostic> diagnostics, boolean capped)
+        {
+            this.refusal = null;
+            this.diagnostics = diagnostics;
+            this.capped = capped;
+        }
+    }
+
+    /**
+     * Collects every finding standing on a project, all severities and all checks, as the record a
+     * baseline is written from.
+     *
+     * @param projectName the project to collect over
+     * @param objects the object FQNs to narrow to; empty for the whole project
+     * @return the snapshot, or the refusal that stopped it
+     */
+    static BaselineSnapshot collectBaselineSnapshot(String projectName, List<String> objects)
+    {
+        if (projectName == null || projectName.isEmpty())
+        {
+            return new BaselineSnapshot("projectName is required"); //$NON-NLS-1$
+        }
+        try
+        {
+            Activator activator = Activator.getDefault();
+            IMarkerManager markerManager = activator == null ? null : activator.getMarkerManager();
+            if (markerManager == null)
+            {
+                return new BaselineSnapshot("# Request Failed\n\nThe IMarkerManager service is unavailable"); //$NON-NLS-1$
+            }
+            if (!ResourcesPlugin.getWorkspace().getRoot().getProject(projectName).exists())
+            {
+                return new BaselineSnapshot("# Request Failed\n\n" //$NON-NLS-1$
+                    + ProjectResolver.describeNotFound(projectName));
+            }
+            String gate = ProjectStateGuard.checkReadyOrWait(projectName, READY_WAIT_MS);
+            if (gate != null)
+            {
+                return new BaselineSnapshot(gate);
+            }
+            ICheckRepository checkRepository = activator.getCheckRepository();
+            Set<String> objectFqns = new HashSet<>();
+            for (String fqn : objects)
+            {
+                objectFqns.addAll(MetadataTypeCatalog.getAllFqnVariants(fqn));
+            }
+            Filter filter =
+                new Filter(projectName, null, null, objectFqns, new HashSet<>(), false, null);
+            // The same retry the error report makes: right after a validation or a build the
+            // markers are still on their way, and a single empty read here would record an empty
+            // baseline that names every standing finding new.
+            List<ErrorInfo> collected = retryEmptyRead(
+                () -> collectMarkers(markerManager, checkRepository, filter, BASELINE_COLLECT_CAP,
+                    false));
+            if (collected.size() < BASELINE_COLLECT_CAP)
+            {
+                collectEclipseMarkers(collected, targetProjects(projectName), filter,
+                    BASELINE_COLLECT_CAP);
+            }
+            return new BaselineSnapshot(collapseErrors(collected), collected.size() >= BASELINE_COLLECT_CAP);
+        }
+        catch (Exception e)
+        {
+            return new BaselineSnapshot("# Request Failed\n\nCould not collect project errors: " //$NON-NLS-1$
+                + failureText(e));
+        }
     }
 
     /**
@@ -909,6 +1310,49 @@ public class ProjectProblemsReader
     }
 
     /**
+     * Reads until the reader answers non-empty, retrying an empty first read a few times.
+     * <p>
+     * A validation that has just been asked for publishes its markers with a delay, and a single
+     * read right after a build meets none of them - which reads as a clean project, and for a
+     * baseline record would mean an empty "before" that names every standing finding new. One
+     * helper serves the report and the baseline record so the two cannot drift apart.
+     * </p>
+     * <p>
+     * Package-visible so a plain test drives the retry without a marker manager behind it.
+     * </p>
+     *
+     * @param <T> the row type
+     * @param read the read to repeat; must never answer <code>null</code>
+     * @return the first non-empty answer, or the empty last answer when every retry stays empty
+     */
+    static <T> List<T> retryEmptyRead(java.util.function.Supplier<List<T>> read)
+    {
+        List<T> collected = read.get();
+        if (!collected.isEmpty())
+        {
+            return collected;
+        }
+        for (int attempt = 0; attempt < REFRESH_ATTEMPTS; attempt++)
+        {
+            try
+            {
+                Thread.sleep(REFRESH_SLEEP_MS);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            collected = read.get();
+            if (!collected.isEmpty())
+            {
+                return collected;
+            }
+        }
+        return collected;
+    }
+
+    /**
      * Collects the EDT markers that pass the filter, up to the limit.
      *
      * @param markerManager the marker manager
@@ -1129,7 +1573,10 @@ public class ProjectProblemsReader
                 MarkerSeverity mapped = mapEclipseSeverity(
                     marker.getAttribute(IMarker.SEVERITY, IMarker.SEVERITY_INFO));
                 String sourceId = marker.getAttribute(IMarker.SOURCE_ID, ""); //$NON-NLS-1$
-                String presentation = buildEclipsePresentation(marker);
+                String location = marker.getAttribute(IMarker.LOCATION, ""); //$NON-NLS-1$
+                String resourcePath = marker.getResource().getFullPath().toString();
+                String presentation = eclipsePresentation(location, resourcePath,
+                    marker.getAttribute(IMarker.LINE_NUMBER, -1));
                 if (!filter.matchesEclipse(mapped, sourceId, presentation))
                 {
                     continue;
@@ -1150,7 +1597,10 @@ public class ProjectProblemsReader
                     marker.getAttribute(IMarker.CHAR_END, -1),
                     // A plain Eclipse problem marker carries no EDT extra info: the map
                     // belongs to the validation model, and these come from under it.
-                    null));
+                    null,
+                    // The identity keeps the line off the reference: a finding that moved is
+                    // the same finding, not one new and one resolved.
+                    eclipseIdentityRef(location, resourcePath)));
             }
         }
     }
@@ -1182,16 +1632,50 @@ public class ProjectProblemsReader
      */
     private static String buildEclipsePresentation(IMarker marker)
     {
-        String location = marker.getAttribute(IMarker.LOCATION, ""); //$NON-NLS-1$
+        return eclipsePresentation(marker.getAttribute(IMarker.LOCATION, ""), //$NON-NLS-1$
+            marker.getResource().getFullPath().toString(), marker.getAttribute(IMarker.LINE_NUMBER, -1));
+    }
+
+    /**
+     * The place an Eclipse marker is shown at and filtered by: its location when it carries one,
+     * else its path with the line it sits on, else the path alone.
+     *
+     * @param location the marker's location attribute; may be <code>null</code> or empty
+     * @param resourcePath the marker's resource path
+     * @param line the line the marker sits on, or {@code -1} when it carries none
+     * @return the presentation, never <code>null</code>
+     */
+    static String eclipsePresentation(String location, String resourcePath, int line)
+    {
         if (location != null && !location.isEmpty())
         {
             return location;
         }
-        String resourcePath = marker.getResource().getFullPath().toString();
-        int line = marker.getAttribute(IMarker.LINE_NUMBER, -1);
         if (line >= 0)
         {
             return resourcePath + ":" + line; //$NON-NLS-1$
+        }
+        return resourcePath;
+    }
+
+    /**
+     * The identity reference of a plain Eclipse marker: its location when it carries one, else
+     * its path alone - never the line.
+     * <p>
+     * The presentation the report shows names the place precisely, and the line belongs there.
+     * The identity is a different question: a finding one line lower is the same finding, and a
+     * key that carried the line read every code shift as one new and one resolved finding.
+     * </p>
+     *
+     * @param location the marker's location attribute, or an empty string
+     * @param resourcePath the marker's resource path
+     * @return the reference, never <code>null</code>
+     */
+    static String eclipseIdentityRef(String location, String resourcePath)
+    {
+        if (location != null && !location.isEmpty())
+        {
+            return location;
         }
         return resourcePath;
     }
@@ -1590,7 +2074,7 @@ public class ProjectProblemsReader
     }
 
     /** One problem, flattened to what the report shows. */
-    private static final class ErrorInfo
+    static final class ErrorInfo
     {
         private final String checkCode;
 
@@ -1601,6 +2085,14 @@ public class ProjectProblemsReader
         private final String message;
 
         private final String objectPresentation;
+
+        /**
+         * The presentation the finding is identified by. The object presentation for a model
+         * marker; for a plain Eclipse marker its location or path with the line taken off - the
+         * line moves with the code, and a finding that moved must not read as one new and one
+         * resolved.
+         */
+        private final String objectKey;
 
         private final String severityNative;
 
@@ -1639,12 +2131,21 @@ public class ProjectProblemsReader
             String objectPresentation, String severityNative, int line, int charStart, int charEnd,
             String extra)
         {
+            this(checkCode, checkId, hasDocumentation, message, objectPresentation, severityNative,
+                line, charStart, charEnd, extra, objectPresentation);
+        }
+
+        ErrorInfo(String checkCode, String checkId, boolean hasDocumentation, String message,
+            String objectPresentation, String severityNative, int line, int charStart, int charEnd,
+            String extra, String objectKey)
+        {
             this.extra = extra;
             this.checkCode = checkCode;
             this.checkId = checkId;
             this.hasDocumentation = hasDocumentation;
             this.message = message;
             this.objectPresentation = objectPresentation;
+            this.objectKey = objectKey;
             this.severityNative = severityNative;
             this.line = line;
             this.charStart = charStart;

@@ -29,6 +29,7 @@ import ru.aiedt.mcp.server.labels.MarkerManager;
 import ru.aiedt.mcp.server.labels.MarkerWriteOutcome;
 import ru.aiedt.mcp.server.labels.MarkerHelpers;
 import ru.aiedt.mcp.server.labels.model.Marker;
+import ru.aiedt.mcp.server.labels.model.MarkerStore;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
 import ru.aiedt.mcp.server.support.FacadeParameterHelp;
@@ -57,6 +58,15 @@ import ru.aiedt.mcp.server.wire.ToolResult;
  * call, and a tag the object already carries - or does not carry - is reported in {@code skipped}
  * rather than refused. A tag name that differs only in case names another tag; the names, not their
  * case, tell the tags apart.</p>
+ *
+ * <p>Every write takes {@code dryRun=true}, which answers what the call would write and changes
+ * nothing: no byte of the markers file, no cached storage, no change notification. The preview runs
+ * the same checks the write runs and refuses for the same reasons, so a caller that reads a
+ * successful preview and repeats the call without {@code dryRun} gets the change it was shown. A
+ * preview writes nothing, so a write-blocking preset lets it through when the call is made as
+ * {@code tag_admin operation=...}; the standalone names of the five writes are switched off by such
+ * a preset with and without {@code dryRun}, because that switch is answered before the call reaches
+ * this facade.</p>
  */
 public class TagAdminFacadeTool
     implements IMcpTool
@@ -78,10 +88,6 @@ public class TagAdminFacadeTool
 
     /** The door a preset switches the unassign operation off under. */
     public static final String DOOR_UNASSIGN = "unassign_tag"; //$NON-NLS-1$
-
-    /** Every operation this facade accepts, in the order a refusal lists them. */
-    private static final String KNOWN =
-        "create_tag | update_tag | delete_tag | assign_tag | unassign_tag | help"; //$NON-NLS-1$
 
     /** The shape a color is stored in: a hash and six hex digits. */
     private static final Pattern COLOR = Pattern.compile("#[0-9A-Fa-f]{6}"); //$NON-NLS-1$
@@ -106,6 +112,22 @@ public class TagAdminFacadeTool
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
+    /** Every operation this facade accepts, as the schema and the refusals name them. */
+    private static final String KNOWN = knownOperations();
+
+    /**
+     * The operation list out of the catalog, so the schema, the refusals and the help all read
+     * one source and cannot drift apart.
+     *
+     * @return the catalog's names with help last, joined with " | "
+     */
+    private static String knownOperations()
+    {
+        List<String> names = new ArrayList<>(OPS.keySet());
+        names.add("help"); //$NON-NLS-1$
+        return String.join(" | ", names); //$NON-NLS-1$
+    }
+
     /** Every help topic, in the order the catalog names them: operations, then named topics. */
     private static final List<String> HELP_TOPICS = helpTopics();
 
@@ -118,15 +140,14 @@ public class TagAdminFacadeTool
     @Override
     public String getDescription()
     {
-        return "Tags - the named, colored labels a user attaches to metadata objects, stored per " //$NON-NLS-1$
-            + "project in .settings/aiedt-markers.yaml; reading them stays in workspace_marks. " //$NON-NLS-1$
-            + "Operations: create_tag (tag, optional color #RRGGBB and description), update_tag " //$NON-NLS-1$
-            + "(newName, color, description; a rename carries the assignments), delete_tag (takes " //$NON-NLS-1$
-            + "the tag off every object; dryRun answers the assignment count without writing), " //$NON-NLS-1$
-            + "assign_tag (objectFqn checked against the model, tags array; one write for the whole " //$NON-NLS-1$
-            + "list), unassign_tag (tags array; answers removed and skipped). The five writes are " //$NON-NLS-1$
-            + "gated by their own names, so a write-blocking preset refuses them before the file " //$NON-NLS-1$
-            + "is read."; //$NON-NLS-1$
+        return "Tags - named, colored labels a user attaches to metadata objects, stored per project " //$NON-NLS-1$
+            + "in .settings/aiedt-markers.yaml; reads stay in workspace_marks. Operations: " //$NON-NLS-1$
+            + "create_tag (tag, optional color #RRGGBB and description), update_tag (newName, " //$NON-NLS-1$
+            + "color, description; a rename keeps the assignments), delete_tag (takes the tag off " //$NON-NLS-1$
+            + "every object), assign_tag (objectFqn, tags array; one write for the list), " //$NON-NLS-1$
+            + "unassign_tag (tags array; answers removed and skipped). dryRun=true previews any " //$NON-NLS-1$
+            + "write and changes nothing, and passes a write-blocking preset when the call goes " //$NON-NLS-1$
+            + "through operation=; the standalone write names stay refused there either way."; //$NON-NLS-1$
     }
 
     @Override
@@ -146,36 +167,35 @@ public class TagAdminFacadeTool
     {
         return SchemaComposer.object()
             .stringProperty("operation",
-                KNOWN + " (required; snake_case canonical, camelCase like createTag is also " //$NON-NLS-1$
-                    + "accepted). Pass operation=help without other params for the operation " //$NON-NLS-1$
-                    + "catalog.") //$NON-NLS-1$
+                KNOWN + " (required; snake_case canonical, camelCase like createTag accepted). " //$NON-NLS-1$
+                    + "Pass operation=help alone for the operation catalog.") //$NON-NLS-1$
             .stringProperty("projectName",
                 "Name of the EDT project (required for every operation but help).") //$NON-NLS-1$
             .stringProperty("tag",
                 "create_tag, update_tag, delete_tag: the tag name (required). Must not be empty " //$NON-NLS-1$
-                    + "once trimmed; names that differ only in case name different tags.") //$NON-NLS-1$
+                    + "once trimmed; names differing only in case are different tags.") //$NON-NLS-1$
             .stringProperty("color",
                 "create_tag, update_tag: the tag color as #RRGGBB (optional; create keeps the " //$NON-NLS-1$
-                    + "default gray when omitted).") //$NON-NLS-1$
+                    + "default gray).") //$NON-NLS-1$
             .stringProperty("description",
-                "create_tag, update_tag: the tag description (optional; omitted leaves it as it " //$NON-NLS-1$
-                    + "is, an empty string clears it).") //$NON-NLS-1$
+                "create_tag, update_tag: the tag description (optional; omitted leaves it, an " //$NON-NLS-1$
+                    + "empty string clears it).") //$NON-NLS-1$
             .stringProperty("newName",
                 "update_tag: the new tag name (optional; omitted keeps the name). A rename " //$NON-NLS-1$
-                    + "carries every assignment to the new name.") //$NON-NLS-1$
+                    + "carries the assignments.") //$NON-NLS-1$
             .booleanProperty("dryRun",
-                "delete_tag: true answers the number of assignments the delete would take off " //$NON-NLS-1$
-                    + "and writes nothing; the call still passes the write gate, because the " //$NON-NLS-1$
-                    + "operation is a write (default false).") //$NON-NLS-1$
+                "true answers what the write would do and changes nothing; delete_tag answers the " //$NON-NLS-1$
+                    + "assignment count it would drop. Passed as operation=, a preview also runs " //$NON-NLS-1$
+                    + "under a write-blocking preset; the standalone write names stay off there " //$NON-NLS-1$
+                    + "(default false).") //$NON-NLS-1$
             .stringProperty("objectFqn",
-                "assign_tag, unassign_tag: the fully qualified name of the object, e.g. " //$NON-NLS-1$
+                "assign_tag, unassign_tag: the object's fully qualified name, e.g. " //$NON-NLS-1$
                     + "'Catalog.Products' or 'Catalog.Products.Attribute.Code'. assign_tag " //$NON-NLS-1$
-                    + "checks it against the configuration and refuses an object the model does " //$NON-NLS-1$
-                    + "not hold.") //$NON-NLS-1$
+                    + "checks it against the model and refuses an object it does not hold.") //$NON-NLS-1$
             .stringArrayProperty("tags",
-                "assign_tag, unassign_tag: tag names the call works with (required). One unknown " //$NON-NLS-1$
-                    + "tag refuses the whole call; a tag the object already carries - or does " //$NON-NLS-1$
-                    + "not carry - is reported in skipped.") //$NON-NLS-1$
+                "assign_tag, unassign_tag: the tag names (required). One unknown tag refuses " //$NON-NLS-1$
+                    + "the whole call; a tag the object already - or does not - carries is " //$NON-NLS-1$
+                    + "reported in skipped.") //$NON-NLS-1$
             .stringProperty("topic",
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -216,69 +236,83 @@ public class TagAdminFacadeTool
                     FacadeHelpSearch.describe(buildHelp(null, null, getInputSchema())))
                 + "\n\nAllowed: " + KNOWN + ".").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
-        String previewRefusal = previewRefusal(operation,
-            JsonUtils.extractBooleanArgument(params, "dryRun", false)); //$NON-NLS-1$
-        if (previewRefusal != null)
-        {
-            return ToolResult.error(previewRefusal).toJson();
-        }
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
         switch (operation)
         {
             case "create_tag": //$NON-NLS-1$
             {
                 // A create writes the markers file, so it is gated as a write: under a
                 // write-blocking preset it is refused before the file is read.
-                String gate = ToolGate.gateOrNull(DOOR_CREATE);
+                String gate = writeGate(DOOR_CREATE, dryRun);
                 if (gate != null)
                 {
                     return ToolResult.error(gate).toJson();
                 }
-                return doCreateTag(params);
+                return doCreateTag(params, dryRun);
             }
             case "update_tag": //$NON-NLS-1$
             {
                 // A rename, a new color or a new description writes the file - gated the same way.
-                String gate = ToolGate.gateOrNull(DOOR_UPDATE);
+                String gate = writeGate(DOOR_UPDATE, dryRun);
                 if (gate != null)
                 {
                     return ToolResult.error(gate).toJson();
                 }
-                return doUpdateTag(params);
+                return doUpdateTag(params, dryRun);
             }
             case "delete_tag": //$NON-NLS-1$
             {
-                // A delete takes the tag off every object that carries it. A dry run writes
-                // nothing, but the operation is a write and passes the same door.
-                String gate = ToolGate.gateOrNull(DOOR_DELETE);
+                // A delete takes the tag off every object that carries it - gated the same way.
+                String gate = writeGate(DOOR_DELETE, dryRun);
                 if (gate != null)
                 {
                     return ToolResult.error(gate).toJson();
                 }
-                return doDeleteTag(params);
+                return doDeleteTag(params, dryRun);
             }
             case "assign_tag": //$NON-NLS-1$
             {
                 // Assigning writes the file - gated before the model is asked about the object.
-                String gate = ToolGate.gateOrNull(DOOR_ASSIGN);
+                String gate = writeGate(DOOR_ASSIGN, dryRun);
                 if (gate != null)
                 {
                     return ToolResult.error(gate).toJson();
                 }
-                return doAssignTag(params);
+                return doAssignTag(params, dryRun);
             }
             case "unassign_tag": //$NON-NLS-1$
             {
                 // Taking tags off an object writes the file - gated the same way.
-                String gate = ToolGate.gateOrNull(DOOR_UNASSIGN);
+                String gate = writeGate(DOOR_UNASSIGN, dryRun);
                 if (gate != null)
                 {
                     return ToolResult.error(gate).toJson();
                 }
-                return doUnassignTag(params);
+                return doUnassignTag(params, dryRun);
             }
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + KNOWN + ".").toJson(); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * The gate a write passes and a preview does not.
+     * <p>
+     * Every operation of this facade writes the markers file, so a preset that blocks writes refuses
+     * all five by their doors. A call with {@code dryRun=true} writes nothing - it answers what the
+     * write would do - so the gate is not asked about it, and a caller under a read-only preset can
+     * still look before asking for the write. This is the rule {@code edit_metadata} follows for its
+     * own previews.
+     * </p>
+     *
+     * @param door the door of the operation
+     * @param dryRun whether the call asked for a preview
+     * @return the refusal the preset answers with, or {@code null} when the call may proceed
+     */
+    private static String writeGate(String door, boolean dryRun)
+    {
+        return dryRun ? null : ToolGate.gateOrNull(door);
     }
 
     /**
@@ -666,34 +700,42 @@ public class TagAdminFacadeTool
     }
 
     /**
-     * Refuses a preview asked of an operation that has none.
-     * <p>
-     * Only {@code delete_tag} reads {@code dryRun}. A caller that passes {@code dryRun=true} to
-     * another operation expects nothing to be written; running the write regardless would answer
-     * success for a change the caller asked only to see.
-     * </p>
+     * Refuses a tag that is already defined, with the sentence the marker service answers a write
+     * with: a preview reads what the write would say.
      *
-     * @param operation the operation named by the call
-     * @param dryRun the {@code dryRun} argument
-     * @return the refusal text, or <code>null</code> when the call may proceed
+     * @param tag the name that is already defined
+     * @param what the operation, for the sentence
+     * @return the refusal
      */
-    static String previewRefusal(String operation, boolean dryRun)
+    private static ToolResult tagExists(String tag, String what)
     {
-        if (!dryRun || "delete_tag".equals(operation)) //$NON-NLS-1$
-        {
-            return null;
-        }
-        return "dryRun is read by delete_tag only: " + operation + " has no preview, and running " //$NON-NLS-1$ //$NON-NLS-2$
-            + "it would write. Nothing was written - call it again without dryRun."; //$NON-NLS-1$
+        return refusalOf(MarkerWriteOutcome.refused(MarkerWriteOutcome.TAG_EXISTS,
+            "a marker named \"" + tag + "\" is already defined in this project"), what); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
-     * Creates a tag.
+     * Refuses a rename onto a name another tag carries, with the sentence the marker service
+     * answers a write with.
+     *
+     * @param newName the name that is taken
+     * @return the refusal
+     */
+    private static ToolResult nameTaken(String newName)
+    {
+        return refusalOf(MarkerWriteOutcome.refused(MarkerWriteOutcome.NAME_TAKEN,
+            "another marker is already named \"" + newName //$NON-NLS-1$
+                + "\"; the color and description were left as they were"), //$NON-NLS-1$
+            "update_tag"); //$NON-NLS-1$
+    }
+
+    /**
+     * Creates a tag, or answers what creating it would write.
      *
      * @param params the call arguments
+     * @param dryRun whether the call asked for a preview
      * @return the answer JSON
      */
-    private String doCreateTag(Map<String, String> params)
+    private String doCreateTag(Map<String, String> params, boolean dryRun)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         ServiceProject context = resolveServiceAndProject(projectName);
@@ -721,6 +763,29 @@ public class TagAdminFacadeTool
             color = null;
         }
         String description = JsonUtils.extractStringArgument(params, "description"); //$NON-NLS-1$
+        if (dryRun)
+        {
+            MarkersInView view = markersInView(context.service, context.project, dryRun);
+            if (view.refusal != null)
+            {
+                return view.refusal.toJson();
+            }
+            if (view.storage.getMarkerByName(tag) != null)
+            {
+                return tagExists(tag, "create_tag").toJson(); //$NON-NLS-1$
+            }
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "create_tag", "the marker \"" + tag + "\" was not created"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
+            return ToolResult.success()
+                .put("created", false) //$NON-NLS-1$
+                .put("dryRun", true) //$NON-NLS-1$
+                .put("tag", tagNode(new Marker(tag, color, description))) //$NON-NLS-1$
+                .toJson();
+        }
         MarkerWriteOutcome outcome = context.service.createMarkerWithOutcome(context.project, tag,
             color, description);
         if (outcome.isRefused())
@@ -734,12 +799,14 @@ public class TagAdminFacadeTool
     }
 
     /**
-     * Renames a tag, or changes its color and description, in one edit.
+     * Renames a tag, or changes its color and description, in one edit, or answers what the edit
+     * would write.
      *
      * @param params the call arguments
+     * @param dryRun whether the call asked for a preview
      * @return the answer JSON
      */
-    private String doUpdateTag(Map<String, String> params)
+    private String doUpdateTag(Map<String, String> params, boolean dryRun)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         ServiceProject context = resolveServiceAndProject(projectName);
@@ -778,15 +845,43 @@ public class TagAdminFacadeTool
             return colorRefusal(color).toJson();
         }
         String description = JsonUtils.extractStringArgument(params, "description"); //$NON-NLS-1$
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
-        Marker existing = context.service.getMarkerStorage(context.project).getMarkerByName(tag);
+        MarkerStore storage = view.storage;
+        Marker existing = storage.getMarkerByName(tag);
         if (existing == null)
         {
             return tagNotFound(tag);
+        }
+        boolean renaming = newName != null && !newName.equals(tag);
+        if (dryRun)
+        {
+            if (renaming && storage.getMarkerByName(newName) != null)
+            {
+                return nameTaken(newName).toJson();
+            }
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "update_tag", "the marker \"" + tag + "\" was not updated"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
+            Marker after = new Marker(renaming ? newName : existing.getName(),
+                color != null ? color : existing.getColor(),
+                description != null ? description : existing.getDescription());
+            ToolResult preview = ToolResult.success()
+                .put("tag", tagNode(existing)) //$NON-NLS-1$
+                .put("tagAfter", tagNode(after)) //$NON-NLS-1$
+                .put("dryRun", true); //$NON-NLS-1$
+            if (renaming)
+            {
+                preview = preview.put("movedAssignments", //$NON-NLS-1$
+                    Integer.valueOf(storage.getObjectsByMarker(tag).size()));
+            }
+            return preview.toJson();
         }
         MarkerWriteOutcome outcome = context.service.updateMarkerWithOutcome(context.project, tag,
             newName, color, description);
@@ -807,9 +902,10 @@ public class TagAdminFacadeTool
      * Deletes a tag and takes it off every object, or counts what that would take off.
      *
      * @param params the call arguments
+     * @param dryRun whether the call asked for a preview
      * @return the answer JSON
      */
-    private String doDeleteTag(Map<String, String> params)
+    private String doDeleteTag(Map<String, String> params, boolean dryRun)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         ServiceProject context = resolveServiceAndProject(projectName);
@@ -823,20 +919,24 @@ public class TagAdminFacadeTool
             return nameRefusal("tag").toJson(); //$NON-NLS-1$
         }
         tag = tag.trim();
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
-        if (context.service.getMarkerStorage(context.project).getMarkerByName(tag) == null)
+        if (view.storage.getMarkerByName(tag) == null)
         {
             return tagNotFound(tag);
         }
-        int assignments = context.service.getMarkerStorage(context.project)
-            .getObjectsByMarker(tag).size();
-        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        int assignments = view.storage.getObjectsByMarker(tag).size();
         if (dryRun)
         {
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "delete_tag", "the marker \"" + tag + "\" was not deleted"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
             return ToolResult.success()
                 .put("deleted", false) //$NON-NLS-1$
                 .put("dryRun", true) //$NON-NLS-1$
@@ -855,12 +955,13 @@ public class TagAdminFacadeTool
     }
 
     /**
-     * Assigns tags to an object in one write.
+     * Assigns tags to an object in one write, or answers what assigning them would write.
      *
      * @param params the call arguments
+     * @param dryRun whether the call asked for a preview
      * @return the answer JSON
      */
-    private String doAssignTag(Map<String, String> params)
+    private String doAssignTag(Map<String, String> params, boolean dryRun)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         ServiceProject context = resolveServiceAndProject(projectName);
@@ -887,10 +988,10 @@ public class TagAdminFacadeTool
             return ToolResult.error("objectFqn must be provided. Example: 'Catalog.Products'.") //$NON-NLS-1$
                 .toJson();
         }
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
         ObjectCheck check = checkObject(context.project, objectFqn);
         if (check.refusal != null)
@@ -902,7 +1003,7 @@ public class TagAdminFacadeTool
         // the whole call and nothing is assigned. The check reads a snapshot outside the write
         // lock, so a definition racing it still meets the operation's own refusal under the lock.
         Set<String> defined = new LinkedHashSet<>();
-        for (Marker marker : context.service.getMarkers(context.project))
+        for (Marker marker : view.storage.getTags())
         {
             defined.add(marker.getName());
         }
@@ -912,6 +1013,30 @@ public class TagAdminFacadeTool
             {
                 return tagNotFound(tag);
             }
+        }
+        if (dryRun)
+        {
+            MarkerStore preview = view.storage.copy();
+            List<String> before = tagsOn(preview, objectFqn);
+            MarkerStore.AssignmentEdit edit = preview.assignAll(objectFqn, tags);
+            List<String> after = tagsOn(preview, objectFqn);
+            if (!edit.applied().isEmpty())
+            {
+                ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                    "assign_tag", "no marker was assigned to \"" + objectFqn + "\""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                if (writeRefusal != null)
+                {
+                    return writeRefusal.toJson();
+                }
+            }
+            return ToolResult.success()
+                .put("objectFqn", objectFqn) //$NON-NLS-1$
+                .put("dryRun", true) //$NON-NLS-1$
+                .put("tagsBefore", before) //$NON-NLS-1$
+                .put("assigned", edit.applied()) //$NON-NLS-1$
+                .put("skipped", skippedNodes(edit.skipped())) //$NON-NLS-1$
+                .put("tagsAfter", after) //$NON-NLS-1$
+                .toJson();
         }
         MarkerWriteOutcome outcome = assignViaService(context.service, context.project, objectFqn,
             tags);
@@ -929,12 +1054,13 @@ public class TagAdminFacadeTool
     }
 
     /**
-     * Takes tags off an object in one write.
+     * Takes tags off an object in one write, or answers what taking them off would write.
      *
      * @param params the call arguments
+     * @param dryRun whether the call asked for a preview
      * @return the answer JSON
      */
-    private String doUnassignTag(Map<String, String> params)
+    private String doUnassignTag(Map<String, String> params, boolean dryRun)
     {
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         ServiceProject context = resolveServiceAndProject(projectName);
@@ -955,13 +1081,13 @@ public class TagAdminFacadeTool
                 return nameRefusal("tags").toJson(); //$NON-NLS-1$
             }
         }
-        ToolResult fileRefusal = fileRefusalOf(context.service, context.project);
-        if (fileRefusal != null)
+        MarkersInView view = markersInView(context.service, context.project, dryRun);
+        if (view.refusal != null)
         {
-            return fileRefusal.toJson();
+            return view.refusal.toJson();
         }
         Set<String> defined = new LinkedHashSet<>();
-        for (Marker marker : context.service.getMarkers(context.project))
+        for (Marker marker : view.storage.getTags())
         {
             defined.add(marker.getName());
         }
@@ -979,6 +1105,40 @@ public class TagAdminFacadeTool
                 .toJson();
         }
         objectFqn = objectFqn.trim();
+        if (dryRun)
+        {
+            MarkerStore preview = view.storage.copy();
+            List<String> before = tagsOn(preview, objectFqn);
+            MarkerStore.AssignmentEdit edit = preview.unassignAll(objectFqn, tags);
+            List<String> after = tagsOn(preview, objectFqn);
+            if (edit.applied().isEmpty())
+            {
+                // A preview of a removal that would remove nothing reads the refusal the write
+                // itself answers with, and still says nothing was written.
+                return ToolResult.error("The object '" + objectFqn + "' carries none of the named " //$NON-NLS-1$ //$NON-NLS-2$
+                    + "tags, so nothing was removed.")
+                        .put("reason", REASON_NOT_ASSIGNED) //$NON-NLS-1$
+                        .put("dryRun", true) //$NON-NLS-1$
+                        .put("tagsBefore", before) //$NON-NLS-1$
+                        .put("removed", edit.applied()) //$NON-NLS-1$
+                        .put("skipped", skippedNodes(edit.skipped())) //$NON-NLS-1$
+                        .toJson();
+            }
+            ToolResult writeRefusal = writeRefusalOf(context.service, context.project,
+                "unassign_tag", "no marker was removed from \"" + objectFqn + "\""); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            if (writeRefusal != null)
+            {
+                return writeRefusal.toJson();
+            }
+            return ToolResult.success()
+                .put("objectFqn", objectFqn) //$NON-NLS-1$
+                .put("dryRun", true) //$NON-NLS-1$
+                .put("tagsBefore", before) //$NON-NLS-1$
+                .put("removed", edit.applied()) //$NON-NLS-1$
+                .put("skipped", skippedNodes(edit.skipped())) //$NON-NLS-1$
+                .put("tagsAfter", after) //$NON-NLS-1$
+                .toJson();
+        }
         MarkerWriteOutcome outcome = unassignViaService(context.service, context.project,
             objectFqn, tags);
         if (outcome.isRefused())
@@ -1061,6 +1221,25 @@ public class TagAdminFacadeTool
     }
 
     /**
+     * The tags an object carries, in the order the file records them.
+     * <p>
+     * The object's own assignment list, not the defined tags resolved from it: a name the file
+     * lists while no definition matches it keeps the place the file gave it, and the names that do
+     * resolve keep theirs. The list is copied, so a caller building the after-state cannot reach
+     * the store through it.
+     * </p>
+     *
+     * @param storage the marker storage
+     * @param objectFqn the object
+     * @return the names, never {@code null}
+     */
+    private static List<String> tagsOn(MarkerStore storage, String objectFqn)
+    {
+        List<String> names = storage.getAssignments().get(objectFqn);
+        return names == null || names.isEmpty() ? new ArrayList<>() : new ArrayList<>(names);
+    }
+
+    /**
      * The refusal an unusable marker file answers with, checked before the tags themselves are
      * read: a pre-check that cannot see the definitions would otherwise answer {@code tagNotFound}
      * for a tag the file does define. A file that does not parse answers {@code unreadableFile};
@@ -1073,19 +1252,125 @@ public class TagAdminFacadeTool
      */
     private static ToolResult fileRefusalOf(MarkerManager service, IProject project)
     {
-        String refusal = service.markerFileRefusal(project);
-        if (refusal != null)
+        return unreadableMarkerFileRefusal(service.markerFileRefusal(project),
+            service.markerFileReadFailed(project), project);
+    }
+
+    /**
+     * The refusal one preview read of the marker file answers with.
+     * <p>
+     * A preview keeps no sign of what it read, so the two ways a read can fail come from that read
+     * itself instead of being asked of the service afterwards, which would have to touch the file
+     * a second time to answer.
+     * </p>
+     *
+     * @param read what the preview read answered
+     * @param project the project
+     * @return the refusal, or {@code null} when the file was read
+     */
+    private static ToolResult previewFileRefusalOf(MarkerManager.PreviewRead read, IProject project)
+    {
+        return unreadableMarkerFileRefusal(
+            read.unreadable() ? MarkerManager.UNREADABLE_MARKER_FILE : null, read.readFailed(),
+            project);
+    }
+
+    /**
+     * The refusal a marker file that is there and does not parse, or that could not be read at
+     * all, answers with.
+     *
+     * @param unreadable the sentence about a file that does not parse, or {@code null}
+     * @param readFailed whether the file could not be read at all
+     * @param project the project
+     * @return the refusal, or {@code null} when neither holds
+     */
+    private static ToolResult unreadableMarkerFileRefusal(String unreadable, boolean readFailed,
+        IProject project)
+    {
+        if (unreadable != null)
         {
-            return ToolResult.error(refusal + " No tag was written.") //$NON-NLS-1$
+            return ToolResult.error(unreadable + ". No tag was written.") //$NON-NLS-1$
                 .put("reason", MarkerWriteOutcome.UNREADABLE_FILE); //$NON-NLS-1$
         }
-        if (service.markerFileReadFailed(project))
+        if (readFailed)
         {
             return ToolResult.error("The marker file of project " + project.getName() //$NON-NLS-1$
                 + " could not be read, so its tags cannot be checked. No tag was written.") //$NON-NLS-1$
                     .put("reason", MarkerWriteOutcome.SAVE_FAILED); //$NON-NLS-1$
         }
         return null;
+    }
+
+    /**
+     * The markers one call reads, together with the refusal that stops it before it reads them.
+     * <p>
+     * A call that writes reads the markers the ordinary way, which carries a marker file an
+     * earlier version wrote over to the name this version uses. A call that writes nothing reads
+     * the file as it stands and remembers nothing, so it leaves both files exactly where they are.
+     * </p>
+     */
+    private static final class MarkersInView
+    {
+        private final MarkerStore storage;
+
+        private final ToolResult refusal;
+
+        /**
+         * Holds the markers one call works from.
+         *
+         * @param storage the markers, or {@code null} when the call is refused
+         * @param refusal the refusal, or {@code null} when there is none
+         */
+        MarkersInView(MarkerStore storage, ToolResult refusal)
+        {
+            this.storage = storage;
+            this.refusal = refusal;
+        }
+    }
+
+    /**
+     * Reads the markers a call works from, the way that call reads them.
+     *
+     * @param service the marker service
+     * @param project the project
+     * @param dryRun whether the call writes nothing
+     * @return the markers and the refusal, exactly one of which is set
+     */
+    private static MarkersInView markersInView(MarkerManager service, IProject project,
+        boolean dryRun)
+    {
+        if (!dryRun)
+        {
+            ToolResult refusal = fileRefusalOf(service, project);
+            return refusal != null ? new MarkersInView(null, refusal)
+                : new MarkersInView(service.getMarkerStorage(project), null);
+        }
+        MarkerManager.PreviewRead read = service.readMarkersForPreview(project);
+        ToolResult refusal = previewFileRefusalOf(read, project);
+        return refusal != null ? new MarkersInView(null, refusal)
+            : new MarkersInView(read.storage(), null);
+    }
+
+    /**
+     * The refusal the write a preview describes would answer with, or {@code null} when nothing
+     * refuses it yet.
+     * <p>
+     * The service asks the file a preview reads, so a preview refuses with the code and the
+     * sentence the write itself refuses with.
+     * </p>
+     *
+     * @param service the marker service
+     * @param project the project
+     * @param what what the call wanted to do, for the sentence
+     * @param subject what the write was about, as the sentence the refusal carries before the
+     *            file reason
+     * @return the refusal, or {@code null}
+     */
+    private static ToolResult writeRefusalOf(MarkerManager service, IProject project, String what,
+        String subject)
+    {
+        MarkerWriteOutcome refusal = service.fileWriteRefusalForPreview(project, subject);
+        return refusal != null ? refusalOf(refusal, what) : null;
     }
 
     /**
@@ -1125,11 +1410,16 @@ public class TagAdminFacadeTool
                 + "description.\n"); //$NON-NLS-1$
             sb.append("- **update_tag** - rename a tag (newName; the assignments carry over) or " //$NON-NLS-1$
                 + "change its color and description.\n"); //$NON-NLS-1$
-            sb.append("- **delete_tag** - delete a tag and take it off every object; dryRun " //$NON-NLS-1$
-                + "answers the assignment count without writing.\n"); //$NON-NLS-1$
+            sb.append("- **delete_tag** - delete a tag and take it off every object.\n"); //$NON-NLS-1$
             sb.append("- **assign_tag** - put tags on an object (objectFqn, tags array); the " //$NON-NLS-1$
                 + "object is checked against the model and the list writes as one.\n"); //$NON-NLS-1$
             sb.append("- **unassign_tag** - take tags off an object (tags array).\n"); //$NON-NLS-1$
+            sb.append("- **dryRun=true** - accepted by every operation: it answers what the call " //$NON-NLS-1$
+                + "would write (create_tag the tag it would define, update_tag the tag before and " //$NON-NLS-1$
+                + "after, delete_tag the assignment count, assign_tag and unassign_tag the " //$NON-NLS-1$
+                + "object's tags before and after) and changes nothing. It runs under a write-" //$NON-NLS-1$
+                + "blocking preset when the call is passed as operation= of tag_admin; the " //$NON-NLS-1$
+                + "standalone names of the five writes are switched off there either way.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the operation-picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
             return sb.toString();

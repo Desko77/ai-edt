@@ -230,8 +230,36 @@ public class TheToolListHasAWeightBudgetTest
      * two safety flags of the extension it installs, and the schema is where a caller learns that
      * before the call writes to the infobase. Measured 08.10: 192404.
      * </p>
+     * <p>
+     * And from 192404 to 192661 for save_baseline and clear_baseline on diagnostics: the two
+     * operation names in the description and the operation list, the sinceBaseline argument and
+     * its sentence, and the projectName and extraInfo sentences rebuilt to name the new
+     * operations in less than they said before. Measured 13.10: 192661.
+     * </p>
+     * <p>
+     * And from 192661 to 192666 for runKey on yaxunit_tests, which collects a run answered
+     * Pending at a dialog or at the deadline of the call. Measured 14.10: 192666.
+     * </p>
+     * <p>
+     * And from 192666 to 192930 for excludeEvents on read_event_log: the argument, its
+     * declaration and the sentence that says a name or its start may be given. Measured 14.10:
+     * 192930.
+     * </p>
+     * <p>
+     * And from 192930 to 193180 for the excludeEvents declaration on the infobase_admin schema,
+     * which is where a client routing the operation through the facade reads it. Measured 14.10:
+     * 193180.
+     * </p>
+     * <p>
+     * And from 193180 to 193260 for the sentence on yaxunit_tests that a name in tests or modules
+     * the report of the run lacks is a discrepancy, not a pass. Measured 14.10: 193260.
+     * </p>
+     * <p>
+     * And from 193260 to 193342 for the empty edgeKinds sentence on the dependency_graph and
+     * insights schemas. Measured 15.10: 193342.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 192404;
+    private static final int DOCUMENT_BUDGET = 193342;
 
     private LiveServer server;
 
@@ -395,8 +423,11 @@ public class TheToolListHasAWeightBudgetTest
         // and retrieve_database_changes adds the operation, replaceLocal, markSynchronized and the
         // pending wait the schema describes. And for verifyInfobaseContent and the sentence that
         // a load marks the stored copy. Raised for the sentence that a load names the stored copy
-        // when the mark could not be written. Measured 29.09: 12539.
-        BUDGETS.put("infobase_admin", Integer.valueOf(12539)); //$NON-NLS-1$
+        // when the mark could not be written. Measured 29.09: 12539. Raised from 12539 to 12789
+        // for excludeEvents: the declaration on the facade schema and the sentence that says a
+        // name or its start may be given and that the exclusion runs before the limit. Measured
+        // 14.10: 12789.
+        BUDGETS.put("infobase_admin", Integer.valueOf(12789)); //$NON-NLS-1$
         BUDGETS.put("write_module_source", Integer.valueOf(6887)); //$NON-NLS-1$
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
@@ -440,7 +471,10 @@ public class TheToolListHasAWeightBudgetTest
         // And to 3366 for yaxunitUnsafeMode, which a caller has to read before installYaxunit lowers
         // the two safety flags of the extension, and for the sentence that says an unnamed update
         // is dropped under a preset that disabled update_database. Measured 08.10: 3366.
-        BUDGETS.put("yaxunit_tests", Integer.valueOf(3366)); //$NON-NLS-1$
+        // And to 3530 for the sentence on tests that a name in tests or modules the report of the
+        // run lacks is a discrepancy, not a pass: the schema is where a caller learns that before
+        // it reads a pass. Measured 14.10: 3530.
+        BUDGETS.put("yaxunit_tests", Integer.valueOf(3530)); //$NON-NLS-1$
         // Raised from 2295 by 713: the audit advertises scope, moduleFqn, methodName and
         // subsystemName, one sentence each. The sentences that say which combination is a walk
         // and which is a refusal live in operation help, not in this schema. 3008 is what remains
@@ -456,7 +490,10 @@ public class TheToolListHasAWeightBudgetTest
         // the two places the refusals are named. Measured 08.10: 2904.
         BUDGETS.put("tag_admin", Integer.valueOf(2904)); //$NON-NLS-1$
         BUDGETS.put("get_form_screenshot", Integer.valueOf(1748)); //$NON-NLS-1$
-        BUDGETS.put("read_event_log", Integer.valueOf(1673)); //$NON-NLS-1$
+        // Raised from 1673 to 1937 for excludeEvents on read_event_log: the declaration and the
+        // sentence that says a name or its start may be given, and that the exclusion runs
+        // before the limit. Measured 14.10: 1937.
+        BUDGETS.put("read_event_log", Integer.valueOf(1937)); //$NON-NLS-1$
         BUDGETS.put("get_metadata_details", Integer.valueOf(1613)); //$NON-NLS-1$
         BUDGETS.put("copy_object", Integer.valueOf(1420)); //$NON-NLS-1$
         BUDGETS.put("get_form_structure", Integer.valueOf(1359)); //$NON-NLS-1$

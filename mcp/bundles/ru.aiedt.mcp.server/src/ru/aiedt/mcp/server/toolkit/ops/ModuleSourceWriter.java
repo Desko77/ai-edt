@@ -132,10 +132,10 @@ public class ModuleSourceWriter implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modulePath", //$NON-NLS-1$
-                "Path to the module, measured from the src/ folder - for instance 'Documents/MyDoc/ObjectModule.bsl' " //$NON-NLS-1$
-                    + "or 'CommonModules/MyModule/Module.bsl'. A leading 'src/' is fine too and gets stripped " //$NON-NLS-1$
-                    + "automatically, so 'src/CommonModules/MyModule/Module.bsl' also works. " //$NON-NLS-1$
-                    + "Or skip this and supply objectName + moduleType instead.") //$NON-NLS-1$
+                "Path to the module from the src/ folder, e.g. 'CommonModules/MyModule/Module.bsl' " //$NON-NLS-1$
+                    + "or 'Documents/MyDoc/ObjectModule.bsl'; a leading 'src/' is stripped. " //$NON-NLS-1$
+                    + "A write refuses a misspelled kind folder or an object the configuration does " //$NON-NLS-1$
+                    + "not hold, naming the canonical path. Or supply objectName + moduleType instead.") //$NON-NLS-1$
             .stringProperty("objectName", //$NON-NLS-1$
                 "The object's fully-qualified name, e.g. 'Document.MyDoc' or 'DataProcessor.MyProcessor'. " //$NON-NLS-1$
                     + "Metadata names in Russian work too (e.g. 'Документ.МойДок'). " //$NON-NLS-1$
@@ -378,6 +378,28 @@ public class ModuleSourceWriter implements IMcpTool
             return refused.wrapContent("Error: " + notEditable.error //$NON-NLS-1$
                 + (notEditable.hint == null || notEditable.hint.isEmpty() //$NON-NLS-1$
                     ? "" : " - " + notEditable.hint)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
+        // --- step 6b: the layout a path would be written into ---
+        // A path whose first segment is not the object's own folder used to answer success and
+        // leave a file no object reads. The path is judged before anything is read or written, so
+        // a preview is refused exactly as a real call is. A module a provider holds is an
+        // address, not a file, and is exempt.
+        if (provided == null)
+        {
+            String layoutRefusal = BslModuleAccess.checkModulePathForWrite(project, modulePath,
+                fileExists);
+            if (layoutRefusal != null)
+            {
+                return layoutRefusal;
+            }
+            // A container module must be written through its provider, not as a separate file.
+            if (!fileExists && file.getParent().getFile(new Path("Form.oform")).exists()) //$NON-NLS-1$
+            {
+                return "Error: src/" + modulePath //$NON-NLS-1$
+                    + " belongs to Form.oform, but no module source provider resolved this address. " //$NON-NLS-1$
+                    + "Enable the Form.oform module provider and retry. Nothing was written."; //$NON-NLS-1$
+            }
         }
 
         // -- outer try: steps 7-17 --
@@ -681,9 +703,11 @@ public class ModuleSourceWriter implements IMcpTool
             PersistenceResult persistence;
             FileMarkers.Grouped validation = null;
             String delivery = null;
+            boolean unchanged = false;
             if (provided != null)
             {
                 boolean written = provided.write(newLines);
+                unchanged = !written;
                 // Nothing in the BM holds this module, so there is no index to flush and no
                 // marker to wait for; saying so beats a "skipped" that reads as a failure.
                 persistence = PersistenceResult.notApplicable(
@@ -693,11 +717,19 @@ public class ModuleSourceWriter implements IMcpTool
             }
             else
             {
-                writeFile(file, newLines, hasBom, fileExists);
+                unchanged = !writeFile(file, newLines, hasBom, fileExists);
 
                 // --- step 14: persistence sync (BM flush) ---
-                String moduleFqn = resolveFqnForValidation(objectName, modulePath);
-                persistence = forceExportModule(project, moduleFqn);
+                if (unchanged)
+                {
+                    persistence = PersistenceResult.notApplicable(
+                        "not needed: the module already held this text, the file was not written"); //$NON-NLS-1$
+                }
+                else
+                {
+                    String moduleFqn = resolveFqnForValidation(objectName, modulePath);
+                    persistence = forceExportModule(project, moduleFqn);
+                }
 
                 // --- step 15: optional EDT validation ---
                 if (validateAfterWrite)
@@ -721,6 +753,9 @@ public class ModuleSourceWriter implements IMcpTool
                 fm.put("linesBefore", totalOriginal); //$NON-NLS-1$
             else
                 fm.put("newFile", true); //$NON-NLS-1$
+
+            if (unchanged)
+                fm.put("unchanged", true); //$NON-NLS-1$
 
             if (protectionWarning != null)
                 fm.put("protection", protectionWarning); //$NON-NLS-1$
@@ -1340,9 +1375,11 @@ public class ModuleSourceWriter implements IMcpTool
      * @param lines lines to write, joined with the delimiter the file already uses
      * @param withBom whether to prepend the BOM
      * @param fileExists whether the file already exists (create vs. setContents)
+     * @return <code>false</code> when the file already holds exactly these bytes and was left
+     *     untouched, <code>true</code> when it was written
      * @throws Exception on any I/O or workspace failure
      */
-    private void writeFile(IFile file, List<String> lines, boolean withBom, boolean fileExists)
+    private boolean writeFile(IFile file, List<String> lines, boolean withBom, boolean fileExists)
         throws Exception
     {
         String content = String.join("\n", lines); //$NON-NLS-1$
@@ -1363,6 +1400,10 @@ public class ModuleSourceWriter implements IMcpTool
         {
             output = contentBytes;
         }
+        if (fileExists && holdsExactly(file, output))
+        {
+            return false;
+        }
         try (InputStream stream = new ByteArrayInputStream(output))
         {
             if (fileExists)
@@ -1372,6 +1413,37 @@ public class ModuleSourceWriter implements IMcpTool
                 createParentFolders(file);
                 file.create(stream, true, null);
             }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the file holds exactly the given bytes, both on disk and in the workspace.
+     * <p>
+     * A file out of sync with the workspace counts as different: its disk bytes may already be
+     * the new text while the workspace and the EDT model still hold the old one, and only the
+     * write brings them together. A file that cannot be read counts as different too, so the
+     * write goes ahead as it did before.
+     * </p>
+     *
+     * @param file the module file
+     * @param bytes the content about to be written
+     * @return <code>true</code> when the file is in sync and its content equals the bytes
+     */
+    private static boolean holdsExactly(IFile file, byte[] bytes)
+    {
+        if (!file.isSynchronized(IResource.DEPTH_ZERO))
+        {
+            return false;
+        }
+        try (InputStream in = file.getContents(true))
+        {
+            return Arrays.equals(in.readAllBytes(), bytes);
+        }
+        catch (Exception e)
+        {
+            Activator.logDebug("Could not compare " + file.getFullPath() + " before writing: " + e); //$NON-NLS-1$ //$NON-NLS-2$
+            return false;
         }
     }
 

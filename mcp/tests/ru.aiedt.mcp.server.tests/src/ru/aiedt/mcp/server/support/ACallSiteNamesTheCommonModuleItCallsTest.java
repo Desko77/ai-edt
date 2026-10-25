@@ -57,13 +57,13 @@ public class ACallSiteNamesTheCommonModuleItCallsTest
         method.getStatements().add(statement);
 
         assertEquals(java.util.List.of("CommonModule.ОбщегоНазначения.Module"), //$NON-NLS-1$
-            BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
+            targetsOf(BslCallGraphHelper.commonModuleNameCallsOf(module, MODULES)));
 
         com._1c.g5.v8.dt.bsl.model.FormalParam param = factory.createFormalParam();
         param.setName("ОбщегоНазначения"); //$NON-NLS-1$
         method.getFormalParams().add(param);
 
-        assertEquals(java.util.List.of(), BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
+        assertEquals(java.util.List.of(), targetsOf(BslCallGraphHelper.commonModuleNameCallsOf(module, MODULES)));
 
         // The same name declared in a sibling method hides nothing here.
         method.getFormalParams().clear();
@@ -72,14 +72,31 @@ public class ACallSiteNamesTheCommonModuleItCallsTest
         sibling.getFormalParams().add(param);
 
         assertEquals(java.util.List.of("CommonModule.ОбщегоНазначения.Module"), //$NON-NLS-1$
-            BslCallGraphHelper.calleesByCommonModuleName(module, MODULES));
+            targetsOf(BslCallGraphHelper.commonModuleNameCallsOf(module, MODULES)));
+    }
+
+    /**
+     * The called modules' FQNs, in the order the calls were read.
+     *
+     * @param calls the calls a module's call sites name
+     * @return their target FQNs
+     */
+    private static java.util.List<String> targetsOf(
+        java.util.List<BslCallGraphHelper.NameCall> calls)
+    {
+        java.util.List<String> targets = new java.util.ArrayList<>(calls.size());
+        for (BslCallGraphHelper.NameCall call : calls)
+        {
+            targets.add(call.targetModuleFqn);
+        }
+        return targets;
     }
 
     /** Common modules that could not be listed answer null, not an empty list. */
     @Test
     public void unknownCommonModulesAnswerNull()
     {
-        assertNull(BslCallGraphHelper.calleesByCommonModuleName(
+        assertNull(BslCallGraphHelper.commonModuleNameCallsOf(
             com._1c.g5.v8.dt.bsl.model.BslFactory.eINSTANCE.createModule(), null));
     }
 }

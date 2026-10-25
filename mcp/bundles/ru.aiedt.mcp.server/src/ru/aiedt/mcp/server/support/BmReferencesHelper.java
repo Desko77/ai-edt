@@ -425,14 +425,16 @@ public final class BmReferencesHelper
      * The fields a dependency-graph answer adds for the kind filter, and for the objects the level
      * does not carry: an edge dropped for an end, a root dropped for being that end itself.
      * <p>
-     * No argument and nothing dropped is an empty map: the answer gains no field. On
-     * {@code modules} a supplied argument is reported as {@code notApplied} and the calls edges
-     * are left to the caller.
+     * No argument and nothing dropped is an empty map: the answer gains no field. An empty list
+     * reads as no argument - it keeps every kind and the answer writes no {@code edgeKinds}
+     * field - so a list built dynamically does not read as a filter that named nothing. On
+     * {@code modules} a supplied non-empty argument is reported as {@code notApplied} and the
+     * calls edges are left to the caller.
      * </p>
      *
      * @param level the graph level, lower case
-     * @param requested the kinds the caller asked to keep, or <code>null</code> when the argument
-     *            was absent
+     * @param requested the kinds the caller asked to keep, an empty list when the argument named
+     *            nothing, or <code>null</code> when the argument was absent
      * @param bfs the walk
      * @return the fields to add, possibly empty
      */
@@ -442,7 +444,7 @@ public final class BmReferencesHelper
         Map<String, Object> fields = new LinkedHashMap<>();
         if ("modules".equals(level)) //$NON-NLS-1$
         {
-            if (requested != null)
+            if (requested != null && !requested.isEmpty())
             {
                 fields.put("edgeKinds", "notApplied"); //$NON-NLS-1$ //$NON-NLS-2$
             }
@@ -456,7 +458,7 @@ public final class BmReferencesHelper
         {
             fields.put("internalRootsDropped", new ArrayList<>(bfs.internalRootsDropped)); //$NON-NLS-1$
         }
-        if (requested == null)
+        if (requested == null || requested.isEmpty())
         {
             return fields;
         }
@@ -603,6 +605,38 @@ public final class BmReferencesHelper
     private static String edgeKey(String fromFqn, String toFqn, String featureName)
     {
         return fromFqn + '\u0000' + toFqn + '\u0000' + (featureName == null ? "" : featureName); //$NON-NLS-1$
+    }
+
+    /**
+     * Whether a row the reference walk cannot give still passes the kind filter, with the same
+     * accounting the walk keeps: the row's kind is seen, and a kind the filter refuses is counted
+     * once per row.
+     *
+     * @param result the walk the row joins
+     * @param fromFqn the source end
+     * @param toFqn the target end
+     * @param featureName the {@code via} of the row
+     * @param keepKinds the kinds to keep, or <code>null</code> for all of them
+     * @return whether the row may enter the graph
+     */
+    public static boolean kindKept(BfsResult result, String fromFqn, String toFqn,
+        String featureName, Set<String> keepKinds)
+    {
+        if (featureName != null && !featureName.isEmpty())
+        {
+            result.kindsSeen.add(featureName);
+        }
+        if (keepKinds != null && (featureName == null || !keepKinds.contains(featureName)))
+        {
+            // One row is dropped once, however many times it is offered.
+            if (result.kindDroppedEdges.add(edgeKey(fromFqn, toFqn, featureName)))
+            {
+                result.edgesDroppedByKind.merge(featureName == null ? "" : featureName, //$NON-NLS-1$
+                    Integer.valueOf(1), Integer::sum);
+            }
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -816,11 +850,20 @@ public final class BmReferencesHelper
         public final String toFqn;
         public final String featureName;
 
+        /**
+         * How the edge was resolved: {@code "model"} when a reference the index or a resolved link
+         * carried it, {@code "name"} when the module text writes the call by name, or
+         * {@code null} when the level the edge belongs to does not say.
+         */
+        public String resolution;
+
         /** How many references this one edge stands for. */
         public int count = 1;
 
         private int forwardObservations;
         private int backwardObservations;
+
+        private final List<NameSite> nameSites = new ArrayList<>();
 
         public Edge(String fromFqn, String toFqn, String featureName)
         {
@@ -831,14 +874,18 @@ public final class BmReferencesHelper
          * @param fromFqn the source end
          * @param toFqn the target end
          * @param featureName the {@code via} of the edge
-         * @param side the end that reported the first reference of this edge
+         * @param side the end that reported the first reference of this edge, or {@code null}
+         *        when no side did and the first sighting is a written-by-name call
          */
         public Edge(String fromFqn, String toFqn, String featureName, Side side)
         {
             this.fromFqn = fromFqn;
             this.toFqn = toFqn;
             this.featureName = featureName;
-            observe(side);
+            if (side != null)
+            {
+                observe(side);
+            }
         }
 
         /**
@@ -864,6 +911,46 @@ public final class BmReferencesHelper
                 forwardObservations++;
             }
             count = Math.max(forwardObservations, backwardObservations);
+        }
+
+        /**
+         * Records one more sighting of this edge as a call written by name, with the place the
+         * call sits at.
+         *
+         * @param file the file the call sits in
+         * @param line the line the call sits on
+         */
+        public void observeName(String file, int line)
+        {
+            nameSites.add(new NameSite(file, line));
+        }
+
+        /**
+         * The places the written-by-name calls of this edge sit at, in the order they were read.
+         *
+         * @return the places, each as a file and a line
+         */
+        public List<NameSite> nameSites()
+        {
+            return new ArrayList<>(nameSites);
+        }
+    }
+
+    /**
+     * The place a written-by-name call sits at: the file and the line.
+     */
+    public static final class NameSite
+    {
+        /** The file the call sits in. */
+        public final String file;
+
+        /** The 1-based line the call sits on, or 0 when the node model names none. */
+        public final int line;
+
+        NameSite(String file, int line)
+        {
+            this.file = file;
+            this.line = line;
         }
     }
 

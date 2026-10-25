@@ -190,7 +190,8 @@ public class WorkspaceMarksFacadeTool implements IMcpTool
             case "get_tasks": //$NON-NLS-1$
                 return new TasksReader().execute(params);
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(" / ", OPS.keySet()) + " / help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 

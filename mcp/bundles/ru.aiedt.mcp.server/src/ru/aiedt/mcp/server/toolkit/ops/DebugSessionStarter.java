@@ -14,6 +14,7 @@ import java.util.function.Function;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.debug.core.DebugPlugin;
 import org.eclipse.debug.core.ILaunchConfiguration;
@@ -1711,7 +1712,21 @@ public final class DebugSessionStarter implements IMcpTool
      * @param config the configuration to launch
      * @return the launch under way
      */
-    private static LaunchUnderWay startLaunch(ILaunchConfiguration config)
+    static LaunchUnderWay startLaunch(ILaunchConfiguration config)
+    {
+        return startLaunch(config, ILaunchManager.DEBUG_MODE, null);
+    }
+
+    /**
+     * Starts a configuration without holding the request thread inside a modal launch call.
+     *
+     * @param config the configuration to launch
+     * @param mode the Eclipse launch mode
+     * @param monitor the progress monitor passed to Eclipse
+     * @return the launch under way
+     */
+    static LaunchUnderWay startLaunch(ILaunchConfiguration config, String mode,
+        IProgressMonitor monitor)
     {
         Display display = Display.getDefault();
         if (display == null || display.isDisposed())
@@ -1720,7 +1735,7 @@ public final class DebugSessionStarter implements IMcpTool
             ILaunch[] launched = {null};
             try
             {
-                launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
+                launched[0] = config.launch(mode, monitor);
             }
             catch (Exception e)
             {
@@ -1736,7 +1751,7 @@ public final class DebugSessionStarter implements IMcpTool
         display.asyncExec(() -> {
             try
             {
-                launched[0] = config.launch(ILaunchManager.DEBUG_MODE, null);
+                launched[0] = config.launch(mode, monitor);
             }
             catch (Exception e)
             {

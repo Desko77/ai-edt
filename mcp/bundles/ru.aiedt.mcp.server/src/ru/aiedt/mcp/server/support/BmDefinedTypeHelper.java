@@ -13,6 +13,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,8 +26,16 @@ import org.eclipse.emf.ecore.util.EcoreUtil;
 import org.eclipse.core.resources.IProject;
 
 import com._1c.g5.v8.dt.core.platform.IDtProject;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicFeature;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
+import com._1c.g5.v8.dt.metadata.mdclass.Constant;
+import com._1c.g5.v8.dt.metadata.mdclass.DataProcessor;
+import com._1c.g5.v8.dt.metadata.mdclass.DefinedType;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalDataProcessor;
+import com._1c.g5.v8.dt.metadata.mdclass.ExternalReport;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
+import com._1c.g5.v8.dt.metadata.mdclass.Report;
+import com._1c.g5.v8.dt.metadata.mdclass.SequenceDimension;
 
 import ru.aiedt.mcp.server.Activator;
 
@@ -104,7 +113,325 @@ public final class BmDefinedTypeHelper
         public boolean idempotentSkip;
         public final List<String> resolved = new ArrayList<>();
         public final List<String> unresolved = new ArrayList<>();
+        public final List<String> added = new ArrayList<>();
+        public final List<String> removed = new ArrayList<>();
+        public final List<String> skipped = new ArrayList<>();
+        public final List<String> finalTypes = new ArrayList<>();
         public String error;
+    }
+
+    /**
+     * Applies one of the list operations accepted by the type-editing facade.
+     *
+     * @param target object carrying the type description
+     * @param project owning project for platform type resolution
+     * @param config configuration for reference type resolution
+     * @param typeFqns types named by the call
+     * @param qualifierOptions qualifiers for newly added types, or for a replacement
+     * @param mode requested list operation
+     * @param preview whether to calculate the result without changing {@code target}
+     * @return the update result and the resulting ordered composition
+     */
+    public static TypesResult updateTypes(MdObject target, IProject project,
+        Configuration config, List<String> typeFqns, QualifierOptions qualifierOptions,
+        ConfigurationListProperties.ListMode mode, boolean preview)
+    {
+        TypesResult r = new TypesResult();
+        if (target == null || typeFqns == null || mode == null)
+        {
+            r.error = "target, typeFqns and mode are required"; //$NON-NLS-1$
+            return r;
+        }
+        Object typeDesc = readTypeDescription(target);
+        if (typeDesc == null)
+        {
+            typeDesc = readTypeDescriptionByGetter(target, "getCommandParameterType"); //$NON-NLS-1$
+            if (typeDesc == null)
+            {
+                typeDesc = ensureTypeDescription(target);
+            }
+        }
+        if (typeDesc == null)
+        {
+            r.error = "Cannot resolve or create TypeDescription on " //$NON-NLS-1$
+                + target.eClass().getName();
+            return r;
+        }
+        return updateTypesOnDescription(typeDesc, project, config, typeFqns,
+            qualifierOptions, target, mode, preview);
+    }
+
+    /**
+     * Description-level implementation of an ordered type-list update.
+     * Existing type items stay in place for add/remove, which also keeps their qualifiers intact.
+     *
+     * @param typeDesc type description to inspect and possibly mutate
+     * @param project owning project for platform type resolution
+     * @param config configuration for reference type resolution
+     * @param typeFqns types named by the call
+     * @param qualifierOptions qualifiers for newly added types, or for a replacement
+     * @param contextObject owner used for stored-carrier checks and proxy resolution
+     * @param mode requested list operation
+     * @param preview whether to return the resulting composition without mutation
+     * @return the update result and the resulting ordered composition
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    public static TypesResult updateTypesOnDescription(Object typeDesc, IProject project,
+        Configuration config, List<String> typeFqns, QualifierOptions qualifierOptions,
+        EObject contextObject, ConfigurationListProperties.ListMode mode, boolean preview)
+    {
+        TypesResult r = new TypesResult();
+        if (typeDesc == null || typeFqns == null || mode == null)
+        {
+            r.error = "typeDesc, typeFqns and mode are required"; //$NON-NLS-1$
+            return r;
+        }
+        EList<?> typesList = readTypesList(typeDesc);
+        if (typesList == null)
+        {
+            r.error = "TypeDescription does not expose getTypes()"; //$NON-NLS-1$
+            return r;
+        }
+
+        List<String> current = readCurrentTypeNamesInOrder(typesList);
+        List<String> requested = expandCommaSeparatedFqns(typeFqns);
+        for (String fqn : requested)
+        {
+            if (!isAcceptableType(fqn, project, config))
+            {
+                r.unresolved.add(fqn);
+            }
+        }
+        if (!r.unresolved.isEmpty())
+        {
+            r.error = "Some types could not be resolved: " + String.join(", ", r.unresolved) //$NON-NLS-1$ //$NON-NLS-2$
+                + ". Check the spelling against the platform's own type names and the " //$NON-NLS-1$
+                + "referenced objects in this configuration"; //$NON-NLS-1$
+            return r;
+        }
+
+        planTypeListUpdate(current, requested, mode, r);
+        if (mode == ConfigurationListProperties.ListMode.CLEAR || r.finalTypes.isEmpty())
+        {
+            r.error = "A metadata element must have at least one type; clear and removal " //$NON-NLS-1$
+                + "of the last type are not allowed."; //$NON-NLS-1$
+            return r;
+        }
+
+        if (typeIsStoredInDatabase(contextObject))
+        {
+            QualifierOptions effective = effectiveStringQualifiers(typeDesc, current,
+                r.finalTypes, r.added, qualifierOptions, mode);
+            String refusal = compositeStringLengthRefusal(r.finalTypes, effective);
+            if (refusal != null)
+            {
+                r.error = refusal;
+                return r;
+            }
+        }
+
+        if (mode == ConfigurationListProperties.ListMode.REPLACE)
+        {
+            Object destination = typeDesc;
+            if (preview)
+            {
+                if (!(typeDesc instanceof EObject))
+                {
+                    r.error = "Cannot preview a non-EObject TypeDescription"; //$NON-NLS-1$
+                    return r;
+                }
+                destination = EcoreUtil.copy((EObject)typeDesc);
+            }
+            TypesResult replaced = setTypesOnDescription(destination, project, config,
+                new ArrayList<>(r.finalTypes), qualifierOptions, contextObject);
+            if (replaced.ok)
+            {
+                // A replacement that names the stored types in another order is idempotent and
+                // writes nothing, so the answer names the composition the model holds.
+                r.finalTypes.clear();
+                r.finalTypes.addAll(readTypeDescriptionNamesInOrder(destination));
+                r.ok = true;
+                r.mutated = replaced.mutated && !preview;
+                r.idempotentSkip = replaced.idempotentSkip;
+                r.resolved.addAll(replaced.resolved);
+                r.unresolved.addAll(replaced.unresolved);
+            }
+            else
+            {
+                r.error = replaced.error;
+                r.unresolved.addAll(replaced.unresolved);
+            }
+            return r;
+        }
+
+        if (r.added.isEmpty() && r.removed.isEmpty())
+        {
+            r.ok = true;
+            r.idempotentSkip = true;
+            r.resolved.addAll(requested);
+            return r;
+        }
+
+        List<Object> newItems = new ArrayList<>();
+        for (String fqn : r.added)
+        {
+            Object item = createTypeItem(fqn, project, config);
+            if (item == null)
+            {
+                r.unresolved.add(fqn);
+            }
+            else
+            {
+                newItems.add(item);
+            }
+        }
+        if (!r.unresolved.isEmpty())
+        {
+            r.error = "Could not build TypeItems for: " + String.join(", ", r.unresolved); //$NON-NLS-1$ //$NON-NLS-2$
+            return r;
+        }
+        if (preview)
+        {
+            r.ok = true;
+            r.resolved.addAll(requested);
+            return r;
+        }
+
+        try
+        {
+            if (mode == ConfigurationListProperties.ListMode.ADD)
+            {
+                int firstAdded = typesList.size();
+                for (Object item : newItems)
+                {
+                    ((EList)typesList).add(item);
+                }
+                resolveAddedPrimitiveItems(typesList, contextObject, firstAdded, r.added);
+                applyPrimitiveQualifiers(typeDesc, r.added, qualifierOptions);
+            }
+            else
+            {
+                Set<String> namesToRemove = new HashSet<>(r.removed);
+                for (int i = typesList.size() - 1; i >= 0; i--)
+                {
+                    String name = readTypeName(typesList.get(i));
+                    if (name != null && namesToRemove.contains(name))
+                    {
+                        ((EList)typesList).remove(i);
+                    }
+                }
+            }
+            r.ok = true;
+            r.mutated = true;
+            r.resolved.addAll(requested);
+            return r;
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("type list update failed: " + e.getMessage()); //$NON-NLS-1$
+            r.error = "Type list update failed: " + e.getMessage(); //$NON-NLS-1$
+            return r;
+        }
+    }
+
+    /** Computes the ordered result and the three response lists without touching the model. */
+    private static void planTypeListUpdate(List<String> current, List<String> requested,
+        ConfigurationListProperties.ListMode mode, TypesResult result)
+    {
+        LinkedHashSet<String> finalNames = new LinkedHashSet<>(current);
+        Set<String> seenRequest = new HashSet<>();
+        if (mode == ConfigurationListProperties.ListMode.REPLACE)
+        {
+            finalNames.clear();
+            for (String name : requested)
+            {
+                if (!seenRequest.add(name))
+                {
+                    result.skipped.add(name);
+                }
+                else
+                {
+                    finalNames.add(name);
+                }
+            }
+            Set<String> requestedSet = new HashSet<>(finalNames);
+            for (String name : current)
+            {
+                if (!requestedSet.contains(name))
+                {
+                    result.removed.add(name);
+                }
+            }
+            Set<String> currentSet = new HashSet<>(current);
+            for (String name : finalNames)
+            {
+                if (!currentSet.contains(name))
+                {
+                    result.added.add(name);
+                }
+            }
+        }
+        else if (mode == ConfigurationListProperties.ListMode.ADD)
+        {
+            for (String name : requested)
+            {
+                if (!seenRequest.add(name) || !finalNames.add(name))
+                {
+                    result.skipped.add(name);
+                }
+                else
+                {
+                    result.added.add(name);
+                }
+            }
+        }
+        else if (mode == ConfigurationListProperties.ListMode.REMOVE)
+        {
+            for (String name : requested)
+            {
+                if (!seenRequest.add(name) || !finalNames.remove(name))
+                {
+                    result.skipped.add(name);
+                }
+                else
+                {
+                    result.removed.add(name);
+                }
+            }
+        }
+        result.finalTypes.addAll(finalNames);
+    }
+
+    /** Chooses the String length that the model will carry after the update. */
+    private static QualifierOptions effectiveStringQualifiers(Object typeDesc, List<String> current,
+        List<String> finalTypes, List<String> added, QualifierOptions requested,
+        ConfigurationListProperties.ListMode mode)
+    {
+        boolean finalHasString = finalTypes.contains("String"); //$NON-NLS-1$
+        boolean existingStringStays = current.contains("String") //$NON-NLS-1$
+            && !added.contains("String"); //$NON-NLS-1$
+        if (!finalHasString || (!existingStringStays
+            && mode != ConfigurationListProperties.ListMode.REMOVE))
+        {
+            return requested;
+        }
+        QualifierOptions effective = new QualifierOptions();
+        effective.length = Integer.valueOf(declaredStringLengthOf(typeDesc));
+        return effective;
+    }
+
+    /** Resolves only newly appended primitive proxies, leaving reference items untouched. */
+    private static void resolveAddedPrimitiveItems(EList<?> typesList, EObject contextObject,
+        int firstAdded, List<String> addedNames)
+    {
+        for (int offset = 0; offset < addedNames.size(); offset++)
+        {
+            if (addedNames.get(offset).indexOf('.') >= 0)
+            {
+                continue;
+            }
+            resolveTypeItemInPlace(typesList, contextObject, firstAdded + offset);
+        }
     }
 
     /**
@@ -249,6 +576,201 @@ public final class BmDefinedTypeHelper
     }
 
     /**
+     * Tells whether a type written on this owner is stored in a database table.
+     * <p>
+     * A type description of a stored carrier becomes a table column, and only such a carrier meets
+     * the platform's refusal of an unlimited String inside a composition. A carrier whose type
+     * never reaches a table - a form attribute, a DCS field or parameter, a command parameter
+     * type, an external data source field or function, a session parameter - takes the same
+     * composition and works.
+     * </p>
+     * <p>
+     * The classes are the model's own, read from the mdclass jar of the target platform
+     * (com._1c.g5.v8.dt.metadata 19.0.0): {@code BasicFeature} is the base of every attribute of a
+     * database object and of a tabular section, of a register dimension, resource and attribute,
+     * of an addressing attribute and of an accounting flag - 34 interfaces in all. The remaining
+     * stored carriers are the top-level objects whose one type description is stored as well: the
+     * constant value, the sequence dimension, and the defined type, whose composition applies to
+     * the stored attributes that borrow it.
+     * </p>
+     * <p>
+     * The carrier class alone does not answer the question. A report and a data processor compute
+     * their attributes and the attributes of their tabular sections at run time and store none of
+     * them, and the external kinds do the same - yet those attributes are {@code BasicFeature}
+     * objects like any other. The root object of the containment chain decides: a feature of one of
+     * those four is not stored, wherever in the object it sits.
+     * </p>
+     *
+     * @param owner the EObject the type description belongs to, possibly <code>null</code>
+     * @return <code>true</code> when the type becomes a table column
+     */
+    public static boolean typeIsStoredInDatabase(Object owner)
+    {
+        if (!isStoredTypeCarrier(owner))
+        {
+            return false;
+        }
+        if (owner instanceof EObject)
+        {
+            return !chainHoldsFeaturesInMemory(((EObject)owner).eContainer());
+        }
+        return true;
+    }
+
+    /**
+     * Tells whether a type written on an element that does not exist yet is stored in a database
+     * table.
+     * <p>
+     * The same rule {@link #typeIsStoredInDatabase} applies to an attached element, answered for
+     * the pair the creation holds: the owner the element is about to sit in, and the element kind
+     * as a detached instance of the class the creation would attach. The walk along the
+     * containment chain starts at the owner itself, because once attached the element's first
+     * container is that owner - a report or a data processor standing right above the new feature
+     * keeps it out of the database the way it keeps the attached ones.
+     * </p>
+     *
+     * @param owner the object the element is about to be created in, possibly <code>null</code>
+     *            when nothing of the model answers for it yet
+     * @param child the element kind, a detached instance of the class the creation would attach
+     * @return <code>true</code> when the type becomes a table column
+     */
+    public static boolean typeToBeCreatedIsStoredInDatabase(EObject owner, Object child)
+    {
+        if (!isStoredTypeCarrier(child))
+        {
+            return false;
+        }
+        return owner == null || !chainHoldsFeaturesInMemory(owner);
+    }
+
+    /**
+     * Whether the object is of a kind whose type description becomes a table column: a
+     * {@code BasicFeature} (the base of every attribute of a database object and of a tabular
+     * section, of a register dimension, resource and attribute, of an addressing attribute and of
+     * an accounting flag), or one of the top-level objects whose one type description is stored
+     * as well - the constant value, the sequence dimension, the defined type.
+     *
+     * @param candidate the object to ask, possibly <code>null</code>
+     * @return <code>true</code> when the kind itself carries a stored type
+     */
+    private static boolean isStoredTypeCarrier(Object candidate)
+    {
+        return candidate instanceof BasicFeature
+            || candidate instanceof Constant
+            || candidate instanceof DefinedType
+            || candidate instanceof SequenceDimension;
+    }
+
+    /**
+     * Tells whether the containment chain at or above <code>start</code> reaches an object that
+     * stores none of its features.
+     * <p>
+     * The four classes are unrelated in the model - each of them extends {@code MdObject} on its
+     * own - so every one of them is named. A detached object carries no chain above it and keeps
+     * its answer.
+     * </p>
+     *
+     * @param start the object the walk starts at, inclusive, possibly <code>null</code>
+     * @return <code>true</code> when a report, a data processor or one of the external kinds holds
+     *         the chain at or above <code>start</code>
+     */
+    private static boolean chainHoldsFeaturesInMemory(EObject start)
+    {
+        for (EObject owner = start; owner != null; owner = owner.eContainer())
+        {
+            if (owner instanceof Report
+                || owner instanceof DataProcessor
+                || owner instanceof ExternalReport
+                || owner instanceof ExternalDataProcessor)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Refuses a type composition that carries a String without a length.
+     * <p>
+     * The platform loads such a description and then refuses the database update with
+     * "Ошибка SDBL: Строка без спецификации длины недопустима". A String with no length is a
+     * type of its own, and a composition names bounded types only; a lone String without a
+     * length is valid and is not refused.
+     * </p>
+     * <p>
+     * The refusal holds for a carrier whose type is stored in a database table - see
+     * {@link #typeIsStoredInDatabase}. A type that goes no further than the form or the schema it
+     * was written on is not judged here.
+     * </p>
+     *
+     * @param typeFqns the resolved types the caller asked for
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable
+     */
+    public static String compositeStringLengthRefusal(List<String> typeFqns,
+        QualifierOptions qualifierOptions)
+    {
+        if (typeFqns == null || typeFqns.size() < 2)
+        {
+            return null;
+        }
+        boolean hasString = false;
+        for (String fqn : typeFqns)
+        {
+            if (fqn != null && "String".equalsIgnoreCase(fqn.trim())) //$NON-NLS-1$
+            {
+                hasString = true;
+                break;
+            }
+        }
+        if (!hasString)
+        {
+            return null;
+        }
+        Integer length = qualifierOptions == null ? null : qualifierOptions.length;
+        if (length != null && length.intValue() > 0)
+        {
+            return null;
+        }
+        return "A composition of more than one type that includes String requires the 'length' " //$NON-NLS-1$
+            + "argument: a String without a length is a type of its own, and the platform " //$NON-NLS-1$
+            + "refuses the database update for an unlimited String inside a composition " //$NON-NLS-1$
+            + "(Ошибка SDBL: Строка без спецификации длины недопустима). Pass length=<characters>, " //$NON-NLS-1$
+            + "or drop String from the composition."; //$NON-NLS-1$
+    }
+
+    /**
+     * The refusal a creating operation answers before the element it was asked for exists.
+     * <p>
+     * The composition refusal of {@link #compositeStringLengthRefusal} is known from the
+     * arguments and the carrier alone, so a creating operation asks it before it creates
+     * anything: after the refusal the model holds neither the element nor a trace of it. The
+     * carrier does not exist yet, so the stored decision is taken on the pair of the owner the
+     * element will sit in and the element kind - see {@link #typeToBeCreatedIsStoredInDatabase}.
+     * </p>
+     * <p>
+     * The check inside {@link #setTypesOnDescription} stays where it is: {@code set_object_type}
+     * and the write paths without a creation take their refusal there.
+     * </p>
+     *
+     * @param owner the object the element is about to be created in, possibly <code>null</code>
+     *            when nothing of the model answers for it yet
+     * @param child the element kind, a detached instance of the class the creation would attach
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @param qualifierOptions the qualifiers the caller asked for, possibly <code>null</code>
+     * @return the refusal text, or <code>null</code> when the composition is acceptable
+     */
+    public static String creationCompositeStringRefusal(EObject owner, Object child,
+        List<String> typeFqns, QualifierOptions qualifierOptions)
+    {
+        if (!typeToBeCreatedIsStoredInDatabase(owner, child))
+        {
+            return null;
+        }
+        return compositeStringLengthRefusal(expandCommaSeparatedFqns(typeFqns), qualifierOptions);
+    }
+
+    /**
      * Description-level core of {@link #setTypes}: validates the requested
      * FQNs, builds fresh TypeItems, replaces the TypeDescription's types
      * list, deep-resolves the proxies against {@code contextObject}'s
@@ -289,25 +811,7 @@ public final class BmDefinedTypeHelper
         // Expand on commas here so every caller (object / TS / form attributes,
         // columns, register fields) gets a proper multi-<types> composite instead of
         // one malformed <types> element with a comma ("Неизвестный тип").
-        List<String> expandedFqns = new ArrayList<>();
-        for (String raw : typeFqns)
-        {
-            if (raw == null)
-            {
-                continue;
-            }
-            for (String part : raw.split(",")) //$NON-NLS-1$
-            {
-                String s = part.trim();
-                if (!s.isEmpty())
-                {
-                    // A Russian primitive (Строка) and a Russian metadata-type prefix
-                    // (ОпределяемыйТип.X) become the English spelling. The check and the
-                    // builder both read that spelling, so the two writings name one object.
-                    expandedFqns.add(normalizePrimitiveFqn(s));
-                }
-            }
-        }
+        List<String> expandedFqns = expandCommaSeparatedFqns(typeFqns);
         List<String> requested = new ArrayList<>();
         for (String fqn : expandedFqns)
         {
@@ -328,6 +832,33 @@ public final class BmDefinedTypeHelper
                 + "ValueTable, StandardPeriod and the rest); for a reference type, check that the "
                 + "object it names exists in this configuration";
             return r;
+        }
+
+        // 1a. A composition carrying String needs the length where the type is stored: the platform
+        // builds a table column out of the type description of such a carrier and refuses the
+        // update otherwise. Every type write passes through here, so the carrier decides - a
+        // composition written to a form attribute or a schema field is kept as it stands.
+        //
+        // What is judged is the length the model carries after the call, not the one the arguments
+        // spell out. A caller repeating the composition already written names no length, and the
+        // write path leaves the stored qualifiers alone, so the length standing in the model is the
+        // one that applies. A caller naming length=0 asks for an unlimited String and is refused,
+        // and so is a composition the caller is changing.
+        if (typeIsStoredInDatabase(contextObject))
+        {
+            QualifierOptions effective = qualifierOptions;
+            if ((effective == null || effective.length == null)
+                && readCurrentTypeNames(typesList).equals(new HashSet<>(requested)))
+            {
+                effective = new QualifierOptions();
+                effective.length = Integer.valueOf(declaredStringLengthOf(typeDesc));
+            }
+            String compositionRefusal = compositeStringLengthRefusal(requested, effective);
+            if (compositionRefusal != null)
+            {
+                r.error = compositionRefusal;
+                return r;
+            }
         }
 
         // 2. Idempotency check.
@@ -959,6 +1490,21 @@ public final class BmDefinedTypeHelper
             return new HashSet<>();
         }
         return readCurrentTypeNames(typesList);
+    }
+
+    /**
+     * Reads a type description in model order.
+     *
+     * @param typeDescription the description to read, may be <code>null</code>
+     * @return the canonical names in their stored order
+     */
+    public static List<String> readTypeDescriptionNamesInOrder(Object typeDescription)
+    {
+        if (typeDescription == null)
+        {
+            return new ArrayList<>();
+        }
+        return readCurrentTypeNamesInOrder(readTypesList(typeDescription));
     }
 
     /**
@@ -1893,6 +2439,24 @@ public final class BmDefinedTypeHelper
     private static int declaredStringLength(EObject target)
     {
         Object typeDesc = target instanceof MdObject ? readTypeDescription((MdObject) target) : null;
+        Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
+        Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
+        return length instanceof Integer ? ((Integer)length).intValue() : 0;
+    }
+
+    /**
+     * Reads the declared length of a type description from its own string
+     * qualifiers.
+     * <p>
+     * Zero means unlimited, and is what the model answers for a description that
+     * carries no string qualifiers at all.
+     * </p>
+     *
+     * @param typeDesc the type description, possibly <code>null</code>
+     * @return the declared length, or zero when there is none
+     */
+    private static int declaredStringLengthOf(Object typeDesc)
+    {
         Object qualifiers = typeDesc == null ? null : invokeNoArg(typeDesc, "getStringQualifiers"); //$NON-NLS-1$
         Object length = qualifiers == null ? null : invokeNoArg(qualifiers, "getLength"); //$NON-NLS-1$
         return length instanceof Integer ? ((Integer)length).intValue() : 0;
@@ -3022,6 +3586,44 @@ public final class BmDefinedTypeHelper
         }
     }
 
+    /** Resolves one primitive proxy appended by listMode=add. */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static void resolveTypeItemInPlace(EList<?> typesList, EObject contextObject, int index)
+    {
+        if (typesList == null || index < 0 || index >= typesList.size() || contextObject == null)
+        {
+            return;
+        }
+        Object item = typesList.get(index);
+        if (!(item instanceof EObject) || !((EObject)item).eIsProxy())
+        {
+            return;
+        }
+        Activator activator = Activator.getDefault();
+        Object bmManager = activator == null ? null : activator.getBmModelManager();
+        org.eclipse.emf.ecore.resource.Resource resource = contextObject.eResource();
+        if (bmManager == null || resource == null)
+        {
+            return;
+        }
+        try
+        {
+            Method resolve = bmManager.getClass().getMethod("resolve", EObject.class, //$NON-NLS-1$
+                org.eclipse.emf.ecore.resource.Resource.class, EObject.class);
+            Object resolved = resolve.invoke(bmManager, item, resource, contextObject);
+            if (resolved instanceof EObject && resolved != item
+                && !((EObject)resolved).eIsProxy())
+            {
+                ((EList)typesList).set(index, resolved);
+            }
+        }
+        catch (Exception e)
+        {
+            Activator.logWarning("resolveTypeItemInPlace failed for index " + index //$NON-NLS-1$
+                + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+    }
+
     /**
      * Builds a canonical primitive Type proxy via
      * {@code IEObjectProvider.Registry.INSTANCE.get(McorePackage.Literals.TYPE_ITEM, version).getProxy(typeName)}.
@@ -3583,6 +4185,25 @@ public final class BmDefinedTypeHelper
         return names;
     }
 
+    /** Reads the current composition in model order. */
+    private static List<String> readCurrentTypeNamesInOrder(EList<?> typesList)
+    {
+        List<String> names = new ArrayList<>();
+        if (typesList == null)
+        {
+            return names;
+        }
+        for (Object item : typesList)
+        {
+            String name = readTypeName(item);
+            if (name != null && !name.isEmpty())
+            {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
     /**
      * The platform name of a single type, for callers holding one type rather than a
      * whole composition - notably the extension side, where each type sits in its own
@@ -3851,6 +4472,45 @@ public final class BmDefinedTypeHelper
         }
         String en = RU_PRIMITIVE_TO_EN.get(fqn.trim().toLowerCase(Locale.ROOT));
         return en != null ? en : fqn;
+    }
+
+    /**
+     * Reads the requested type FQNs the way every reader of the argument reads them: split on
+     * commas, trimmed, empty parts dropped, each part in the spelling
+     * {@link #normalizePrimitiveFqn} answers. Callers pass the {@code type} argument as a single
+     * list element and a composition arrives comma-joined, so this is where one element becomes
+     * the composition's parts.
+     * <p>
+     * Shared by the write ({@link #setTypesOnDescription}) and by the refusal a creating
+     * operation answers before the element exists ({@link #creationCompositeStringRefusal}),
+     * so the two cannot disagree about what the caller asked for.
+     * </p>
+     *
+     * @param typeFqns the requested types, possibly comma-joined in one element
+     * @return the normalized parts, empty when nothing was asked
+     */
+    private static List<String> expandCommaSeparatedFqns(List<String> typeFqns)
+    {
+        List<String> expanded = new ArrayList<>();
+        for (String raw : typeFqns)
+        {
+            if (raw == null)
+            {
+                continue;
+            }
+            for (String part : raw.split(",")) //$NON-NLS-1$
+            {
+                String s = part.trim();
+                if (!s.isEmpty())
+                {
+                    // A Russian primitive (Строка) and a Russian metadata-type prefix
+                    // (ОпределяемыйТип.X) become the English spelling. The check and the
+                    // builder both read that spelling, so the two writings name one object.
+                    expanded.add(normalizePrimitiveFqn(s));
+                }
+            }
+        }
+        return expanded;
     }
 
     /**

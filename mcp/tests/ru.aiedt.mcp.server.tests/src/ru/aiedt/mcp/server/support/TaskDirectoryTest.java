@@ -229,6 +229,199 @@ public class TaskDirectoryTest
         }
     }
 
+    /**
+     * A run that answers a refusal document fails the task, and the message names the step it
+     * stopped at.
+     * <p>
+     * The registry's worker catches what a body throws and answers it as a refusal document, and
+     * a tool that declines answers one of its own - both used to settle the task as completed,
+     * so a caller polling a run that died read "finished" over the refusal it never saw.
+     * </p>
+     */
+    @Test
+    public void aRefusalAnswerFailsTheTaskAndNamesTheStepItStoppedAt() throws Exception
+    {
+        String step = "3 of 5 done (2 applied, 1 failed); now running add_field"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step,
+            () -> ru.aiedt.mcp.server.wire.ToolResult.error("the object is not there").toJson(), //$NON-NLS-1$
+            release);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        awaitTheStepIsAnnounced(key);
+        directory.poll(task.taskId);
+        release.countDown();
+        awaitCompletion(key);
+        awaitSettled(task.taskId);
+
+        TaskDirectory.Task polled = directory.poll(task.taskId);
+        assertEquals("a refusal answer is the task's failure, not its completion", //$NON-NLS-1$
+            TaskDirectory.FAILED, polled.status);
+        assertEquals("the object is not there", polled.failure); //$NON-NLS-1$
+        assertTrue("the message must name the step the run stopped at: " + polled.statusMessage, //$NON-NLS-1$
+            polled.statusMessage.startsWith("failed at " + step + ":")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * A run whose body throws fails the task, and the message names the step it stopped at.
+     * <p>
+     * The throw reaches the task as the registry's refusal document, so this exercises the same
+     * detection through the path a real failure takes: the body raising on the worker thread.
+     * </p>
+     */
+    @Test
+    public void aThrownRunFailsTheTaskAndNamesTheStepItStoppedAt() throws Exception
+    {
+        String step = "1 of 2 done (1 applied, 0 failed); now running set_object_property"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step, () -> {
+            throw new IllegalStateException("the platform refused the write"); //$NON-NLS-1$
+        }, release);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        awaitTheStepIsAnnounced(key);
+        directory.poll(task.taskId);
+        release.countDown();
+        awaitCompletion(key);
+        awaitSettled(task.taskId);
+
+        TaskDirectory.Task polled = directory.poll(task.taskId);
+        assertEquals(TaskDirectory.FAILED, polled.status);
+        assertTrue("the failure must carry what was thrown: " + polled.failure, //$NON-NLS-1$
+            polled.failure.contains("the platform refused the write")); //$NON-NLS-1$
+        assertTrue("the message must name the step the run stopped at: " + polled.statusMessage, //$NON-NLS-1$
+            polled.statusMessage.startsWith("failed at " + step + ":")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** Cancelling names the step the run had announced, beside what stopping came to. */
+    @Test
+    public void cancellingNamesTheStepTheRunHadAnnounced() throws Exception
+    {
+        String step = "4 of 9 done (4 applied, 0 failed); now running add_field"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step, () -> "never collected", release); //$NON-NLS-1$
+
+        TaskDirectory.Task task = directory.open(key, "update_database", "update_database", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        awaitTheStepIsAnnounced(key);
+        directory.poll(task.taskId);
+
+        assertTrue(directory.cancel(task.taskId));
+
+        TaskDirectory.Task polled = directory.poll(task.taskId);
+        assertEquals(TaskDirectory.CANCELLED, polled.status);
+        assertTrue("the message must name the step the run had announced: " //$NON-NLS-1$
+            + polled.statusMessage,
+            polled.statusMessage.startsWith("cancelled at " + step + ":")); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("what stopping came to is still said", //$NON-NLS-1$
+            polled.statusMessage.contains("may still be running")); //$NON-NLS-1$
+        release.countDown();
+    }
+
+    /**
+     * A markdown refusal fails the task as a JSON one does, and the message carries its first line.
+     * <p>
+     * The facades answer markdown, and the synchronous call marks a {@code **Error:**} head as
+     * {@code isError}; a task over the same answer must fail with it.
+     * </p>
+     */
+    @Test
+    public void aMarkdownRefusalFailsTheTaskWithItsFirstLine() throws Exception
+    {
+        String step = "2 of 3 done (2 applied, 0 failed); now running add_table"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step,
+            () -> "**Error:** Table Items is not on the form.\n\nAvailable: Goods, Services", //$NON-NLS-1$
+            release);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        awaitTheStepIsAnnounced(key);
+        directory.poll(task.taskId);
+        release.countDown();
+        awaitCompletion(key);
+        awaitSettled(task.taskId);
+
+        TaskDirectory.Task polled = directory.poll(task.taskId);
+        assertEquals(TaskDirectory.FAILED, polled.status);
+        assertEquals("failed at " + step + ": **Error:** Table Items is not on the form.", //$NON-NLS-1$ //$NON-NLS-2$
+            polled.statusMessage);
+        assertNotNull("the refusal stays the task's result, for tasks/result to answer", //$NON-NLS-1$
+            polled.result);
+    }
+
+    /**
+     * A run that announces a step and refuses before anyone polls still names that step.
+     * <p>
+     * The poll is what copies the note as the run goes; a run that ends first must not lose it.
+     * </p>
+     */
+    @Test
+    public void aRefusalBeforeAnyPollStillNamesTheStep() throws Exception
+    {
+        String step = "1 of 4 done (1 applied, 0 failed); now running add_group"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step,
+            () -> ru.aiedt.mcp.server.wire.ToolResult.error("the group exists").toJson(), //$NON-NLS-1$
+            release);
+        awaitTheStepIsAnnounced(key);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        release.countDown();
+        awaitCompletion(key);
+        awaitSettled(task.taskId);
+
+        assertEquals("failed at " + step + ": the group exists", //$NON-NLS-1$ //$NON-NLS-2$
+            directory.poll(task.taskId).statusMessage);
+    }
+
+    /** Cancelling before any poll names the step the run had announced. */
+    @Test
+    public void cancellingBeforeAnyPollNamesTheStep() throws Exception
+    {
+        String step = "2 of 9 done (2 applied, 0 failed); now running add_field"; //$NON-NLS-1$
+        CountDownLatch release = new CountDownLatch(1);
+        String key = startStepped(step, () -> "never collected", release); //$NON-NLS-1$
+        awaitTheStepIsAnnounced(key);
+
+        TaskDirectory.Task task = directory.open(key, "edit_metadata", "edit_metadata", args()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(directory.cancel(task.taskId));
+
+        assertTrue("the message must name the step: " + task.statusMessage, //$NON-NLS-1$
+            task.statusMessage.startsWith("cancelled at " + step + ":")); //$NON-NLS-1$ //$NON-NLS-2$
+        release.countDown();
+    }
+
+    /** A long JSON refusal is named by its first line, cut to the limit; the result keeps it whole. */
+    @Test
+    public void aLongJsonRefusalIsCutInTheMessage()
+    {
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < 100; i++)
+        {
+            text.append("Catalog.Item").append(i).append(' ');
+        }
+        text.append("\nsecond line");
+        String refused = TaskDirectory.Task.refusalTextOf(
+            ru.aiedt.mcp.server.wire.ToolResult.error(text.toString()).toJson());
+
+        assertEquals(TaskDirectory.Task.REFUSAL_LINE_LIMIT + 3, refused.length());
+        assertTrue(refused.endsWith("...")); //$NON-NLS-1$
+        assertFalse(refused.contains("second line")); //$NON-NLS-1$
+    }
+
+    /** A report that mentions an error below its head is an answer, and the task completes. */
+    @Test
+    public void aReportMentioningAnErrorCompletes() throws Exception
+    {
+        CountDownLatch release = new CountDownLatch(1);
+        String key = start("## Checks\n\n1 of 4 objects:\n**Error:** in Catalog.Items", release); //$NON-NLS-1$
+        release.countDown();
+        awaitCompletion(key);
+
+        TaskDirectory.Task task = directory.open(key, "code_review", "code_review", args()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(TaskDirectory.COMPLETED, directory.poll(task.taskId).status);
+    }
+
     /** An id nobody handed out is not a task, and cancelling one is not a success. */
     @Test
     public void anUnknownIdIsNotATask()
@@ -279,6 +472,53 @@ public class TaskDirectoryTest
             return produces;
         });
         return key;
+    }
+
+    /**
+     * Starts a run that announces one step and then answers whatever the body says.
+     *
+     * @param step the progress note the run publishes before it parks
+     * @param body what the run answers once released; may throw, which the registry answers as a
+     *            refusal document
+     * @param release what the body parks on
+     * @return the run's key
+     */
+    private String startStepped(String step, java.util.function.Supplier<String> body,
+        CountDownLatch release)
+    {
+        String key = PendingWorkRegistry.computeRunKey("stepped", step, //$NON-NLS-1$
+            String.valueOf(System.nanoTime()));
+        keysToClean.add(key);
+        PendingWorkRegistry.GENERIC.getOrStart(key, entry -> {
+            entry.progressNote = step;
+            try
+            {
+                release.await(10, TimeUnit.SECONDS);
+            }
+            catch (InterruptedException interrupted)
+            {
+                Thread.currentThread().interrupt();
+            }
+            return body.get();
+        });
+        return key;
+    }
+
+    /**
+     * Waits until the run has published its note, so a poll issued after it records the step.
+     *
+     * @param key the run's key
+     * @throws InterruptedException when the wait is cut short
+     */
+    private static void awaitTheStepIsAnnounced(String key) throws InterruptedException
+    {
+        PendingWorkRegistry.PendingEntry entry = PendingWorkRegistry.GENERIC.get(key);
+        assertNotNull(entry);
+        for (int attempt = 0; attempt < 250 && entry.progressNote == null; attempt++)
+        {
+            Thread.sleep(20L);
+        }
+        assertNotNull("the run never announced its step", entry.progressNote); //$NON-NLS-1$
     }
 
     private static void awaitCompletion(String key) throws InterruptedException

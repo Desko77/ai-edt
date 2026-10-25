@@ -345,6 +345,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application (infobase) id from get_applications.") //$NON-NLS-1$
+            .stringArrayProperty("excludeEvents", //$NON-NLS-1$
+                "read_event_log: events to leave out, by whole name or, ending in *, by the start " //$NON-NLS-1$
+                    + "of it - _$Transaction$_* drops the transaction events. Case is ignored; " //$NON-NLS-1$
+                    + "applied before limit.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "Infobase name: required for create_infobase, delete_infobase and " //$NON-NLS-1$
                     + "register_infobase of a server infobase. sync_control " //$NON-NLS-1$
@@ -580,7 +584,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             case "sync_control": //$NON-NLS-1$
                 return routeSyncControl(params);
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(" / ", OPS.keySet()) + " / help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
@@ -704,7 +709,10 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "baseline of the base is matched against the model and an entity the base " //$NON-NLS-1$
                 + "holds and the model does not stops the call, which names the addresses " //$NON-NLS-1$
                 + "(dataLossTables) with status=confirmationRequired and starts nothing; " //$NON-NLS-1$
-                + "acceptDataLoss=true carries it through.\n"); //$NON-NLS-1$
+                + "acceptDataLoss=true carries it through. The platform's active-flow flag is " //$NON-NLS-1$
+                + "read for the infobase under the claim: an active synchronization flow of this EDT refuses " //$NON-NLS-1$
+                + "with busy naming the infobase, and a flow begun after that read does not " //$NON-NLS-1$
+                + "stop the update.\n"); //$NON-NLS-1$
             sb.append("- **inspect_database_sync** - read what stands between a project and its " //$NON-NLS-1$
                 + "infobase: the update state, the restructure-confirmation preference, and the " //$NON-NLS-1$
                 + "data an update now would delete (pendingDataLoss). Read-only - starts " //$NON-NLS-1$

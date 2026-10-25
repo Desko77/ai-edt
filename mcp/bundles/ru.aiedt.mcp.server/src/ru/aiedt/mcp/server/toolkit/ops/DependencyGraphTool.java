@@ -36,6 +36,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
+import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BmReferencesHelper;
 import ru.aiedt.mcp.server.support.BslCallGraphHelper;
 import ru.aiedt.mcp.server.support.DependencyGraphBuilder;
@@ -106,7 +107,8 @@ public class DependencyGraphTool implements IMcpTool
             .stringProperty("direction", "in | out | both (default both)") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("edgeKinds", //$NON-NLS-1$
                 "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
-                    + "Omit to keep every kind.") //$NON-NLS-1$
+                    + "Omit - or pass an empty list - to keep every kind; the answer writes no " //$NON-NLS-1$
+                    + "edgeKinds field for an empty list.") //$NON-NLS-1$
             .integerProperty("maxNodes", "Node cap, default 200, at most 2000") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("maxEdges", "Edge cap, default 500, at most 5000") //$NON-NLS-1$ //$NON-NLS-2$
             .build();
@@ -271,18 +273,24 @@ public class DependencyGraphTool implements IMcpTool
                     }
                     else
                     {
+                        Set<String> keep = keptKindsOf(edgeKinds);
                         if (roots.isEmpty())
                         {
                             result = new BmReferencesHelper.BfsResult();
                         }
                         else
                         {
-                            Set<String> keep =
-                                edgeKinds == null ? null : new LinkedHashSet<>(edgeKinds);
                             BmReferencesHelper.EdgePolicy policy = edgePolicy(level, keep);
                             result = BmReferencesHelper.bfs(tx, bmModel.getEngine(), roots,
                                 direction, maxNodes, maxEdges, depth,
                                 () -> monitor.isCanceled() || watch.stopHere(), policy);
+                        }
+                        if (level == Level.MIXED)
+                        {
+                            // The reference walk cannot give the rows a job's method name and a
+                            // subscription's handler stand for: both are plain strings.
+                            addJobAndSubscriptionEdges(result, configuration, lookup,
+                                modulesUnloaded, maxNodes, maxEdges, keep);
                         }
                     }
                     bfsRef.set(result);
@@ -334,6 +342,25 @@ public class DependencyGraphTool implements IMcpTool
     }
 
     /**
+     * The kinds the walk keeps, as the argument the call carried asks for them.
+     * <p>
+     * An absent argument keeps every kind. A list that named nothing - empty on arrival, or
+     * nothing but blanks - keeps every kind as well: a caller building the list dynamically ends
+     * up with an empty one far more often than with a deliberate "keep none", and an answer with
+     * no edges at all reads as a broken graph rather than as a filter.
+     * </p>
+     *
+     * @param requested the kinds the caller asked to keep, or {@code null} when the argument was
+     *        absent
+     * @return the set of kinds a kept edge's {@code via} must be in, or {@code null} when every
+     *         kind is kept
+     */
+    static Set<String> keptKindsOf(List<String> requested)
+    {
+        return requested == null || requested.isEmpty() ? null : new LinkedHashSet<>(requested);
+    }
+
+    /**
      * The filter of the walk a level makes.
      * <p>
      * The metadata level is a graph between metadata objects, and the mixed level shows both halves
@@ -355,9 +382,11 @@ public class DependencyGraphTool implements IMcpTool
     /**
      * The via values to keep, in the order given, with blanks and repeats dropped.
      * <p>
-     * Absent is <code>null</code> and keeps every kind. Present and empty keeps none: an empty
-     * list and a missing argument are different, and the reader of a list returns
-     * <code>null</code> for both, so the key itself is what tells them apart.
+     * Absent is <code>null</code> and keeps every kind. Present and naming nothing keeps every
+     * kind as well - the walk treats that list the way it treats no list, while still echoing it
+     * in the answer - so a list built dynamically does not turn into a graph with no edges. The
+     * reader of a list returns <code>null</code> for an absent argument and for one that is not a
+     * list at all, so the key itself is what tells the cases apart.
      * </p>
      *
      * @param params the call
@@ -616,6 +645,21 @@ public class DependencyGraphTool implements IMcpTool
                     direction == BmReferencesHelper.Direction.OUT
                         || direction == BmReferencesHelper.Direction.BOTH,
                     edge -> {
+                        if (edge.byName)
+                        {
+                            // A written-by-name call is an edge of the walk like any other: the
+                            // same cap on its ends, the same queueing of the module it reaches.
+                            if (!endpointsFitTheNodeCap(result, visited, edge.fromFqn, edge.toFqn,
+                                maxNodes)
+                                || !addModuleNameEdge(result, edge.fromFqn, edge.toFqn, edge.file,
+                                    edge.line, maxEdges))
+                            {
+                                return;
+                            }
+                            addModuleNodeIfNew(result, queue, visited, lookup, edge.toFqn, maxNodes,
+                                unloaded);
+                            return;
+                        }
                         // Which half of the call graph reported this edge: the module being walked
                         // is the source of an outgoing one and the target of an incoming one.
                         BmReferencesHelper.Side side = selfFqn.equals(edge.fromFqn)
@@ -678,7 +722,8 @@ public class DependencyGraphTool implements IMcpTool
     {
         if (fromFqn == null || toFqn == null || fromFqn.equals(toFqn))
         {
-            return true; // not an edge at all; the add step refuses it
+            // Same module on both ends: a self-edge needs no node it does not already have.
+            return true;
         }
         int missing = (visited.contains(fromFqn) ? 0 : 1) + (visited.contains(toFqn) ? 0 : 1);
         if (missing > 0 && result.nodes.size() + missing > maxNodes)
@@ -719,6 +764,8 @@ public class DependencyGraphTool implements IMcpTool
                 && CALLS.equals(existing.featureName))
             {
                 existing.observe(side);
+                // A reference the index carries resolves the pair, whatever the text also says.
+                existing.resolution = RESOLUTION_MODEL;
                 return true;
             }
         }
@@ -727,12 +774,190 @@ public class DependencyGraphTool implements IMcpTool
             result.truncated = true;
             return false;
         }
-        result.edges.add(new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, side));
+        BmReferencesHelper.Edge edge = new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, side);
+        edge.resolution = RESOLUTION_MODEL;
+        result.edges.add(edge);
         return true;
     }
 
     /** The {@code via} of every edge of the module level. */
     private static final String CALLS = "calls"; //$NON-NLS-1$
+
+    /** The resolution of an edge the reference index or a resolved link reported. */
+    static final String RESOLUTION_MODEL = "model"; //$NON-NLS-1$
+
+    /** The resolution of an edge only the module's text reported. */
+    static final String RESOLUTION_NAME = "name"; //$NON-NLS-1$
+
+    /**
+     * Joins the scheduled jobs and the event subscriptions the graph carries to the common modules
+     * their methods sit in.
+     * <p>
+     * The reference walk cannot give these rows: a job's method name and a subscription's handler
+     * are plain strings in the metadata, not references the BM engine records. The object is joined
+     * to the module itself, with the method name as the {@code via}; the row is model-resolved,
+     * because the metadata states it rather than a call site spelling it. The module node a row
+     * adds holds the module the lookup loads, under the same {@code .Module} address the walk keys
+     * its own module nodes by; an address whose file is there and whose model did not load is
+     * named in {@code unloaded}, the way the walk names its own. A name the project does
+     * not answer with a common module gives no row, and a method the module does not declare is
+     * not checked for here - the row is about the module, not the method.
+     * </p>
+     *
+     * @param result the graph the walk filled
+     * @param configuration the project configuration
+     * @param lookup the module lookup, which turns the FQN into the module to hold
+     * @param unloaded the module FQNs whose file exists and whose model did not load, filled
+     * @param maxNodes the node cap of the walk
+     * @param maxEdges the edge cap of the walk
+     * @param keepKinds the {@code via} values to keep, or {@code null} for all of them
+     * @return how many rows were added
+     */
+    static int addJobAndSubscriptionEdges(BmReferencesHelper.BfsResult result,
+        Configuration configuration, ModuleLookup lookup, List<String> unloaded, int maxNodes,
+        int maxEdges, Set<String> keepKinds)
+    {
+        int added = 0;
+        List<Map.Entry<String, IBmObject>> nodes = new ArrayList<>(result.nodes.entrySet());
+        for (Map.Entry<String, IBmObject> node : nodes)
+        {
+            IBmObject object = node.getValue();
+            String methodReference = object instanceof com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob
+                ? ((com._1c.g5.v8.dt.metadata.mdclass.ScheduledJob)object).getMethodName()
+                : object instanceof com._1c.g5.v8.dt.metadata.mdclass.EventSubscription
+                    ? ((com._1c.g5.v8.dt.metadata.mdclass.EventSubscription)object).getHandler()
+                    : null;
+            if (methodReference == null || methodReference.isEmpty())
+            {
+                continue;
+            }
+            BmEventSubscriptionHelper.NormalizationResult parsed =
+                BmEventSubscriptionHelper.normalizeHandler(methodReference);
+            if (parsed == null)
+            {
+                continue;
+            }
+            MdObject target = BmEventSubscriptionHelper.commonModuleObject(configuration,
+                parsed.moduleName);
+            if (target == null)
+            {
+                continue;
+            }
+            String targetFqn = "CommonModule." + target.getName() + ".Module"; //$NON-NLS-1$ //$NON-NLS-2$
+            // The same kind filter and the same accounting the walk applies to its own rows: a
+            // dropped row adds neither an edge nor the node its target would have been.
+            if (!BmReferencesHelper.kindKept(result, node.getKey(), targetFqn,
+                parsed.methodName, keepKinds))
+            {
+                continue;
+            }
+            if (!result.nodes.containsKey(targetFqn))
+            {
+                if (result.nodes.size() >= maxNodes)
+                {
+                    result.truncated = true;
+                    continue;
+                }
+                // The node holds the module the method sits in, loaded the way the walk loads its
+                // own module nodes, so the key and the object agree the way they agree everywhere
+                // else in the graph. The metadata objects the runtime builds answer the graph's
+                // node type; the double cast says so to the compiler.
+                ModuleResolution resolution = lookup.byFqn(targetFqn);
+                result.nodes.put(targetFqn, (IBmObject)(Object)resolution.module);
+                if (resolution.module == null && resolution.addressPresent
+                    && !unloaded.contains(targetFqn))
+                {
+                    unloaded.add(targetFqn);
+                }
+            }
+            if (edgeExists(result, node.getKey(), targetFqn, parsed.methodName))
+            {
+                continue;
+            }
+            if (result.edges.size() >= maxEdges)
+            {
+                result.truncated = true;
+                continue;
+            }
+            BmReferencesHelper.Edge edge = new BmReferencesHelper.Edge(node.getKey(), targetFqn,
+                parsed.methodName, BmReferencesHelper.Side.FORWARD);
+            edge.resolution = RESOLUTION_MODEL;
+            result.edges.add(edge);
+            added++;
+        }
+        return added;
+    }
+
+    /**
+     * Whether the graph already holds the edge the helper is about to add.
+     *
+     * @param result the graph
+     * @param fromFqn the source end
+     * @param toFqn the target end
+     * @param via the feature name
+     * @return whether the edge is already there
+     */
+    private static boolean edgeExists(BmReferencesHelper.BfsResult result, String fromFqn,
+        String toFqn, String via)
+    {
+        for (BmReferencesHelper.Edge existing : result.edges)
+        {
+            if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                && via.equals(existing.featureName))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Records one edge the module's text wrote by name, merging it with the same connection
+     * already recorded.
+     * <p>
+     * The reference index may already have named this pair of modules, and the name-written
+     * sighting then lands on a row the model resolved: the row stays model-resolved, because a
+     * reference the index carries says more about the pair than a name in the text does. A row
+     * only the text filled stays name-resolved and lists the place of every sighting. A row whose
+     * ends are the same module - a call the text writes on its own module - is a row like any
+     * other: the reference half never reports it, so the text-written one is its only source.
+     * </p>
+     *
+     * @param result the graph being built
+     * @param fromFqn the caller's FQN
+     * @param toFqn the callee's FQN
+     * @param file the file the call sits in
+     * @param line the line the call sits on
+     * @param maxEdges the edge cap
+     * @return <code>true</code> when the edge is in the graph afterwards
+     */
+    static boolean addModuleNameEdge(BmReferencesHelper.BfsResult result, String fromFqn,
+        String toFqn, String file, int line, int maxEdges)
+    {
+        if (fromFqn == null || toFqn == null)
+        {
+            return false;
+        }
+        for (BmReferencesHelper.Edge existing : result.edges)
+        {
+            if (fromFqn.equals(existing.fromFqn) && toFqn.equals(existing.toFqn)
+                && CALLS.equals(existing.featureName))
+            {
+                existing.observeName(file, line);
+                return true;
+            }
+        }
+        if (result.edges.size() >= maxEdges)
+        {
+            result.truncated = true;
+            return false;
+        }
+        BmReferencesHelper.Edge edge = new BmReferencesHelper.Edge(fromFqn, toFqn, CALLS, null);
+        edge.resolution = RESOLUTION_NAME;
+        edge.observeName(file, line);
+        result.edges.add(edge);
+        return true;
+    }
 
     /**
      * Records a module the walk has just found, and puts it in the queue so the next ring walks it.

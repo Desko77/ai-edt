@@ -22,8 +22,15 @@ import pathlib
 import re
 import sys
 
-OPS = pathlib.Path(__file__).resolve().parent.parent / (
-    "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server/toolkit/ops")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+# The ops packages of every bundle. Only the server holds facades today; a bundle that
+# grows a dispatch switch of this shape is read here from the day it appears.
+OPS_ROOTS = [bundles.bundle_src(bundles.SERVER) / "ru/aiedt/mcp/server/toolkit/ops"]
+_oform_ops = bundles.bundle_src(bundles.OFORM) / "ru/aiedt/mcp/oform/ops"
+if _oform_ops.is_dir():
+    OPS_ROOTS.append(_oform_ops)
 
 # Every label the dispatch switches on, and every key the second list holds. Read apart from the
 # expressions that resolve them to a class, because a label whose route this cannot read is the
@@ -200,20 +207,20 @@ NO_SECOND_LIST = {
 def main() -> int:
     read = 0
     complaints = []
-    for path in sorted(OPS.glob("*.java")):
-        source = path.read_text(encoding="utf-8")
-        found = disagreements(source)
-        if DESCRIBED.search(source):
-            read += 1
-        elif path.stem not in NO_SECOND_LIST and routes(switch_body(source))[0]:
-            # Counted facades would let one file's map vanish behind the others still having
-            # theirs, which is the same shrink this check exists to refuse one operation at a
-            # time. A facade that dispatches to standalone tools describes them or is named above.
-            complaints.append(f"{path.name}: dispatches to standalone tools and keeps no list "
-                              "describing them, so its help cannot name what an operation takes")
-        for line in found:
-            complaints.append(f"{path.name}: {line}")
-
+    for ops in OPS_ROOTS:
+        for path in sorted(ops.glob("*.java")):
+            source = path.read_text(encoding="utf-8")
+            for line in disagreements(source):
+                complaints.append(f"{path.name}: {line}")
+            if DESCRIBED.search(source):
+                read += 1
+            elif path.stem not in NO_SECOND_LIST and routes(switch_body(source))[0]:
+                # Counted facades would let one file's map vanish behind the others still
+                # having theirs, which is the same shrink this check exists to refuse one
+                # operation at a time. A facade that dispatches to standalone tools
+                # describes them or is named above.
+                complaints.append(f"{path.name}: dispatches to standalone tools and keeps no list "
+                                  "describing them, so its help cannot name what an operation takes")
     if read == 0:
         # Said rather than passed over: the map this exists for is written by hand, and a rename
         # of the builder would leave this check sweeping nothing and reporting success.

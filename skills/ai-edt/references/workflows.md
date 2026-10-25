@@ -62,6 +62,17 @@ stale derived state rather than real type errors. Revalidation does not clear th
    language the query is written in; a star over a nested query or a temporary table stays as one
    column, because there is no table of the model behind it.
 
+In an extension project the query is checked against two models: the extension's own and the
+configuration it extends. A clean answer from the configuration settles the query whole and is
+named in `resolvedInProject`. When neither model is clean - a query mixing a borrowed object's
+non-adopted attribute with an object the extension declares itself - the two answers are settled
+place by place: a missing-field error of the extension is dropped only where the configuration is
+silent at that very place and the table the field's alias names resolves in the configuration's
+model within the query that declared the alias - one query of the package, one union part, or one
+nested query. Every other finding - a warning, a type mismatch, a syntax complaint - stands, and an
+alias redeclared by another query of the batch settles nothing of the query that declared it
+first. The answer then names both projects in `resolvedInProjects`, and one place is reported once.
+
 Do not batch several queries and validate at the end - a failure then costs a hunt for which one
 broke.
 
@@ -74,6 +85,40 @@ broke.
 
 Never hand-write `.form` XML. The form model has invariants the constructor maintains and a
 hand-edit does not.
+
+## Edit an ordinary form
+
+An ordinary form has no model in EDT: its layout and its module are two entries of a `Form.oform`
+container, and `ordinary_forms` is the tool that reads and writes them.
+
+1. `ordinary_forms operation=audit` to see which forms the project has and whether their containers
+   read back unchanged, then `operation=layout` on one address: `formFqn`
+   (`Catalog.Products.Form.ItemForm`) or `modulePath` (`Catalogs/Products/Forms/ItemForm/Module.bsl`).
+2. `operation=describe_owner` for the owner's attributes and tabular sections before composing a
+   form, then `operation=create_form`. That creator lays the form out itself, so the arguments that
+   shape it - `width`, `height`, `withFields`, `withTables`, `withCommands`, `columns`,
+   `tabularSections` - go to `ordinary_forms`, not to `edit_metadata`. `edit_metadata
+   operation=create_form formType=ORDINARY` reaches the same creator for the narrower set of
+   arguments and refuses the rest by name.
+3. Edit with the layout operations: `add_element`, `set_property`, `add_page`, `add_column`,
+   `add_command_panel`, `add_button`, `add_submenu`, `bind_handler` (with `stub=true` for the empty
+   procedure), `move_element`, `remove_element`. Pass `dryRun=true` on any write to see the change
+   before it happens.
+4. `operation=inspect_layout` for duplicate names, dangling page, attribute, action and anchor
+   references, unbound handlers and geometry warnings. Read `coverage` with the findings: a result
+   with no findings and partial coverage is not a validated whole form.
+5. The module is a module: `read_method_source` and `write_module_source` at
+   `<object>/Forms/<form>/Module.bsl`. A write there leaves the layout entry untouched. Use
+   `handlerChanges=refuse` when the write must not take away a procedure the layout still binds.
+6. `diagnostics operation=validate_for_export`, then `infobase_admin operation=update_database`. The
+   write updated the project and marked the owner; it did not touch the infobase. EDT resolves no
+   reference in an ordinary form's module, so project diagnostics say nothing about it - the
+   platform is what checks it, at the update.
+
+Never hand-write the `Form.oform` container. On a project holding ordinary forms,
+`code_search operation=call_hierarchy` and `operation=object_references`, and
+`diagnostics operation=get_project_errors`, answer without their modules and say so in a coverage
+line.
 
 ## Debug a running application
 

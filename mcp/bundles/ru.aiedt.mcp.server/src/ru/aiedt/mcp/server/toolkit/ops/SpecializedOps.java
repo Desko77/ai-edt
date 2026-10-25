@@ -15,11 +15,13 @@ import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.ecore.EObject;
 
 import com._1c.g5.v8.bm.core.IBmObject;
+import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
 import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
 import com._1c.g5.v8.dt.metadata.mdclass.AddressingAttribute;
+import com._1c.g5.v8.dt.metadata.mdclass.BasicCommand;
 import com._1c.g5.v8.dt.metadata.mdclass.BusinessProcess;
 import com._1c.g5.v8.dt.metadata.mdclass.Configuration;
 import com._1c.g5.v8.dt.metadata.mdclass.InformationRegister;
@@ -27,16 +29,19 @@ import com._1c.g5.v8.dt.metadata.mdclass.InformationRegisterDimension;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.metadata.mdclass.SessionParameter;
 import com._1c.g5.v8.dt.metadata.mdclass.Task;
+import com._1c.g5.v8.dt.mcore.CommandGroup;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.BmCommandInterfaceHelper;
 import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.BmDefinedTypeHelper;
 import ru.aiedt.mcp.server.support.BmEventSubscriptionHelper;
 import ru.aiedt.mcp.server.support.BmExportHelper;
 import ru.aiedt.mcp.server.support.BmHelpHelper;
 import ru.aiedt.mcp.server.support.BmObjectHelper;
+import ru.aiedt.mcp.server.support.ConfigurationListProperties;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.EventStubGenerator;
 import ru.aiedt.mcp.server.support.MetadataGuards;
@@ -72,6 +77,13 @@ final class SpecializedOps
      * by EDT itself when the {@code .mdo} is exported - the agent fills the
      * body afterwards via {@code write_module_source}.
      *
+     * <p>The command carries a command-interface group: the {@code group}
+     * argument (friendly name, platform token, or {@code CommandGroup.<name>}
+     * for a custom group), or {@code FormCommandBarImportant} when none is
+     * given. The platform refuses to load a configuration whose command has no
+     * group, so the resolved group is always written. An argument matching no
+     * known group is refused before the project is touched.
+     *
      * <p>For {@link com._1c.g5.v8.dt.metadata.mdclass.CommonCommand} use
      * {@code createObject objectName=CommonCommand.X} - that path already
      * exists.
@@ -85,6 +97,7 @@ final class SpecializedOps
         String commandParameterType = JsonUtils.extractStringArgument(params, "commandParameterType"); //$NON-NLS-1$
         String picture = JsonUtils.extractStringArgument(params, "picture"); //$NON-NLS-1$
         String tooltip = JsonUtils.extractStringArgument(params, "tooltip"); //$NON-NLS-1$
+        String group = JsonUtils.extractStringArgument(params, "group"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
 
         String err = EditMetadataTool.requireNonEmpty(projectName, "projectName") //$NON-NLS-1$
@@ -93,6 +106,31 @@ final class SpecializedOps
         if (!err.isEmpty())
         {
             return ToolResult.error(err.trim()).toJson();
+        }
+        // The group is resolved before anything else is touched: an unusable name is refused
+        // here, so no project lookup and no write happen for it. A null result means the
+        // argument names a custom group, resolved against the model inside the transaction.
+        final boolean customGroupWanted;
+        final String standardGroup;
+        try
+        {
+            standardGroup = BmCommandInterfaceHelper.resolveObjectCommandGroupName(group);
+            customGroupWanted = standardGroup == null;
+        }
+        catch (RuntimeException groupError)
+        {
+            return ToolResult.error(groupError.getMessage()).toJson();
+        }
+        // A command that takes a parameter is shown on the form of the object it is given, so the
+        // platform accepts it only in a form group; the model validation rejects any other pairing.
+        if (commandParameterType != null && !commandParameterType.isEmpty() && standardGroup != null
+            && !BmCommandInterfaceHelper.isFormObjectCommandGroup(standardGroup))
+        {
+            return ToolResult.error("group '" + standardGroup + "' does not take a command with " //$NON-NLS-1$ //$NON-NLS-2$
+                + "commandParameterType. A command with a parameter goes into a form group: " //$NON-NLS-1$
+                + "FormCommandBarImportant, FormCommandBarCreateBasedOn, FormNavigationPanelGoTo, " //$NON-NLS-1$
+                + "FormNavigationPanelImportant, FormNavigationPanelSeeAlso, or CommandGroup.<name>. " //$NON-NLS-1$
+                + "Nothing was changed.").toJson(); //$NON-NLS-1$
         }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
@@ -147,6 +185,10 @@ final class SpecializedOps
                         + "MdClassPackage EClass lookup)."); //$NON-NLS-1$
                 }
                 command.setName(name);
+                Object customGroup = customGroupWanted
+                    ? resolveCustomObjectCommandGroup(tx, group)
+                    : null;
+                applyObjectCommandGroup(command, standardGroup, customGroup);
                 commands.add(command);
                 // Auto-generate a synonym from the name when no title was supplied, via the same
                 // path createObject uses: applyMdObjectSynonym resolves the configuration's default
@@ -192,6 +234,63 @@ final class SpecializedOps
                     + " propertyName=picture propertyValue=" + picture); //$NON-NLS-1$
         }
         return EditMetadataTool.formatResult(r, "create_object_command"); //$NON-NLS-1$
+    }
+
+    /**
+     * Resolves a {@code CommandGroup.<name>} argument of an object command
+     * against the model of the transaction's project.
+     *
+     * @return the resolved command group, never null
+     * @throws RuntimeException when the address resolves to no command group
+     */
+    private static Object resolveCustomObjectCommandGroup(IBmTransaction tx, String group)
+    {
+        String normGroupFqn = MetadataTypeCatalog.normalizeFqn(group.trim());
+        Object resolved = EditMetadataTool.resolveReferenceTarget(tx, normGroupFqn);
+        if (!(resolved instanceof CommandGroup))
+        {
+            throw new RuntimeException("Command group not found: " + normGroupFqn //$NON-NLS-1$
+                + " (group=" + group + ")."); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return resolved;
+    }
+
+    /**
+     * Writes the command-interface group of an object command: the standard
+     * platform group named by {@code standardGroup} (a canonical name from
+     * {@link BmCommandInterfaceHelper#resolveObjectCommandGroupName}), or the
+     * custom group {@code customGroup} already resolved from the model. A null
+     * {@code standardGroup} alongside a null {@code customGroup} writes
+     * {@link BmCommandInterfaceHelper#DEFAULT_OBJECT_COMMAND_GROUP}, which is
+     * what an unnamed group argument resolves to.
+     *
+     * @throws RuntimeException when {@code command} is not a command, or
+     *         {@code customGroup} is not a command group
+     */
+    static void applyObjectCommandGroup(MdObject command, String standardGroup, Object customGroup)
+    {
+        if (!(command instanceof BasicCommand))
+        {
+            throw new RuntimeException("Not a command: " + command.eClass().getName() //$NON-NLS-1$
+                + ". A command group is written only on a command."); //$NON-NLS-1$
+        }
+        CommandGroup target;
+        if (customGroup != null)
+        {
+            if (!(customGroup instanceof CommandGroup))
+            {
+                throw new RuntimeException("Not a command group: " + customGroup); //$NON-NLS-1$
+            }
+            target = (CommandGroup) customGroup;
+        }
+        else
+        {
+            String canonical = standardGroup == null || standardGroup.trim().isEmpty()
+                ? BmCommandInterfaceHelper.DEFAULT_OBJECT_COMMAND_GROUP
+                : standardGroup.trim();
+            target = BmCommandInterfaceHelper.createObjectCommandGroup(canonical);
+        }
+        ((BasicCommand) command).setGroup(target);
     }
 
     /**
@@ -606,6 +705,26 @@ final class SpecializedOps
             return ToolResult.error(target.refusal).toJson();
         }
 
+        // The composition refusal of an addressing attribute the call creates is answered before
+        // the write entry adopts the Task: the adoption commits on its own and survives the
+        // rollback the in-transaction refusal throws, so the extension would hold the Task.
+        for (NameValue spec : wanted)
+        {
+            if (spec.type == null)
+            {
+                continue;
+            }
+            String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+                target.fqn, null, "AddressingAttribute", spec.name, //$NON-NLS-1$
+                Collections.singletonList(spec.type), new BmDefinedTypeHelper.QualifierOptions());
+            if (preBorrowRefusal != null)
+            {
+                return EditMetadataTool.refusedResult(target.fqn, dryRun,
+                    "addressing attribute '" + spec.name + "': " + preBorrowRefusal, //$NON-NLS-1$ //$NON-NLS-2$
+                    "set_task_addressing"); //$NON-NLS-1$
+            }
+        }
+
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, target.fqn, dryRun,
             (tx, owner) -> {
                 Task task = taskOf(owner, ownerFqn);
@@ -639,6 +758,20 @@ final class SpecializedOps
                         {
                             throw new RuntimeException("Cannot create an AddressingAttribute under " //$NON-NLS-1$
                                 + fqnOf(task) + ": no compatible MdClassFactory method."); //$NON-NLS-1$
+                        }
+                        if (spec.type != null)
+                        {
+                            // Answered while the attribute is still detached - the same
+                            // order the attribute-creating operations keep.
+                            String compositionRefusal =
+                                BmDefinedTypeHelper.creationCompositeStringRefusal(task, attribute,
+                                    Collections.singletonList(spec.type),
+                                    new BmDefinedTypeHelper.QualifierOptions());
+                            if (compositionRefusal != null)
+                            {
+                                throw new RuntimeException("addressing attribute '" + spec.name //$NON-NLS-1$
+                                    + "': " + compositionRefusal); //$NON-NLS-1$
+                            }
                         }
                         attribute.setName(spec.name);
                         task.getAddressingAttributes().add(attribute);
@@ -1425,6 +1558,17 @@ final class SpecializedOps
         final List<String> appliedFeatureProps = new ArrayList<>();
         final Map<String, String> failedFeatureProps = new LinkedHashMap<>();
 
+        // The composition refusal is answered before the write entry adopts an owner the
+        // extension did not hold: the adoption commits on its own and survives the rollback the
+        // in-transaction refusal throws, so the extension would hold what it adopted.
+        String preBorrowRefusal = BmObjectHelper.preBorrowCompositeStringRefusal(project,
+            ownerFqn, null, childType, name, Collections.singletonList(type), qualifiers);
+        if (preBorrowRefusal != null)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                childType.toLowerCase() + " '" + name + "': " + preBorrowRefusal, opLabel); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+
         BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 EList<MdObject> list = EditMetadataTool.invokeListGetter(owner, collection);
@@ -1496,6 +1640,16 @@ final class SpecializedOps
                         + "': no compatible MdClassFactory method (tried " //$NON-NLS-1$
                         + "create" + owner.eClass().getName() + childType //$NON-NLS-1$
                         + ", create" + childType + ", MdClassPackage lookup)."); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+                // The composition refusal is answered while the field is still detached:
+                // it is known from the arguments and the carrier alone, and the
+                // transaction rolls back to a refusal thrown before anything is attached.
+                String compositionRefusal = BmDefinedTypeHelper.creationCompositeStringRefusal(
+                    owner, field, Collections.singletonList(type), qualifiers);
+                if (compositionRefusal != null)
+                {
+                    throw new RuntimeException(
+                        childType.toLowerCase() + " '" + name + "': " + compositionRefusal); //$NON-NLS-1$ //$NON-NLS-2$
                 }
                 field.setName(name);
                 synOut[0] = EditMetadataTool.applyMdObjectSynonym(field, synonym, name, project);
@@ -1869,9 +2023,23 @@ final class SpecializedOps
         String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn"); //$NON-NLS-1$
         String typesCsv = JsonUtils.extractStringArgument(params, "types"); //$NON-NLS-1$
         boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false); //$NON-NLS-1$
+        String listModeArg = JsonUtils.extractStringArgument(params, "listMode"); //$NON-NLS-1$
+        final ConfigurationListProperties.ListMode listMode =
+            ConfigurationListProperties.ListMode.parse(listModeArg);
+        if (listMode == null)
+        {
+            return ToolResult.error("listMode takes one of: " //$NON-NLS-1$
+                + ConfigurationListProperties.ListMode.spelled()).toJson();
+        }
         if (ownerFqn == null || ownerFqn.isEmpty())
         {
             return ToolResult.error("setDefinedTypeTypes requires ownerFqn (DefinedType.X)").toJson();
+        }
+        if (listMode == ConfigurationListProperties.ListMode.CLEAR)
+        {
+            return EditMetadataTool.refusedResult(ownerFqn, dryRun,
+                "A metadata element must have at least one type; listMode=clear is not allowed.", //$NON-NLS-1$
+                "set_defined_type_types"); //$NON-NLS-1$
         }
         if (typesCsv == null || typesCsv.isEmpty())
         {
@@ -1910,11 +2078,9 @@ final class SpecializedOps
             (tx, owner) -> {
                 Configuration config = Activator.getDefault().getConfigurationProvider()
                     .getConfiguration(project);
-                IDtProject dtProject = Activator.getDefault().getDtProjectManager()
-                    .getDtProject(project);
                 ru.aiedt.mcp.server.support.BmDefinedTypeHelper.TypesResult tr
-                    = ru.aiedt.mcp.server.support.BmDefinedTypeHelper.setTypes(
-                        owner, dtProject, config, types, qualifiers);
+                    = ru.aiedt.mcp.server.support.BmDefinedTypeHelper.updateTypes(
+                        owner, project, config, types, qualifiers, listMode, dryRun);
                 ref.set(tr);
                 if (!tr.ok)
                 {
@@ -1935,14 +2101,20 @@ final class SpecializedOps
         ToolResult tool = r.ok ? ToolResult.success() : ToolResult.error(r.error != null ? r.error : "setDefinedTypeTypes failed");
         tool.put("operation", "set_defined_type_types")
             .put("ownerFqn", ownerFqn)
-            .put("requestedTypes", types);
+            .put("requestedTypes", types)
+            .put("listMode", listMode.name().toLowerCase());
         if (ref.get() != null)
         {
             ru.aiedt.mcp.server.support.BmDefinedTypeHelper.TypesResult tr = ref.get();
             tool.put("resolved", tr.resolved)
                 .put("unresolved", tr.unresolved)
                 .put("mutated", tr.mutated)
-                .put("idempotentSkip", tr.idempotentSkip);
+                .put("idempotentSkip", tr.idempotentSkip)
+                .put("added", tr.added)
+                .put("removed", tr.removed)
+                .put("skipped", tr.skipped)
+                .put("types", tr.finalTypes)
+                .put("typeCount", tr.finalTypes.size());
             if (!tr.unresolved.isEmpty())
             {
                 tool.put("partialMutation", "Some FQNs could not be turned into TypeItems"); //$NON-NLS-1$ //$NON-NLS-2$

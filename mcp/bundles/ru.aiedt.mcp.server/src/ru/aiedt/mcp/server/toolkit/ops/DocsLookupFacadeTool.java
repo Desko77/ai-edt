@@ -204,7 +204,8 @@ public class DocsLookupFacadeTool implements IMcpTool
             case "system_enum_values": //$NON-NLS-1$
                 return systemEnumValues(params);
             default:
-                return ToolResult.error("Unhandled operation: " + operation).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Unhandled operation: " + operation + ". Allowed: " //$NON-NLS-1$ //$NON-NLS-2$
+                    + String.join(" / ", OPS.keySet()) + " / help.").toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 

@@ -19,6 +19,7 @@ import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.xtext.nodemodel.util.NodeModelUtils;
 import org.eclipse.xtext.resource.IReferenceDescription;
 import org.eclipse.xtext.resource.IResourceServiceProvider;
 import org.eclipse.xtext.ui.editor.findrefs.IReferenceFinder;
@@ -29,8 +30,11 @@ import com._1c.g5.v8.dt.bsl.model.DynamicFeatureAccess;
 import com._1c.g5.v8.dt.bsl.model.Invocation;
 import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
+import com._1c.g5.v8.dt.bsl.model.OperatorStyleCreator;
 import com._1c.g5.v8.dt.bsl.model.StaticFeatureAccess;
+import com._1c.g5.v8.dt.bsl.model.StringLiteral;
 import com._1c.g5.v8.dt.bsl.model.Variable;
+import com._1c.g5.v8.dt.mcore.Type;
 
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess;
@@ -65,11 +69,65 @@ public final class BslCallGraphHelper
         public final String toFqn;
         public final int callCount;
 
+        /** Whether the call was read out of the module text as a written-by-name call. */
+        public final boolean byName;
+
+        /** The file a written-by-name call sits in, or {@code null} for a resolved reference. */
+        public final String file;
+
+        /** The 1-based line a written-by-name call sits on, or 0 when the node model names none. */
+        public final int line;
+
         public ModuleEdge(String fromFqn, String toFqn, int callCount)
+        {
+            this(fromFqn, toFqn, callCount, false, null, 0);
+        }
+
+        /**
+         * @param fromFqn the caller's FQN
+         * @param toFqn the callee's FQN
+         * @param callCount how many calls the edge stands for
+         * @param byName whether the call is written by name rather than resolved as a reference
+         * @param file the file a written-by-name call sits in, or {@code null} for a resolved one
+         * @param line the line a written-by-name call sits on, or 0 when unknown
+         */
+        public ModuleEdge(String fromFqn, String toFqn, int callCount, boolean byName, String file,
+            int line)
         {
             this.fromFqn = fromFqn;
             this.toFqn = toFqn;
             this.callCount = callCount;
+            this.byName = byName;
+            this.file = file;
+            this.line = line;
+        }
+    }
+
+    /**
+     * A call whose target method the code writes as a string: the name sits in the text as a
+     * literal, and no reference the index carries points at the method.
+     */
+    public static final class NameCall
+    {
+        /** The called module's FQN, or {@code null} when the call names a method of its own module. */
+        public final String targetModuleFqn;
+
+        /** The method name as the call spells it. */
+        public final String methodName;
+
+        /** The 1-based line the call sits on, or 0 when the node model names none. */
+        public final int line;
+
+        /**
+         * @param targetModuleFqn the called module's FQN, or {@code null} for the module itself
+         * @param methodName the method name as the call spells it
+         * @param line the line the call sits on, or 0 when unknown
+         */
+        public NameCall(String targetModuleFqn, String methodName, int line)
+        {
+            this.targetModuleFqn = targetModuleFqn;
+            this.methodName = methodName;
+            this.line = line;
         }
     }
 
@@ -511,8 +569,10 @@ public final class BslCallGraphHelper
      * Where the two halves of the module call graph come from.
      * <p>
      * The single source the module level walks: incoming edges from the reference index the
-     * {@code call_hierarchy} tool reads, outgoing edges from the module's own resolved call links.
-     * A level reading them anywhere else answers about calls differently from that tool.
+     * {@code call_hierarchy} tool reads, outgoing edges out of the module's text - a plain call
+     * into a common module and a call written by name both reach their target without a reference
+     * the index would carry. A level reading them anywhere else answers about calls differently
+     * from that tool.
      * </p>
      */
     public interface ModuleCallSource
@@ -525,10 +585,16 @@ public final class BslCallGraphHelper
         List<String> callersOf(Module module);
 
         /**
-         * @param module the module whose callees to list
-         * @return the called modules' FQNs, empty when the module calls nothing outside itself
+         * The calls the module's text writes by name: every call into a common module written
+         * {@code ModuleName.Method(...)}, and the calls whose method name sits in the code as a
+         * string literal. The reference index the incoming direction reads carries nothing about
+         * them, so the outgoing direction of the module level is read here instead.
+         *
+         * @param module the module whose text to read
+         * @return the name-written calls, each with the line it sits on; empty when the source
+         *         reads no text
          */
-        List<String> calleesOf(Module module);
+        List<NameCall> nameCallsOf(Module module);
 
         /**
          * The source of a live project: the BSL reference index and the modules' resolved links.
@@ -539,20 +605,30 @@ public final class BslCallGraphHelper
          */
         static ModuleCallSource bslModel(IProject project, IBmModel bmModel)
         {
-            return new BslModelCallSource(project, bmModel);
+            return new BslModelCallSource(project, bmModel, fqn -> {
+                BslModuleAccess.ModulePathResolution path =
+                    BslModuleAccess.resolveModulePath(project, fqn);
+                return path != null && path.isResolved()
+                    ? BslModuleAccess.loadModule(project, path.getPath())
+                    : null;
+            });
         }
     }
 
     /** The production source, over the project's BSL reference index and resolved call links. */
-    private static final class BslModelCallSource implements ModuleCallSource
+    static final class BslModelCallSource implements ModuleCallSource
     {
         private final IProject project;
         private final IBmModel bmModel;
 
-        BslModelCallSource(IProject project, IBmModel bmModel)
+        private final java.util.function.Function<String, Module> targetModuleLoader;
+
+        BslModelCallSource(IProject project, IBmModel bmModel,
+            java.util.function.Function<String, Module> targetModuleLoader)
         {
             this.project = project;
             this.bmModel = bmModel;
+            this.targetModuleLoader = targetModuleLoader;
         }
 
         @Override
@@ -562,9 +638,29 @@ public final class BslCallGraphHelper
         }
 
         @Override
-        public List<String> calleesOf(Module module)
+        public List<NameCall> nameCallsOf(Module module)
         {
-            return calleesByCommonModuleName(module, commonModuleNames());
+            java.util.Map<String, String> commonModules = commonModuleNames();
+            if (module == null || commonModules == null)
+            {
+                return Collections.emptyList();
+            }
+            // A plain ModuleName.Method(...) call names a module the project holds, so it needs no
+            // target check; a string literal has to be answered by a method, and the target module
+            // is loaded the way the module level loads every module it walks into. One cache holds
+            // the answers for the whole walk, so a module many calls name is loaded once.
+            List<NameCall> calls = commonModuleNameCallsOf(module, commonModules);
+            if (calls == null)
+            {
+                calls = new ArrayList<>();
+            }
+            else
+            {
+                calls = new ArrayList<>(calls);
+            }
+            calls.addAll(withExistingTargets(literalNameCallsOf(module, commonModules), module,
+                targetMethodNames()));
+            return calls;
         }
 
         /** The project's common modules by lower-cased name, read from the source folder once. */
@@ -572,40 +668,67 @@ public final class BslCallGraphHelper
         {
             if (commonModules == null)
             {
-                java.util.Map<String, String> names = new java.util.HashMap<>();
-                try
-                {
-                    org.eclipse.core.resources.IFolder folder =
-                        project.getFolder("src/CommonModules"); //$NON-NLS-1$
-                    if (folder.exists())
-                    {
-                        for (org.eclipse.core.resources.IResource member : folder.members())
-                        {
-                            if (member instanceof org.eclipse.core.resources.IFolder)
-                            {
-                                names.put(member.getName().toLowerCase(java.util.Locale.ROOT),
-                                    member.getName());
-                            }
-                        }
-                    }
-                }
-                catch (org.eclipse.core.runtime.CoreException | RuntimeException unreadable)
-                {
-                    Activator.logWarning("BslCallGraphHelper: the common modules of project " //$NON-NLS-1$
-                        + project.getName() + " could not be listed, so outgoing call edges are " //$NON-NLS-1$
-                        + "left out: " + unreadable.getMessage()); //$NON-NLS-1$
-                    return null;
-                }
-                commonModules = names;
+                commonModules = BslCallGraphHelper.commonModuleNames(project);
             }
             return commonModules;
         }
 
+        /**
+         * The method names of the target modules of this walk, each module read once.
+         *
+         * @return the cache
+         */
+        private MethodNameCache targetMethodNames()
+        {
+            if (targetMethods == null)
+            {
+                targetMethods = new MethodNameCache(targetModuleLoader);
+            }
+            return targetMethods;
+        }
+
         private java.util.Map<String, String> commonModules;
+
+        private MethodNameCache targetMethods;
     }
 
     /**
-     * The common modules a module calls, read off the text of its call sites.
+     * The project's common modules by lower-cased name, read from the source folder.
+     *
+     * @param project the project to read
+     * @return the common modules, or {@code null} when the folder could not be listed
+     */
+    public static java.util.Map<String, String> commonModuleNames(IProject project)
+    {
+        java.util.Map<String, String> names = new java.util.HashMap<>();
+        try
+        {
+            org.eclipse.core.resources.IFolder folder = project.getFolder("src/CommonModules"); //$NON-NLS-1$
+            if (folder.exists())
+            {
+                for (org.eclipse.core.resources.IResource member : folder.members())
+                {
+                    if (member instanceof org.eclipse.core.resources.IFolder)
+                    {
+                        names.put(member.getName().toLowerCase(java.util.Locale.ROOT),
+                            member.getName());
+                    }
+                }
+            }
+        }
+        catch (org.eclipse.core.runtime.CoreException | RuntimeException unreadable)
+        {
+            Activator.logWarning("BslCallGraphHelper: the common modules of project " //$NON-NLS-1$
+                + project.getName() + " could not be listed, so outgoing call edges are " //$NON-NLS-1$
+                + "left out: " + unreadable.getMessage()); //$NON-NLS-1$
+            return null;
+        }
+        return names;
+    }
+
+    /**
+     * The common modules a module calls, read off the text of its call sites, each call with the
+     * place it sits at.
      * <p>
      * A call into a common module is written {@code ModuleName.Method(...)}: a member access whose
      * source is a plain name. The name is matched against the project's common modules without
@@ -615,13 +738,18 @@ public final class BslCallGraphHelper
      * variable is not an edge here. The incoming direction reads the reference index and is not
      * limited this way.
      * </p>
+     * <p>
+     * Every call site is reported, not one per module: the places are what a name-resolved edge
+     * lists, and their number is the count of that edge.
+     * </p>
      *
      * @param module the module whose call sites to read
      * @param commonModules the project's common modules, lower-cased name to name; {@code null}
      *        when they could not be listed
-     * @return the called modules' FQNs, or {@code null} when the common modules are not known
+     * @return the calls, each naming the called module and the line it sits on, or {@code null}
+     *         when the common modules are not known
      */
-    static List<String> calleesByCommonModuleName(Module module,
+    static List<NameCall> commonModuleNameCallsOf(Module module,
         java.util.Map<String, String> commonModules)
     {
         if (module == null)
@@ -633,21 +761,8 @@ public final class BslCallGraphHelper
             return null;
         }
         String selfFqn = moduleFqn(module);
-        Set<String> called = new LinkedHashSet<>();
-        // A parameter or a variable may carry the name of a common module, and a call through it
-        // is a call through a variable. A name declared in a method hides the module in that method
-        // only; a name declared outside every method hides it in the whole module (key null).
-        java.util.Map<Method, Set<String>> shadowed = new java.util.HashMap<>();
-        java.util.Iterator<EObject> declared = module.eAllContents();
-        while (declared.hasNext())
-        {
-            EObject node = declared.next();
-            if (node instanceof Variable && ((Variable)node).getName() != null)
-            {
-                shadowed.computeIfAbsent(enclosingMethod(node), scope -> new HashSet<>())
-                    .add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
-            }
-        }
+        List<NameCall> calls = new ArrayList<>();
+        java.util.Map<Method, Set<String>> shadowed = shadowedNamesOf(module);
         java.util.Iterator<EObject> contents = module.eAllContents();
         while (contents.hasNext())
         {
@@ -673,19 +788,544 @@ public final class BslCallGraphHelper
             {
                 continue;
             }
-            String lowered = name.toLowerCase(java.util.Locale.ROOT);
-            if (shadowed.getOrDefault(null, Collections.emptySet()).contains(lowered)
-                || shadowed.getOrDefault(enclosingMethod(node), Collections.emptySet()).contains(lowered))
+            if (shadowedIn(shadowed, node, name.toLowerCase(java.util.Locale.ROOT)))
             {
                 continue;
             }
             String fqn = commonModuleFqn(name, commonModules);
             if (fqn != null && !fqn.equals(selfFqn))
             {
-                called.add(fqn);
+                calls.add(new NameCall(fqn, ((DynamicFeatureAccess)node).getName(),
+                    lineOf(holder)));
             }
         }
-        return new ArrayList<>(called);
+        return calls;
+    }
+
+    /**
+     * The names a module's own declarations hide, per method: a parameter or a variable may carry
+     * the name of a common module, and a call through it is a call through that parameter or
+     * variable, not through the module.
+     * <p>
+     * A name declared in a method hides the module in that method only; a name declared outside
+     * every method hides it in the whole module (key {@code null}).
+     * </p>
+     *
+     * @param module the module whose declarations to read
+     * @return the hidden names of each method, and of the module itself under the {@code null}
+     *         method
+     */
+    private static java.util.Map<Method, Set<String>> shadowedNamesOf(Module module)
+    {
+        java.util.Map<Method, Set<String>> shadowed = new java.util.HashMap<>();
+        java.util.Iterator<EObject> declared = module.eAllContents();
+        while (declared.hasNext())
+        {
+            EObject node = declared.next();
+            if (node instanceof Variable && ((Variable)node).getName() != null)
+            {
+                shadowed.computeIfAbsent(enclosingMethod(node), scope -> new HashSet<>())
+                    .add(((Variable)node).getName().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        return shadowed;
+    }
+
+    /**
+     * Whether a name is hidden at the place a node sits: by a declaration of the method the node
+     * belongs to, or by one that stands outside every method.
+     *
+     * @param shadowed the hidden names of each method, as {@link #shadowedNamesOf(Module)} reads
+     *        them
+     * @param node the node the name is read at
+     * @param loweredName the name, already folded to one case
+     * @return whether a declaration of that name hides the module in the method the node sits in
+     */
+    private static boolean shadowedIn(java.util.Map<Method, Set<String>> shadowed, EObject node,
+        String loweredName)
+    {
+        return shadowed.getOrDefault(null, Collections.emptySet()).contains(loweredName)
+            || shadowed.getOrDefault(enclosingMethod(node), Collections.emptySet())
+                .contains(loweredName);
+    }
+
+    /** The Russian and the English spelling of the notify description type. */
+    private static final String NOTIFY_DESCRIPTION_RU = "ОписаниеОповещения"; //$NON-NLS-1$
+    private static final String NOTIFY_DESCRIPTION_EN = "NotifyDescription"; //$NON-NLS-1$
+
+    /** The module-owning spellings a notify description accepts as its source argument. */
+    private static final String THIS_OBJECT_RU = "ЭтотОбъект"; //$NON-NLS-1$
+    private static final String THIS_OBJECT_EN = "ThisObject"; //$NON-NLS-1$
+
+    /** The global function that attaches a handler the timer calls by name. */
+    private static final String IDLE_HANDLER_RU = "ПодключитьОбработчикОжидания"; //$NON-NLS-1$
+    private static final String IDLE_HANDLER_EN = "AttachIdleHandler"; //$NON-NLS-1$
+
+    /**
+     * The calls a module's text writes by name, read off the module's own model.
+     * <p>
+     * Three forms are read, and only when the method name sits in the code as a string literal: a
+     * notify description constructor whose first parameter names a method of the module its second
+     * parameter names ({@code ЭтотОбъект} names the module the call sits in, a common module name
+     * names that module), the idle handler attachment naming a method of its own module, and the
+     * background execution entry points naming {@code ОбщийМодуль.Метод} in their first parameter.
+     * A name held in a variable or built at runtime is not a literal and is not read.
+     * </p>
+     * <p>
+     * The calls are read, not verified: whether the named method exists is a separate question,
+     * answered by {@link #withExistingTargets(List, Module, java.util.function.Function)}.
+     * </p>
+     *
+     * @param module the module whose text to read
+     * @param commonModules the project's common modules, lower-cased name to name; {@code null}
+     *        reads no call, since a module name cannot be matched
+     * @return the calls, in the order the walk meets them
+     */
+    public static List<NameCall> literalNameCallsOf(Module module,
+        java.util.Map<String, String> commonModules)
+    {
+        if (module == null || commonModules == null)
+        {
+            return Collections.emptyList();
+        }
+        List<NameCall> calls = new ArrayList<>();
+        // The same set of hidden names the plain call sites are read against: a notify
+        // description's source and a background entry point's owner are read as module names, so
+        // a name a method declares as its own must hide the module here as well.
+        java.util.Map<Method, Set<String>> shadowed = shadowedNamesOf(module);
+        java.util.Iterator<EObject> it = module.eAllContents();
+        while (it.hasNext())
+        {
+            EObject node = it.next();
+            if (node instanceof Invocation)
+            {
+                nameCallsOfInvocation((Invocation)node, commonModules, shadowed, calls);
+            }
+            else if (node instanceof OperatorStyleCreator)
+            {
+                nameCallsOfNotifyDescription((OperatorStyleCreator)node, commonModules, shadowed,
+                    calls);
+            }
+        }
+        return calls;
+    }
+
+    /**
+     * The written-by-name calls of one invocation: the idle handler attachment and the background
+     * execution entry points.
+     *
+     * @param call the invocation to read
+     * @param commonModules the project's common modules, lower-cased name to name
+     * @param shadowed the names each method's own declarations hide, as
+     *        {@link #shadowedNamesOf(Module)} reads them
+     * @param out the calls found so far, filled
+     */
+    private static void nameCallsOfInvocation(Invocation call,
+        java.util.Map<String, String> commonModules, java.util.Map<Method, Set<String>> shadowed,
+        List<NameCall> out)
+    {
+        if (call.getMethodAccess() instanceof StaticFeatureAccess)
+        {
+            String name = ((StaticFeatureAccess)call.getMethodAccess()).getName();
+            if (IDLE_HANDLER_RU.equalsIgnoreCase(name) || IDLE_HANDLER_EN.equalsIgnoreCase(name))
+            {
+                String literal = stringLiteralAt(call.getParams(), 0);
+                if (literal != null && !literal.isEmpty())
+                {
+                    out.add(new NameCall(null, literal, lineOf(call)));
+                }
+            }
+            return;
+        }
+        if (!(call.getMethodAccess() instanceof DynamicFeatureAccess))
+        {
+            return;
+        }
+        EObject source = ((DynamicFeatureAccess)call.getMethodAccess()).getSource();
+        if (!(source instanceof StaticFeatureAccess))
+        {
+            return;
+        }
+        String owner = ((StaticFeatureAccess)source).getName();
+        if (owner == null || shadowedIn(shadowed, call, owner.toLowerCase(java.util.Locale.ROOT)))
+        {
+            // The invocation starts with a name the method declares as its own, so it is a call
+            // through that parameter or variable, not one through the entry point's module.
+            return;
+        }
+        String method = ((DynamicFeatureAccess)call.getMethodAccess()).getName();
+        if (!backgroundExecutionCall(owner, method))
+        {
+            return;
+        }
+        String[] target = backgroundTargetOf(stringLiteralAt(call.getParams(),
+            backgroundNameArgumentIndex(owner, method)));
+        if (target == null)
+        {
+            return;
+        }
+        String fqn = commonModuleFqn(target[0], commonModules);
+        if (fqn != null)
+        {
+            out.add(new NameCall(fqn, target[1], lineOf(call)));
+        }
+    }
+
+    /**
+     * The module and the method a background-call literal spells, with the spaces around the dot
+     * read as separators rather than parts of the names.
+     *
+     * @param literal the text of the literal, without its quotes
+     * @return the module name and the method name, or {@code null} when the literal names no pair
+     */
+    static String[] backgroundTargetOf(String literal)
+    {
+        if (literal == null)
+        {
+            return null;
+        }
+        int dot = literal.indexOf('.');
+        if (dot <= 0 || dot == literal.length() - 1)
+        {
+            return null;
+        }
+        String module = literal.substring(0, dot).trim();
+        String method = literal.substring(dot + 1).trim();
+        if (module.isEmpty() || method.isEmpty())
+        {
+            return null;
+        }
+        return new String[]{module, method};
+    }
+
+    /**
+     * Whether an invocation is one of the background execution entry points whose parameters name
+     * the procedure as {@code ОбщийМодуль.Метод}: the long operations module's three runners and
+     * the background jobs executor.
+     *
+     * @param owner the name the invocation starts with
+     * @param method the invoked method's name
+     * @return whether the pair is such an entry point
+     */
+    private static boolean backgroundExecutionCall(String owner, String method)
+    {
+        if (owner == null || method == null)
+        {
+            return false;
+        }
+        if ("ДлительныеОперации".equalsIgnoreCase(owner)) //$NON-NLS-1$
+        {
+            return "ВыполнитьВФоне".equalsIgnoreCase(method) //$NON-NLS-1$
+                || "ВыполнитьФункцию".equalsIgnoreCase(method) //$NON-NLS-1$
+                || "ВыполнитьПроцедуру".equalsIgnoreCase(method); //$NON-NLS-1$
+        }
+        if ("ФоновыеЗадания".equalsIgnoreCase(owner)) //$NON-NLS-1$
+        {
+            return "Выполнить".equalsIgnoreCase(method); //$NON-NLS-1$
+        }
+        if ("BackgroundJobs".equalsIgnoreCase(owner)) //$NON-NLS-1$
+        {
+            return "Execute".equalsIgnoreCase(method); //$NON-NLS-1$
+        }
+        return false;
+    }
+
+    /**
+     * The parameter position a background execution entry point holds its
+     * {@code ОбщийМодуль.Метод} literal in.
+     * <p>
+     * {@code ВыполнитьВФоне} and the background jobs executors name the procedure first, the way
+     * their signatures read; {@code ВыполнитьФункцию} and {@code ВыполнитьПроцедуру} take the
+     * execution parameters first and name the method second.
+     * </p>
+     *
+     * @param owner the name the invocation starts with
+     * @param method the invoked method's name
+     * @return the argument index the literal sits at
+     */
+    private static int backgroundNameArgumentIndex(String owner, String method)
+    {
+        if ("ДлительныеОперации".equalsIgnoreCase(owner) //$NON-NLS-1$
+            && ("ВыполнитьФункцию".equalsIgnoreCase(method) //$NON-NLS-1$
+                || "ВыполнитьПроцедуру".equalsIgnoreCase(method))) //$NON-NLS-1$
+        {
+            return 1;
+        }
+        return 0;
+    }
+
+    /**
+     * The written-by-name call of a notify description constructor, when its parameters name one.
+     *
+     * @param creator the constructor expression to read
+     * @param commonModules the project's common modules, lower-cased name to name
+     * @param shadowed the names each method's own declarations hide, as
+     *        {@link #shadowedNamesOf(Module)} reads them
+     * @param out the calls found so far, filled
+     */
+    private static void nameCallsOfNotifyDescription(OperatorStyleCreator creator,
+        java.util.Map<String, String> commonModules, java.util.Map<Method, Set<String>> shadowed,
+        List<NameCall> out)
+    {
+        if (!isNotifyDescription(creator.getType()))
+        {
+            return;
+        }
+        String literal = stringLiteralAt(creator.getParams(), 0);
+        if (literal == null || literal.isEmpty())
+        {
+            return;
+        }
+        // The second parameter is the source whose method the first parameter names: only a plain
+        // name is read, so anything else leaves the call without a target.
+        if (creator.getParams().size() < 2
+            || !(creator.getParams().get(1) instanceof StaticFeatureAccess))
+        {
+            return;
+        }
+        String source = ((StaticFeatureAccess)creator.getParams().get(1)).getName();
+        if (source == null || shadowedIn(shadowed, creator, source.toLowerCase(java.util.Locale.ROOT)))
+        {
+            // The source is a name the method declares as its own, so the description names a
+            // method of that parameter or variable, not of a module.
+            return;
+        }
+        if (THIS_OBJECT_RU.equalsIgnoreCase(source) || THIS_OBJECT_EN.equalsIgnoreCase(source))
+        {
+            out.add(new NameCall(null, literal, lineOf(creator)));
+            return;
+        }
+        String fqn = commonModuleFqn(source, commonModules);
+        if (fqn != null)
+        {
+            out.add(new NameCall(fqn, literal, lineOf(creator)));
+        }
+    }
+
+    /**
+     * Whether the type a constructor builds is the notify description.
+     * <p>
+     * A name a type reads without failure settles the question, so the second reader is never
+     * reached after a match. A reader that fails is written to the log and reads as no name: one
+     * broken type costs its own constructor, not the whole walk. When the first reader fails the
+     * second is still asked, so a type that answers only the name the first reader does not spell
+     * is still recognized.
+     * </p>
+     *
+     * @param type the type the constructor names, resolved or not
+     * @return whether the type spells the notify description's name, in either language
+     */
+    private static boolean isNotifyDescription(Type type)
+    {
+        if (type == null)
+        {
+            return false;
+        }
+        String name = null;
+        try
+        {
+            name = type.getName();
+        }
+        catch (RuntimeException unreadable)
+        {
+            Activator.logWarning("BslCallGraphHelper: a constructor type name could not be read" //$NON-NLS-1$
+                + " (getName): " + unreadable.getMessage()); //$NON-NLS-1$
+        }
+        if (spellsNotifyDescription(name))
+        {
+            return true;
+        }
+        try
+        {
+            return spellsNotifyDescription(type.getNameRu());
+        }
+        catch (RuntimeException unreadable)
+        {
+            Activator.logWarning("BslCallGraphHelper: a constructor type name could not be read" //$NON-NLS-1$
+                + " (getNameRu): " + unreadable.getMessage()); //$NON-NLS-1$
+            return false;
+        }
+    }
+
+    /**
+     * Whether a type name spells the notify description, in either language.
+     *
+     * @param name the name a type reader gave, or {@code null}
+     * @return whether it spells the notify description
+     */
+    private static boolean spellsNotifyDescription(String name)
+    {
+        return NOTIFY_DESCRIPTION_RU.equalsIgnoreCase(name)
+            || NOTIFY_DESCRIPTION_EN.equalsIgnoreCase(name);
+    }
+
+    /**
+     * The content of a parameter that sits in the code as a string literal.
+     * <p>
+     * </p>
+     *
+     * @param params the expressions to read
+     * @param index the parameter's position
+     * @return the literal's text without its quotes, or {@code null} when the parameter at the
+     *         position is absent or is not a string literal
+     */
+    private static String stringLiteralAt(List<? extends EObject> params, int index)
+    {
+        if (params.size() <= index || !(params.get(index) instanceof StringLiteral))
+        {
+            return null;
+        }
+        List<String> lines = ((StringLiteral)params.get(index)).lines(true);
+        return lines.isEmpty() ? null : String.join("\n", lines); //$NON-NLS-1$
+    }
+
+    /**
+     * The line a node's text starts on.
+     *
+     * @param node the node
+     * @return the 1-based line, or 0 when the node model names none (a model built in memory
+     *         carries no node model, and a detached node lost its own)
+     */
+    static int lineOf(EObject node)
+    {
+        try
+        {
+            var textNode = NodeModelUtils.findActualNodeFor(node);
+            return textNode == null ? 0 : textNode.getStartLine();
+        }
+        catch (Exception noNodeModel)
+        {
+            return 0;
+        }
+    }
+
+    /**
+     * Keeps the name calls whose target method exists, so a call is not invented for a string the
+     * project does not answer.
+     *
+     * @param calls the calls read out of a module's text
+     * @param self the module the calls sit in, the target of every call naming its own module
+     * @param targetModules the method names of the target modules, read once per module
+     * @return the calls whose named method exists, in the order they were read
+     */
+    static List<NameCall> withExistingTargets(List<NameCall> calls, Module self,
+        MethodNameCache targetModules)
+    {
+        List<NameCall> kept = new ArrayList<>();
+        for (NameCall call : calls)
+        {
+            boolean exists = call.targetModuleFqn == null
+                ? hasMethodNamed(self, call.methodName)
+                : targetModules.hasMethodNamed(call.targetModuleFqn, call.methodName);
+            if (exists)
+            {
+                kept.add(call);
+            }
+        }
+        return kept;
+    }
+
+    /**
+     * The method names of the target modules of one walk, each module read once.
+     * <p>
+     * A walk that reads many written-by-name calls into the same module would load that module
+     * per call site otherwise - under the read transaction, with a journal entry per load.
+     * </p>
+     */
+    public static final class MethodNameCache
+    {
+        private final java.util.function.Function<String, Module> loader;
+
+        private final java.util.Map<String, Set<String>> namesByFqn = new java.util.HashMap<>();
+
+        /**
+         * @param loader the module behind an FQN, or {@code null} when there is none
+         */
+        public MethodNameCache(java.util.function.Function<String, Module> loader)
+        {
+            this.loader = loader;
+        }
+
+        /**
+         * Whether the module an FQN names declares a method of the given name, without regard to
+         * case.
+         * <p>
+         * The module is read on the first question about it and remembered, also when it answered
+         * nothing. A module that would not load is not remembered: the model may still be
+         * building, so the next question about it loads it again rather than reading a cached
+         * nothing.
+         * </p>
+         *
+         * @param fqn the module's FQN
+         * @param methodName the name as a call site spells it
+         * @return whether the module declares the method
+         */
+        public boolean hasMethodNamed(String fqn, String methodName)
+        {
+            if (fqn == null || methodName == null || methodName.isEmpty())
+            {
+                return false;
+            }
+            Set<String> names = namesByFqn.get(fqn);
+            if (names == null)
+            {
+                Module module = loader.apply(fqn);
+                if (module == null)
+                {
+                    return false;
+                }
+                names = methodNamesOf(module);
+                namesByFqn.put(fqn, names);
+            }
+            return names.contains(methodName.toLowerCase(java.util.Locale.ROOT));
+        }
+    }
+
+    /**
+     * The method names a module declares, folded to one case.
+     *
+     * @param module the module to read
+     * @return its method names, or an empty set for a module that is not there
+     */
+    private static Set<String> methodNamesOf(Module module)
+    {
+        if (module == null)
+        {
+            return Collections.emptySet();
+        }
+        Set<String> names = new HashSet<>();
+        for (Method method : module.allMethods())
+        {
+            String name = method.getName();
+            if (name != null)
+            {
+                names.add(name.toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Whether a module declares a method of the given name, without regard to case.
+     *
+     * @param module the module to read
+     * @param methodName the name as a call site spells it
+     * @return whether the module declares the method
+     */
+    static boolean hasMethodNamed(Module module, String methodName)
+    {
+        if (methodName == null || methodName.isEmpty())
+        {
+            return false;
+        }
+        for (Method method : module.allMethods())
+        {
+            if (methodName.equalsIgnoreCase(method.getName()))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -771,16 +1411,108 @@ public final class BslCallGraphHelper
         }
         if (includeOutgoing)
         {
-            // null: the called modules could not be read, so this direction is left out rather
-            // than answered as a module that calls nobody.
-            List<String> callees = source.calleesOf(module);
-            if (callees != null)
+            // Every outgoing edge of the module level is read out of the text: a plain call into a
+            // common module and a call written by name both name their target without a reference
+            // the index carries, and the two readers sit behind the same method of the source. A
+            // call naming its own module is an edge of the module onto itself: the reference half
+            // drops self-calls, so the text-written row is the only one that carries them.
+            // The place a sighting names is the module's src-relative path, the address every
+            // other file answer of this graph spells; an FQN here would read as a path it is not.
+            String sitePath = modulePathOf(module);
+            if (sitePath == null)
             {
-                for (String callee : callees)
-                {
-                    visitor.visit(new ModuleEdge(selfFqn, callee, 1));
-                }
+                // The resource is addressed some other way - or has no address at all - and the
+                // FQN the module is recorded under names the path the module tools spell, so the
+                // place is not left blank.
+                sitePath = modulePathFromFqn(selfFqn);
+            }
+            for (NameCall call : source.nameCallsOf(module))
+            {
+                String targetFqn = call.targetModuleFqn != null ? call.targetModuleFqn : selfFqn;
+                visitor.visit(new ModuleEdge(selfFqn, targetFqn, 1, true, sitePath, call.line));
             }
         }
+    }
+
+    /**
+     * The path a module's own resource address names, relative to {@code src/}.
+     *
+     * @param module the module
+     * @return its path the way the module tools spell it, or {@code null} when the module has no
+     *         address to read
+     */
+    static String modulePathOf(Module module)
+    {
+        try
+        {
+            org.eclipse.emf.ecore.resource.Resource resource = module.eResource();
+            if (resource == null)
+            {
+                return null;
+            }
+            String path = resource.getURI().path();
+            int srcIdx = path == null ? -1 : path.indexOf("/src/"); //$NON-NLS-1$
+            return srcIdx < 0 ? null : path.substring(srcIdx + 5);
+        }
+        catch (Exception noResource)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * The path an FQN names, relative to {@code src/}: the inverse of the address
+     * {@link #extractModuleFqnFromUri(URI)} reads, for a module whose resource is addressed some
+     * other way or has no address at all.
+     *
+     * @param fqn the module's FQN
+     * @return the path the module tools spell, or {@code null} when the FQN names none
+     */
+    static String modulePathFromFqn(String fqn)
+    {
+        if (fqn == null || fqn.isEmpty())
+        {
+            return null;
+        }
+        String[] parts = fqn.split("\\."); //$NON-NLS-1$
+        StringBuilder path = new StringBuilder();
+        for (int i = 0; i < parts.length; i++)
+        {
+            if (i > 0)
+            {
+                path.append('/');
+            }
+            path.append(fqnPathSegment(parts[i], i, i == parts.length - 1));
+        }
+        return path.toString();
+    }
+
+    /**
+     * One segment of an FQN as the path spells it: the type's directory, the form level's folder
+     * and the module file's {@code .bsl} suffix. Every other segment keeps the spelling it has in
+     * the FQN, which is the spelling it has on disk.
+     *
+     * @param segment the FQN segment
+     * @param index the position of the segment in the FQN
+     * @param last whether the segment is the file name
+     * @return the segment as a path spells it
+     */
+    private static String fqnPathSegment(String segment, int index, boolean last)
+    {
+        if (index == 0)
+        {
+            String directory = MetadataTypeCatalog.getDirectoryName(segment);
+            return directory == null ? segment : directory;
+        }
+        if (index == 2 && !last && BslModuleAccess.isFormKeyword(segment))
+        {
+            return MetadataPathMapper.FORMS_SEGMENT;
+        }
+        if (last && (segment.length() < 4
+            || !segment.regionMatches(true, segment.length() - 4, ".bsl", 0, 4))) //$NON-NLS-1$
+        {
+            return segment + ".bsl"; //$NON-NLS-1$
+        }
+        return segment;
     }
 }

@@ -34,7 +34,10 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+ROOT = bundles.REPO_ROOT
 OPS = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server/toolkit/ops"
 REPORT = ROOT / "docs/tools/operation-parameters.md"
 # The same map as a resource the plugin packages, so per-operation help answers from it at runtime.
@@ -62,9 +65,11 @@ READER_HELPERS = ("required", "strictFlag", "strictInt", "parseInt", "optionalIn
 # vocabulary is established at the facade (`read in place`) and not here.
 # templateModelFileMismatch takes the map and the operation name. The name is not an
 # argument it reads; the address comes out through extractStringArgument inside it.
+# routeToOrdinaryForms takes the resolved form name, not an argument key. Its fixed-key reads
+# are collected from its body; the name is forwarded under the ordinary tool's name argument.
 NOT_READERS = ("addContentEntry", "addTypedCollectionChild", "bind", "unbind", "branchArgument",
                "dispatchExport", "dispatchRestore", "doBorrow", "pathOf", "put",
-               "removeContentEntry", "templateModelFileMismatch", "withMode")
+               "removeContentEntry", "routeToOrdinaryForms", "templateModelFileMismatch", "withMode")
 READERS = r"\b(?:extract\w*|" + "|".join(READER_HELPERS) + r")"
 HELPER_SIGNATURE = re.compile(r"\b(\w+)\(Map<String, ?String> \w+, String \w+")
 SRC = ROOT / "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server"
@@ -887,6 +892,166 @@ def baseline() -> set[str]:
             if line.strip() and not line.startswith("#")}
 
 
+OFORM_OPS = bundles.bundle_src(bundles.OFORM) / "ru/aiedt/mcp/oform/ops"
+OFORM_CATALOG = OFORM_OPS / "OperationsCatalog.java"
+
+# The ordinary-forms tool answers from this catalog: no facade switch, no handler walk. Its
+# label in the report is the tool name a client calls.
+OFORM_TOOL = "ordinary_forms"
+
+# One argument as that catalog declares it: ParamSpec.string("name", ...). The kind is the
+# factory's own name, which is why no class has to be compiled for the kind to be known.
+PARAM_SPEC = re.compile(r"\bParamSpec\.(string|integer|bool)\(\s*\"([A-Za-z0-9_]+)\"")
+PARAM_KIND = {"string": "string", "integer": "integer", "bool": "boolean"}
+
+# One operation as a theme catalog declares it. The call's argument list is where both the
+# help string and the ParamSpec list sit, so the span between its parentheses is the row.
+SPEC_CALL = re.compile(r"\bOperationSpec\.(?:query|projectlessQuery|layout|creation)\(\s*"
+                       r"\"([a-z0-9_]+)\"")
+
+# The theme catalogs OperationsCatalog pulls its operations from: CoreOperations.specs() and
+# its kin. Every class named here has to be read, or a catalog added later is invisible.
+CATALOG_PULL = re.compile(r"\b(\w+)\.specs\(\)")
+
+# Below this the catalog parse stopped matching rather than the catalog getting smaller. The
+# measured count at the shared delivery is 23.
+MIN_CATALOG_OPERATIONS = 20
+
+
+def catalog_common(source: str) -> dict[str, str]:
+    """The arguments every operation of the catalog takes, as name -> kind.
+
+    They sit in one List.of beside a COMMON field; a common set that does not parse is an
+    answer the caller must not read as "there are none".
+    """
+    at = source.find("List<ParamSpec> COMMON")
+    if at < 0:
+        return {}
+    opened = source.find("List.of(", at)
+    if opened < 0:
+        return {}
+    opened = source.index("(", opened)
+    end = balanced_span(source, opened, "(", ")")
+    if end < 0:
+        return {}
+    return {name: PARAM_KIND[kind] for kind, name in PARAM_SPEC.findall(source[opened:end])}
+
+
+def catalog_rows() -> tuple[dict[str, dict[str, object]], list[str]]:
+    """The operations of the ordinary-forms catalog, and what did not add up.
+
+    The facade derivation above reads dispatch switches and handler code, because a facade
+    advertises one schema for every operation and which parameters a handler reads is known
+    only to its code. This catalog is the other shape: it declares its vocabulary outright
+    and the schema of the tool is built FROM it, so the row of an operation is read from the
+    OperationSpec call that declares it - its own ParamSpec list plus the arguments the
+    catalog holds common. Nothing here walks the handler: the declaration is what a client
+    is told, and this row exists so the published map cannot drift from the declaration.
+
+    A bundle that is not on disk yet answers nothing and no complaint: over a tree without
+    it the map must stay exactly the map of the server alone.
+
+    :return: the rows keyed "<tool>:<operation>" in the shape collect() produces, and the
+             integrity complaints that make the check refuse rather than pass silently
+    """
+    if not bundles.bundle_src(bundles.OFORM).is_dir():
+        return {}, []
+    if not OFORM_OPS.is_dir():
+        return {}, [f"the ordinary-forms bundle is on disk without its ops package "
+                    f"({OFORM_OPS.as_posix()})"]
+    if not OFORM_CATALOG.is_file():
+        return {}, [f"OperationsCatalog.java is not there - the adapter has nothing to read"]
+
+    problems: list[str] = []
+    catalog_source = OFORM_CATALOG.read_text(encoding="utf-8")
+    common = catalog_common(catalog_source)
+    if not common:
+        problems.append("the common arguments of OperationsCatalog did not parse - the adapter "
+                        "is out of step with the catalog")
+    pulled = sorted(set(CATALOG_PULL.findall(catalog_source)))
+    if not pulled:
+        problems.append("OperationsCatalog pulls no theme catalog - the adapter reads no "
+                        "operations at all")
+
+    kinds: dict[str, str] = dict(common)
+    found: dict[str, dict[str, object]] = {}
+    declared_in: dict[str, str] = {}
+    for name in pulled:
+        path = OFORM_OPS / f"{name}.java"
+        if not path.is_file():
+            problems.append(f"{name} is pulled by OperationsCatalog and is not on disk")
+            continue
+        source = path.read_text(encoding="utf-8")
+        declared = 0
+        for match in SPEC_CALL.finditer(source):
+            opened = source.index("(", match.start())
+            end = balanced_span(source, opened, "(", ")")
+            if end < 0:
+                problems.append(f"{name}: the declaration of {match.group(1)} does not close")
+                continue
+            own: dict[str, str] = {}
+            for kind, param in PARAM_SPEC.findall(source[opened:end]):
+                previous = own.get(param, kind)
+                if previous != kind:
+                    problems.append(f"{name}: the argument {param} is declared {previous} and "
+                                    f"{kind} in one operation")
+                own[param] = kind
+            declared += 1
+            operation = match.group(1)
+            key = f"{OFORM_TOOL}:{operation}"
+            if key in found:
+                problems.append(f"the operation {operation} is declared in both "
+                                f"{declared_in[key]} and {name}")
+                continue
+            declared_in[key] = name
+            for param, kind in own.items():
+                previous = kinds.get(param)
+                if previous is not None and previous != kind:
+                    problems.append(f"the argument {param} of {operation} is {kind} and was "
+                                    f"{previous} elsewhere - the merged schema would disagree")
+                kinds[param] = kind
+            parameters = sorted(set(common) | set(own))
+            found[key] = {
+                "facade": OFORM_TOOL,
+                "operation": operation,
+                # Established and accepted are the same set here: the declaration is both the
+                # promise and the whole of what the guard would allow.
+                "established": parameters,
+                "parameters": parameters,
+                "own": own,
+                "how": f"catalog {name}",
+            }
+        if declared == 0 and "PropertyHandlers.register" not in source:
+            # A theme may contribute properties only and no operation of its own - the style
+            # theme registers the properties set_property reads and its specs() is empty by
+            # design. A pulled file with neither shape is a catalog this adapter no longer
+            # understands, which is a finding rather than a small theme.
+            problems.append(f"{name} is pulled and declares neither an OperationSpec nor a "
+                            "property registration - the adapter reads none of it")
+
+    if found and len(found) < MIN_CATALOG_OPERATIONS:
+        problems.append(f"only {len(found)} catalog operations parsed - the derivation stopped "
+                        "matching rather than the catalog getting smaller")
+    return found, problems
+
+
+def catalog_kinds(catalog: dict[str, dict[str, object]]) -> dict[str, str]:
+    """The kind of every argument the catalog declares, common ones included.
+
+    Built for the report table the same way kinds_by_class builds the facades' kinds, so a
+    catalog row prints the kind its own declaration carries rather than whichever kind a
+    server class of the same name happens to declare.
+    """
+    if not OFORM_CATALOG.is_file():
+        return {}
+    kinds = catalog_common(OFORM_CATALOG.read_text(encoding="utf-8"))
+    for row in catalog.values():
+        own = row.get("own") or {}
+        for param, kind in own.items():
+            kinds[param] = kind
+    return kinds
+
+
 def unknowns(found: dict[str, dict[str, object]]) -> list[str]:
     missing = []
     for key, row in sorted(found.items()):
@@ -898,20 +1063,25 @@ def unknowns(found: dict[str, dict[str, object]]) -> list[str]:
     return missing
 
 
-def write_report(found: dict[str, dict[str, object]]) -> None:
+def write_report(found: dict[str, dict[str, object]],
+                 catalog: dict[str, dict[str, object]] | None = None) -> None:
+    catalog = catalog or {}
     lines = [
         "# Параметры операций",
         "",
         "Выведено из исходников скриптом `scripts/check-operation-params.py`, вручную не правится.",
         "Ветка, отдающая работу другому инструменту, берёт его схему; ветка, делающая работу сама,",
-        "перечисляет то, что читает из `params`.",
+        "перечисляет то, что читает из `params`. Операции `ordinary_forms` читаются из их",
+        "декларации в каталоге: общие аргументы каталога плюс собственные аргументы операции.",
         "",
         "| Фасад | Операция | Параметры | Откуда |",
         "|---|---|---|---|",
     ]
     declared = kinds_by_class()
+    if catalog:
+        declared[OFORM_TOOL] = catalog_kinds(catalog)
     agreed = kind_everywhere(declared)
-    for _, row in sorted(found.items()):
+    for key, row in sorted({**found, **catalog}.items()):
         params = ", ".join(f"`{p}`" for p in with_kinds(row, declared, agreed)) or "-"
         how = row["how"] or "не установлено"
         lines.append(f"| `{row['facade']}` | `{row['operation']}` | {params} | {how} |")
@@ -927,6 +1097,10 @@ def write_report(found: dict[str, dict[str, object]]) -> None:
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join(lines), encoding="utf-8")
 
+    # The shipped resource carries the server's facades only. The ordinary-forms tool answers
+    # its per-operation vocabulary from its own catalog at run time and reads nothing from this
+    # file, so a catalog row here would be data no consumer reads - published in the report,
+    # where the person comparing declarations with documentation sits, and nowhere else.
     RESOURCE.parent.mkdir(parents=True, exist_ok=True)
     RESOURCE.write_text(resource_text(found), encoding="utf-8")
 
@@ -990,17 +1164,27 @@ def main() -> int:
         print(f"only {len(found)} operations found - the derivation stopped matching", file=sys.stderr)
         return 1
 
+    catalog, catalog_problems = catalog_rows()
+    if catalog_problems:
+        print("the ordinary-forms catalog did not parse whole:", file=sys.stderr)
+        for problem in catalog_problems:
+            print(f"  {problem}", file=sys.stderr)
+        return 1
+
     if args.list:
         for _, row in sorted(found.items()):
             print(f"{row['facade']}:{row['operation']} -> {', '.join(row['parameters']) or '(none)'}"
                   f"  [{row['how'] or 'unknown'}]")
+        for _, row in sorted(catalog.items()):
+            print(f"{row['facade']}:{row['operation']} -> {', '.join(row['parameters']) or '(none)'}"
+                  f"  [{row['how']}]")
 
     missing = unknowns(found)
     if args.check:
         if stale(found):
             return 1
     else:
-        write_report(found)
+        write_report(found, catalog)
 
     if args.no_narrowing:
         lost = narrowed(found)
@@ -1028,6 +1212,8 @@ def main() -> int:
     covered = len(found) - len(missing)
     skipped = dispatches_otherwise()
     print(f"{len(found)} operations, {covered} with parameters established")
+    if catalog:
+        print(f"{len(catalog)} ordinary_forms operations from the catalog declaration")
     if skipped:
         print("not covered - these dispatch without a switch: " + ", ".join(skipped))
     print(f"{len(hidden)} parameters read but not advertised by their facade "

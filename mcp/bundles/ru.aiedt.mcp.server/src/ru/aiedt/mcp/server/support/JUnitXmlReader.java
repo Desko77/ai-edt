@@ -140,7 +140,12 @@ public final class JUnitXmlReader
         if (suites.getLength() == 0)
         {
             // No suite to read counters from - the test cases are the whole story.
-            results.setTotal(doc.getElementsByTagName(TAG_TESTCASE).getLength());
+            NodeList cases = doc.getElementsByTagName(TAG_TESTCASE);
+            results.setTotal(cases.getLength());
+            for (int i = 0; i < cases.getLength(); i++)
+            {
+                noteCaseNames((Element)cases.item(i), null, results);
+            }
             return results;
         }
 
@@ -159,6 +164,9 @@ public final class JUnitXmlReader
      */
     private static void collectSuite(Element suite, JUnitRunOutcome results)
     {
+        results.noteModuleName(suite.getAttribute(ATTR_NAME).trim());
+        results.noteModuleName(suite.getAttribute(ATTR_CLASSNAME).trim());
+
         List<Element> testCases = new ArrayList<>();
         collectOwnTestCases(suite, testCases);
 
@@ -168,7 +176,8 @@ public final class JUnitXmlReader
 
         for (Element testCase : testCases)
         {
-            String name = fullName(testCase);
+            String name = fullName(testCase, suite);
+            noteCaseNames(testCase, suite, results);
 
             Element failure = firstDescendant(testCase, TAG_FAILURE);
             if (failure != null)
@@ -245,13 +254,45 @@ public final class JUnitXmlReader
     }
 
     /**
+     * Notes the names one test case is known by: what the report called it, and the class it named
+     * beside the test - which is the test module, and what a call naming that module looks for.
+     *
      * @param testCase the test case element
+     * @param owningSuite the suite the case belongs to, or <code>null</code> when the report has none
+     * @param results the results being built
+     */
+    private static void noteCaseNames(Element testCase, Element owningSuite, JUnitRunOutcome results)
+    {
+        results.noteTestName(fullName(testCase, owningSuite));
+        results.noteModuleName(testCase.getAttribute(ATTR_CLASSNAME).trim());
+    }
+
+    /**
+     * Builds the name one test case is reported under.
+     * <p>
+     * The usual shape is the class the case names joined with the case's own name. A producer that
+     * already writes the qualified method as the case classname - the suite's classname, a dot, the
+     * method - is recognized through the owning suite: joining the pieces again would double the
+     * method in every failure detail and test name. Only an exact {@code suiteClassname.name} match
+     * qualifies; any other classname keeps the classic join.
+     * </p>
+     *
+     * @param testCase the test case element
+     * @param owningSuite the suite the case belongs to, or <code>null</code> when the report has none
      * @return the module-qualified test name, or the bare name when the report gave no module
      */
-    private static String fullName(Element testCase)
+    private static String fullName(Element testCase, Element owningSuite)
     {
         String name = testCase.getAttribute(ATTR_NAME);
         String className = testCase.getAttribute(ATTR_CLASSNAME);
+        if (owningSuite != null)
+        {
+            String suiteClassName = owningSuite.getAttribute(ATTR_CLASSNAME).trim();
+            if (!suiteClassName.isEmpty() && className.equals(suiteClassName + "." + name)) //$NON-NLS-1$
+            {
+                return className;
+            }
+        }
         return className.isEmpty() ? name : className + "." + name; //$NON-NLS-1$
     }
 
