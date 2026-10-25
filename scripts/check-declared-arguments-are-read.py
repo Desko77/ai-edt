@@ -34,13 +34,24 @@ import pathlib
 import re
 import sys
 
-BUNDLE = pathlib.Path(__file__).resolve().parent.parent / (
-    "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+BUNDLE = bundles.bundle_src(bundles.SERVER) / "ru/aiedt/mcp/server"
 OPS = BUNDLE / "toolkit/ops"
 # Shared readers: a name read here is read for every tool that calls them. TimeoutArgs reads
 # timeoutSeconds for a dozen tools, PendingExecutor reads runKey, ScopeArgs reads scope - and a
 # census that only looked at the declaring file called all of those unread.
 SHARED = BUNDLE / "support"
+
+# The ordinary-forms bundle declares its arguments in a catalog (ParamSpec.string("name", ...))
+# rather than in a schema builder, and reads them anywhere in ITS OWN bundle: the whole bundle
+# is one tool, so a read in any of its files is a read by the tool that declares the argument.
+# Bundle-wide counting is wrong for the server above, where files are separate tools; here the
+# scope and the tool are the same thing.
+OFORM_SRC = bundles.bundle_src(bundles.OFORM)
+CATALOG_DECLARATION = re.compile(
+    r"\bParamSpec\.(string|integer|bool)\s*\(\s*\"([A-Za-z0-9_]+)\"")
 
 DECLARATION = re.compile(
     r"\.(string|integer|boolean|number|array|stringArray|object)Property\s*\(\s*\"([A-Za-z0-9_]+)\"")
@@ -96,6 +107,24 @@ def shared_names():
     return _SHARED_CACHE
 
 
+def weigh_catalog():
+    """The catalog's declared arguments against mentions anywhere in its own bundle.
+
+    None when the bundle is not on disk: over a tree without it the census answers exactly
+    what it answered before, and a fake zero would read as a clean result.
+    """
+    if not OFORM_SRC.is_dir():
+        return None
+    declared = collections.Counter()
+    mentioned = collections.Counter()
+    for path in sorted(OFORM_SRC.rglob("*.java")):
+        text = path.read_text(encoding="utf-8")
+        declared.update(name for _kind, name in CATALOG_DECLARATION.findall(text))
+        without_declarations = CATALOG_DECLARATION.sub("", text)
+        mentioned.update(LITERAL.findall(without_declarations))
+    return declared, mentioned
+
+
 def main() -> int:
     listing = "--list" in sys.argv
     weighed = 0
@@ -111,7 +140,19 @@ def main() -> int:
             if mentioned[name] == 0 and path.name not in FACADES:
                 findings.append((path.name, name))
 
+    catalog = weigh_catalog()
+    catalog_weighed = 0
+    if catalog is not None:
+        declared, mentioned = catalog
+        for name in declared:
+            catalog_weighed += 1
+            if listing:
+                print(f"ordinary_forms catalog: {name} ({mentioned[name]} mentions)")
+            if mentioned[name] == 0:
+                findings.append(("ordinary_forms catalog", name))
+
     print(f"declarations weighed: {weighed}")
+    print(f"catalog declarations weighed: {catalog_weighed}")
     print(f"tools treated as facades (their delegate reads the argument): {len(FACADES)}")
     if not findings:
         print("every declared argument is read by the tool that declares it")

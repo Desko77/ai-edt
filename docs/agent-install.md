@@ -153,7 +153,12 @@ from 1C:EDT Start.
 
 **7. Verify.** Poll `http://localhost:<port>/health` until it answers `status: ok`. The port is
 the one configured in that workspace (`mcpServerPort` in the workspace preferences), which is
-not necessarily the default. Then confirm the running build is the one you installed.
+not necessarily the default. Then confirm the running build is the one you installed. From
+0.2.60, the main feature installs both `ru.aiedt.mcp.server` and `ru.aiedt.mcp.oform` at the same
+full version. Trusted health returns `ordinaryFormsRegistered=true` once the ordinary-forms tool
+is registered, independently of its visibility and write permissions. Supply the configured bearer
+authorization when it is required: the unauthenticated liveness response does not confirm that
+registration. A single-session `edt-selfupdate.ps1` run returns exit code 6 without this confirmation.
 
 **8. Install the skill for yourself.** The plugin gives you the tools; the skill tells you how to
 use them - which facade fits a job, which checks are mandatory after an edit, what a resume key

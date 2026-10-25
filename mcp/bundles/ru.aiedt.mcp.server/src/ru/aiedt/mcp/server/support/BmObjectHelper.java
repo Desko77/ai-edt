@@ -24,6 +24,7 @@ import org.eclipse.emf.common.util.EList;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EClass;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EReference;
 import org.eclipse.emf.ecore.InternalEObject;
 
 import com._1c.g5.v8.bm.core.BmUriUtil;
@@ -1776,6 +1777,40 @@ public final class BmObjectHelper
         {
             Activator.logWarning("addToConfiguration failed for " + typeName //$NON-NLS-1$
                 + ": " + e.getMessage()); //$NON-NLS-1$
+        }
+        return false;
+    }
+
+    /**
+     * Tells whether the configuration collection this type is created into holds
+     * its members by containment. A contained member (a Language today) is
+     * serialized inline in the configuration .mdo and joins the BM namespace the
+     * moment it is added to the collection, so attaching it again as a top object
+     * is rejected by the transaction service with "The object is already
+     * attached". Reference-held collections (catalogs, subsystems, ...) answer
+     * {@code false}: their members stay free top objects until an explicit
+     * {@code IBmTransaction.attachTopObject} registers them.
+     *
+     * @param typeName English singular metadata type name, e.g. {@code "Language"}
+     * @return {@code true} when the type joins the configuration as an inline
+     *     contained child and must not be attached as a top object
+     */
+    public static boolean isInlineConfigurationChild(String typeName)
+    {
+        String collection = MetadataTypeCatalog.getConfigReferenceName(typeName);
+        if (collection == null)
+        {
+            return false;
+        }
+        // The feature name casing does not always follow the catalog spelling
+        // (xDTOPackages vs xdtoPackages), so the match is case-insensitive -
+        // the same tolerance findNoArgGetter applies to the collection getter.
+        for (EReference reference : MdClassPackage.eINSTANCE.getConfiguration().getEAllReferences())
+        {
+            if (reference.getName().equalsIgnoreCase(collection))
+            {
+                return reference.isContainment();
+            }
         }
         return false;
     }

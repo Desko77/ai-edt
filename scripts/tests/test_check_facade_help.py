@@ -86,8 +86,8 @@ def run_over(source, name="SampleTool.java"):
     """The exit code the census gives one facade, with nothing else in the directory."""
     with tempfile.TemporaryDirectory() as folder:
         pathlib.Path(folder, name).write_text(source, encoding="utf-8")
-        previous = CHECKER.OPS
-        CHECKER.OPS = pathlib.Path(folder)
+        previous = CHECKER.OPS_ROOTS
+        CHECKER.OPS_ROOTS = [pathlib.Path(folder)]
         try:
             import io
             import contextlib
@@ -96,7 +96,7 @@ def run_over(source, name="SampleTool.java"):
                 code = CHECKER.main()
             return code, out.getvalue()
         finally:
-            CHECKER.OPS = previous
+            CHECKER.OPS_ROOTS = previous
 
 
 class TheHelpIsFoundWhereItIs(unittest.TestCase):

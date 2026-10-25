@@ -31,8 +31,16 @@ import pathlib
 import re
 import sys
 
-OPS = pathlib.Path(__file__).resolve().parent.parent / (
-    "mcp/bundles/ru.aiedt.mcp.server/src/ru/aiedt/mcp/server/toolkit/ops")
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+# The ops packages of every bundle. Only the server builds its help in a method today; a
+# bundle that grows one is read here from the day it appears, and a tool whose help comes
+# from a catalog abstains below exactly as a facade's help built elsewhere does.
+OPS_ROOTS = [bundles.bundle_src(bundles.SERVER) / "ru/aiedt/mcp/server/toolkit/ops"]
+_oform_ops = bundles.bundle_src(bundles.OFORM) / "ru/aiedt/mcp/oform/ops"
+if _oform_ops.is_dir():
+    OPS_ROOTS.append(_oform_ops)
 
 DISPATCH = re.compile(r'case "([a-z_0-9]+)":')
 
@@ -134,7 +142,8 @@ def main() -> int:
     abstained = []
     unreadable = []
     checked = 0
-    for path in sorted(OPS.glob("*.java")):
+    files = [path for ops in OPS_ROOTS for path in sorted(ops.glob("*.java"))]
+    for path in files:
         source = path.read_text(encoding="utf-8")
         operations = sorted(set(DISPATCH.findall(source)) - NOT_AN_OPERATION)
         if not operations:

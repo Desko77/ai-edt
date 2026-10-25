@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Preserve the serialized bytes of ordinary-form templates and fixtures.
+/mcp/bundles/ru.aiedt.mcp.oform/src/ru/aiedt/mcp/oform/layout/templates/*.form -text
+/mcp/tests/ru.aiedt.mcp.oform.tests/src/ru/aiedt/mcp/oform/fixtures/*.form -text

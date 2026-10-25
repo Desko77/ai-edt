@@ -26,6 +26,13 @@
        the shared p2 profile/bundle-pool. Installing something older than what is
        already running is refused unless -AllowDowngrade. No elevation - the
        EDT install lives under %LOCALAPPDATA% and the pool under %USERPROFILE%\.p2.
+       From 0.2.60 on the delivery carries two bundles (ru.aiedt.mcp.server and
+       ru.aiedt.mcp.oform): the repository has to offer both at one version, and an
+       installation is confirmed only when the area it loads records both at the
+       version installed. A p2 profile that still installs the private
+       ru.aiedt.mcp.oform.feature - read from the installed units of the profile of the
+       loaded area, which no directory of cached jars or features proves - is refused
+       with the p2 migration it needs; nothing is uninstalled automatically.
     4. Relaunch the dev session with the captured arguments (unless -NoRestart).
     5. Poll the MCP /health endpoint, on the port discovered from the dev workspace's
        prefs (mcpServerPort), until the server is back (or -HealthTimeoutSec).
@@ -50,7 +57,9 @@
     4. Run the p2 director of EACH selected installation, with the java named by that
        installation's ini, then -JavaExe, then JAVA_HOME, then the java on PATH.
     5. Read the versions back and print installation / before / after, exiting non-zero
-       unless every selected installation carries the installed version.
+       unless every selected installation holds the installed version - for a delivery
+       from the shared floor on, an installation already at the server version and
+       missing the second bundle is half a delivery, not success.
 
   -WhatIf prints that plan without downloading, installing or otherwise changing
   anything.
@@ -64,10 +73,10 @@
   the dev session with the existing (un-updated) plugin so you are never left without an IDE.
 
   Exit codes: 0 done; 2 repository or argument problem; 3 refused (no installation named,
-  a record of no installation found here, an unreadable bundles.info, an EDT of a selected
-  installation running, or a downgrade without -AllowDowngrade); 4 the session did not
-  close; 5 the director failed; 6 the version could not be confirmed afterwards; 7 the
-  session could not be relaunched.
+  a record of no installation found here, an unreadable bundles.info, the installed profile
+  of the target session cannot be read, an EDT of a selected installation running, or a
+  downgrade without -AllowDowngrade); 4 the session did not close; 5 the director failed;
+  6 the version could not be confirmed afterwards; 7 the session could not be relaunched.
 
   PowerShell 5.1+ compatible (no PS7-only syntax) so it runs from either shell.
 
@@ -76,7 +85,7 @@
   Local build when this working copy has one, otherwise the latest release.
 
 .EXAMPLE
-  pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -WorkspaceMatch SSL_Demo -Source release
+  pwsh -NoProfile -File scripts\edt-selfupdate.ps1 -WorkspaceMatch my-project -Source release
   The published build, whatever is in target\. Add -ReleaseTag v0.2.1 to pin a version.
 
 .EXAMPLE
@@ -138,18 +147,36 @@ param(
     # Print the plan of -AllInstallations and change nothing.
     [Alias('DryRun')]
     [switch]$WhatIf,
-    # Python interpreter that reads the installation report (scripts/report-plugin-jars.py).
-    # Empty searches python and python3 on PATH.
+    # Python interpreter that reads the installation report (scripts/report-plugin-jars.py),
+    # in both modes: the report is what tells the legacy check and the delivery confirmation
+    # what the installation actually loads. Empty searches python and python3 on PATH.
     [string]$PythonExe = '',
     # java.exe for the directors of installations whose 1cedt.ini names no -vm (the ones the 1C
     # launcher starts). Empty takes JAVA_HOME, and with that empty too the director uses the java
     # on PATH.
     [string]$JavaExe = '',
-    # Bundle whose installations and versions are read. The feature installed is -FeatureIU.
+    # Server bundle whose installations and versions are read. The feature installed is -FeatureIU.
+    [ValidateSet('ru.aiedt.mcp.server')]
     [string]$BundleSymbolicName = 'ru.aiedt.mcp.server'
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The first release whose delivery carries two bundles. Before it the ordinary-forms bundle
+# was not part of the public installation, so an old repository or profile without it is the
+# norm rather than damage; from it on, a delivery that holds only the server bundle is half
+# a delivery and this script refuses to call it installed.
+$script:SharedDeliveryFloor = '0.2.60'
+$script:OformBundle = 'ru.aiedt.mcp.oform'
+
+# The private ordinary-forms delivery installed a feature of its own. A run into a profile
+# that still installs that feature - read from the installed units of the p2 profile the
+# loaded area provisions from, not from any directory of cached jars or features - refuses
+# and names the units found: the removal is a separate, agreed p2 step, and nothing here
+# uninstalls on its own or widens an allowlist. The group IU is what that step uninstalls;
+# the artifact IU follows its group, and naming an IU that is not installed would fail the
+# whole director request.
+$script:LegacyOformFeatureGroupIU = 'ru.aiedt.mcp.oform.feature.feature.group'
 
 function Write-Step($m) { Write-Host "[selfupdate] $m" -ForegroundColor Cyan }
 function Write-Note($m) { Write-Host "[selfupdate] $m" }
@@ -219,6 +246,259 @@ function Compare-P2Version([string]$a, [string]$b) {
     $qa = if ($pa.Count -gt 3) { ($pa[3..($pa.Count - 1)] -join '.') } else { '' }
     $qb = if ($pb.Count -gt 3) { ($pb[3..($pb.Count - 1)] -join '.') } else { '' }
     return [Math]::Sign([string]::Compare($qa, $qb, [StringComparison]::Ordinal))
+}
+
+# Whether a bundle version is at or above a floor release. The qualifier never decides:
+# 0.2.60.<stamp> is a build OF 0.2.60, not a version after it, so only the three numeric
+# segments are compared. A segment that is no number reads as the floor's segment is lower.
+function Test-VersionAtLeast([string]$Version, [string]$Floor) {
+    function LeadingDigits([string]$segment) {
+        $m = [regex]::Match($segment, '^\d+')
+        if ($m.Success) { return [int]$m.Value }
+        return 0
+    }
+    $va = @($Version -split '\.'); $fa = @($Floor -split '\.')
+    for ($i = 0; $i -lt 3; $i++) {
+        $x = 0; $y = 0
+        if ($i -lt $va.Count) { $x = LeadingDigits $va[$i] }
+        if ($i -lt $fa.Count) { $y = LeadingDigits $fa[$i] }
+        if ($x -ne $y) { return $x -gt $y }
+    }
+    return $true
+}
+
+# Confirms the live registration independently of tool visibility and write permissions.
+# Missing or unauthenticated health data cannot confirm an ordinary-forms runtime.
+function Test-OrdinaryFormsRegistered([string]$Body) {
+    try {
+        $health = ConvertFrom-Json -InputObject $Body -ErrorAction Stop
+        return ($health.ordinaryFormsRegistered -is [bool]) -and $health.ordinaryFormsRegistered
+    } catch {
+        return $false
+    }
+}
+
+# The jars of the plugin bundles a repository offers, highest version of each. Pure over the
+# directory it is given, so the check on a repository is tested against a made-up one.
+function Find-RepoBundles([string]$RepoPath) {
+    $found = @{}
+    foreach ($bundle in @($BundleSymbolicName, $script:OformBundle)) {
+        $best = $null; $bestVersion = $null
+        $dir = Join-Path $RepoPath 'plugins'
+        if (Test-Path -LiteralPath $dir) {
+            foreach ($cand in @(Get-ChildItem -LiteralPath $dir -Filter ($bundle + '_*.jar') -ErrorAction SilentlyContinue)) {
+                $m = [regex]::Match($cand.Name, '^' + [regex]::Escape($bundle) + '_(.+)\.jar$')
+                if (-not $m.Success) { continue }
+                if (-not $best -or (Compare-P2Version $m.Groups[1].Value $bestVersion) -gt 0) {
+                    $best = $cand; $bestVersion = $m.Groups[1].Value
+                }
+            }
+        }
+        $found[$bundle] = @{ Jar = $best; Version = $bestVersion }
+    }
+    return [PSCustomObject]@{
+        Server         = $found[$BundleSymbolicName].Jar
+        ServerVersion  = $found[$BundleSymbolicName].Version
+        Oform          = $found[$script:OformBundle].Jar
+        OformVersion   = $found[$script:OformBundle].Version
+    }
+}
+
+# --- the installation report: one discovery for both modes ---------------------------
+#
+# Where an installation is and where it reads its bundles from is decided by
+# scripts/report-plugin-jars.py, which answers that question for the jar report too. Reading
+# the layout a second time here is how the installer and the report come to disagree about
+# which version an installation actually loads. Both modes of this script ask it: the
+# closed-EDT one for the whole machine, the running-session one for the installation of its
+# session - an installation whose configuration sits in the shared profile of the user's
+# home answers nothing over its own directory.
+
+function Resolve-PythonExe([string]$explicit) {
+    $names = if ($explicit) { @($explicit) } else { @('python', 'python3') }
+    foreach ($name in $names) {
+        $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $command) { continue }
+        $path = $command.Source
+        # An interpreter that answers nothing is the Microsoft Store stub, which opens a
+        # window instead of running a script.
+        $probe = & $path -c "print('ok')" 2>&1
+        if ($LASTEXITCODE -eq 0 -and ($probe | Out-String).Trim() -eq 'ok') { return $path }
+    }
+    return $null
+}
+
+# The installation report as objects, or $null when the interpreter or the report failed.
+# The caller may name directories searched beside the report's usual places - the
+# installation it asks about need not sit under them.
+function Get-InstallationReport([string]$interpreter, [string]$reportPath, [string]$bundle, [string[]]$ExtraRoots = @()) {
+    $arguments = @('-X', 'utf8', $reportPath, '--json', '--bundle', $bundle)
+    foreach ($root in @($ExtraRoots)) {
+        if ($root) { $arguments += @('--also-root', $root) }
+    }
+    $output = & $interpreter @arguments 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err2 "The installation report failed (exit $LASTEXITCODE):"
+        $output | ForEach-Object { Write-Note "  | $_" }
+        return $null
+    }
+    try { return ($output | Out-String | ConvertFrom-Json) }
+    catch {
+        Write-Err2 "The installation report did not print JSON: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+# A path normalised the way the report normalises the areas it names: full, back slashes,
+# no trailing separator, lower case.
+function Get-NormalPath([string]$path) {
+    if (-not $path) { return '' }
+    return ([IO.Path]::GetFullPath(($path -replace '/', '\'))).TrimEnd('\').ToLowerInvariant()
+}
+
+# The configuration area an installation loads: the one holding the record the report marks
+# active, normalised so that it compares with the areas the report's consumers name.
+function Get-ActiveArea($records) {
+    foreach ($record in @($records)) {
+        if ($record.active) { return Get-NormalPath (Split-Path (Split-Path ([string]$record.bundlesInfo))) }
+    }
+    return ''
+}
+
+# The record of an installation its launcher reads bundles from, or $null when the report marks
+# none. The report decides that by the configuration area the installation uses; the other
+# records are areas it stopped reading from.
+function Get-ActiveRecord($records) {
+    foreach ($record in @($records)) {
+        if ($record.active) { return $record }
+    }
+    return $null
+}
+
+# What an installation loads now: the highest version in its active record, or $null when the
+# report marks none. A build recorded only in an area the launcher ignores is not what runs, so
+# the version there does not decide whether this installation needs the build.
+function Get-RecordedVersion($records) {
+    $active = Get-ActiveRecord $records
+    if (-not $active) { return $null }
+    $best = $null
+    foreach ($version in @($active.versions)) {
+        if (-not $best -or (Compare-P2Version $version $best) -gt 0) { $best = $version }
+    }
+    return $best
+}
+
+# The report entry of one installation directory, or $null. The comparison is normalised:
+# the path the caller holds comes from a running process, the one the report holds from a
+# directory walk, and Windows spells one directory in either case.
+function Get-ReportEntry($report, [string]$installDir) {
+    $wanted = Get-NormalPath $installDir
+    foreach ($entry in @($report.installations)) {
+        if ((Get-NormalPath ([string]$entry.install)) -eq $wanted) { return $entry }
+    }
+    return $null
+}
+
+# What the report records for one installation directory: the highest version in the record
+# its launcher loads, or $null.
+function Get-ReportedVersion($report, [string]$installDir) {
+    $entry = Get-ReportEntry $report $installDir
+    if ($entry) { return (Get-RecordedVersion $entry.records) }
+    return $null
+}
+
+# The configuration area an installation loads, whether or not it records anything of its own.
+# The report's consumers list names it for every installation it found: an installation whose
+# ini points at another installation's area records nothing there of its own and still loads
+# it, so only that list answers for it.
+function Get-LoadedAreaForInstall($report, [string]$installDir) {
+    $wanted = Get-NormalPath $installDir
+    foreach ($consumer in @($report.consumers)) {
+        if ((Get-NormalPath ([string]$consumer.install)) -eq $wanted) { return (Get-NormalPath ([string]$consumer.loads)) }
+    }
+    $entry = Get-ReportEntry $report $installDir
+    if ($entry) { return (Get-ActiveArea $entry.records) }
+    return ''
+}
+
+# The highest version recorded in one configuration area, over every record any holder keeps
+# there and over an unclaimed one: the area, not the installation, decides what runs from it.
+# An installation that loads another one's area through -configuration owns no record of its
+# own there and still runs what that area records, so reading only its own records would call
+# a fully known matching area unconfirmed.
+function Get-AreaVersion($report, [string]$ConfigArea) {
+    if (-not $ConfigArea) { return $null }
+    $area = Get-NormalPath $ConfigArea
+    $records = @()
+    foreach ($entry in @($report.installations)) { $records += @($entry.records) }
+    $records += @($report.unclaimed | Where-Object { $_ })
+    $best = $null
+    foreach ($record in @($records)) {
+        $recordArea = Get-NormalPath (Split-Path (Split-Path ([string]$record.bundlesInfo)))
+        if ($recordArea -ne $area) { continue }
+        foreach ($version in @($record.versions)) {
+            if (-not $best -or (Compare-P2Version $version $best) -gt 0) { $best = $version }
+        }
+    }
+    return $best
+}
+
+# Whether an installation is confirmed for a shared delivery: the version it EFFECTIVELY
+# holds of each bundle - the highest recorded in the area it loads, because the
+# configurator loads one bundle and not a list - is the version just installed, for BOTH
+# bundles. A matching version beside a newer one is not a confirmation: the newer one is
+# what runs, and reading the matching one alone would call a mixed profile whole.
+function Test-SharedDeliveryConfirmed([string]$ServerVersion, [string]$OformVersion, [string]$InstalledVersion) {
+    return ($ServerVersion -eq $InstalledVersion) -and ($OformVersion -eq $InstalledVersion)
+}
+
+# The installed p2 state of one loaded configuration area, as the report read it. The report
+# key is the area ROOT - the parent of the configuration directory, beside which the p2
+# registry sits - normalised the way both sides normalise the area itself.
+function Get-AreaP2Status($report, [string]$ConfigArea) {
+    if (-not $ConfigArea) { return $null }
+    $root = Get-NormalPath (Split-Path -Parent $ConfigArea)
+    if (-not $report) { return $null }
+    $profiles = $report.PSObject.Properties['p2Profiles'].Value
+    if (-not $profiles) { return $null }
+    return $profiles.PSObject.Properties[$root].Value
+}
+
+# The legacy verdict for the area an installation loads. What p2 itself resolved as
+# installed decides: the exact unit ids of the private ordinary-forms feature in the latest
+# snapshot of the area's profile. A profile the report could not read - no registry, several
+# profiles none selected, a latest snapshot that will not parse, a profile bound to another
+# area - leaves legacy presence undecided, and undecided is refused, never read as absent:
+# a cached jar or feature directory is not installed membership either way.
+function Get-LegacyOformVerdict($report, [string]$ConfigArea,
+    [string]$TargetVersion = $script:SharedDeliveryFloor) {
+    if ($TargetVersion -and -not (Test-VersionAtLeast $TargetVersion $script:SharedDeliveryFloor)) {
+        return [PSCustomObject]@{ Refuse = $false; Units = @(); Reason = $null }
+    }
+    $status = Get-AreaP2Status $report $ConfigArea
+    if (-not $status) {
+        return [PSCustomObject]@{
+            Refuse = $true; Units = @()
+            Reason = 'the report names no p2 profile for the area this installation loads' }
+    }
+    if ([string]$status.status -ne 'known') {
+        return [PSCustomObject]@{
+            Refuse = $true; Units = @()
+            Reason = ("the area's p2 profile cannot be read: " + [string]$status.reason) }
+    }
+    return [PSCustomObject]@{ Refuse = $false; Units = @($status.legacyUnits); Reason = $null }
+}
+
+# The refusal both modes print over legacy units the profile installs. It names the units
+# found and the director step that removes them, and hands that step to a separate, agreed
+# migration: nothing is uninstalled here.
+function Write-LegacyOformRefusal([string]$Area, $LegacyUnits) {
+    Write-Err2 "The p2 profile of the area this installation loads still installs the private ordinary-forms feature ($Area):"
+    foreach ($unit in @($LegacyUnits)) { Write-Note ("  {0}  {1}" -f $unit.id, $unit.version) }
+    Write-Err2 "Installing the shared delivery beside it needs an agreed migration. Uninstall the legacy feature with that installation's director:"
+    Write-Note "  1cedtc.exe -nosplash -application org.eclipse.equinox.p2.director -uninstallIU $($script:LegacyOformFeatureGroupIU)"
+    Write-Note "  (or the agreed migration plan for this stand), then re-run this script."
+    Write-Err2 "Nothing was removed or installed here."
 }
 
 # Every call this script makes to its own server goes through here. Deliberately
@@ -294,19 +574,26 @@ function Get-InstalledPluginVersion([string]$installDir) {
 #
 # Highest by version, not by name: sorting strings puts 0.9 above 0.10 and orders
 # timestamp qualifiers by text.
+#
+# A repository whose server bundle is from the shared delivery on has to offer the second
+# bundle too, at the same version: the delivery installs both, and a repository with the
+# server alone would install half of it and answer success.
 function Resolve-RepoBundle([string]$repoPath) {
     if (-not (Test-Path -LiteralPath (Join-Path $repoPath 'content.jar'))) {
         Write-Err2 "Not a P2 repository (no content.jar): $repoPath"
         exit 2
     }
-    $jar = $null
-    $version = $null
-    foreach ($cand in (Get-ChildItem -LiteralPath (Join-Path $repoPath 'plugins') -Filter 'ru.aiedt.mcp.server_*.jar' -ErrorAction SilentlyContinue)) {
-        $mc = [regex]::Match($cand.Name, '^ru\.aiedt\.mcp\.server_(.+)\.jar$')
-        if (-not $mc.Success) { continue }
-        if (-not $jar -or (Compare-P2Version $mc.Groups[1].Value $version) -gt 0) {
-            $jar = $cand
-            $version = $mc.Groups[1].Value
+    $found = Find-RepoBundles $repoPath
+    $jar = $found.Server
+    $version = $found.ServerVersion
+    if ($version -and (Test-VersionAtLeast $version $script:SharedDeliveryFloor)) {
+        if (-not $found.OformVersion) {
+            Write-Err2 "The repository offers $BundleSymbolicName $version and no $script:OformBundle jar - a delivery from $($script:SharedDeliveryFloor) on installs both."
+            exit 2
+        }
+        if ((Compare-P2Version $found.OformVersion $version) -ne 0) {
+            Write-Err2 "The repository offers $BundleSymbolicName $version beside $script:OformBundle $($found.OformVersion) - one delivery carries both at one version."
+            exit 2
         }
     }
     # PSCustomObject rather than a hashtable: both return intact from a function,
@@ -400,39 +687,6 @@ if ($builtJar) { Write-Note "  bundle: $($builtJar.Name)" }
 # ---------------------------------------------------------------------------
 if ($AllInstallations) {
 
-    # Where an installation is and where it reads its bundles.info from is decided by
-    # scripts/report-plugin-jars.py, which answers that question for the jar report too. Reading
-    # the layout a second time here is how the installer and the report come to disagree about
-    # which version an installation actually loads.
-    function Resolve-PythonExe([string]$explicit) {
-        $names = if ($explicit) { @($explicit) } else { @('python', 'python3') }
-        foreach ($name in $names) {
-            $command = Get-Command $name -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $command) { continue }
-            $path = $command.Source
-            # An interpreter that answers nothing is the Microsoft Store stub, which opens a
-            # window instead of running a script.
-            $probe = & $path -c "print('ok')" 2>&1
-            if ($LASTEXITCODE -eq 0 -and ($probe | Out-String).Trim() -eq 'ok') { return $path }
-        }
-        return $null
-    }
-
-    # The installation report as objects, or $null when the interpreter or the report failed.
-    function Get-InstallationReport([string]$interpreter, [string]$reportPath, [string]$bundle) {
-        $output = & $interpreter -X utf8 $reportPath --json --bundle $bundle 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Err2 "The installation report failed (exit $LASTEXITCODE):"
-            $output | ForEach-Object { Write-Note "  | $_" }
-            return $null
-        }
-        try { return ($output | Out-String | ConvertFrom-Json) }
-        catch {
-            Write-Err2 "The installation report did not print JSON: $($_.Exception.Message)"
-            return $null
-        }
-    }
-
     # True when a path is a directory itself or lies under it.
     function Test-UnderPath([string]$path, [string]$directory) {
         if (-not $path -or -not $directory) { return $false }
@@ -465,22 +719,6 @@ if ($AllInstallations) {
         if (-not $m.Success) { return '' }
         if ($m.Groups[2].Success) { return $m.Groups[2].Value }
         return $m.Groups[3].Value
-    }
-
-    # A path normalised the way the report normalises the areas it names: full, back slashes,
-    # no trailing separator, lower case.
-    function Get-NormalPath([string]$path) {
-        if (-not $path) { return '' }
-        return ([IO.Path]::GetFullPath(($path -replace '/', '\'))).TrimEnd('\').ToLowerInvariant()
-    }
-
-    # The configuration area an installation loads: the one holding the record the report marks
-    # active, normalised so that it compares with the areas the report's consumers name.
-    function Get-ActiveArea($records) {
-        foreach ($record in @($records)) {
-            if ($record.active) { return Get-NormalPath (Split-Path (Split-Path ([string]$record.bundlesInfo))) }
-        }
-        return ''
     }
 
     # A director writes into the area its installation loads. Every other installation the report
@@ -543,37 +781,6 @@ if ($AllInstallations) {
         foreach ($line in (Get-Content -LiteralPath $ini)) {
             $m = [regex]::Match($line, '^(?:product\.version|eclipse\.buildId)=(.+)$')
             if ($m.Success) { return $m.Groups[1].Value.Trim() }
-        }
-        return $null
-    }
-
-    # The record of an installation its launcher reads bundles from, or $null when the report marks
-    # none. The report decides that by the configuration area the installation uses; the other
-    # records are areas it stopped reading from.
-    function Get-ActiveRecord($records) {
-        foreach ($record in @($records)) {
-            if ($record.active) { return $record }
-        }
-        return $null
-    }
-
-    # What an installation loads now: the highest version in its active record, or $null when the
-    # report marks none. A build recorded only in an area the launcher ignores is not what runs, so
-    # the version there does not decide whether this installation needs the build.
-    function Get-RecordedVersion($records) {
-        $active = Get-ActiveRecord $records
-        if (-not $active) { return $null }
-        $best = $null
-        foreach ($version in @($active.versions)) {
-            if (-not $best -or (Compare-P2Version $version $best) -gt 0) { $best = $version }
-        }
-        return $best
-    }
-
-    # What the report records for one installation directory.
-    function Get-ReportedVersion($report, [string]$installDir) {
-        foreach ($entry in @($report.installations)) {
-            if ([string]$entry.install -eq $installDir) { return (Get-RecordedVersion $entry.records) }
         }
         return $null
     }
@@ -658,6 +865,7 @@ if ($AllInstallations) {
             Edt      = Get-InstallProductVersion $dir
             Before   = $before
             After    = $before
+            AfterOform = $null
             Status   = $status
             Records  = @($entry.records)
             Running  = $running
@@ -715,6 +923,26 @@ if ($AllInstallations) {
     }
     foreach ($p in $selected) { $p.Selected = $true }
 
+    # The private ordinary-forms feature still INSTALLED in the p2 profile of the area a
+    # selected installation LOADS refuses the whole run BEFORE any director runs, in a dry
+    # run too: a plan that cannot execute is a finding, not a plan. Installed means the exact
+    # unit ids in the latest snapshot of that area's profile - a jar or directory under
+    # plugins/ or features/ is a cache entry, not membership - and a profile that cannot be
+    # read is refused rather than read as legacy-free. Nothing is uninstalled automatically.
+    foreach ($p in $selected) {
+        if (-not $p.Active) { continue }   # refused below: no record the launcher loads
+        $legacy = Get-LegacyOformVerdict $report $p.Active $repoVersion
+        if ($legacy.Refuse) {
+            Write-Err2 "The installed profile of $($p.Install) cannot be read ($($legacy.Reason)),"
+            Write-Err2 "so the private ordinary-forms feature cannot be ruled out. Nothing was installed here."
+            exit 3
+        }
+        if ($legacy.Units.Count -gt 0) {
+            Write-LegacyOformRefusal $p.Active $legacy.Units
+            exit 3
+        }
+    }
+
     # Each installation's own director: it installs into the profile that installation is
     # configured with, which for a read-only installation is the one in the user's home.
     $actions = @()
@@ -746,7 +974,8 @@ if ($AllInstallations) {
     if ($WhatIf) {
         Write-Step "-WhatIf: nothing was downloaded, installed or otherwise changed."
         if ($actions.Count -eq 0) {
-            Write-Note "  Every installation named already carries $repoVersion."
+            Write-Note "  No director would run: every installation named already records $repoVersion."
+            Write-Note "  The run reads the versions back and confirms both bundles of a shared delivery."
         } else {
             Write-Note "  The director would run:"
             foreach ($a in $actions) {
@@ -785,11 +1014,10 @@ if ($AllInstallations) {
         exit 3
     }
     if ($WhatIf) { exit 0 }
-    if ($actions.Count -eq 0) {
-        Write-Step "Every installation named already carries $repoVersion. Nothing to do."
-        exit 0
-    }
 
+    # Even with no director to run, an installation already at the server version is
+    # confirmed, not assumed: the readback below decides, and a shared delivery that holds
+    # only the server bundle there is half a delivery rather than success.
     $failed = @()
     foreach ($a in $actions) {
         Write-Step "Installing into $($a.Install)"
@@ -810,16 +1038,38 @@ if ($AllInstallations) {
     }
 
     Write-Step "Reading the versions back from bundles.info..."
+    $sharedDelivery = Test-VersionAtLeast $repoVersion $script:SharedDeliveryFloor
     $after = Get-InstallationReport $python $reportPath $BundleSymbolicName
     if (-not $after) {
         Write-Err2 "The installation report failed after the install, so the versions are not confirmed."
         exit 6
     }
+    $afterOform = $null
+    if ($sharedDelivery) {
+        $afterOform = Get-InstallationReport $python $reportPath $script:OformBundle
+        if (-not $afterOform) {
+            Write-Err2 "The installation report failed for $script:OformBundle, so the delivery is not confirmed."
+            exit 6
+        }
+    }
     foreach ($p in $plan) {
         $p.After = Get-ReportedVersion $after $p.Install
+        if ($sharedDelivery) { $p.AfterOform = Get-ReportedVersion $afterOform $p.Install }
         if (-not $p.Selected) { continue }
-        if ($p.Status -ne 'install' -and $p.Status -ne 'downgrade-allowed') { continue }
-        if ($p.After -eq $repoVersion) { $p.Status = 'updated' } else { $p.Status = 'NOT CONFIRMED' }
+        # Every SELECTED installation is confirmed, an installation the director was not run
+        # for included: one already at the server version and missing the second bundle is
+        # half a delivery, and the versions effectively recorded - the highest in the area it
+        # loads - are what confirm, not membership in the list of versions found.
+        $confirmed = if ($sharedDelivery) {
+            Test-SharedDeliveryConfirmed $p.After $p.AfterOform $repoVersion
+        } else {
+            $p.After -eq $repoVersion
+        }
+        if ($p.Status -eq 'install' -or $p.Status -eq 'downgrade-allowed') {
+            if ($confirmed) { $p.Status = 'updated' } else { $p.Status = 'NOT CONFIRMED' }
+        } elseif (-not $confirmed) {
+            $p.Status = 'NOT CONFIRMED'
+        }
     }
 
     Write-Step "Installation - version before - version after"
@@ -832,6 +1082,14 @@ if ($AllInstallations) {
     }
     if ($unconfirmed.Count -gt 0) {
         Write-Err2 "The version was not confirmed in: $(@($unconfirmed | ForEach-Object { $_.Install }) -join '; ')"
+        foreach ($p in $unconfirmed) {
+            if ($sharedDelivery) {
+                Write-Note ("  {0}: server {1}, {2} {3} - a delivery from {4} on installs both at {5}" -f `
+                    $p.Install, $p.After, $script:OformBundle, $p.AfterOform, $script:SharedDeliveryFloor, $repoVersion)
+            } else {
+                Write-Note ("  {0}: {1}" -f $p.Install, $p.After)
+            }
+        }
         exit 6
     }
     Write-Step "Every installation named carries $repoVersion."
@@ -992,6 +1250,55 @@ function Confirm-NotADowngrade {
 }
 Confirm-NotADowngrade
 
+if (-not $repoVersion -or (Test-VersionAtLeast $repoVersion $script:SharedDeliveryFloor)) {
+    # The private ordinary-forms feature still INSTALLED in the p2 profile of the area this
+    # session's installation LOADS refuses the run BEFORE anything is closed or changed. The
+    # installed state is read through the same discovery -AllInstallations reads - the report,
+    # over this installation's directory beside the usual places, because the area a session
+    # loads can be the shared profile in the user's home rather than anything beside the exe -
+    # and it is the exact unit ids of the latest profile snapshot that decide, not any directory
+    # of cached jars or features. An answer that discovery cannot give is a refusal, not an
+    # empty finding: nothing here rules the feature out on the strength of a profile it did not
+    # read.
+    $reportPath = Join-Path $PSScriptRoot 'report-plugin-jars.py'
+    $python = $null
+    if (Test-Path -LiteralPath $reportPath) {
+        $python = Resolve-PythonExe $PythonExe
+    }
+    $unverifiedWhy = $null
+    $loadedArea = ''
+    if (-not (Test-Path -LiteralPath $reportPath)) {
+        $unverifiedWhy = "the installation report is not here: $reportPath"
+    } elseif (-not $python) {
+        $unverifiedWhy = "no Python interpreter found (tried python and python3; -PythonExe <path> names one)"
+    } else {
+        $legacyReport = Get-InstallationReport $python $reportPath $BundleSymbolicName @($installDir)
+        if (-not $legacyReport) {
+            $unverifiedWhy = "the installation report failed"
+        } else {
+            $loadedArea = Get-LoadedAreaForInstall $legacyReport $installDir
+            if (-not $loadedArea) {
+                $unverifiedWhy = "the report names no area this installation loads"
+            }
+        }
+    }
+    if ($unverifiedWhy) {
+        Write-Err2 "The installed profile of this installation cannot be read ($unverifiedWhy),"
+        Write-Err2 "so the private ordinary-forms feature cannot be ruled out. Nothing was closed, removed or installed here."
+        exit 3
+    }
+    $legacyVerdict = Get-LegacyOformVerdict $legacyReport $loadedArea
+    if ($legacyVerdict.Refuse) {
+        Write-Err2 "The installed profile of this installation cannot be read ($($legacyVerdict.Reason)),"
+        Write-Err2 "so the private ordinary-forms feature cannot be ruled out. Nothing was closed, removed or installed here."
+        exit 3
+    }
+    if ($legacyVerdict.Units.Count -gt 0) {
+        Write-LegacyOformRefusal $loadedArea $legacyVerdict.Units
+        exit 3
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 2. Graceful close ONLY this session (never force-kill)
 # ---------------------------------------------------------------------------
@@ -1087,12 +1394,48 @@ if ($updateOk) {
         "Relaunching the dev session with the existing plugin so you are not left without an IDE.")
 }
 
+# A delivery from the shared floor on installs two bundles, so the session's installation
+# is confirmed only when the area it loads effectively holds BOTH at the version just
+# installed - read through the same report -AllInstallations reads after its installs, over
+# THE AREA THE INSTALLATION LOADS (the one the legacy check read) and not over this
+# installation's own records: an installation that loads another one's area through
+# -configuration owns no record there and still runs what that area records. The plugins
+# directory beside the exe is not that evidence either: the pool keeps every version ever
+# downloaded, and the area a session loads can be the shared profile in the user's home, so
+# the jars next to the exe say nothing about what this session runs. The version that
+# confirms is the EFFECTIVE one - the highest recorded in the area - for both bundles: a
+# matching version beside a newer one leaves the newer one as what runs.
+$deliveryConfirmed = $true
+if ($updateOk -and (Test-VersionAtLeast $repoVersion $script:SharedDeliveryFloor)) {
+    $afterReport = Get-InstallationReport $python $reportPath $BundleSymbolicName @($installDir)
+    $afterOformReport = Get-InstallationReport $python $reportPath $script:OformBundle @($installDir)
+    $serverEffective = $null
+    $oformEffective = $null
+    if ($afterReport) { $serverEffective = Get-AreaVersion $afterReport $loadedArea }
+    if ($afterOformReport) { $oformEffective = Get-AreaVersion $afterOformReport $loadedArea }
+    if (-not $afterReport -or -not $afterOformReport) {
+        Write-Warn2 "The installation report failed, so the delivery is not confirmed for this installation."
+        $deliveryConfirmed = $false
+    } elseif (-not $serverEffective) {
+        Write-Warn2 "The area this installation loads records no $BundleSymbolicName - the delivery is not confirmed here."
+        $deliveryConfirmed = $false
+    } elseif (-not (Test-SharedDeliveryConfirmed $serverEffective $oformEffective $repoVersion)) {
+        Write-Err2 ("The area this installation loads holds {0} {1} and {2} {3} effectively - a delivery from {4} on installs both at {5}." -f `
+            $BundleSymbolicName, $serverEffective, $script:OformBundle,
+            $(if ($oformEffective) { $oformEffective } else { 'nothing' }),
+            $script:SharedDeliveryFloor, $repoVersion)
+        $deliveryConfirmed = $false
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 4. Relaunch the dev session faithfully (verbatim argument tail)
 # ---------------------------------------------------------------------------
 if ($NoRestart) {
     Write-Step "Relaunch skipped (-NoRestart)."
-    if ($updateOk) { exit 0 } else { exit 5 }
+    if (-not $updateOk) { exit 5 }
+    if (-not $deliveryConfirmed) { exit 6 }
+    exit 0
 }
 Write-Step "Relaunching dev session..."
 # .NET Process.Start(file, args) forwards the argument string verbatim (no PS re-quoting).
@@ -1123,14 +1466,21 @@ if ($healthy) {
     # initial build. Bounded by the same timeout - a stuck build must not hang the self-update forever.
     $phaseDeadline = (Get-Date).AddSeconds($HealthTimeoutSec)
     $phase = "unknown"
+    $needsOrdinaryRuntime = Test-VersionAtLeast $repoVersion $script:SharedDeliveryFloor
+    $ordinaryRegistered = -not $needsOrdinaryRuntime
     while ((Get-Date) -lt $phaseDeadline) {
         $r = Invoke-LocalHttp $healthUrl
         if ($r.Body) {
             $m = [regex]::Match($r.Body, '"phase"\s*:\s*"([^"]+)"')
             if ($m.Success) { $phase = $m.Groups[1].Value }
-            if ($phase -eq "ready") { break }
+            if ($needsOrdinaryRuntime) { $ordinaryRegistered = Test-OrdinaryFormsRegistered $r.Body }
+            if ($phase -eq "ready" -and $ordinaryRegistered) { break }
         }
         Start-Sleep -Seconds 3
+    }
+    if (-not $ordinaryRegistered) {
+        Write-Err2 "The installed bundle pair is recorded, but /health did not confirm ordinaryFormsRegistered=true. Check the ordinary-forms bundle and its services; bearer-protected health requires authenticated runtime verification. Self-update is not confirmed."
+        exit 6
     }
     if ($phase -eq "ready") {
         Write-Step "MCP server is UP and workspace is ready. Self-update complete."
@@ -1138,7 +1488,9 @@ if ($healthy) {
         Write-Warn2 "MCP server is UP but workspace phase is '$phase' after ${HealthTimeoutSec}s; proceeding."
     }
     if ($builtJar) { Write-Note "Loaded build target: $($builtJar.Name)" }
-    if ($updateOk) { exit 0 } else { exit 5 }
+    if (-not $updateOk) { exit 5 }
+    if (-not $deliveryConfirmed) { exit 6 }
+    exit 0
 } else {
     Write-Warn2 "MCP /health did not respond within ${HealthTimeoutSec}s. EDT may still be starting; check manually."
     exit 6

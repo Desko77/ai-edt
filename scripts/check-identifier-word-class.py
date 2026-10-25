@@ -38,7 +38,12 @@ import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent / "mcp/bundles/ru.aiedt.mcp.server/src"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
+# Every production bundle on disk. The patterns of a second bundle are weighed by exactly
+# the rule the server's are, from the day the bundle appears.
+ROOTS = [(bundle, bundles.bundle_src(bundle)) for bundle in bundles.production_bundles()]
 
 # Every call whose first argument Java compiles as a regular expression. The flag says whether a
 # second argument states the semantics, which only Pattern.compile has.
@@ -53,10 +58,13 @@ INLINE_FLAGS = re.compile(r"\(\?([a-zA-Z]+)[:)]")
 WORD_CLASS = ("\\w", "\\W", "\\b", "\\B")
 
 # A pattern that reads an ASCII-only input by nature. The reason is part of the entry: an
-# unexplained exception is how a gate stops meaning anything.
+# unexplained exception is how a gate stops meaning anything. Keyed by the bundle-relative
+# path, because two bundles may carry a file of one name.
 ALLOWED = {
-    ("ValidateForExportTool.java", "xmlns:"): "XML namespace prefix - ASCII by the XML specification",
-    ("ValidateForExportTool.java", "<lang>"): "language code in a .mdo file - ASCII by the format",
+    ("ru.aiedt.mcp.server/settings/ValidateForExportTool.java", "xmlns:"):
+        "XML namespace prefix - ASCII by the XML specification",
+    ("ru.aiedt.mcp.server/settings/ValidateForExportTool.java", "<lang>"):
+        "language code in a .mdo file - ASCII by the format",
 }
 
 
@@ -115,9 +123,17 @@ def weigh(path: pathlib.Path):
             yield text[: match.start()].count("\n") + 1, regex, flags
 
 
-def excused(path: pathlib.Path, regex: str) -> str | None:
+def excused(path: pathlib.Path, bundle: str, regex: str) -> str | None:
+    """Return a matching exception for a bundle-relative path, or None outside its source root."""
+    if path.is_absolute():
+        try:
+            relative = path.relative_to(bundles.bundle_src(bundle)).as_posix()
+        except ValueError:
+            return None
+    else:
+        relative = path.as_posix()
     for (name, needle), reason in ALLOWED.items():
-        if path.name == name and needle in regex:
+        if "%s/%s" % (bundle, relative) == name and needle in regex:
             return reason
     return None
 
@@ -129,11 +145,11 @@ def weighed_in(path: pathlib.Path):
             yield line, regex, flags
 
 
-def violations_in(path: pathlib.Path):
+def violations_in(path: pathlib.Path, bundle: str = bundles.SERVER):
     """The patterns in one file that read BSL as if it were ASCII, as (line, regex, why)."""
     found = []
     for line, regex, flags in weighed_in(path):
-        if excused(path, regex):
+        if excused(path, bundle, regex):
             continue
         inline = "".join(INLINE_FLAGS.findall(regex))
         needs_class = any(token in regex for token in WORD_CLASS)
@@ -155,22 +171,28 @@ def main() -> int:
     listing = "--list" in sys.argv
     weighed = 0
     violations = []
-    for path in sorted(ROOT.rglob("*.java")):
-        for line, regex, _flags in weighed_in(path):
-            weighed += 1
-            if listing:
-                print(f"{path.name}:{line}  {regex[:70]}")
-        violations.extend((path, *found) for found in violations_in(path))
+    if not ROOTS:
+        print("no production bundle found under mcp/bundles", file=sys.stderr)
+        return 1
+    for bundle, root in ROOTS:
+        for path in sorted(root.rglob("*.java")):
+            for line, regex, _flags in weighed_in(path):
+                weighed += 1
+                if listing:
+                    print(f"{bundle}/{path.relative_to(root)}:{line}  {regex[:70]}")
+            violations.extend((bundle, path.relative_to(root), *found)
+                              for found in violations_in(path, bundle))
 
     print(f"patterns carrying Cyrillic: {weighed}")
+    print(f"bundles weighed: {len(ROOTS)}")
     print(f"excused by name and reason: {len(ALLOWED)}")
     if not violations:
         print("every one of them declares the semantics it relies on")
         return 0
 
     print(f"\n{len(violations)} pattern(s) read BSL as if it were ASCII:\n")
-    for path, line, regex, why in violations:
-        print(f"  {path.relative_to(ROOT.parent)}:{line}")
+    for bundle, relative, line, regex, why in violations:
+        print(f"  {bundle}/src/{relative}:{line}")
         print(f"      {regex[:90]}")
         print(f"      {why}\n")
     return 1

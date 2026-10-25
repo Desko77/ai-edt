@@ -46,11 +46,26 @@ import urllib.request
 import zipfile
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys_path_here = os.path.dirname(os.path.abspath(__file__))
+if sys_path_here not in sys.path:
+    sys.path.insert(0, sys_path_here)
+import bundles  # noqa: E402  (scripts/ is not a package; the path is the import)
+
 TARGET_FILE = os.path.join(REPO_ROOT, "mcp", "targets", "default", "default.target")
 CLASSES = os.path.join(REPO_ROOT, "mcp", "bundles", "ru.aiedt.mcp.server", "target", "classes")
-SOURCES = os.path.join(REPO_ROOT, "mcp", "bundles", "ru.aiedt.mcp.server", "src")
+# The sources of every bundle on disk: the reflective reaches of a second bundle are census
+# input from the day the bundle appears in the tree. The compiled root stays the server's
+# target/classes, which is what a local build of this checkout produces.
+SOURCE_ROOTS = [str(bundles.bundle_src(name)) for name in bundles.production_bundles()]
 REGISTRY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "edt-reflection-registry.txt")
 DEFAULT_CACHE = os.path.join(REPO_ROOT, ".cache", "edt-bundles")
+
+
+def walk_sources():
+    """Every java file of every bundle's sources, as os.walk would yield them."""
+    for root in SOURCE_ROOTS:
+        for base, _dirs, names in os.walk(root):
+            yield base, _dirs, names
 
 SITE = "https://edt.1c.ru/downloads/releases/ruby/%s/"
 
@@ -539,7 +554,7 @@ def reflective_pairs_in_sources():
     pairs = set()
     unattached = set()
     unseen = set()
-    for base, _dirs, names in os.walk(SOURCES):
+    for base, _dirs, names in walk_sources():
         for name in names:
             if not name.endswith(".java"):
                 continue
@@ -595,7 +610,7 @@ def reflective_pairs_in_sources():
 def reflective_classes_in_sources():
     """EDT class names our sources reach by name, however they are written."""
     found = set()
-    for base, _dirs, names in os.walk(SOURCES):
+    for base, _dirs, names in walk_sources():
         for name in names:
             if not name.endswith(".java"):
                 continue

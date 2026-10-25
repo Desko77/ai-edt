@@ -269,6 +269,19 @@ Two things worth knowing before the first call:
   object keeps its types in the extension block, and setting a type wrote to a property it does not
   have while answering `applied:true`.
 
+### Localized object presentations
+
+`edit_metadata operation=set_object_property` writes `objectPresentation`,
+`extendedObjectPresentation`, `listPresentation`, `extendedListPresentation`, `recordPresentation`,
+`extendedRecordPresentation` and `explanation` where the object's type declares the property.
+Pass `ownerFqn`, `propertyName` and a string `propertyValue`: plain text updates the configuration's
+default language and preserves other translations; a serialized JSON object of language codes
+replaces the whole map. Omitted or blank clears it; JSON null entries become empty strings.
+An empty object, array, blank language key, object-shaped input that fails parsing or non-string/non-null
+value is refused before writing. `listMode` accepts `replace` (default) or `clear`; `dryRun=true`
+returns the resulting map in `wouldWrite`, while a write returns it in `listValue`. The object's
+UUID and other properties are preserved.
+
 ### Form operations
 
 - `create_form` builds a managed form with EDT's own form generator - the engine the New Form wizard
@@ -287,6 +300,19 @@ Two things worth knowing before the first call:
   `defaultForm` slot. A common form
   (`ownerFqn=CommonForm.<Name>`) is created through `create_object` and its inner form receives
   the same properties.
+- `create_form` with `formType=ORDINARY` routes the call to the `ordinary_forms` tool before
+  anything is written, so no managed-form artifacts are created. `ORDINARY` is matched
+  without regard to case, after trimming surrounding whitespace. Without explicit `ORDINARY`
+  the existing managed-form path applies. The
+  pass-through arguments are `projectName`, `ownerFqn`, `purpose`, `synonym`, `title`,
+  `setAsDefault`, `dryRun` and the name resolved from `formName` or `name`. The arguments that
+  belong to the ordinary creator alone - `width`, `height`, `withFields`, `withTables`,
+  `withCommands`, `columns`, `tabularSections`, `language` - and `layout` are refused through this
+  route, and the answer points at `ordinary_forms create_form`: that tool is the one that reads
+  them. A common form is routed by name and refused by the ordinary creator. When the
+  `ordinary_forms` tool is not installed, the call is refused by name instead of falling back to a
+  managed form. Later `update_database` and the gated write capability of that tool are as in
+  `ordinary-forms.md`.
 - `add_form_appearance_rule`, `list_form_appearance_rules` and `remove_form_appearance_rule` are the
   conditional appearance of a managed form. `add_form_appearance_rule` takes `itemNames` - the form
   items the rule styles, comma-separated, and the whole form when omitted - a condition (`field`,
@@ -815,6 +841,7 @@ Not every tool belongs to a facade. These are called by name.
 | `get_mcp_history` | What has been called on this server recently, with arguments and answers. Useful for retracing your own steps; a person reads the same buffer from the status bar. A record carries `arbitratedBy` (`tool` / `signal` - whether the operator answered the agent from the status bar instead of the tool), `deliveryStatus` (`delivered` / `failed`) and, for a signal, `signalType` and `signalNote`; `stats` carries `interrupted` and `undelivered` on top of `success` and `failure`. |
 | `self_status` | Server, EDT services, queue and heap. Ask when the server answers but one operation misbehaves. |
 | `marker_corrections` | Applies the fix the check that raised a finding offers, rather than inventing a repair by hand. Its own `list` and `apply` operations; it is NOT an operation of `diagnostics`. |
+| `ordinary_forms` | The ordinary (non-managed) forms of the project, read from and written into their `Form.oform` containers. One `operation` catalogue, JSON answers, one write capability (`ordinary_forms_writes`). It is NOT an operation of `edit_metadata`; that facade routes `create_form formType=ORDINARY` to it. The operations, their arguments and the delivery are in `ordinary-forms.md`. |
 
 Three more are reached through a facade rather than by name, because the Canonical preset hides
 them: `extension_workshop operation=list_interceptors`, `project_admin operation=self_upkeep` and

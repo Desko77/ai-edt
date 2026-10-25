@@ -1,6 +1,6 @@
 ---
 name: ai-edt
-description: "1C:Enterprise development through the AI-EDT MCP server - BSL analysis and editing, metadata and managed forms, query validation, project diagnostics, debugging, infobase updates and unit tests. Use when the project is a 1C:EDT workspace: BSL modules, .mdo metadata, 1C queries, managed forms. Also use when all you have is a delivered .cf or .cfe with no project yet - it becomes one. Not for 1C 7.7 sources."
+description: "1C:Enterprise development through the AI-EDT MCP server - BSL analysis and editing, metadata, managed and ordinary forms, query validation, project diagnostics, debugging, infobase updates and unit tests. Use when the project is a 1C:EDT workspace: BSL modules, .mdo metadata, 1C queries, managed forms, Form.oform containers. Also use when all you have is a delivered .cf or .cfe with no project yet - it becomes one. Not for 1C 7.7 sources."
 ---
 
 # AI-EDT
@@ -18,6 +18,11 @@ than all of them.
 - Reading and editing BSL: modules, methods, references, call graphs, refactoring.
 - Metadata: inspect, create, change, delete, rename with cascade.
 - Managed forms: structure, a screenshot of the WYSIWYG editor, editing without hand-written XML.
+- **Ordinary (non-managed) forms held in `Form.oform`.** `ordinary_forms` reads and edits their
+  layout and their module: the operation catalogue, creating and importing a form, elements, pages,
+  table columns, command panels, properties, handlers, `inspect_layout`. The same module address
+  reaches the embedded module through the standard module tools. See
+  `references/ordinary-forms.md`.
 - 1C queries: syntax and semantic validation before anything runs.
 - Project problems, infobase updates, YAxUnit tests, debugging and profiling.
 - **A configuration or extension delivered as one binary file.** A `.cf` becomes a project in a
@@ -104,7 +109,9 @@ For BSL and 1C metadata this server beats grep-style search: it answers from the
 ## When not to use it
 
 - **1C 7.7** sources (`.1s`, `.ert`, `1Cv7.MD`). The EDT model does not cover them.
-- **Ordinary (non-managed) forms.** The form operations assume managed forms.
+- **Forms of a configuration that is not an EDT project.** Ordinary forms held in `Form.oform`
+  inside an EDT project are covered by `ordinary_forms`; a configuration kept only in the
+  Configuration-Designer format has no project model to read here.
 - **Data in a running infobase, outside a suspended debug session.** Use an HTTP route into the
   running 1C application instead.
 - **EDT is not running.** The tools are unavailable. Say so instead of falling back to editing
@@ -156,6 +163,10 @@ So are the everyday reading and writing tools: `write_module_source`, `read_modu
 `read_method_source`, `get_module_structure`, `list_modules`, `validate_query`, `ai_context`,
 `diff_module`, `get_form_structure`, `get_form_screenshot`, `code_review`, `get_edt_version`.
 
+`ordinary_forms` is one too, with its own `operation` catalogue and a JSON answer. It reads and
+edits the ordinary forms of the project, and the standard module tools reach their module through
+the ordinary `Module.bsl` address - `references/ordinary-forms.md`.
+
 `code_search` never writes. It only reads.
 
 ### The Canonical preset hides aliases
@@ -191,6 +202,11 @@ EDT runtime supports.
 5. **After edits, revalidate before reading problems.** `diagnostics operation=revalidate_objects`
    on the objects you touched, then `diagnostics operation=get_project_errors` filtered to them.
    Reading problems without revalidating reports the previous state.
+6. **Edit an ordinary form through `ordinary_forms`**, or through `edit_metadata
+   operation=create_form formType=ORDINARY` when you want the ordinary creator. Never hand-write the
+   `Form.oform` container. A write there updates the project only: `diagnostics
+   operation=validate_for_export`, then `infobase_admin operation=update_database`, is what puts the
+   form into the infobase.
 
 ## Spending context wisely
 
@@ -243,3 +259,4 @@ goes to the plugin repository `Desko77/ai-edt` as an issue.
 | What each facade covers and which operations it exposes | `references/facades.md` |
 | A ready order of calls for a concrete task | `references/workflows.md` |
 | What the responses mean and how the server behaves at scale | `references/expected-behavior.md` |
+| `ordinary_forms`: operations, arguments, layout and module editing, delivery | `references/ordinary-forms.md` |

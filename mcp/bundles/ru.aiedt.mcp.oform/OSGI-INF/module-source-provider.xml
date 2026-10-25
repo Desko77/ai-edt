@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<scr:component xmlns:scr="http://www.osgi.org/xmlns/scr/v1.3.0" name="ru.aiedt.mcp.oform.module-source-provider">
+   <implementation class="ru.aiedt.mcp.oform.OrdinaryFormModuleProvider"/>
+   <service>
+      <provide interface="ru.aiedt.mcp.server.support.modules.IModuleSourceProvider"/>
+   </service>
+</scr:component>

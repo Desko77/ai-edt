@@ -18,6 +18,7 @@
 
   <modules>
     <module>ru.aiedt.mcp.server</module>
+    <module>ru.aiedt.mcp.oform</module>
   </modules>
 
 </project>

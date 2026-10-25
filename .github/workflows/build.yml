@@ -60,6 +60,12 @@ jobs:
           MAVEN_OPTS: -Xmx2g -XX:+UseParallelGC
         run: xvfb-run -a mvn clean verify --batch-mode --no-transfer-progress -T 1C
 
+      - name: Bundle census script tests
+        run: |
+          python3 scripts/tests/test_check_declared_arguments.py
+          python3 scripts/tests/test_check_tool_catalog.py
+          python3 scripts/tests/test_test_coverage_audit.py
+
       - name: Test coverage census
         run: python3 scripts/test-coverage-audit.py --check
 
@@ -186,3 +192,17 @@ jobs:
         with:
           name: AI-EDT-${{ steps.version.outputs.version }}
           path: mcp/repositories/ru.aiedt.mcp.server.repository/target/repository/
+
+  self-update-functions:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # These installer functions normalize Windows paths and drive-qualified records.
+      # The script body is parsed, never executed: no session or installation is changed.
+      - name: Self-update script functions
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/tests/test_edt_selfupdate.ps1
