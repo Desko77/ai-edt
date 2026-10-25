@@ -47,6 +47,10 @@ $script:SharedDeliveryFloor = '0.2.60'
 $script:OformBundle = 'ru.aiedt.mcp.oform'
 $script:LegacyOformFeatureGroupIU = 'ru.aiedt.mcp.oform.feature.feature.group'
 
+# Made-up installation directories sit under the temporary directory: a fixed drive letter
+# exists on one machine and not on another, and Join-Path refuses a drive that is absent.
+$fakeEdt = Join-Path ([IO.Path]::GetTempPath()) 'aiedt-selfupdate-test\EDT'
+
 # --- a tiny assertion set ----------------------------------------------------
 $script:failed = 0
 $script:ran = 0
@@ -125,7 +129,7 @@ Remove-Item -LiteralPath $half -Recurse -Force
 # The report answers versions per record, and only the record the launcher loads decides
 # what runs; within it, the highest version is the effective one - the configurator loads
 # one bundle, not a list.
-function New-Record([string]$kind, [bool]$active, [string[]]$versions, [string]$area = 'C:\edt') {
+function New-Record([string]$kind, [bool]$active, [string[]]$versions, [string]$area = (Join-Path $fakeEdt 'default')) {
     return [PSCustomObject]@{
         kind = $kind; active = $active; versions = $versions
         bundlesInfo = (Join-Path $area 'configuration\org.eclipse.equinox.simpleconfigurator\bundles.info') }
@@ -159,16 +163,16 @@ Assert-True (-not (Test-SharedDeliveryConfirmed '0.2.61' '0.2.60' '0.2.60')) `
 # --- the loaded area of an installation, from the report ----------------------
 $areaReport = [PSCustomObject]@{
     installations = @([PSCustomObject]@{
-        install = 'E:\EDT\A'
+        install = "$fakeEdt\A"
         records = @((New-Record 'installation' $true @('0.2.60'))) })
     consumers = @(
-        [PSCustomObject]@{ install = 'E:\EDT\A'; loads = 'E:\EDT\A\configuration' },
-        [PSCustomObject]@{ install = 'E:\EDT\B'; loads = 'E:\EDT\A\configuration' }) }
-Assert-True ((Get-LoadedAreaForInstall $areaReport 'E:\EDT\A') -ne '') `
+        [PSCustomObject]@{ install = "$fakeEdt\A"; loads = "$fakeEdt\A\configuration" },
+        [PSCustomObject]@{ install = "$fakeEdt\B"; loads = "$fakeEdt\A\configuration" }) }
+Assert-True ((Get-LoadedAreaForInstall $areaReport "$fakeEdt\A") -ne '') `
     "the loaded area of an installation is answered"
-Assert-True ((Get-LoadedAreaForInstall $areaReport 'E:\EDT\B') -eq (Get-LoadedAreaForInstall $areaReport 'E:\EDT\A')) `
+Assert-True ((Get-LoadedAreaForInstall $areaReport "$fakeEdt\B") -eq (Get-LoadedAreaForInstall $areaReport "$fakeEdt\A")) `
     "an installation loading another's area is answered by the consumers list"
-Assert-True ((Get-LoadedAreaForInstall $areaReport 'E:\EDT\C') -eq '') `
+Assert-True ((Get-LoadedAreaForInstall $areaReport "$fakeEdt\C") -eq '') `
     "an installation the report does not name answers nothing"
 
 # --- the installed legacy state, from the p2 profile of the loaded area -------------
@@ -195,33 +199,33 @@ $profileUnreadable = [PSCustomObject]@{
 $p2Report = [PSCustomObject]@{
     installations = @(); unclaimed = @(); consumers = @()
     p2Profiles = [PSCustomObject]@{
-        'e:\edt\a' = $profileWithLegacy
-        'e:\edt\b' = $profileClean
-        'e:\edt\c' = $profileUnreadable } }
-Assert-True ((Get-AreaP2Status $p2Report 'E:\EDT\A\configuration') -eq $profileWithLegacy) `
+        (Get-NormalPath "$fakeEdt\A") = $profileWithLegacy
+        (Get-NormalPath "$fakeEdt\B") = $profileClean
+        (Get-NormalPath "$fakeEdt\C") = $profileUnreadable } }
+Assert-True ((Get-AreaP2Status $p2Report "$fakeEdt\A\configuration") -eq $profileWithLegacy) `
     "the p2 status of a loaded area is read by its normalized area root"
-Assert-True ($null -eq (Get-AreaP2Status $p2Report 'E:\EDT\missing\configuration')) `
+Assert-True ($null -eq (Get-AreaP2Status $p2Report "$fakeEdt\missing\configuration")) `
     "an area the report holds no p2 state for answers nothing"
-Assert-True ($null -eq (Get-AreaP2Status ([PSCustomObject]@{ installations = @() }) 'E:\EDT\A\configuration')) `
+Assert-True ($null -eq (Get-AreaP2Status ([PSCustomObject]@{ installations = @() }) "$fakeEdt\A\configuration")) `
     "a report without p2 states answers nothing"
 Assert-True ($null -eq (Get-AreaP2Status $p2Report '')) "no area answers nothing"
 
 # The verdict: known state decides by the exact installed units, unreadable state refuses.
-$verdictLegacy = Get-LegacyOformVerdict $p2Report 'E:\EDT\A\configuration'
+$verdictLegacy = Get-LegacyOformVerdict $p2Report "$fakeEdt\A\configuration"
 Assert-True ((-not $verdictLegacy.Refuse) -and $verdictLegacy.Units.Count -eq 2) `
     "a profile installing both legacy units reports them as the refusal will name them"
-$verdictClean = Get-LegacyOformVerdict $p2Report 'E:\EDT\B\configuration'
+$verdictClean = Get-LegacyOformVerdict $p2Report "$fakeEdt\B\configuration"
 Assert-True ((-not $verdictClean.Refuse) -and $verdictClean.Units.Count -eq 0) `
     "a known profile without the legacy units is a clean verdict, not an unknown one"
-$verdictUnknown = Get-LegacyOformVerdict $p2Report 'E:\EDT\C\configuration'
+$verdictUnknown = Get-LegacyOformVerdict $p2Report "$fakeEdt\C\configuration"
 Assert-True ($verdictUnknown.Refuse -and $verdictUnknown.Reason -match 'cannot be parsed') `
     "a profile that cannot be read refuses with its reason, never reads as legacy-free"
-$verdictAbsent = Get-LegacyOformVerdict $p2Report 'E:\EDT\missing\configuration'
+$verdictAbsent = Get-LegacyOformVerdict $p2Report "$fakeEdt\missing\configuration"
 Assert-True ($verdictAbsent.Refuse) `
     "an area with no p2 state in the report refuses: absence of the answer is not absence of the feature"
 
 # Public deliveries before the shared feature do not require ordinary-profile discovery.
-$oldLegacy = Get-LegacyOformVerdict $p2Report 'E:/EDT/A/configuration' '0.2.59'
+$oldLegacy = Get-LegacyOformVerdict $p2Report (("$fakeEdt\A\configuration") -replace '\\', '/') '0.2.59'
 Assert-True ((-not $oldLegacy.Refuse) -and $oldLegacy.Units.Count -eq 0) `
     "an older public delivery does not require legacy-feature migration"
 $oldUnknown = Get-LegacyOformVerdict $null '' '0.2.59'
@@ -257,20 +261,20 @@ Assert-True ($hintLines[0] -notmatch '-installIU') "the migration hint installs 
 $areaVersionReport = [PSCustomObject]@{
     installations = @(
         [PSCustomObject]@{
-            install = 'E:\EDT\A'
+            install = "$fakeEdt\A"
             records = @(
-                (New-Record 'installation' $true @('0.2.60') 'E:\EDT\A'),
-                (New-Record 'profile' $false @('0.2.59') 'E:\EDT\A')) })
+                (New-Record 'installation' $true @('0.2.60') "$fakeEdt\A"),
+                (New-Record 'profile' $false @('0.2.59') "$fakeEdt\A")) })
     unclaimed = @(
         [PSCustomObject]@{
             kind = 'unclaimed'
-            bundlesInfo = 'E:\EDT\A\configuration\org.eclipse.equinox.simpleconfigurator\bundles.info'
+            bundlesInfo = "$fakeEdt\A\configuration\org.eclipse.equinox.simpleconfigurator\bundles.info"
             versions = @('0.2.60.202610171200') }) }
-Assert-True ((Get-AreaVersion $areaVersionReport 'E:\EDT\A\configuration') -eq '0.2.60.202610171200') `
+Assert-True ((Get-AreaVersion $areaVersionReport "$fakeEdt\A\configuration") -eq '0.2.60.202610171200') `
     "the effective version of an area is the highest every record there holds, unclaimed included"
-Assert-True ((Get-AreaVersion $areaVersionReport 'e:\edt\a\configuration') -eq '0.2.60.202610171200') `
+Assert-True ((Get-AreaVersion $areaVersionReport (("$fakeEdt\A\configuration").ToLowerInvariant())) -eq '0.2.60.202610171200') `
     "the area compares normalised, whatever case either side spells it in"
-Assert-True ($null -eq (Get-AreaVersion $areaVersionReport 'E:\EDT\elsewhere\configuration')) `
+Assert-True ($null -eq (Get-AreaVersion $areaVersionReport "$fakeEdt\elsewhere\configuration")) `
     "an area holding no records answers no version"
 Assert-True ($null -eq (Get-AreaVersion $areaVersionReport '')) "no area answers no version"
 
@@ -278,10 +282,10 @@ Assert-True ($null -eq (Get-AreaVersion $areaVersionReport '')) "no area answers
 # membership in the list, is what the confirmation compares.
 $mixedArea = [PSCustomObject]@{
     installations = @([PSCustomObject]@{
-        install = 'E:\EDT\A'
-        records = @((New-Record 'installation' $true @('0.2.60', '0.2.61') 'E:\EDT\A')) })
+        install = "$fakeEdt\A"
+        records = @((New-Record 'installation' $true @('0.2.60', '0.2.61') "$fakeEdt\A")) })
     unclaimed = @() }
-Assert-True ((Get-AreaVersion $mixedArea 'E:\EDT\A\configuration') -eq '0.2.61') `
+Assert-True ((Get-AreaVersion $mixedArea "$fakeEdt\A\configuration") -eq '0.2.61') `
     "the area maximum answers, so a newer non-matching bundle is not hidden by a matching one"
 
 # --- a matching borrowed configuration confirms the delivery ------------------------
@@ -290,19 +294,19 @@ Assert-True ((Get-AreaVersion $mixedArea 'E:\EDT\A\configuration') -eq '0.2.61')
 # AREA it loads, exactly as the legacy check reads the same area's profile.
 $borrowed = [PSCustomObject]@{
     installations = @([PSCustomObject]@{
-        install = 'E:\EDT\owner'
-        records = @((New-Record 'installation' $true @('0.2.60') 'E:\EDT\owner')) })
+        install = "$fakeEdt\owner"
+        records = @((New-Record 'installation' $true @('0.2.60') "$fakeEdt\owner")) })
     unclaimed = @()
     consumers = @(
-        [PSCustomObject]@{ install = 'E:\EDT\owner'; loads = 'E:\EDT\owner\configuration' },
-        [PSCustomObject]@{ install = 'E:\EDT\borrower'; loads = 'E:\EDT\owner\configuration' }) }
+        [PSCustomObject]@{ install = "$fakeEdt\owner"; loads = "$fakeEdt\owner\configuration" },
+        [PSCustomObject]@{ install = "$fakeEdt\borrower"; loads = "$fakeEdt\owner\configuration" }) }
 $borrowedOform = [PSCustomObject]@{
     installations = @([PSCustomObject]@{
-        install = 'E:\EDT\owner'
-        records = @((New-Record 'installation' $true @('0.2.60') 'E:\EDT\owner')) })
+        install = "$fakeEdt\owner"
+        records = @((New-Record 'installation' $true @('0.2.60') "$fakeEdt\owner")) })
     unclaimed = @() }
-$borrowedArea = Get-LoadedAreaForInstall $borrowed 'E:\EDT\borrower'
-Assert-True ($borrowedArea -eq (Get-NormalPath 'E:\EDT\owner\configuration')) `
+$borrowedArea = Get-LoadedAreaForInstall $borrowed "$fakeEdt\borrower"
+Assert-True ($borrowedArea -eq (Get-NormalPath "$fakeEdt\owner\configuration")) `
     "the borrower's loaded area is answered through the consumers list"
 Assert-True (Test-SharedDeliveryConfirmed `
         (Get-AreaVersion $borrowed $borrowedArea) `
