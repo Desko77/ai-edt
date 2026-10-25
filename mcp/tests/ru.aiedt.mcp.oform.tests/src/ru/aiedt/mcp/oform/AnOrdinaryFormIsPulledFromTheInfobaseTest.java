@@ -570,12 +570,16 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
      * the parent is named as leftBehind with the answer saying it is removed in the background,
      * and the background removal takes the parent for good once the Designer has left. The call
      * answers Pending only once the Designer holds its begun file open, so the removal cannot
-     * race the Designer's start; whether the place step moved the service directory into place
-     * before the removal took it stays a race the test records, not a condition.
+     * race the Designer's start; while the Designer works the parent cannot be removed on either
+     * kind of file system, so the parent is still there when the answer is checked. Whether the
+     * place step moved the service directory into place before the removal took it stays a race
+     * the test records, not a condition.
      */
     @Test
     public void aDesignerStillWritingPastTheCancelIsRemovedInTheBackground() throws Exception
     {
+        assumeTrue("this user can delete a held file (a POSIX superuser ignores directory permissions)", //$NON-NLS-1$
+            aHeldFileCannotBeDeleted());
         byte[] before = container(PROJECT_LAYOUT, PROJECT_MODULE);
         theProjectHolds(before);
         ToolCallScope scope = ToolCallScope.create(null);
@@ -593,19 +597,25 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
             ToolCallScope.exit();
         }
 
-        assertEquals(Boolean.FALSE, answer.get("success")); //$NON-NLS-1$
-        assertTrue(String.valueOf(answer.get("error")), //$NON-NLS-1$
-            String.valueOf(answer.get("error")).contains("cancelled")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertTrue(String.valueOf(answer.get("error")), //$NON-NLS-1$
-            String.valueOf(answer.get("error")).contains("background")); //$NON-NLS-1$ //$NON-NLS-2$
-        assertEquals("the run was cancelled by its key", 1, road.cancels); //$NON-NLS-1$
-        assertTrue("the refusal came before the Designer left", road.designerDone.getCount() == 1); //$NON-NLS-1$
-        Path parent = theOneImportDirectory();
-        assertEquals("the output path lies inside the parent", parent, road.outputPassed.getParent()); //$NON-NLS-1$
-        assertEquals(parent.toString(), String.valueOf(answer.get("leftBehind"))); //$NON-NLS-1$
-        assertArrayEquals(before, theProjectsContainerBytes());
-
-        road.designerGate.countDown();
+        Path parent;
+        try
+        {
+            assertEquals(Boolean.FALSE, answer.get("success")); //$NON-NLS-1$
+            assertTrue(String.valueOf(answer.get("error")), //$NON-NLS-1$
+                String.valueOf(answer.get("error")).contains("cancelled")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertTrue(String.valueOf(answer.get("error")), //$NON-NLS-1$
+                String.valueOf(answer.get("error")).contains("background")); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("the run was cancelled by its key", 1, road.cancels); //$NON-NLS-1$
+            assertTrue("the refusal came before the Designer left", road.designerDone.getCount() == 1); //$NON-NLS-1$
+            parent = theOneImportDirectory();
+            assertEquals("the output path lies inside the parent", parent, road.outputPassed.getParent()); //$NON-NLS-1$
+            assertEquals(parent.toString(), String.valueOf(answer.get("leftBehind"))); //$NON-NLS-1$
+            assertArrayEquals(before, theProjectsContainerBytes());
+        }
+        finally
+        {
+            road.designerGate.countDown();
+        }
         assertTrue("the Designer did not leave", road.designerDone.await(10, TimeUnit.SECONDS)); //$NON-NLS-1$
         assertNull("the Designer failed: " + road.designerFailure, road.designerFailure); //$NON-NLS-1$
         boolean thePlaceStepMoved = road.placeStepMoved;
@@ -867,8 +877,8 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
      * one whose resume never finishes, one that holds the exported file open past the return,
      * and one whose Designer keeps writing beside the output path past the cancel and moves its
      * service directory into place after the test lets it leave. In that mode the call answers
-     * Pending only once the Designer holds its begun file open, so the background removal the
-     * cancel starts cannot take the parent before the Designer holds it.
+     * Pending only once the Designer holds its begun file open and the entries of the parent, so
+     * the background removal the cancel starts cannot take the parent before the Designer leaves.
      */
     static final class FakeRoad implements IToolRoad
     {
@@ -1052,7 +1062,9 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
          * The Designer of the stand-in: it works from the call - it writes into the service
          * directory beside the output path and holds the file open, the way a process holds its
          * output - goes on writing past the cancel, and moves the directory onto the output
-         * path only after the test lets it leave.
+         * path only after the test lets it leave. A POSIX file system deletes an open file, so
+         * the Designer also holds the entries of the parent until it leaves: on either kind of
+         * system the parent stays while the Designer works.
          */
         private void startTheDesigner(Path output, String runKey)
         {
@@ -1064,6 +1076,7 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
                     Path begun = service.resolve("begun.bin"); //$NON-NLS-1$
                     Files.write(begun, new byte[]{1});
                     java.io.FileInputStream running = new java.io.FileInputStream(begun.toFile());
+                    Undeletable parentHeld = Undeletable.holdEntries(output.getParent());
                     designerBegun.countDown();
                     try
                     {
@@ -1073,7 +1086,14 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
                     }
                     finally
                     {
-                        running.close();
+                        try
+                        {
+                            parentHeld.close();
+                        }
+                        finally
+                        {
+                            running.close();
+                        }
                     }
                     // The place step: the exporter moves the service directory onto the output
                     // path. The background removal races it - the run's answer is read by no
@@ -1209,7 +1229,29 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
         }
 
         /**
-         * Gives the directory its permissions back and closes the file.
+         * Keeps the entries of a directory from being removed, without holding a file open:
+         * where the file system keeps POSIX permissions it takes the write permission off the
+         * directory, elsewhere it does nothing.
+         *
+         * @param directory the directory whose entries to keep
+         * @return the hold, released by {@link #close()}
+         * @throws IOException when the permissions cannot be read or set
+         */
+        static Undeletable holdEntries(Path directory) throws IOException
+        {
+            var view = Files.getFileAttributeView(directory, java.nio.file.attribute.PosixFileAttributeView.class);
+            if (view == null)
+            {
+                return new Undeletable(null, null, null);
+            }
+            var permissions = view.readAttributes().permissions();
+            Files.setPosixFilePermissions(directory,
+                java.nio.file.attribute.PosixFilePermissions.fromString("r-x------")); //$NON-NLS-1$
+            return new Undeletable(null, directory, permissions);
+        }
+
+        /**
+         * Gives the directory its permissions back and closes the file, when one is held.
          *
          * @throws IOException when either fails
          */
@@ -1225,7 +1267,10 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
             }
             finally
             {
-                open.close();
+                if (open != null)
+                {
+                    open.close();
+                }
             }
         }
     }
