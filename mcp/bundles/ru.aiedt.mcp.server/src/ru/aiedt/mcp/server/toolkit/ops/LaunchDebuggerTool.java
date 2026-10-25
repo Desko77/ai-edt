@@ -126,8 +126,8 @@ public class LaunchDebuggerTool implements IMcpTool
                 "launch: build the external object when its project has dumps off; without " //$NON-NLS-1$
                     + "it the client starts empty. A preset that blocks writing refuses true.", false) //$NON-NLS-1$
             .stringProperty("externalObjectName", //$NON-NLS-1$
-                "launch: open this data processor or report in the client, so its code runs " //$NON-NLS-1$
-                    + "under the debugger. A ready .epf goes in through " //$NON-NLS-1$
+                "launch: open this data processor or report in the client to debug its code. " //$NON-NLS-1$
+                    + "A ready .epf goes in through " //$NON-NLS-1$
                     + "external_object_workshop operation=import_external_object. Not for Attach.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
                 "launch: the external-object project holding externalObjectName.") //$NON-NLS-1$
