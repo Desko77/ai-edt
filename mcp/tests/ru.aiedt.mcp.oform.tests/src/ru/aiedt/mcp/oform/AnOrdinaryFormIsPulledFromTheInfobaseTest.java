@@ -1075,8 +1075,17 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
                     Files.createDirectories(service);
                     Path begun = service.resolve("begun.bin"); //$NON-NLS-1$
                     Files.write(begun, new byte[]{1});
-                    java.io.FileInputStream running = new java.io.FileInputStream(begun.toFile());
                     Undeletable parentHeld = Undeletable.holdEntries(output.getParent());
+                    java.io.FileInputStream running;
+                    try
+                    {
+                        running = new java.io.FileInputStream(begun.toFile());
+                    }
+                    catch (IOException | RuntimeException failure)
+                    {
+                        parentHeld.close();
+                        throw failure;
+                    }
                     designerBegun.countDown();
                     try
                     {
@@ -1124,6 +1133,7 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
                 }
                 finally
                 {
+                    designerBegun.countDown();
                     designerDone.countDown();
                 }
             }, "the-designer-of-the-stand-in"); //$NON-NLS-1$
@@ -1143,6 +1153,10 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
                 if (!designerBegun.await(10, TimeUnit.SECONDS))
                 {
                     throw new IllegalStateException("the stand-in's Designer did not begin"); //$NON-NLS-1$
+                }
+                if (designerFailure != null)
+                {
+                    throw new IllegalStateException("the stand-in's Designer failed to begin", designerFailure); //$NON-NLS-1$
                 }
             }
             catch (InterruptedException e)
@@ -1176,10 +1190,13 @@ public class AnOrdinaryFormIsPulledFromTheInfobaseTest
     }
 
     /**
-     * A file held so that it cannot be deleted, the way a process holding its output holds it.
-     * Windows refuses to delete a file open without the delete share; a POSIX file system
-     * deletes an open file and refuses only when the directory holding it is not writable. The
-     * hold does both, so it keeps the file on either kind of system.
+     * A hold that keeps files from being deleted, in one of two modes. {@link #hold(Path)} keeps
+     * one file the way a process holding its output holds it: Windows refuses to delete a file
+     * open without the delete share; a POSIX file system deletes an open file and refuses only
+     * when the directory holding it is not writable, so the hold does both and keeps the file on
+     * either kind of system. {@link #holdEntries(Path)} opens no file and only takes the write
+     * permission off a directory, which keeps its entries on a POSIX file system and does
+     * nothing elsewhere.
      */
     private static final class Undeletable implements java.io.Closeable
     {
