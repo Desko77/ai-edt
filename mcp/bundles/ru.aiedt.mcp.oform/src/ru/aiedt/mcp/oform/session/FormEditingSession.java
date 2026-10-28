@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.locks.ReentrantLock;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -43,6 +42,7 @@ import ru.aiedt.mcp.oform.OrdinaryFormLocator;
 import ru.aiedt.mcp.oform.OrdinaryFormModule;
 import ru.aiedt.mcp.oform.OwnerModel;
 import ru.aiedt.mcp.oform.OwnerModelReader;
+import ru.aiedt.mcp.oform.Pacing;
 import ru.aiedt.mcp.oform.V8Container;
 import ru.aiedt.mcp.oform.layout.ElementKinds;
 import ru.aiedt.mcp.oform.layout.FormEvents;
@@ -217,7 +217,7 @@ public final class FormEditingSession
         {
             return Edit.refused(operation + " is not a layout operation of ordinary_forms."); //$NON-NLS-1$
         }
-        ReentrantLock lock = OpenFormSessions.lockFor(file);
+        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
         lock.lock();
         try
         {
@@ -249,6 +249,7 @@ public final class FormEditingSession
             {
                 return new Edit(false, applied.message, applied.refusedVersion, null, null);
             }
+            Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
             formText = applied.layoutText;
             if (applied.moduleText != null)
             {
@@ -278,7 +279,7 @@ public final class FormEditingSession
         {
             return Preview.refused(operation + " is not a layout operation of ordinary_forms.", null); //$NON-NLS-1$
         }
-        ReentrantLock lock = OpenFormSessions.lockFor(file);
+        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
         lock.lock();
         try
         {
@@ -401,7 +402,7 @@ public final class FormEditingSession
         IResourceRuleFactory rules = workspace.getRuleFactory();
         Save[] out = new Save[1];
         IWorkspaceRunnable work = monitor -> {
-            ReentrantLock lock = OpenFormSessions.lockFor(file);
+            OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
             lock.lock();
             try
             {
@@ -446,7 +447,8 @@ public final class FormEditingSession
         }
         String formOut = formChanged() ? formText : null;
         String moduleOut = moduleChanged() ? moduleText : null;
-        OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut);
+        OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut,
+            id(), true);
         if (!outcome.written)
         {
             return new Save(false, null, null);
@@ -487,7 +489,7 @@ public final class FormEditingSession
      */
     public Reconciliation reconcile()
     {
-        ReentrantLock lock = OpenFormSessions.lockFor(file);
+        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
         lock.lock();
         try
         {

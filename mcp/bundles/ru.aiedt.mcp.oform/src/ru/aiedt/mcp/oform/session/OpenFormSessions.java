@@ -21,12 +21,14 @@ import org.eclipse.core.runtime.IPath;
  * The registry keys a session by the file's location, hands out the file's lock every state
  * change of a session - an edit, a save, a reconciliation - goes under, and answers whether a
  * file's entries are held changed by a live session, which the write paths of the agent ask
- * before they replace a container.
+ * before they replace a container. The lock comes with its registry entry pinned from the
+ * lookup to the give-back, so a release that ends the last editor in that window cannot drop
+ * the entry and leave a reopened session with a different lock of the same file.
  * </p>
  */
 public final class OpenFormSessions
 {
-    /** One file's place in the registry: its session, its editor count and its lock. */
+    /** One file's place in the registry: its session, its editor count, its lock and the pins that hold it. */
     private static final class Held
     {
         final ReentrantLock lock = new ReentrantLock();
@@ -34,6 +36,55 @@ public final class OpenFormSessions
         FormEditingSession session;
 
         int editors;
+
+        int pins;
+    }
+
+    /**
+     * The lock of one file's registry entry, with the entry pinned for its holder. The pin goes
+     * on when the lock is looked up and comes off when the lock is given back, so the entry
+     * outlives a release of the last editor that runs inside that window, and a session opened
+     * beside it takes the same lock - one lock per file, whatever closes and reopens around it.
+     */
+    public static final class SessionLock
+    {
+        private final Held held;
+
+        private final String key;
+
+        SessionLock(Held held, String key)
+        {
+            this.held = held;
+            this.key = key;
+        }
+
+        /** Takes the lock, waiting for whoever holds it. */
+        public void lock()
+        {
+            held.lock.lock();
+        }
+
+        /** Gives the lock back and takes the pin off; an entry nothing holds is dropped. */
+        public void unlock()
+        {
+            held.lock.unlock();
+            unpin(key, held);
+        }
+
+        /**
+         * @param thread a thread
+         * @return whether the thread waits for this lock
+         */
+        public boolean hasQueuedThread(Thread thread)
+        {
+            return held.lock.hasQueuedThread(thread);
+        }
+
+        /** @return whether any thread waits for this lock */
+        public boolean hasQueuedThreads()
+        {
+            return held.lock.hasQueuedThreads();
+        }
     }
 
     private static final Map<String, Held> BY_FILE = new LinkedHashMap<>();
@@ -61,8 +112,9 @@ public final class OpenFormSessions
     }
 
     /**
-     * Closes one editor of a session. The session ends when the last editor closes; the lock
-     * stays while a thread holds or waits for it, so a state change in flight finishes on it.
+     * Closes one editor of a session. The session ends when the last editor closes; the entry
+     * stays while a thread holds or waits for its lock, so a state change in flight finishes on
+     * it.
      *
      * @param session the session one editor of which closes
      */
@@ -72,7 +124,8 @@ public final class OpenFormSessions
         {
             return;
         }
-        Held held = BY_FILE.get(keyOf(session.file()));
+        String key = keyOf(session.file());
+        Held held = BY_FILE.get(key);
         if (held == null || held.session != session)
         {
             return;
@@ -83,20 +136,7 @@ public final class OpenFormSessions
             return;
         }
         held.session = null;
-        if (held.lock.tryLock())
-        {
-            try
-            {
-                if (held.lock.getQueueLength() == 0)
-                {
-                    BY_FILE.remove(keyOf(session.file()));
-                }
-            }
-            finally
-            {
-                held.lock.unlock();
-            }
-        }
+        dropIfIdle(key, held);
     }
 
     /** @param file the {@code Form.oform} @return whether a live session holds the file */
@@ -129,10 +169,82 @@ public final class OpenFormSessions
         return held != null && held.session != null && held.session.isDirty();
     }
 
-    /** The lock of a file's session; every state change of the session goes under it. */
-    static synchronized ReentrantLock lockFor(IFile file)
+    /**
+     * Whether a live session other than the initiator holds one of the named entries changed.
+     * The write paths ask this before they replace a container: what another session holds
+     * changed must not be replaced by a write its editor has never seen, while the session's
+     * own save - the initiator named - replaces its own edits.
+     *
+     * @param file the {@code Form.oform}
+     * @param initiator the session id of the writer, or {@code null} when no session writes
+     * @param form whether the write replaces the layout entry
+     * @param module whether the write replaces the module entry
+     * @return whether such a session holds one of those entries changed
+     */
+    public static synchronized boolean anotherHoldsChanged(IFile file, String initiator, boolean form,
+        boolean module)
     {
-        return held(file).lock;
+        Held held = BY_FILE.get(keyOf(file));
+        if (held == null || held.session == null)
+        {
+            return false;
+        }
+        if (initiator != null && initiator.equals(held.session.id()))
+        {
+            return false;
+        }
+        return (form && held.session.formChanged()) || (module && held.session.moduleChanged());
+    }
+
+    /**
+     * The lock of a file's session with its registry entry pinned; every state change of the
+     * session goes under it, and so does the write of a container through the write guard. The
+     * entry stays in the registry until the lock's {@link SessionLock#unlock unlock}, so a
+     * release that ends the last editor while the holder waits for the lock cannot drop the
+     * entry and hand a different lock of the same file to a session opened beside it.
+     *
+     * @param file the {@code Form.oform}
+     * @return the file's lock, pinned until it is unlocked
+     */
+    public static synchronized SessionLock lockOf(IFile file)
+    {
+        Held held = held(file);
+        held.pins++;
+        return new SessionLock(held, keyOf(file));
+    }
+
+    /** Takes one pin off an entry and drops the entry when nothing holds it. */
+    private static synchronized void unpin(String key, Held held)
+    {
+        held.pins--;
+        dropIfIdle(key, held);
+    }
+
+    /**
+     * Drops an entry that has no session, no editor and no pinned taker of its lock, whose lock
+     * nobody waits for. An entry whose lock is held or waited for stays, so a state change in
+     * flight finishes on it.
+     */
+    private static void dropIfIdle(String key, Held held)
+    {
+        if (held.session != null || held.editors > 0 || held.pins > 0 || BY_FILE.get(key) != held)
+        {
+            return;
+        }
+        if (held.lock.tryLock())
+        {
+            try
+            {
+                if (held.lock.getQueueLength() == 0)
+                {
+                    BY_FILE.remove(key);
+                }
+            }
+            finally
+            {
+                held.lock.unlock();
+            }
+        }
     }
 
     private static Held held(IFile file)

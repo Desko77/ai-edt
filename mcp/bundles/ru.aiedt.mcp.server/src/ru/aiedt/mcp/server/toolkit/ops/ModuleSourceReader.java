@@ -146,10 +146,16 @@ public class ModuleSourceReader
         if (provided != null)
         {
             // The address is a file that does not exist; what was read is said, so a caller
-            // that goes on to write knows where the write lands.
-            unsavedNote = "\n\n**Source:** " + provided.source() //$NON-NLS-1$
-                + (provided.containerPath() == null ? "" : " - held in src/" + provided.containerPath()) //$NON-NLS-1$ //$NON-NLS-2$
-                + "; EDT builds no model of it. write_module_source by this address writes to the same place."; //$NON-NLS-1$
+            // that goes on to write knows where the write lands. The provider's own fields ride
+            // along - a form editor holding unsaved changes of the container says so here.
+            StringBuilder source = new StringBuilder("\n\n**Source:** ").append(provided.source()) //$NON-NLS-1$
+                .append(provided.containerPath() == null ? "" : " - held in src/" + provided.containerPath()); //$NON-NLS-1$ //$NON-NLS-2$
+            for (Map.Entry<String, String> field : provided.answerFields().entrySet())
+            {
+                source.append("; ").append(field.getKey()).append(": ").append(field.getValue()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            source.append("; EDT builds no model of it. write_module_source by this address writes to the same place."); //$NON-NLS-1$
+            unsavedNote = source.toString();
         }
         int total = lines.size();
         if (total == 0)

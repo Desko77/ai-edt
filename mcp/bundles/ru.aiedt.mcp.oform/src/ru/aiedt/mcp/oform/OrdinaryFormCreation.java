@@ -469,7 +469,9 @@ public final class OrdinaryFormCreation
         }
 
         /**
-         * Writes the created container after checking its connected editor buffer.
+         * Writes the created container after checking its connected editor buffer and its
+         * session, all through {@link ContainerWriteGuard}: the folders this write makes and the
+         * file itself lie inside the guard's rule.
          *
          * @param relativeFile the container path relative to the project
          * @param bytes the composed container bytes
@@ -481,23 +483,26 @@ public final class OrdinaryFormCreation
             try
             {
                 IFile file = project.getFile(new org.eclipse.core.runtime.Path(relativeFile));
-                OrdinaryFormModule.refuseWhileAnEditorHoldsUnsavedChanges(file);
-                int slash = relativeFile.lastIndexOf('/');
-                if (slash > 0)
-                {
-                    createFolders(relativeFile.substring(0, slash));
-                }
-                try (InputStream stream = new ByteArrayInputStream(bytes))
-                {
-                    if (file.exists())
+                ContainerWriteGuard.write(file, () -> {
+                    ContainerWriteGuard.refuseUnlessAllowed(file, null, true, true);
+                    int slash = relativeFile.lastIndexOf('/');
+                    if (slash > 0)
                     {
-                        file.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
+                        createFolders(relativeFile.substring(0, slash));
                     }
-                    else
+                    try (InputStream stream = new ByteArrayInputStream(bytes))
                     {
-                        file.create(stream, IResource.FORCE, null);
+                        if (file.exists())
+                        {
+                            file.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
+                        }
+                        else
+                        {
+                            file.create(stream, IResource.FORCE, null);
+                        }
                     }
-                }
+                    return null;
+                });
             }
             catch (CoreException e)
             {
