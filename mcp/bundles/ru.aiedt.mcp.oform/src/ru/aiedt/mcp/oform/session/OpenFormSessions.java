@@ -129,8 +129,41 @@ public final class OpenFormSessions
         return held != null && held.session != null && held.session.isDirty();
     }
 
-    /** The lock of a file's session; every state change of the session goes under it. */
-    static synchronized ReentrantLock lockFor(IFile file)
+    /**
+     * Whether a live session other than the initiator holds one of the named entries changed.
+     * The write paths ask this before they replace a container: what another session holds
+     * changed must not be replaced by a write its editor has never seen, while the session's
+     * own save - the initiator named - replaces its own edits.
+     *
+     * @param file the {@code Form.oform}
+     * @param initiator the session id of the writer, or {@code null} when no session writes
+     * @param form whether the write replaces the layout entry
+     * @param module whether the write replaces the module entry
+     * @return whether such a session holds one of those entries changed
+     */
+    public static synchronized boolean anotherHoldsChanged(IFile file, String initiator, boolean form,
+        boolean module)
+    {
+        Held held = BY_FILE.get(keyOf(file));
+        if (held == null || held.session == null)
+        {
+            return false;
+        }
+        if (initiator != null && initiator.equals(held.session.id()))
+        {
+            return false;
+        }
+        return (form && held.session.formChanged()) || (module && held.session.moduleChanged());
+    }
+
+    /**
+     * The lock of a file's session; every state change of the session goes under it, and so does
+     * the write of a container through the write guard.
+     *
+     * @param file the {@code Form.oform}
+     * @return the file's lock
+     */
+    public static synchronized ReentrantLock lockFor(IFile file)
     {
         return held(file).lock;
     }

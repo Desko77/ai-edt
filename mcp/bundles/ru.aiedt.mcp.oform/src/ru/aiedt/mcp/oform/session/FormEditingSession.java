@@ -446,7 +446,8 @@ public final class FormEditingSession
         }
         String formOut = formChanged() ? formText : null;
         String moduleOut = moduleChanged() ? moduleText : null;
-        OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut);
+        OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut,
+            id(), true);
         if (!outcome.written)
         {
             return new Save(false, null, null);
