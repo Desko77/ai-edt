@@ -19,6 +19,8 @@ import org.junit.Test;
 
 import com._1c.g5.v8.dt.platform.services.core.dump.IExternalObjectDumpSupport;
 
+import ru.aiedt.mcp.server.support.LaunchConfigAccess;
+
 /**
  * An external object named to a launch that cannot open it is refused before anything starts.
  *
@@ -64,6 +66,22 @@ public class AnExternalObjectIsRefusedWhereNothingOpensItTest
         assertNull(DebugSessionStarter.attachExternalObjectRefusal(false, "Report1", PROJECT)); //$NON-NLS-1$
         assertNull(DebugSessionStarter.attachExternalObjectRefusal(true, null, null));
         assertNull(DebugSessionStarter.attachExternalObjectRefusal(true, "", "")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The refusal follows the type of the configuration named by launchConfigurationName, the
+     * only route that can reach an Attach configuration: a runtime-client configuration named the
+     * same way passes with an external object, an Attach one of either kind is refused.
+     */
+    @Test
+    public void theConfigurationTypeDecidesTheRefusal()
+    {
+        assertNull(DebugSessionStarter.attachExternalObjectRefusal(
+            LaunchConfigAccess.isAttachConfigTypeId(LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID), "Report1", PROJECT)); //$NON-NLS-1$
+        assertNotNull(DebugSessionStarter.attachExternalObjectRefusal(
+            LaunchConfigAccess.isAttachConfigTypeId(LaunchConfigAccess.TYPE_REMOTE_RUNTIME), "Report1", null)); //$NON-NLS-1$
+        assertNotNull(DebugSessionStarter.attachExternalObjectRefusal(
+            LaunchConfigAccess.isAttachConfigTypeId(LaunchConfigAccess.TYPE_LOCAL_RUNTIME), "Report1", null)); //$NON-NLS-1$
     }
 
     /**
