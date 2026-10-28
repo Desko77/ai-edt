@@ -7,12 +7,12 @@ other than the server are named with the bundle in front (`oform:ops`).
 | Bucket | Classes | Meaning |
 |---|---:|---|
 | direct | 150 | a test class named after it |
-| exercised | 326 | reached by some other test |
+| exercised | 327 | reached by some other test |
 | tool-sweep | 26 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 35 | needs a display or an extension point |
 | workspace-bound | 18 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **555** | across 894 test classes |
+| **total** | **556** | across 901 test classes |
 
 ## untested (0)
 
@@ -141,7 +141,7 @@ _none_
 - SelfStatusTool
 - UninstallExtensionTool
 
-## exercised (326)
+## exercised (327)
 
 **(root)**
 - Activator
@@ -198,6 +198,7 @@ _none_
 
 **oform:(root)**
 - BraceTree
+- ContainerWriteGuard
 - FormComposer
 - HandlerBindings
 - LayoutOperations
@@ -717,9 +718,9 @@ closes.
 | 9-16 | 60 |
 | 17+ | 29 |
 
-6530 test methods across 894 test classes; 150 classes have a test of their own, median 10 methods each.
+6553 test methods across 901 test classes; 150 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 150 of 555 classes have one: 26 are covered by the registry-wide contract sweep and 18 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 150 of 556 classes have one: 26 are covered by the registry-wide contract sweep and 18 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 
