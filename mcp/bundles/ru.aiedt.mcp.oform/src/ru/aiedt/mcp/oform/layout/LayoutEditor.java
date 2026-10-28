@@ -13,7 +13,6 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 
 import ru.aiedt.mcp.oform.BraceTree;
@@ -96,14 +95,6 @@ public final class LayoutEditor
             return LayoutReader.tokenText(record.get(1));
         }
     }
-
-    /** The position of the events list in the own list of a type, measured over the corpus. */
-    private static final Map<String, Integer> EVENTS_AT = Map.ofEntries(Map.entry("Field", 4), //$NON-NLS-1$
-        Map.entry("SelectField", 2), Map.entry("CheckBox", 2), Map.entry("RadioBtn", 5), Map.entry("Button", 2), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        Map.entry("Label", 2), Map.entry("Image", 2), Map.entry("Panel", 2), Map.entry("Table", 4), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        Map.entry("ListField", 2), Map.entry("CalendarBox", 2), Map.entry("FieldHtml", 2), Map.entry("TableField", 17), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-        Map.entry("Chart", 201)); //$NON-NLS-1$
-
 
     /** The layout versions every writer is measured on; another version is refused before any edit. */
     public static final Set<String> SUPPORTED_VERSIONS = Set.of("25", "26", "27"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -474,7 +465,7 @@ public final class LayoutEditor
 
     private ListNode eventsList(Located located)
     {
-        Integer at = EVENTS_AT.get(located.type());
+        Integer at = PropertyApplicability.eventsAt(located.type());
         ListNode own = LayoutReader.ownOf(located.record);
         if (at == null || own == null || own.size() <= at.intValue())
         {
