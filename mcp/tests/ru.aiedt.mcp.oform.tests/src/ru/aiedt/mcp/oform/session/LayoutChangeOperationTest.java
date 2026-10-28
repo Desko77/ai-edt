@@ -46,7 +46,9 @@ import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceWriter;
  * keeps {@link FormEditingSession#HISTORY_LIMIT} records; a form record undoes and redoes while
  * an agent's module stays; a history that touched the module is cleared when the agent writes
  * the module; an undo over a foreign write reconciles instead of editing a stale baseline; a
- * clean session and the agent's write lose nothing in either order; a gesture is one record.
+ * clean session and the agent's write lose nothing in either order; a gesture is one record;
+ * two handler bindings in one gesture both keep their stubs; an undo stops when that
+ * reconciliation has already cleared the history.
  */
 public class LayoutChangeOperationTest
 {
@@ -600,6 +602,112 @@ public class LayoutChangeOperationTest
         }
     }
 
+    /**
+     * Two {@code bind_handler} steps with different procedures and {@code stub=true}, fixed as
+     * one gesture, keep both stubs. Each step has to read the module the previous step produced:
+     * reading the file's original module on every step leaves only the last procedure, while both
+     * bindings stay in the layout.
+     */
+    @Test
+    public void aGestureOfTwoHandlerStubsKeepsBothProcedures() throws Exception
+    {
+        try
+        {
+            FormEditingSession session = OpenFormSessions.open(probe.file());
+            try
+            {
+                String openedModule = session.currentModuleText();
+                String rowProcedure = "ТаблицаПриАктивизацииСтроки"; //$NON-NLS-1$
+                String columnProcedure = "ТаблицаПриАктивизацииКолонки"; //$NON-NLS-1$
+                List<FormEditingSession.Step> steps = List.of(
+                    new FormEditingSession.Step("bind_handler", args("elementName", table, //$NON-NLS-1$
+                        "event", "ПриАктивизацииСтроки", "procedure", rowProcedure, "stub", "true")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                    new FormEditingSession.Step("bind_handler", args("elementName", table, //$NON-NLS-1$
+                        "event", "ПриАктивизацииКолонки", "procedure", columnProcedure, "stub", "true"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                FormEditingSession.Edit gesture = session.gesture(steps);
+                assertTrue(gesture.message, gesture.done);
+                assertEquals(1, session.undoRecords().length);
+                assertTrue(session.undoRecords()[0].touchesModule());
+                assertBothHandlers(session, rowProcedure, columnProcedure);
+                FormEditingSession.Save save = session.save();
+                assertTrue(String.valueOf(save.reconciliation), save.written);
+                String savedModule = moduleOnDisk();
+                assertTrue(savedModule, savedModule.contains("Процедура " + rowProcedure)); //$NON-NLS-1$
+                assertTrue(savedModule, savedModule.contains("Процедура " + columnProcedure)); //$NON-NLS-1$
+                assertBothHandlers(session, rowProcedure, columnProcedure);
+                FormEditingSession.Reversal undone = session.undo();
+                assertTrue(undone.message, undone.done);
+                assertEquals(openedModule, session.currentModuleText());
+                assertFalse(handlerBound(session.snapshot(), table, "ПриАктивизацииСтроки", rowProcedure)); //$NON-NLS-1$
+                assertFalse(handlerBound(session.snapshot(), table, "ПриАктивизацииКолонки", columnProcedure)); //$NON-NLS-1$
+                FormEditingSession.Reversal redone = session.redo();
+                assertTrue(redone.message, redone.done);
+                assertBothHandlers(session, rowProcedure, columnProcedure);
+                assertEquals(1, session.undoRecords().length);
+            }
+            finally
+            {
+                OpenFormSessions.release(session);
+            }
+        }
+        finally
+        {
+            probe.restore();
+        }
+    }
+
+    /**
+     * Undo after a foreign module write, before any observer runs, stops when the reconciliation
+     * clears the history. The history holds a handler record and then a title record; the title
+     * still matches, and applying it would put that record back and drop the saved title.
+     */
+    @Test
+    public void anUndoStopsWhenReconciliationClearsTheHistory() throws Exception
+    {
+        try
+        {
+            FormEditingSession session = OpenFormSessions.open(probe.file());
+            try
+            {
+                edit(session, "bind_handler", "elementName", table, "event", "ПриАктивизацииСтроки", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                    "procedure", "ТаблицаПриАктивизацииСтроки", "stub", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                edit(session, "set_property", "property", "title", "value", "Заголовок Вне"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                FormEditingSession.Save save = session.save();
+                assertTrue(String.valueOf(save.reconciliation), save.written);
+                assertFalse(session.isDirty());
+                LayoutChangeOperation[] pending = session.undoRecords();
+                assertEquals(2, pending.length);
+                assertTrue(pending[0].touchesModule());
+                assertFalse(pending[1].touchesModule());
+                String savedModule = session.currentModuleText();
+                assertTrue(savedModule, savedModule.contains(WRITTEN_BEFORE));
+                byte[] foreign = withForeignModule(probe.bytes(), savedModule.replace(WRITTEN_BEFORE, WRITTEN_AFTER));
+                probe.anotherWriterWrites(foreign);
+                FormEditingSession.Reversal reversal = session.undo();
+                assertFalse(reversal.done);
+                assertEquals(FormEditingSession.Reconciliation.MODULE_ACCEPTED, reversal.reconciliation);
+                assertEquals(HISTORY_CLEARED, reversal.message);
+                assertEquals(0, session.undoRecords().length);
+                assertEquals(0, session.redoRecords().length);
+                assertFalse(session.canUndo());
+                assertFalse(session.canRedo());
+                assertEquals("Заголовок Вне", session.snapshot().title); //$NON-NLS-1$
+                assertTrue(session.currentModuleText(), session.currentModuleText().contains(WRITTEN_AFTER));
+                assertFalse(session.currentModuleText(), session.currentModuleText().contains(WRITTEN_BEFORE));
+                assertFalse(session.isDirty());
+                assertArrayEquals(foreign, probe.bytes());
+            }
+            finally
+            {
+                OpenFormSessions.release(session);
+            }
+        }
+        finally
+        {
+            probe.restore();
+        }
+    }
+
     /** How long one undo takes on the largest ordinary-form fixture. */
     @Test
     public void theUndoOfTheLargestFixtureIsTimed() throws Exception
@@ -734,5 +842,57 @@ public class LayoutChangeOperationTest
             throw new AssertionError(e.getMessage(), e);
         }
         return file.toBytes();
+    }
+
+    /**
+     * The saved container with another module text and the same layout.
+     *
+     * @param saved the container bytes the session saved
+     * @param module the foreign module text
+     * @return the container's bytes
+     */
+    private static byte[] withForeignModule(byte[] saved, String module)
+    {
+        OrdinaryFormFile file = OrdinaryFormFile.of(null, V8Container.read(saved), saved);
+        file.setModuleText(module);
+        return file.toBytes();
+    }
+
+    /** @return the module text the container on disk holds now */
+    private static String moduleOnDisk()
+    {
+        byte[] bytes = probe.bytes();
+        return OrdinaryFormFile.of(null, V8Container.read(bytes), bytes).moduleText();
+    }
+
+    /** Both gesture bindings are in the layout and both procedures are in the module. */
+    private static void assertBothHandlers(FormEditingSession session, String rowProcedure, String columnProcedure)
+    {
+        String module = session.currentModuleText();
+        assertTrue(module, module.contains("Процедура " + rowProcedure)); //$NON-NLS-1$
+        assertTrue(module, module.contains("Процедура " + columnProcedure)); //$NON-NLS-1$
+        FormSnapshot snapshot = session.snapshot();
+        assertTrue(handlerBound(snapshot, table, "ПриАктивизацииСтроки", rowProcedure)); //$NON-NLS-1$
+        assertTrue(handlerBound(snapshot, table, "ПриАктивизацииКолонки", columnProcedure)); //$NON-NLS-1$
+    }
+
+    /** @return whether the named element has that handler */
+    private static boolean handlerBound(FormSnapshot snapshot, String elementName, String event, String procedure)
+    {
+        for (FormSnapshot.Element element : snapshot.allElements)
+        {
+            if (!elementName.equals(element.name))
+            {
+                continue;
+            }
+            for (FormSnapshot.Handler handler : element.handlers)
+            {
+                if (event.equals(handler.event) && procedure.equals(handler.procedure))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

@@ -319,8 +319,9 @@ public final class FormEditingSession
 
     /**
      * Applies several layout operations as one change: one baseline check, one fixation and one
-     * history record. A refusal or a throw of any step leaves the session exactly as it was, and
-     * no record is kept.
+     * history record. Each step reads the layout and the module the earlier steps of this gesture
+     * produced; the session's texts move only after every step has landed. A refusal or a throw
+     * of any step leaves the session exactly as it was, and no record is kept.
      *
      * @param steps the operations, in order; each is one {@link OperationsCatalog} layout operation
      * @return what the last step did, when every step was fixed
@@ -348,17 +349,10 @@ public final class FormEditingSession
             }
             String beforeForm = currentFormText();
             String beforeModule = currentModuleText();
-            Target target;
-            try
-            {
-                target = target();
-            }
-            catch (IOException e)
-            {
-                return Edit.refused(e.getMessage());
-            }
             Applied last = null;
-            String moduleKept = null;
+            String formKept = beforeForm;
+            String moduleKept = beforeModule;
+            boolean moduleWritten = false;
             for (Step step : steps)
             {
                 OperationSpec spec = OperationsCatalog.find(step.operation);
@@ -369,9 +363,9 @@ public final class FormEditingSession
                 Applied applied;
                 try
                 {
-                    applied = LayoutOperations.applyTo(spec, target, step.params);
+                    applied = LayoutOperations.applyTo(spec, targetOver(formKept, moduleKept), step.params);
                 }
-                catch (RuntimeException e)
+                catch (IOException | RuntimeException e)
                 {
                     return Edit.refused(e.getMessage());
                 }
@@ -380,9 +374,11 @@ public final class FormEditingSession
                     return new Edit(false, applied.message, applied.refusedVersion, null, null);
                 }
                 last = applied;
+                formKept = applied.layoutText;
                 if (applied.moduleText != null)
                 {
                     moduleKept = applied.moduleText;
+                    moduleWritten = true;
                 }
             }
             if (last == null)
@@ -391,7 +387,7 @@ public final class FormEditingSession
             }
             Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
             formText = last.layoutText;
-            if (moduleKept != null)
+            if (moduleWritten)
             {
                 moduleText = moduleKept;
             }
@@ -1019,6 +1015,12 @@ public final class FormEditingSession
         {
             return LayoutChangeOperation.notDone(IStatus.CANCEL, reversalMessage(reconciledDuringStep));
         }
+        // The history removes a record only after undo returns OK. Absence here means the
+        // reconciliation disposed the context, and applying the record would put it back.
+        if (reconciledDuringStep != null && !historyKeeps(operation))
+        {
+            return LayoutChangeOperation.notDone(IStatus.CANCEL, reversalMessage(reconciledDuringStep));
+        }
         if (!operation.matches(currentFormText(), currentModuleText(), undoing))
         {
             if (reconciledDuringStep != null)
@@ -1048,6 +1050,33 @@ public final class FormEditingSession
     void disposeHistory()
     {
         history().dispose(undoContext, true, true, true);
+    }
+
+    /**
+     * Whether this record is still on the session's undo or redo. A reconciliation that disposed
+     * the context has already removed it; the history itself removes a record only after undo
+     * returns OK.
+     *
+     * @param operation the record an undo or redo is applying
+     * @return whether the history still lists the record
+     */
+    private boolean historyKeeps(LayoutChangeOperation operation)
+    {
+        return listed(history().getUndoHistory(undoContext), operation)
+            || listed(history().getRedoHistory(undoContext), operation);
+    }
+
+    /** @return whether the record is one of the operations, by identity */
+    private static boolean listed(IUndoableOperation[] operations, LayoutChangeOperation operation)
+    {
+        for (IUndoableOperation one : operations)
+        {
+            if (one == operation)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** @return whether any record still on this session's undo or redo changed the module */
@@ -1128,28 +1157,35 @@ public final class FormEditingSession
     /** The operation's target: the baseline container with the session's texts in. */
     private Target target() throws IOException
     {
+        return targetOver(formText == null ? baseForm : formText, moduleText);
+    }
+
+    /**
+     * A target over the given texts, not over whatever the session holds. A gesture feeds each
+     * step the texts the earlier steps produced. A {@code null} text leaves that entry of the
+     * baseline container as it was read.
+     *
+     * @param form the layout text the step reads, or {@code null} to keep the baseline layout
+     * @param moduleSource the module text the step reads, or {@code null} to keep the baseline module
+     * @return the target
+     * @throws IOException when the container does not lie at a form module's address
+     */
+    private Target targetOver(String form, String moduleSource) throws IOException
+    {
         if (module == null)
         {
             throw new IOException("the container does not lie at a form module's address."); //$NON-NLS-1$
         }
-        OrdinaryFormFile current = currentFile();
-        return Target.of(module, fqn, current);
-    }
-
-    /** The baseline container with the session's texts put in; the baseline stays what a write compares against. */
-    private OrdinaryFormFile currentFile()
-    {
         OrdinaryFormFile current = baselineFile();
-        String form = formText == null ? baseForm : formText;
         if (form != null)
         {
             current.setFormText(form);
         }
-        if (moduleText != null)
+        if (moduleSource != null)
         {
-            current.setModuleText(moduleText);
+            current.setModuleText(moduleSource);
         }
-        return current;
+        return Target.of(this.module, fqn, current);
     }
 
     /** The baseline container, its observed texts the write compares the file with. */
