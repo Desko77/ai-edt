@@ -177,12 +177,15 @@ public final class AgentGuidance
     private static final Route R1 = new Route("R1", "Start a client without debugging", //$NON-NLS-1$ //$NON-NLS-2$
         List.of(E1, E2), List.of(), List.of(M1), List.of(), List.of(), null, //$NON-NLS-1$
         "A saved launch configuration is named by launchConfigurationName, or by projectName plus " //$NON-NLS-1$
-            + "applicationId; a missing one is created and saved. startupOption carries the /C string " //$NON-NLS-1$
-            + "in this launch's own copy, the saved configuration is not changed; /Execute is set by " //$NON-NLS-1$
-            + "the environment from the configuration's external-object binding. A client already " //$NON-NLS-1$
-            + "running answers alreadyRunning without override arguments and is refused with them; " //$NON-NLS-1$
-            + "allowSecondSession=true starts a second client. updateBeforeLaunch defaults to false. " //$NON-NLS-1$
-            + "Stop it with launch_debugger action=terminate."); //$NON-NLS-1$
+            + "applicationId; a missing one is created and saved. An Attach configuration starts no " //$NON-NLS-1$
+            + "client and is refused. startupOption carries the /C string in this launch's own copy, " //$NON-NLS-1$
+            + "the saved configuration is not changed; /Execute is set by the environment from the " //$NON-NLS-1$
+            + "configuration's external-object binding. A client already running answers " //$NON-NLS-1$
+            + "alreadyRunning before the update gate; startupOption, waitForEndpoint, clientType or " //$NON-NLS-1$
+            + "runMode over it are refused, and allowSecondSession=true starts a second client. " //$NON-NLS-1$
+            + "updateBeforeLaunch defaults to false; under a preset without update_database an " //$NON-NLS-1$
+            + "explicit true is refused, but an already running client still answers alreadyRunning " //$NON-NLS-1$
+            + "first. Stop it with launch_debugger action=terminate."); //$NON-NLS-1$
 
     /** R2: an external object of the workspace opened in a client under debug. */
     private static final Route R2 = new Route("R2", "Open an external object of an EDT project in a client under debug", //$NON-NLS-1$ //$NON-NLS-2$
@@ -193,7 +196,8 @@ public final class AgentGuidance
             + "configuration: an Attach configuration opens no client and is refused when an external " //$NON-NLS-1$
             + "object is named. With dump generation off the launch is refused when the environment's " //$NON-NLS-1$
             + "dump service answers; enableExternalObjectDump=true turns it on in the project's " //$NON-NLS-1$
-            + "settings. updateBeforeLaunch defaults to true; an unnamed argument under a preset " //$NON-NLS-1$
+            + "settings, which is a project write and is refused by a preset that blocks writing. " //$NON-NLS-1$
+            + "updateBeforeLaunch defaults to true; an unnamed argument under a preset " //$NON-NLS-1$
             + "without update_database launches without updating and says " //$NON-NLS-1$
             + "databaseUpdate=SKIPPED_BY_PRESET, an explicit true is refused. A running session with " //$NON-NLS-1$
             + "override arguments is refused; stop it with action=terminate."); //$NON-NLS-1$
