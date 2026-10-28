@@ -70,6 +70,12 @@ public final class AgentGuidance
     /** The phrase a boundary outside this server carries, and nothing else can carry it. */
     public static final String NOT_SERVED = "not served here"; //$NON-NLS-1$
 
+    /** The argument the routed facades dispatch on, except the debugger facade. */
+    private static final String OPERATION_ARGUMENT = "operation"; //$NON-NLS-1$
+
+    /** The debugger facade selects its action through this argument, not through operation. */
+    private static final String ACTION_ARGUMENT = "action"; //$NON-NLS-1$
+
     /** R1 entry point: the facade operation that starts a client without a debugger. */
     private static final Entry E1 = new Entry("E1", InfobaseAdminFacadeTool.NAME, //$NON-NLS-1$
         "start_client", InfobaseAdminFacadeTool.gateChecksOf("start_client")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -77,9 +83,9 @@ public final class AgentGuidance
     /** R1 entry point: the standalone client starter, hidden while Canonical is in force. */
     private static final Entry E2 = new Entry("E2", "start_client", null, List.of()); //$NON-NLS-1$ //$NON-NLS-2$
 
-    /** R2 entry point: the debugger facade's launch action. */
+    /** R2 entry point: the debugger facade's launch action, dispatched by {@code action}. */
     private static final Entry E3 = new Entry("E3", LaunchDebuggerTool.NAME, "launch", //$NON-NLS-1$ //$NON-NLS-2$
-        LaunchDebuggerTool.gateChecksOf("launch")); //$NON-NLS-1$
+        ACTION_ARGUMENT, LaunchDebuggerTool.gateChecksOf("launch")); //$NON-NLS-1$
 
     /** R2 entry point: the standalone debug launcher, hidden while Canonical is in force. */
     private static final Entry E4 = new Entry("E4", "debug_launch", null, List.of()); //$NON-NLS-1$ //$NON-NLS-2$
@@ -434,13 +440,22 @@ public final class AgentGuidance
 
         private final String operation;
 
+        private final String dispatchArgument;
+
         private final List<GateCheck> checks;
 
         private Entry(String id, String tool, String operation, List<GateCheck> checks)
         {
+            this(id, tool, operation, operation == null ? null : OPERATION_ARGUMENT, checks);
+        }
+
+        private Entry(String id, String tool, String operation, String dispatchArgument,
+            List<GateCheck> checks)
+        {
             this.id = Objects.requireNonNull(id, "id"); //$NON-NLS-1$
             this.tool = Objects.requireNonNull(tool, "tool"); //$NON-NLS-1$
             this.operation = operation;
+            this.dispatchArgument = dispatchArgument;
             this.checks = List.copyOf(checks);
         }
 
@@ -469,6 +484,14 @@ public final class AgentGuidance
         }
 
         /**
+         * @return the argument the facade dispatches on, or {@code null} for a standalone tool
+         */
+        public String dispatchArgument()
+        {
+            return dispatchArgument;
+        }
+
+        /**
          * @return the gate checks the facade runs, in its own order; empty for a standalone tool
          */
         public List<GateCheck> checks()
@@ -477,12 +500,13 @@ public final class AgentGuidance
         }
 
         /**
-         * @return the callable name as an agent writes it, for example
-         *         {@code infobase_admin operation=start_client}
+         * @return the callable name as an agent writes it, with the argument the facade itself
+         *         dispatches on, for example {@code infobase_admin operation=start_client} or
+         *         {@code launch_debugger action=launch}
          */
         public String callName()
         {
-            return operation == null ? tool : tool + " operation=" + operation; //$NON-NLS-1$
+            return operation == null ? tool : tool + " " + dispatchArgument + "=" + operation; //$NON-NLS-1$ //$NON-NLS-2$
         }
 
         /**

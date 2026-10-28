@@ -200,6 +200,47 @@ public class AgentGuidanceTest
         }
     }
 
+    /**
+     * The call the document prints is a call its facade answers.
+     * <p>
+     * The routed facades do not agree on the argument that selects the operation: the debugger
+     * facade reads {@code action} and refuses a call that carries none, while the other three read
+     * {@code operation}. A document that prints the wrong name publishes a call refused before the
+     * operation runs, so the printed argument is probed against the facade itself rather than
+     * trusted.
+     * </p>
+     */
+    @Test
+    public void everyPublishedCallNamesTheFacadesOwnDispatchArgument()
+    {
+        assertEquals("launch_debugger action=launch", AgentGuidance.entry("E3").callName()); //$NON-NLS-1$ //$NON-NLS-2$
+
+        for (Entry entry : AgentGuidance.targetEntries())
+        {
+            if (entry.operation() == null)
+            {
+                continue;
+            }
+            String published = entry.callName();
+            String call = entry.tool() + " "; //$NON-NLS-1$
+            assertTrue(entry.id() + " prints " + published, published.startsWith(call)); //$NON-NLS-1$
+            String assignment = published.substring(call.length());
+            int equals = assignment.indexOf('=');
+            assertTrue(entry.id() + " prints no argument in " + published, equals > 0); //$NON-NLS-1$
+            String dispatch = assignment.substring(0, equals);
+            assertEquals(entry.id() + " prints the wrong operation in " + published, //$NON-NLS-1$
+                entry.operation(), assignment.substring(equals + 1));
+
+            IMcpTool tool = catalog.getTool(entry.tool());
+            assertNotNull(entry.id() + " names a tool nothing registered: " + entry.tool(), tool); //$NON-NLS-1$
+            Map<String, String> probe = new HashMap<>();
+            probe.put(dispatch, "help"); //$NON-NLS-1$ //$NON-NLS-2$
+            String answer = tool.execute(probe);
+            assertFalse(entry.id() + " publishes " + published + ", which " + entry.tool() //$NON-NLS-1$
+                + " does not dispatch on: " + answer, answer.contains("is required")); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+    }
+
     /** The document names the installed version, the active preset and the moment of reading. */
     @Test
     public void theDocumentNamesTheVersionThePresetAndTheReadingMoment()
