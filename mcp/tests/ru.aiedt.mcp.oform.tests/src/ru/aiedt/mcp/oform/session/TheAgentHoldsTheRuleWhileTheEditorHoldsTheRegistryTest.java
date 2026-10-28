@@ -14,7 +14,6 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -68,7 +67,7 @@ public class TheAgentHoldsTheRuleWhileTheEditorHoldsTheRegistryTest
             FormEditingSession session = OpenFormSessions.open(probe.file());
             try
             {
-                ReentrantLock registry = OpenFormSessions.lockFor(probe.file());
+                OpenFormSessions.SessionLock registry = OpenFormSessions.lockOf(probe.file());
                 registry.lock();
                 AtomicReference<IOException> refusalOf = new AtomicReference<>();
                 Thread agent = new Thread(() -> {
@@ -121,7 +120,7 @@ public class TheAgentHoldsTheRuleWhileTheEditorHoldsTheRegistryTest
      * @return whether the agent queued within the bound
      * @throws InterruptedException when the wait is broken
      */
-    private static boolean theAgentWaits(ReentrantLock registry, Thread agent) throws InterruptedException
+    private static boolean theAgentWaits(OpenFormSessions.SessionLock registry, Thread agent) throws InterruptedException
     {
         long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
         while (System.nanoTime() - end < 0)

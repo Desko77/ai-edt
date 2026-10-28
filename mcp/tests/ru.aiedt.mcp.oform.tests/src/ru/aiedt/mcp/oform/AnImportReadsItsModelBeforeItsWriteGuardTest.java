@@ -135,7 +135,7 @@ public class AnImportReadsItsModelBeforeItsWriteGuardTest
             // thread holds it: a model read placed behind the guard would block on it here and
             // never answer; a read placed before the guard answers and then asks for the lock
             // itself, which this thread sees as the import coming to wait.
-            java.util.concurrent.locks.ReentrantLock registry = OpenFormSessions.lockFor(container);
+            OpenFormSessions.SessionLock registry = OpenFormSessions.lockOf(container);
             registry.lock();
             CountDownLatch readAnswered = new CountDownLatch(1);
             CountDownLatch importAnswered = new CountDownLatch(1);
@@ -154,8 +154,9 @@ public class AnImportReadsItsModelBeforeItsWriteGuardTest
                             // guard - and only then takes the registry lock, on its way into the
                             // guard, to prove that order to the thread that holds the lock.
                             readAnswered.countDown();
-                            registry.lock();
-                            registry.unlock();
+                            OpenFormSessions.SessionLock own = OpenFormSessions.lockOf(container);
+                            own.lock();
+                            own.unlock();
                             return null;
                         }, new OrdinaryFormImport.ProjectSpace(project), written -> {
                             marks.incrementAndGet();

@@ -523,6 +523,7 @@ public final class OrdinaryFormModule
         {
             container.refreshLocal(IResource.DEPTH_ZERO, null);
         }
+        Pacing.pauseAt(Pacing.BEFORE_CONTAINER_WRITE);
         try (InputStream stream = new ByteArrayInputStream(bytes))
         {
             container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
@@ -597,6 +598,7 @@ public final class OrdinaryFormModule
             {
                 container.refreshLocal(IResource.DEPTH_ZERO, null);
             }
+            Pacing.pauseAt(Pacing.BEFORE_CONTAINER_WRITE);
             try (InputStream stream = new ByteArrayInputStream(bytes))
             {
                 container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);

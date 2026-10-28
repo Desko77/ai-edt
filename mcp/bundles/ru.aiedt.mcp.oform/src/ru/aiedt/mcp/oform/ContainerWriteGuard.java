@@ -7,7 +7,6 @@
 package ru.aiedt.mcp.oform;
 
 import java.io.IOException;
-import java.util.concurrent.locks.ReentrantLock;
 
 import org.eclipse.core.resources.IContainer;
 import org.eclipse.core.resources.IFile;
@@ -142,11 +141,17 @@ public final class ContainerWriteGuard
         }
     }
 
-    /** The work under the registry lock of the file's session. */
+    /**
+     * The work under the registry lock of the file's session. The lock comes with its registry
+     * entry pinned, and the pin stays from the lookup to the give-back: a release that ends the
+     * last editor inside that window cannot drop the entry, so a session opened in it takes the
+     * same lock and no write and no edit ever run beside each other under two locks of one file.
+     */
     private static <T> T underTheRegistryLock(IFile container, GuardedWrite<T> work)
         throws IOException, CoreException
     {
-        ReentrantLock lock = OpenFormSessions.lockFor(container);
+        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(container);
+        Pacing.pauseAt(Pacing.BEFORE_REGISTRY_LOCK);
         lock.lock();
         try
         {

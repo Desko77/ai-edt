@@ -12,7 +12,6 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.ReentrantLock;
 
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -54,19 +53,20 @@ public class ALastEditorsReleaseNeverLeavesTheLockHeldTest
         FormEditingSession session = OpenFormSessions.open(probe.file());
         try
         {
-            ReentrantLock lock = OpenFormSessions.lockFor(probe.file());
+            OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(probe.file());
             lock.lock();
             CountDownLatch taken = new CountDownLatch(1);
             CountDownLatch freed = new CountDownLatch(1);
             Thread waiter = new Thread(() -> {
-                lock.lock();
+                OpenFormSessions.SessionLock own = OpenFormSessions.lockOf(probe.file());
+                own.lock();
                 try
                 {
                     taken.countDown();
                 }
                 finally
                 {
-                    lock.unlock();
+                    own.unlock();
                     freed.countDown();
                 }
             }, "oform-release-lock-waiter"); //$NON-NLS-1$
@@ -98,7 +98,7 @@ public class ALastEditorsReleaseNeverLeavesTheLockHeldTest
     }
 
     /** Waits until a thread sits in the lock's queue. */
-    private static boolean queued(ReentrantLock lock) throws InterruptedException
+    private static boolean queued(OpenFormSessions.SessionLock lock) throws InterruptedException
     {
         long deadline = System.currentTimeMillis() + 60_000L;
         while (!lock.hasQueuedThreads())
