@@ -108,7 +108,11 @@ DISPATCH = re.compile(r"switch\s*\((operation|action|op|mode)\)")
 # A case label in the dispatch, and an entry in the catalog a facade checks membership against.
 CASE_LABEL = re.compile(r'case\s+"([a-z0-9_]+)"\s*:')
 CATALOG_GUARD = re.compile(r"!\s*(\w+)\s*\.containsKey\(\s*(operation|action|op|mode)\s*\)")
-GATES = ("gateIfPresetDisabled", "gatedRoute")
+# A facade can ask the gate inline, route through the shared gated helper, or execute the list of
+# GateCheck records it publishes for the same operation. The last one is the extraction of the
+# inline checks into support/GateCheck, and the call that runs that list is the gate.
+GATE_LIST_RUN = "GateCheck.firstRefusal("
+GATES = ("gateIfPresetDisabled", "gatedRoute", GATE_LIST_RUN)
 
 # A facade whose branches are all reads and that deliberately has no gate would go here, with the
 # reason. Nothing is exempt today: a read is still a tool a preset may switch off, and answering it
@@ -276,10 +280,11 @@ def constructor_verdict(path: pathlib.Path) -> tuple[str | None, str | None]:
     delegation facades are held to.
     """
     code = without_comments(path.read_text(encoding="utf-8"))
-    gate = min((code.find(token) for token in ("gateIfPresetDisabled", "gateWriteDoor", "presetWriteGate")
+    gate = min((code.find(token) for token in ("gateIfPresetDisabled", "gateWriteDoor", "presetWriteGate",
+                                                GATE_LIST_RUN)
                 if code.find(token) != -1), default=-1)
     if gate == -1:
-        return "no gateIfPresetDisabled or gateWriteDoor in the source", None
+        return "no gateIfPresetDisabled, gateWriteDoor or GateCheck.firstRefusal in the source", None
     handoff = HANDOFF.search(code)
     if handoff and handoff.start() < gate:
         return None, f"operation hand-off at offset {handoff.start()} before the gate at {gate}"
@@ -309,12 +314,12 @@ def main() -> int:
         if missing:
             unreachable.append((path.name, missing))
     for path, delegations in found:
-        source = path.read_text(encoding="utf-8")
-        gated = any(gate in source for gate in GATES)
+        code = without_comments(path.read_text(encoding="utf-8"))
+        gated = any(gate in code for gate in GATES)
         name = path.name
         if not gated and name not in EXEMPT:
             ungated.append(name)
-        too_late = gate_comes_first(source) if gated else None
+        too_late = gate_comes_first(code) if gated else None
         if too_late:
             late.append((name, too_late))
         if args.list:

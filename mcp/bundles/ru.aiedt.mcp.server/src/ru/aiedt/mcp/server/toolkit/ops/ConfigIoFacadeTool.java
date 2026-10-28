@@ -22,6 +22,7 @@ import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
+import ru.aiedt.mcp.server.support.GateCheck;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmInfobaseExtensionHelper;
@@ -360,6 +361,25 @@ public class ConfigIoFacadeTool implements IMcpTool
         return ResponseType.MARKDOWN;
     }
 
+    /**
+     * The preset checks {@link #execute} applies to an operation, in the order it applies them.
+     * <p>
+     * Every operation this facade folds in is keyed on its own name - that IS the folded tool's
+     * name - so one check is enough for each. An operation with no tool of its own is in nobody's
+     * disabled set and passes. The gated routes are a second check of their own inside their
+     * branches and are not part of this list. The method is public because the route guidance reads
+     * the same list the call runs, and it lives in another package.
+     * </p>
+     *
+     * @param operation the normalized operation name; may be {@code null}
+     * @return the checks, never {@code null}; empty when there is no operation to check
+     */
+    public static List<GateCheck> gateChecksOf(String operation)
+    {
+        return operation == null ? Collections.emptyList()
+            : Collections.singletonList(GateCheck.preset(operation));
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
@@ -391,10 +411,11 @@ public class ConfigIoFacadeTool implements IMcpTool
         // still reaching that tool, and a preset that switched it off means it. Keyed on the
         // operation name because that IS the folded tool's name; an operation with no tool of its
         // own is in nobody's disabled set and passes straight through.
-        String presetGate = ToolGate.gateIfPresetDisabled(operation);
-        if (presetGate != null)
+        List<GateCheck> gateChecks = gateChecksOf(operation);
+        String gateRefusal = GateCheck.firstRefusal(gateChecks);
+        if (gateRefusal != null)
         {
-            return ToolResult.error(presetGate).put("operation", operation).toJson(); //$NON-NLS-1$
+            return ToolResult.error(gateRefusal).put("operation", operation).toJson(); //$NON-NLS-1$
         }
         switch (operation)
         {
