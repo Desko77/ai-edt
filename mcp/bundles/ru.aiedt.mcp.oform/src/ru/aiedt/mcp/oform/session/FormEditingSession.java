@@ -136,13 +136,10 @@ public final class FormEditingSession
             {
                 refuse("the container of " + file.getProjectRelativePath() + " holds no layout entry."); //$NON-NLS-1$ //$NON-NLS-2$
             }
-            else
+            else if (!versionMeasured(baseForm))
             {
-                String version = read.formVersion();
-                if (version == null || !LayoutEditor.SUPPORTED_VERSIONS.contains(version))
-                {
-                    refuse("the layout version " + version + " is outside the measured set 25, 26, 27."); //$NON-NLS-1$ //$NON-NLS-2$
-                }
+                refuse("the layout version " + OrdinaryFormFile.formVersionOf(baseForm) //$NON-NLS-1$
+                    + " is outside the measured set 25, 26, 27."); //$NON-NLS-1$
             }
         }
         catch (IOException | IllegalArgumentException e)
@@ -517,9 +514,9 @@ public final class FormEditingSession
         if (Arrays.equals(bytes, baseBytes))
         {
             baseStamp = stamp;
-            if (baseForm != null)
+            if (baselineEditable())
             {
-                // the baseline is a layout this session once read, so a file back at it is
+                // the baseline is a layout this session can edit, so a file back at it is
                 // editable again after a read-only spell over something else
                 readOnly = false;
                 problem = null;
@@ -540,10 +537,10 @@ public final class FormEditingSession
         {
             return refuse("the container holds no layout entry."); //$NON-NLS-1$
         }
-        String version = read.formVersion();
-        if (version == null || !LayoutEditor.SUPPORTED_VERSIONS.contains(version))
+        if (!versionMeasured(form))
         {
-            return refuse("the layout version " + version + " is outside the measured set 25, 26, 27."); //$NON-NLS-1$ //$NON-NLS-2$
+            return refuse("the layout version " + OrdinaryFormFile.formVersionOf(form) //$NON-NLS-1$
+                + " is outside the measured set 25, 26, 27."); //$NON-NLS-1$
         }
         readOnly = false;
         problem = null;
@@ -806,6 +803,28 @@ public final class FormEditingSession
         }
         String[] parts = fqn.split("\\."); //$NON-NLS-1$
         return parts.length == 4 ? parts[0] + "." + parts[1] : null; //$NON-NLS-1$
+    }
+
+    /**
+     * Whether the baseline holds a layout a session can edit. A session opened over a
+     * container of an unmeasured version keeps that baseline while the file stands at it, and
+     * a reconciliation over unchanged bytes must not read the session back into edit.
+     *
+     * @return whether the baseline layout opens with a measured version
+     */
+    private boolean baselineEditable()
+    {
+        return versionMeasured(baseForm);
+    }
+
+    /**
+     * @param formText a layout text
+     * @return whether it opens with a version the writers are measured on
+     */
+    private static boolean versionMeasured(String formText)
+    {
+        String version = OrdinaryFormFile.formVersionOf(formText);
+        return version != null && LayoutEditor.SUPPORTED_VERSIONS.contains(version);
     }
 
     /**

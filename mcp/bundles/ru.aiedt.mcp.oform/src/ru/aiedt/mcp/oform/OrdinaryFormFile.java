@@ -183,17 +183,28 @@ public final class OrdinaryFormFile
      */
     public String formVersion()
     {
-        String text = formText();
-        if (text == null || !text.startsWith("{")) //$NON-NLS-1$
+        return formVersionOf(formText());
+    }
+
+    /**
+     * The version a layout text opens with, whatever entry it was read from.
+     *
+     * @param formText the layout text, or {@code null}
+     * @return the version token, or {@code null} when the text is {@code null} or does not
+     *         start with one
+     */
+    public static String formVersionOf(String formText)
+    {
+        if (formText == null || !formText.startsWith("{")) //$NON-NLS-1$
         {
             return null;
         }
         int end = 1;
-        while (end < text.length() && Character.isDigit(text.charAt(end)))
+        while (end < formText.length() && Character.isDigit(formText.charAt(end)))
         {
             end++;
         }
-        return end > 1 ? text.substring(1, end) : null;
+        return end > 1 ? formText.substring(1, end) : null;
     }
 
     /**

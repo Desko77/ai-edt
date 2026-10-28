@@ -291,6 +291,48 @@ public class AReconciliationFollowsItsTableTest
         }
     }
 
+    /** A session opened over an unmeasured version stays read-only while the file stands at it. */
+    @Test
+    public void aSessionOpenedOverAnUnmeasuredVersionStaysReadOnlyAtAnUnchangedFile() throws Exception
+    {
+        try
+        {
+            probe.anotherWriterWrites(withForeignVersion("24")); //$NON-NLS-1$
+            FormEditingSession session = OpenFormSessions.open(probe.file());
+            try
+            {
+                assertTrue("the session opens read-only over an unmeasured version", session.readOnly()); //$NON-NLS-1$
+                assertTrue(String.valueOf(session.problem()), session.problem().contains("24")); //$NON-NLS-1$
+
+                FormEditingSession.Reconciliation unchanged = session.reconcile();
+                assertEquals(FormEditingSession.Reconciliation.NOTHING, unchanged.outcome);
+                assertTrue("the unchanged file keeps the read-only: its baseline holds no editable layout", //$NON-NLS-1$
+                    session.readOnly());
+                assertTrue(session.problem().contains("24")); //$NON-NLS-1$
+                FormEditingSession.Edit edit = session.edit("set_property", Map.of( //$NON-NLS-1$
+                    "property", "title", "value", "Проба")); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                assertFalse(edit.done);
+                FormEditingSession.Save save = session.save();
+                assertFalse(save.written);
+
+                probe.restore();
+                FormEditingSession.Reconciliation back = session.reconcile();
+                assertEquals(FormEditingSession.Reconciliation.REREAD, back.outcome);
+                assertFalse("a measured container ends the read-only", session.readOnly()); //$NON-NLS-1$
+                assertNull(session.problem());
+                assertTrue(theTitleEdit(session).done);
+            }
+            finally
+            {
+                OpenFormSessions.release(session);
+            }
+        }
+        finally
+        {
+            probe.restore();
+        }
+    }
+
     /** An edit that meets a file the session has not seen does not edit over it. */
     @Test
     public void anEditAtAForeignFileReconcilesInsteadOfEditing() throws Exception

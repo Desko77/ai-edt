@@ -83,10 +83,19 @@ public final class OpenFormSessions
             return;
         }
         held.session = null;
-        if (held.lock.tryLock() && held.lock.getQueueLength() == 0)
+        if (held.lock.tryLock())
         {
-            held.lock.unlock();
-            BY_FILE.remove(keyOf(session.file()));
+            try
+            {
+                if (held.lock.getQueueLength() == 0)
+                {
+                    BY_FILE.remove(keyOf(session.file()));
+                }
+            }
+            finally
+            {
+                held.lock.unlock();
+            }
         }
     }
 
