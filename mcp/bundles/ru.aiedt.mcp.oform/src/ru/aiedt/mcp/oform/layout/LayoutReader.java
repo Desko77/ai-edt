@@ -135,6 +135,11 @@ public final class LayoutReader
             {
                 layout.title = localized(head.get(0));
             }
+            if (body.size() >= 5 && intOf(body.get(3)) != null && intOf(body.get(4)) != null)
+            {
+                layout.width = intOf(body.get(3));
+                layout.height = intOf(body.get(4));
+            }
             ListNode rootPanel = body.size() > 2 ? asList(body.get(2)) : null;
             if (rootPanel != null && rootPanel.size() >= 2 && PANEL_TYPE.equalsIgnoreCase(tokenText(rootPanel.get(0))))
             {

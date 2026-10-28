@@ -63,7 +63,7 @@ public final class StandardActions
         public ListNode freshRecord()
         {
             ListNode node = BraceTree.parse(record);
-            CommandPanels.substitute(node, "@U", new BraceTree.Token(java.util.UUID.randomUUID().toString())); //$NON-NLS-1$
+            CommandPanels.substitute(node, "@U", new BraceTree.Token(LayoutIds.next())); //$NON-NLS-1$
             return node;
         }
     }
