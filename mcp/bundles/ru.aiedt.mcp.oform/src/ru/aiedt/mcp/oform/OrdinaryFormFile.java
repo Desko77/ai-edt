@@ -109,7 +109,7 @@ public final class OrdinaryFormFile
      * @param asRead the bytes the container was read from
      * @return the file
      */
-    static OrdinaryFormFile of(Path path, V8Container container, byte[] asRead)
+    public static OrdinaryFormFile of(Path path, V8Container container, byte[] asRead)
     {
         return new OrdinaryFormFile(path, container, asRead);
     }

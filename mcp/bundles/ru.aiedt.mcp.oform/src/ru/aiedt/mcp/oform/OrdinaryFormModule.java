@@ -440,6 +440,28 @@ public final class OrdinaryFormModule
      */
     public boolean writeEntries(OrdinaryFormFile observed, String formText, String moduleText) throws IOException
     {
+        return writeEntriesReturning(observed, formText, moduleText).written;
+    }
+
+    /**
+     * Writes the two entries of the container and answers what the write left: whether it wrote,
+     * the bytes it wrote, and the file's modification stamp read right after the write. A caller
+     * that keeps its own baseline of the file - an editing session - makes those its next
+     * baseline inside the lock it holds over the write, so no reader can observe the file between
+     * the write and the baseline.
+     *
+     * @param observed the container as the caller read it, or {@code null} when the caller read
+     *        none and there is nothing to compare the file with
+     * @param formText the layout text as {@link BraceTree#serialize} writes it, or {@code null} to keep
+     * @param moduleText the module text, or {@code null} to keep
+     * @return what the write did; a write that changed nothing carries the file's bytes as they
+     *         are and its current stamp
+     * @throws IOException when the container cannot be read or written, no longer holds an
+     *         entry this write would replace, or is held by an editor with unsaved changes
+     */
+    public WriteOutcome writeEntriesReturning(OrdinaryFormFile observed, String formText, String moduleText)
+        throws IOException
+    {
         OrdinaryFormFile file = read();
         boolean changed = false;
         if (formText != null && !formText.equals(file.formText()))
@@ -464,7 +486,7 @@ public final class OrdinaryFormModule
         }
         if (!changed)
         {
-            return false;
+            return new WriteOutcome(false, file.toBytes(), container.getModificationStamp());
         }
         refuseWhileAnEditorHoldsUnsavedChanges(container);
         byte[] bytes = file.toBytes();
@@ -484,7 +506,27 @@ public final class OrdinaryFormModule
             throw new IOException(e.getMessage(), e);
         }
         remembered(file.moduleText());
-        return true;
+        return new WriteOutcome(true, bytes, container.getModificationStamp());
+    }
+
+    /** What a {@link #writeEntriesReturning} did: whether it wrote, and what the file holds now. */
+    public static final class WriteOutcome
+    {
+        /** Whether the container was written. */
+        public final boolean written;
+
+        /** The bytes the write put into the file, or the file's bytes when nothing was written. */
+        public final byte[] bytes;
+
+        /** The file's modification stamp read right after the write. */
+        public final long modificationStamp;
+
+        WriteOutcome(boolean written, byte[] bytes, long modificationStamp)
+        {
+            this.written = written;
+            this.bytes = bytes;
+            this.modificationStamp = modificationStamp;
+        }
     }
 
     /**

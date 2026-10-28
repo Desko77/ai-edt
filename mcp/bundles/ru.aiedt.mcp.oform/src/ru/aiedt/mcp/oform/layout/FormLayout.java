@@ -686,7 +686,7 @@ public final class FormLayout
      * @param localized language to text; may be {@code null} or empty
      * @return a string, a map, or {@code null}
      */
-    static Object text(Map<String, String> localized)
+    public static Object text(Map<String, String> localized)
     {
         if (localized == null || localized.isEmpty())
         {
