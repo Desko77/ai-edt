@@ -512,21 +512,9 @@ public final class LayoutReader
         {
             return null;
         }
-        int[] path;
-        switch (type)
+        int[] path = PropertyApplicability.captionPath(type);
+        if (path == null)
         {
-        case "Label": //$NON-NLS-1$
-        case "Button": //$NON-NLS-1$
-        case "Group": //$NON-NLS-1$
-            path = new int[] { 1, 2 };
-            break;
-        case "CheckBox": //$NON-NLS-1$
-            path = new int[] { 1, 0, 2 };
-            break;
-        case "RadioBtn": //$NON-NLS-1$
-            path = new int[] { 2, 0, 2 };
-            break;
-        default:
             return null;
         }
         Node node = own;

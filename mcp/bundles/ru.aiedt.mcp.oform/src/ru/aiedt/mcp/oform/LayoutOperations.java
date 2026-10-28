@@ -169,7 +169,7 @@ public final class LayoutOperations
      * @param params the tool arguments
      * @return the answer as JSON
      */
-    static String run(OperationSpec spec, IProject project, Map<String, String> params)
+    public static String run(OperationSpec spec, IProject project, Map<String, String> params)
     {
         String formFqn = JsonUtils.extractStringArgument(params, "formFqn"); //$NON-NLS-1$
         String modulePath = JsonUtils.extractStringArgument(params, "modulePath"); //$NON-NLS-1$
