@@ -6,11 +6,19 @@
 
 package ru.aiedt.mcp.server.wire;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 
 /**
  * Covers the base-protocol methods this server answered with method-not-found until now.
@@ -29,6 +37,16 @@ public class ProtocolBaseMethodsTest
         String body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"" + method + "\"" //$NON-NLS-1$ //$NON-NLS-2$
             + (params == null ? "" : ",\"params\":" + params) + "}"; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         return new McpRequestRouter().processRequest(body);
+    }
+
+    private static JsonObject resultOf(String answer)
+    {
+        return JsonParser.parseString(answer).getAsJsonObject().getAsJsonObject("result"); //$NON-NLS-1$
+    }
+
+    private static JsonObject resultOfError(String answer)
+    {
+        return JsonParser.parseString(answer).getAsJsonObject().getAsJsonObject("error"); //$NON-NLS-1$
     }
 
     /**
@@ -68,6 +86,64 @@ public class ProtocolBaseMethodsTest
     }
 
     /**
+     * The route document is part of the listing, with the mime type a markdown reader expects.
+     * <p>
+     * It is listed even when no check write-up is packaged: the guidance document is assembled from
+     * code and does not depend on those files, so an empty checks folder must not hide it.
+     * </p>
+     */
+    @Test
+    public void theGuidanceDocumentIsListedAsMarkdown()
+    {
+        JsonArray resources = resultOf(call("resources/list", null)).getAsJsonArray("resources"); //$NON-NLS-1$
+        JsonObject guidance = null;
+        for (int i = 0; i < resources.size(); i++)
+        {
+            JsonObject candidate = resources.get(i).getAsJsonObject();
+            if (McpServerMeta.RESOURCE_GUIDANCE.equals(candidate.get("uri").getAsString())) //$NON-NLS-1$
+            {
+                guidance = candidate;
+            }
+        }
+
+        assertNotNull("resources/list has to advertise " + McpServerMeta.RESOURCE_GUIDANCE //$NON-NLS-1$
+            + ": " + resources, guidance); //$NON-NLS-1$
+        assertEquals("text/markdown", guidance.get("mimeType").getAsString()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * Reading the route document hands back the plugin's own version and the preset in force, not a
+     * copy of either frozen into the build.
+     */
+    @Test
+    public void theGuidanceDocumentCarriesTheVersionAndThePreset()
+    {
+        String answer = call("resources/read", //$NON-NLS-1$
+            "{\"uri\":\"" + McpServerMeta.RESOURCE_GUIDANCE + "\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(answer, 1, resultOf(answer).getAsJsonArray("contents").size()); //$NON-NLS-1$
+        String text = resultOf(answer).getAsJsonArray("contents").get(0).getAsJsonObject() //$NON-NLS-1$
+            .get("text").getAsString(); //$NON-NLS-1$
+
+        assertTrue("the document must name the installed version: " + text, //$NON-NLS-1$
+            text.contains(McpServerMeta.PLUGIN_VERSION));
+        assertTrue("the document must name the active preset: " + text, //$NON-NLS-1$
+            text.contains(ToolSettingsStore.getInstance().getActivePreset().getDisplayName()));
+    }
+
+    /** A deeper path under the guidance address is an unknown resource, not a sub-page. */
+    @Test
+    public void aNestedGuidanceUriIsRefusedByName()
+    {
+        String answer = call("resources/read", //$NON-NLS-1$
+            "{\"uri\":\"" + McpServerMeta.RESOURCE_GUIDANCE + "/x\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertEquals(answer, McpServerMeta.ERROR_INVALID_PARAMS, //$NON-NLS-1$
+            resultOfError(answer).get("code").getAsInt()); //$NON-NLS-1$
+        assertTrue(answer, answer.contains(McpServerMeta.RESOURCE_GUIDANCE)); //$NON-NLS-1$
+        assertFalse("a refusal must not hand back a document", answer.contains("\"contents\"")); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
      * A read without a uri is refused for that reason, not answered with an empty document.
      * <p>
      * An empty document reads as "this resource is empty", which is a different and untrue claim.
@@ -83,7 +159,7 @@ public class ProtocolBaseMethodsTest
             answer.contains("-32602")); //$NON-NLS-1$
     }
 
-    /** A uri under no scheme this server serves is named as such. */
+    /** A uri under no scheme this server serves is named as such, with both families named. */
     @Test
     public void aUriThisServerDoesNotServeIsNamed()
     {
@@ -92,6 +168,8 @@ public class ProtocolBaseMethodsTest
         assertTrue(answer, answer.contains("-32602")); //$NON-NLS-1$
         assertTrue("the refusal must say what IS served: " + answer, //$NON-NLS-1$
             answer.contains("aiedt://checks/")); //$NON-NLS-1$
+        assertTrue("and it must name the route document too: " + answer, //$NON-NLS-1$
+            answer.contains(McpServerMeta.RESOURCE_GUIDANCE));
         assertFalse("and must not hand back a document", answer.contains("\"contents\"")); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
