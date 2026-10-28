@@ -756,7 +756,7 @@ public final class LayoutEditor
         fill(record, id, name, box, 0, null, null, null);
         for (int i = 0; i < 7; i++)
         {
-            String uuid = java.util.UUID.randomUUID().toString();
+            String uuid = LayoutIds.next();
             substitute(record, "@U" + i, () -> new Token(uuid)); //$NON-NLS-1$
         }
         substitute(record, "@OK", () -> LayoutReader.localizedNode(language, "OK")); //$NON-NLS-1$ //$NON-NLS-2$
