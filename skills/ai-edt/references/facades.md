@@ -562,7 +562,10 @@ generation switched on. It is off by default on a freshly made project, and then
 with nothing open. The launch refuses and names the project; `enableExternalObjectDump=true` turns
 it on for that project and goes ahead. That write is gated by the `launch_debugger_writes` door:
 under Read-only, Debug & Test and Code Review `enableExternalObjectDump=true` is refused before
-anything starts, and `false` or no argument launches as before.
+anything starts, with `enableExternalObjectDump: "blocked by preset"` and
+`nothingWasLaunchedOrUpdated`; `false` or no argument launches as before. An Attach configuration
+named in `launchConfigurationName` starts no client, so `externalObjectName` and
+`externalObjectProject` are refused there with `attach: true` and `nothingWasLaunchedOrUpdated`.
 
 `debugServerPort` gives this launch its own debug server port (1..65535). One machine has one
 default port between all the environments running on it, and the second one to start debugging is
