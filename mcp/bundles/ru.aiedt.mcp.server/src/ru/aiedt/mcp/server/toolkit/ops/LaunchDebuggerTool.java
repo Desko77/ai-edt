@@ -12,8 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 import ru.aiedt.mcp.server.support.FacadeHelpSearch;
+import ru.aiedt.mcp.server.support.GateCheck;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
-import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
@@ -260,6 +260,24 @@ public class LaunchDebuggerTool implements IMcpTool
             ? DebugSessionStarter.NAME : null;
     }
 
+    /**
+     * The preset checks {@link #execute} applies to an action, in the order it applies them.
+     * <p>
+     * Keyed on the folded tool's name, which for most actions is the action itself and for the rest
+     * is what {@link #canonicalName} says - this facade renamed several of them, and gating the
+     * shorter spelling would leave the longer one an open door. The method is public because the
+     * route guidance reads the same list the call runs, and it lives in another package.
+     * </p>
+     *
+     * @param operation the normalized action name; may be {@code null}
+     * @return the checks, never {@code null}; empty when there is no action to check
+     */
+    public static List<GateCheck> gateChecksOf(String operation)
+    {
+        return operation == null ? Collections.emptyList()
+            : Collections.singletonList(GateCheck.preset(canonicalName(operation)));
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
@@ -274,10 +292,11 @@ public class LaunchDebuggerTool implements IMcpTool
         // Keyed on the folded tool's name, which for most actions is the action itself and for the
         // rest is what CANONICAL_NAMES says - this facade renamed several of them, and gating the
         // shorter spelling would leave the longer one an open door.
-        String presetGate = ToolGate.gateIfPresetDisabled(canonicalName(action));
-        if (presetGate != null)
+        List<GateCheck> gateChecks = gateChecksOf(action);
+        String gateRefusal = GateCheck.firstRefusal(gateChecks);
+        if (gateRefusal != null)
         {
-            return ToolResult.error(presetGate).put("action", action).toJson(); //$NON-NLS-1$
+            return ToolResult.error(gateRefusal).put("action", action).toJson(); //$NON-NLS-1$
         }
         switch (action)
         {
