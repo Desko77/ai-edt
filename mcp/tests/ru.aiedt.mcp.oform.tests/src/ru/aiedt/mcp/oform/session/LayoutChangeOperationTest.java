@@ -48,7 +48,9 @@ import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceWriter;
  * the module; an undo over a foreign write reconciles instead of editing a stale baseline; a
  * clean session and the agent's write lose nothing in either order; a gesture is one record;
  * two handler bindings in one gesture both keep their stubs; an undo stops when that
- * reconciliation has already cleared the history.
+ * reconciliation has already cleared the history; the undo of a stub that created the module
+ * entry is refused once the save has fixed that entry in the container, while before any save
+ * it returns the absent entry and the redo brings the stub back.
  */
 public class LayoutChangeOperationTest
 {
@@ -705,6 +707,109 @@ public class LayoutChangeOperationTest
         finally
         {
             probe.restore();
+        }
+    }
+
+    /**
+     * A container that carries no module entry: a handler stub creates the entry, the save
+     * writes it into the container, and the undo of that record is then refused. The undo
+     * would put the session on a module entry that no longer exists while the baseline - the
+     * bytes the save left - holds the created one, and no write of the editor removes a
+     * module entry. A refusal keeps the record on the undo stack and the session on the
+     * saved texts; it does not answer success while holding the saved module as though it
+     * were the state from before the change, which left no redo.
+     */
+    @Test
+    public void anUndoOfASavedCreatedModuleEntryIsRefused() throws Exception
+    {
+        String layout = SessionProbe.fixture("fixtures/panel-table-form-v27.form"); //$NON-NLS-1$
+        SessionProbe moduleless = SessionProbe.withModuleless(PROJECT + "NoModule", layout); //$NON-NLS-1$
+        try
+        {
+            FormEditingSession session = OpenFormSessions.open(moduleless.file());
+            try
+            {
+                assertNull(session.currentModuleText());
+                edit(session, "bind_handler", "elementName", table, "event", "ПриАктивизацииСтроки", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                    "procedure", "ТаблицаПриАктивизацииСтроки", "stub", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                assertTrue(session.moduleChanged());
+                String stub = session.currentModuleText();
+                assertTrue(stub, stub.contains("Процедура ТаблицаПриАктивизацииСтроки")); //$NON-NLS-1$
+                FormEditingSession.Save save = session.save();
+                assertTrue(String.valueOf(save.reconciliation), save.written);
+                assertFalse(session.moduleChanged());
+                byte[] saved = moduleless.bytes();
+                FormEditingSession.Reversal reversal = session.undo();
+                assertFalse(reversal.message, reversal.done);
+                assertTrue(reversal.message, reversal.message.contains("module entry")); //$NON-NLS-1$
+                assertNull(reversal.reconciliation);
+                assertEquals(stub, session.currentModuleText());
+                assertTrue(handlerBound(session.snapshot(), table, "ПриАктивизацииСтроки", //$NON-NLS-1$
+                    "ТаблицаПриАктивизацииСтроки")); //$NON-NLS-1$
+                assertTrue(session.canUndo());
+                assertEquals(1, session.undoRecords().length);
+                FormEditingSession.Reversal redo = session.redo();
+                assertFalse(redo.done);
+                assertFalse(session.canRedo());
+                assertArrayEquals("the refused undo wrote nothing", saved, moduleless.bytes()); //$NON-NLS-1$
+            }
+            finally
+            {
+                OpenFormSessions.release(session);
+            }
+        }
+        finally
+        {
+            moduleless.dispose();
+        }
+    }
+
+    /**
+     * The same record over the same moduleless container, undone before any save: the module
+     * entry the stub created is the session's own edit, the baseline still holds no entry, so
+     * the undo returns the absent entry, the session is clean, a save writes nothing, and the
+     * redo brings the stub back.
+     */
+    @Test
+    public void anUndoBeforeASaveReturnsTheAbsentModuleEntry() throws Exception
+    {
+        String layout = SessionProbe.fixture("fixtures/panel-table-form-v27.form"); //$NON-NLS-1$
+        SessionProbe moduleless = SessionProbe.withModuleless(PROJECT + "NoModuleUndo", layout); //$NON-NLS-1$
+        try
+        {
+            FormEditingSession session = OpenFormSessions.open(moduleless.file());
+            try
+            {
+                assertNull(session.currentModuleText());
+                edit(session, "bind_handler", "elementName", table, "event", "ПриАктивизацииСтроки", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                    "procedure", "ТаблицаПриАктивизацииСтроки", "stub", "true"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+                String stub = session.currentModuleText();
+                FormEditingSession.Reversal undone = session.undo();
+                assertTrue(undone.message, undone.done);
+                assertNull(session.currentModuleText());
+                assertFalse(session.moduleChanged());
+                assertFalse(handlerBound(session.snapshot(), table, "ПриАктивизацииСтроки", //$NON-NLS-1$
+                    "ТаблицаПриАктивизацииСтроки")); //$NON-NLS-1$
+                assertFalse(session.isDirty());
+                FormEditingSession.Save save = session.save();
+                assertFalse(save.written);
+                assertArrayEquals("the undo wrote nothing", moduleless.original(), moduleless.bytes()); //$NON-NLS-1$
+                FormEditingSession.Reversal redone = session.redo();
+                assertTrue(redone.message, redone.done);
+                assertEquals(stub, session.currentModuleText());
+                assertTrue(session.moduleChanged());
+                assertTrue(handlerBound(session.snapshot(), table, "ПриАктивизацииСтроки", //$NON-NLS-1$
+                    "ТаблицаПриАктивизацииСтроки")); //$NON-NLS-1$
+                assertEquals(1, session.undoRecords().length);
+            }
+            finally
+            {
+                OpenFormSessions.release(session);
+            }
+        }
+        finally
+        {
+            moduleless.dispose();
         }
     }
 

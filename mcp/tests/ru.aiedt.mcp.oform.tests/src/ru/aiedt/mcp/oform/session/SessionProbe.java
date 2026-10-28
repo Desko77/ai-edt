@@ -65,6 +65,34 @@ final class SessionProbe
         V8Container v8 = V8Container.empty();
         v8.add(V8Container.Entry.of(OrdinaryFormFile.FORM_ENTRY, withBom(layoutText)));
         v8.add(V8Container.Entry.of(OrdinaryFormFile.MODULE_ENTRY, withBom(module)));
+        return built(projectName, v8);
+    }
+
+    /**
+     * Builds a project around one fixture whose container carries no module entry.
+     *
+     * @param projectName the project's name, unique in the workspace
+     * @param layoutText the layout text the container opens with
+     * @return the probe
+     * @throws Exception when the project cannot be built
+     */
+    static SessionProbe withModuleless(String projectName, String layoutText) throws Exception
+    {
+        V8Container v8 = V8Container.empty();
+        v8.add(V8Container.Entry.of(OrdinaryFormFile.FORM_ENTRY, withBom(layoutText)));
+        return built(projectName, v8);
+    }
+
+    /**
+     * Creates the throwaway project and writes the prepared container into it.
+     *
+     * @param projectName the project's name, unique in the workspace
+     * @param v8 the container the form opens with
+     * @return the probe
+     * @throws Exception when the project cannot be built
+     */
+    private static SessionProbe built(String projectName, V8Container v8) throws Exception
+    {
         byte[] original = v8.write();
         Path root = Files.createTempDirectory("aiedt-oform-session"); //$NON-NLS-1$
         Path form = root.resolve(projectName).resolve("src/Catalogs/Products/Forms/ItemForm"); //$NON-NLS-1$

@@ -84,7 +84,9 @@ import ru.aiedt.mcp.oform.ops.OperationsCatalog;
  *
  * <p>Each edit that changes a text is one record of the workspace operation history, on this
  * session's own undo context. Undo and redo run under the same lock and put back only the
- * entries that record touched. The history is disposed when the last editor closes, when the
+ * entries that record touched; a record whose side is the module entry's absence is not
+ * applied while the baseline holds that entry, for no write of this editor removes a module
+ * entry from the container. The history is disposed when the last editor closes, when the
  * layout is reread, and when a foreign module write meets a record that touched the module.</p>
  */
 public final class FormEditingSession
@@ -1030,6 +1032,17 @@ public final class FormEditingSession
             String which = undoing ? "undo" : "redo"; //$NON-NLS-1$ //$NON-NLS-2$
             return LayoutChangeOperation.notDone(IStatus.ERROR,
                 which + " is not available: the text is not the one this operation left"); //$NON-NLS-1$
+        }
+        // The side to restore is the module entry's absence, which is not the same as the
+        // absence of a change: a save has fixed the entry in the baseline, and holding the
+        // saved text as though it were that state would answer an undo that restored nothing.
+        // No write of this editor removes a module entry, so the step is not available.
+        if (operation.restoresAnAbsentModule(undoing) && baseModule != null)
+        {
+            String which = undoing ? "undo" : "redo"; //$NON-NLS-1$ //$NON-NLS-2$
+            return LayoutChangeOperation.notDone(IStatus.ERROR, which + " is not available: the module entry this " //$NON-NLS-1$
+                + "change " + (undoing ? "created" : "removed") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                + " is in the saved baseline, and no write of the editor removes a module entry"); //$NON-NLS-1$
         }
         Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
         operation.apply(undoing);
