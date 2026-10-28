@@ -258,8 +258,12 @@ public class TheToolListHasAWeightBudgetTest
      * And from 193260 to 193342 for the empty edgeKinds sentence on the dependency_graph and
      * insights schemas. Measured 15.10: 193342.
      * </p>
+     * <p>
+     * And from 193342 to 193361 for the sentence on enableExternalObjectDump that a preset which
+     * blocks writing refuses true. Measured 25.10: 193361.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 193342;
+    private static final int DOCUMENT_BUDGET = 193361;
 
     private LiveServer server;
 

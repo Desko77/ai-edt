@@ -69,7 +69,7 @@ public class PresetWriteBlockingTest
             // here, the catalogue keeps that mixed tool callable for its reads under these
             // presets; left out, the only barrier left is the whole-tool refusal and the reads
             // go with the writes.
-            "ordinary_forms_writes",
+            "ordinary_forms_writes", "launch_debugger_writes",
             // The installYaxunit pre-step of yaxunit_tests writes the infobase through this name,
             // and the one write-blocking preset that keeps the facade on (Debug & Test) keeps the
             // whole applications group on as well - the name is disabled by hand there or the

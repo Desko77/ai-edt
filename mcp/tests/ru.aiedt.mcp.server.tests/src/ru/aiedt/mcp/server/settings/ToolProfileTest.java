@@ -281,14 +281,14 @@ public class ToolProfileTest
     public void everyDisabledNameInEveryPresetBelongsToAGroup()
     {
         // A name no group claims can never be switched off anyway, so listing it in a preset is a
-        // dead entry. Catch drift here. The constructor doors are the one deliberate exception:
-        // capability names registered nowhere, which a preset disables so the facade that carries
+        // dead entry. Catch drift here. The write doors are the one deliberate exception:
+        // capability names registered nowhere, which a preset disables so the tool that carries
         // them can refuse its writes by asking ToolGate - the exception is written out here by
-        // hand, not read back from ToolProfile, so a fourth ungrouped name still fails.
+        // hand, not read back from ToolProfile, so an ungrouped name missing from it still fails.
         Set<String> capabilityDoors = Set.of("edit_form_writes", "edit_metadata_writes", //$NON-NLS-1$ //$NON-NLS-2$
             "dcs_workshop_writes", "mxl_workshop_writes", "xdto_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "external_object_workshop_writes", "external_data_source_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$
-            "ordinary_forms_writes"); //$NON-NLS-1$
+            "ordinary_forms_writes", "launch_debugger_writes"); //$NON-NLS-1$ //$NON-NLS-2$
         for (ToolProfile preset : ToolProfile.values())
         {
             Set<String> disabled = preset.getDisabledTools();
