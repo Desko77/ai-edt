@@ -65,7 +65,7 @@ public final class AgentGuidance
             + "compatibility tool names from tools/list while they remain callable; a name absent " //$NON-NLS-1$
             + "from the list is not necessarily off. A refusal on one argument does not mean the " //$NON-NLS-1$
             + "whole tool or the environment is unavailable: read the refusal text and the facade " //$NON-NLS-1$
-            + "help. Data of a running infobase is not served by this server."; //$NON-NLS-1$
+            + "help. For data of a running infobase, use HTTP tools outside this server."; //$NON-NLS-1$
 
     /** The phrase a boundary outside this server carries, and nothing else can carry it. */
     public static final String NOT_SERVED = "not served here"; //$NON-NLS-1$
