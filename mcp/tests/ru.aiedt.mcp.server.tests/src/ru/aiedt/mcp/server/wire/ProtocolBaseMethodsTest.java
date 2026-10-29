@@ -233,8 +233,11 @@ public class ProtocolBaseMethodsTest
                 assertTrue(discovery.length() <= 1200);
                 assertFalse(discovery.contains("Tool preset:"));
                 assertFalse(discovery.contains("matchPreset"));
-                assertFalse(discovery.contains("[available]"));
-                assertFalse(discovery.contains("[unavailable]"));
+                // The marks the route document computes at read time, in the shapes it prints them.
+                assertFalse(discovery.contains("available via"));
+                assertFalse(discovery.contains("hidden, callable"));
+                assertFalse(discovery.contains("off by preset"));
+                assertFalse(discovery.contains("off: "));
                 for (String version : McpServerMeta.HANDSHAKE_PROTOCOL_VERSIONS)
                 {
                     JsonObject result = resultOf(call("initialize", "{\"protocolVersion\":\"" + version
