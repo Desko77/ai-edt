@@ -71,20 +71,17 @@ public class ClientSessionStarter
     @Override
     public String getDescription()
     {
-        return "Start a 1C:Enterprise client from an EDT launch configuration, without a debugger. " //$NON-NLS-1$
-            + "Use this instead of building a 1cv8.exe command line: the client comes up with the " //$NON-NLS-1$
-            + "runtime version, infobase, client type and user the IDE is configured for. Identify " //$NON-NLS-1$
-            + "the configuration by launchConfigurationName (as returned by list_configurations), or " //$NON-NLS-1$
-            + "let it be resolved from projectName plus applicationId - when that pair has no " //$NON-NLS-1$
-            + "configuration yet, one is created and saved. A configuration whose default run mode " //$NON-NLS-1$
-            + "is the ordinary application starts in the thick client with " //$NON-NLS-1$
-            + "/RunModeOrdinaryApplication among the infobase's additional launch parameters " //$NON-NLS-1$
-            + "for this EDT session; " //$NON-NLS-1$
-            + "clientType and runMode override the choice. Set updateBeforeLaunch=true to " //$NON-NLS-1$
-            + "bring the infobase up to date first. A configuration whose client is already running " //$NON-NLS-1$
-            + "is reported rather than started twice; pass allowSecondSession=true to start another " //$NON-NLS-1$
-            + "anyway. To debug instead, use launch_debugger action=launch; to stop a client, " //$NON-NLS-1$
-            + "launch_debugger action=terminate."; //$NON-NLS-1$
+        return "Start a 1C:Enterprise client from a saved EDT launch configuration, with that " //$NON-NLS-1$
+            + "configuration's attributes, without a debugger. Use this instead of a 1cv8.exe " //$NON-NLS-1$
+            + "command line. Dump readiness is not checked here. An external object under debug " //$NON-NLS-1$
+            + "is launch_debugger action=launch with externalObjectName. Identify the " //$NON-NLS-1$
+            + "configuration by launchConfigurationName (from list_configurations), or by " //$NON-NLS-1$
+            + "projectName plus applicationId; a missing pair is created and saved. clientType " //$NON-NLS-1$
+            + "and runMode override the configuration. updateBeforeLaunch defaults to false. A " //$NON-NLS-1$
+            + "client already running with no startupOption, waitForEndpoint, clientType or " //$NON-NLS-1$
+            + "runMode answers alreadyRunning (started=false); those overrides are refused, and " //$NON-NLS-1$
+            + "allowSecondSession=true starts another. Stop it with launch_debugger " //$NON-NLS-1$
+            + "action=terminate."; //$NON-NLS-1$
     }
 
     @Override
@@ -98,14 +95,17 @@ public class ClientSessionStarter
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application to resolve the configuration from, together with projectName.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "Update the infobase before starting (default false).") //$NON-NLS-1$
+                "Update before starting (default false). Explicit true is refused when a preset " //$NON-NLS-1$
+                    + "disabled update_database. A running client with no startupOption, " //$NON-NLS-1$
+                    + "waitForEndpoint, clientType or runMode answers alreadyRunning " //$NON-NLS-1$
+                    + "(started=false) before that gate.") //$NON-NLS-1$
             .booleanProperty("allowSecondSession", //$NON-NLS-1$
                 "Start even when this configuration already has a client running (default false).") //$NON-NLS-1$
             .stringProperty("startupOption", //$NON-NLS-1$
-                "The /C startup string for the client that starts, written to this launch's own " //$NON-NLS-1$
-                    + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
-                    + "external processor or report receives its parameters. Refused while the " //$NON-NLS-1$
-                    + "configuration's client is already running - that one was not started with it.") //$NON-NLS-1$
+                "The /C startup string only, written to this launch's own configuration copy; the " //$NON-NLS-1$
+                    + "saved configuration is not changed. An external-object binding and /Execute " //$NON-NLS-1$
+                    + "are set by the environment from that configuration, not by this argument. " //$NON-NLS-1$
+                    + "Refused while its client is already running.") //$NON-NLS-1$
             .stringProperty("clientType", //$NON-NLS-1$
                 "The client to start: thin, thick or web. Omitted: the launch configuration's " //$NON-NLS-1$
                     + "own, thin for a configuration created here - and thick whenever the run " //$NON-NLS-1$

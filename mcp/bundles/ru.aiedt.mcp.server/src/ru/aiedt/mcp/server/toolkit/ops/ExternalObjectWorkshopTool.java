@@ -55,14 +55,12 @@ public class ExternalObjectWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Create External Data Processor / External Report DT projects (which edit_metadata " //$NON-NLS-1$
-            + "create_object cannot - they are standalone DT projects, not configuration objects). " //$NON-NLS-1$
-            + "operation=create (kind=ExternalDataProcessor|ExternalReport, name, parentProjectName?): " //$NON-NLS-1$
-            + "scaffolds the DT project and its root object via EDT's external-object project manager. " //$NON-NLS-1$
-            + "After create, fill the root object (FQN ExternalDataProcessor.<name> / ExternalReport.<name>) " //$NON-NLS-1$
-            + "with edit_metadata (add_object_attribute / add_tabular_section / add_template / create_form) " //$NON-NLS-1$
-            + "and edit_form, write its ObjectModule with write_module_source, then build the .epf/.erf with " //$NON-NLS-1$
-            + "export_object. No manual file editing needed."; //$NON-NLS-1$
+        return "Create an External Data Processor or External Report project (edit_metadata " //$NON-NLS-1$
+            + "create_object cannot: they are standalone projects). operation=create (kind, name, " //$NON-NLS-1$
+            + "optional parentProjectName) scaffolds the project and its root object. Fill it with " //$NON-NLS-1$
+            + "edit_metadata and write_module_source, then export_object builds the .epf/.erf. " //$NON-NLS-1$
+            + "import_external_object puts a ready .epf/.erf into an existing " //$NON-NLS-1$
+            + "V8ExternalObjectsNature container; open it with launch_debugger action=launch."; //$NON-NLS-1$
     }
 
     @Override

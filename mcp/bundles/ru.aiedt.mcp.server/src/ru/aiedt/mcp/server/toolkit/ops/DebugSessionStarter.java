@@ -198,10 +198,11 @@ public final class DebugSessionStarter implements IMcpTool
                     + "environment refuses in a dialog. Zero: the environment decides. Attach " //$NON-NLS-1$
                     + "ignores it.") //$NON-NLS-1$
             .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
-                "Turn on dump generation for the external-object project when it is off. The " //$NON-NLS-1$
-                    + "environment opens such an object by building it, and with the setting off " //$NON-NLS-1$
-                    + "the client starts empty. Default false: the launch is refused instead, " //$NON-NLS-1$
-                    + "because this changes the project. A preset that blocks writing refuses true.", //$NON-NLS-1$
+                "Turn dump generation on in the external-object project's settings. With " //$NON-NLS-1$
+                    + "generation off the client starts with nothing open, so the launch is refused " //$NON-NLS-1$
+                    + "when the dump service answers; an unreachable dump service also refuses " //$NON-NLS-1$
+                    + "(Nothing was launched). true changes the project setting and is refused by " //$NON-NLS-1$
+                    + "the write door of a preset that blocks writing. Default false.", //$NON-NLS-1$
                 false)
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
@@ -215,10 +216,10 @@ public final class DebugSessionStarter implements IMcpTool
                     + "one object and its name is unambiguous in the workspace. Refused with an " //$NON-NLS-1$
                     + "Attach configuration.") //$NON-NLS-1$
             .stringProperty("startupOption", //$NON-NLS-1$
-                "The /C startup string for the client that starts, written to this launch's own " //$NON-NLS-1$
-                    + "configuration copy; the saved configuration is not changed. This is how an " //$NON-NLS-1$
-                    + "opened external object receives its parameters. An Attach configuration " //$NON-NLS-1$
-                    + "starts no client, so the argument is refused there.") //$NON-NLS-1$
+                "The /C startup string only, written to this launch's own configuration copy; the " //$NON-NLS-1$
+                    + "saved configuration is not changed. /Execute is set by the environment from " //$NON-NLS-1$
+                    + "externalObjectName, not by this argument. An Attach configuration starts no " //$NON-NLS-1$
+                    + "client, so the argument is refused there.") //$NON-NLS-1$
             .stringProperty("clientType", //$NON-NLS-1$
                 "The client to start: thin, thick or web. Omitted: the launch configuration's " //$NON-NLS-1$
                     + "own, thin for a configuration created here - and thick whenever the run " //$NON-NLS-1$
