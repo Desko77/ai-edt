@@ -18,6 +18,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.settings.PrefKeys;
+import ru.aiedt.mcp.server.settings.ToolProfile;
 import ru.aiedt.mcp.server.settings.ToolSettingsStore;
 
 /**
@@ -195,4 +198,59 @@ public class ProtocolBaseMethodsTest
         assertTrue(handshake.contains("\"tools\"")); //$NON-NLS-1$
         assertTrue(discovery.contains("\"tools\"")); //$NON-NLS-1$
     }
+
+    /**
+     * Both announcements carry the same guidance, whatever preset is in force.
+     * <p>
+     * {@code server/discover} is cached by the client, so the text may not depend on the current
+     * sets: it is built under every named preset and has to come out the same, without the marks
+     * the route document computes or the preset line it prints.
+     * </p>
+     */
+    @Test
+    public void announcementsCarryTheSamePresetIndependentGuidance()
+    {
+        var store = Activator.getDefault().getPreferenceStore();
+        String preset = store.getString(PrefKeys.PREF_TOOL_PRESET);
+        String disabled = store.getString(PrefKeys.PREF_DISABLED_TOOLS);
+        String unlisted = store.getString(PrefKeys.PREF_UNLISTED_TOOLS);
+        try
+        {
+            String expected = null;
+            int count = 0;
+            for (ToolProfile profile : ToolProfile.values())
+            {
+                if (profile == ToolProfile.CUSTOM)
+                    continue;
+                count++;
+                ToolSettingsStore.getInstance().applyPreset(profile);
+                String discovery = resultOf(call("server/discover", null)).get("instructions").getAsString();
+                if (expected == null)
+                    expected = discovery;
+                assertEquals(expected, discovery);
+                assertTrue(discovery.contains("aiedt://guidance"));
+                assertTrue(discovery.contains("HTTP"));
+                assertTrue(discovery.length() <= 1200);
+                assertFalse(discovery.contains("Tool preset:"));
+                assertFalse(discovery.contains("matchPreset"));
+                assertFalse(discovery.contains("[available]"));
+                assertFalse(discovery.contains("[unavailable]"));
+                for (String version : McpServerMeta.HANDSHAKE_PROTOCOL_VERSIONS)
+                {
+                    JsonObject result = resultOf(call("initialize", "{\"protocolVersion\":\"" + version
+                        + "\",\"capabilities\":{}}"));
+                    assertEquals(version, result.get("protocolVersion").getAsString());
+                    assertEquals(discovery, result.get("instructions").getAsString());
+                }
+            }
+            assertEquals(6, count);
+        }
+        finally
+        {
+            store.setValue(PrefKeys.PREF_DISABLED_TOOLS, disabled);
+            store.setValue(PrefKeys.PREF_UNLISTED_TOOLS, unlisted);
+            store.setValue(PrefKeys.PREF_TOOL_PRESET, preset);
+        }
+    }
+
 }

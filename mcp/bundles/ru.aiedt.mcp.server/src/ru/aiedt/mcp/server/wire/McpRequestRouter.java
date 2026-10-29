@@ -775,9 +775,7 @@ public class McpRequestRouter
     private static DiscoverResult buildDiscoverResult()
     {
         return new DiscoverResult(new ArrayList<>(McpServerMeta.SUPPORTED_PROTOCOL_VERSIONS),
-            "Works against a running 1C:EDT: BSL, metadata, managed forms, queries, validation, " //$NON-NLS-1$
-                + "debugging and the infobase. Every tool needs EDT open with the target project " //$NON-NLS-1$
-                + "loaded - there is no headless mode.", //$NON-NLS-1$
+            AgentGuidance.BRIEF,
             DISCOVER_TTL_MS, CACHE_SCOPE_PRIVATE);
     }
 
@@ -802,7 +800,7 @@ public class McpRequestRouter
                 : McpServerMeta.PROTOCOL_VERSION;
 
         return new InitializeResult(revision, McpServerMeta.SERVER_NAME, McpServerMeta.PLUGIN_VERSION,
-            McpServerMeta.AUTHOR, InstanceRegistry.selfTitle());
+            McpServerMeta.AUTHOR, InstanceRegistry.selfTitle(), AgentGuidance.BRIEF);
     }
 
     /**
