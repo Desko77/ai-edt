@@ -47,6 +47,7 @@ import ru.aiedt.mcp.server.support.ToolCallScope;
 import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.support.ToolRoad;
 import ru.aiedt.mcp.server.support.UiSync;
+import ru.aiedt.mcp.server.support.guidance.AgentGuidance;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 
@@ -673,11 +674,12 @@ public class McpRequestRouter
     /**
      * Names the documents this server can hand over.
      * <p>
-     * One family today: the write-up for each EDT validation check. They are worth addressing as
-     * resources rather than leaving behind a tool call because that is what they are - documents
-     * with stable names, read the same way every time and useful to a client that wants to show
-     * one to a person. The list is built from the same place {@code get_check_description} reads,
-     * so nothing can be listed here that cannot then be fetched.
+     * Two families today. The first is the write-up for each EDT validation check: documents with
+     * stable names, read the same way every time and useful to a client that wants to show one to a
+     * person. The list is built from the same place {@code get_check_description} reads, so nothing
+     * can be listed here that cannot then be fetched. The second is the single route document an
+     * agent reads before choosing a tool; it is assembled at read time, so it belongs in the list
+     * as one stable address rather than as a page per route.
      * </p>
      *
      * @return the listing, in the shape the specification asks for
@@ -685,6 +687,13 @@ public class McpRequestRouter
     private static Map<String, Object> buildResourcesList()
     {
         List<Map<String, Object>> resources = new ArrayList<>();
+        Map<String, Object> guidance = new LinkedHashMap<>();
+        guidance.put("uri", McpServerMeta.RESOURCE_GUIDANCE); //$NON-NLS-1$
+        guidance.put("name", "agent-guidance"); //$NON-NLS-1$ //$NON-NLS-2$
+        guidance.put("description", //$NON-NLS-1$
+            "Routes of this AI-EDT build: tasks, entry points, conditions and availability"); //$NON-NLS-1$
+        guidance.put("mimeType", "text/markdown"); //$NON-NLS-1$ //$NON-NLS-2$
+        resources.add(guidance);
         for (String checkId : CheckDocReader.listDocumentedChecks())
         {
             Map<String, Object> resource = new LinkedHashMap<>();
@@ -721,13 +730,27 @@ public class McpRequestRouter
         {
             return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS, "uri is required"); //$NON-NLS-1$
         }
+        if (McpServerMeta.RESOURCE_GUIDANCE.equals(uri))
+        {
+            // Built here rather than cached: availability is a photograph of the registry and the
+            // preset at this instant, and a cached one would teach yesterday's gates.
+            Map<String, Object> content = new LinkedHashMap<>();
+            content.put("uri", uri); //$NON-NLS-1$
+            content.put("mimeType", "text/markdown"); //$NON-NLS-1$ //$NON-NLS-2$
+            content.put("text", AgentGuidance.document()); //$NON-NLS-1$
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("contents", Collections.singletonList(content)); //$NON-NLS-1$
+            return answer(requestId, result, era);
+        }
         if (!uri.startsWith(McpServerMeta.RESOURCE_CHECKS))
         {
             // Named rather than answered with an empty document: a client that mistyped a uri and
-            // got back nothing would read it as a check with no write-up.
+            // got back nothing would read it as a check with no write-up. Both families are named,
+            // including when the uri is a deeper path under one of them.
             return failure(requestId, McpServerMeta.ERROR_INVALID_PARAMS,
                 "No resource is served under " + uri + ". This server serves " //$NON-NLS-1$ //$NON-NLS-2$
-                    + McpServerMeta.RESOURCE_CHECKS + "<check id>."); //$NON-NLS-1$
+                    + McpServerMeta.RESOURCE_CHECKS + "<check id> and " //$NON-NLS-1$
+                    + McpServerMeta.RESOURCE_GUIDANCE + "."); //$NON-NLS-1$
         }
         String checkId = uri.substring(McpServerMeta.RESOURCE_CHECKS.length());
         if (!CheckDocReader.hasCheckDocumentation(checkId))
