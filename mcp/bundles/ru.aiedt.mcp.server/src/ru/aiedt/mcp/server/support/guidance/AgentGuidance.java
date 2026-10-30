@@ -201,7 +201,8 @@ public final class AgentGuidance
             + "operation=import_external_object. The launch configuration has to be a client " //$NON-NLS-1$
             + "configuration: an Attach configuration opens no client and is refused when an external " //$NON-NLS-1$
             + "object is named. With dump generation off the launch is refused when the environment's " //$NON-NLS-1$
-            + "dump service answers; enableExternalObjectDump=true turns it on in the project's " //$NON-NLS-1$
+            + "dump service answers; an unreachable dump service also refuses. " //$NON-NLS-1$
+            + "enableExternalObjectDump=true turns it on in the project's " //$NON-NLS-1$
             + "settings, which is a project write and is refused by a preset that blocks writing. " //$NON-NLS-1$
             + "updateBeforeLaunch defaults to true; an unnamed argument under a preset " //$NON-NLS-1$
             + "without update_database launches without updating and says " //$NON-NLS-1$
@@ -221,7 +222,7 @@ public final class AgentGuidance
     private static final Route R4 = new Route("R4", "Check a 1C query before it runs", //$NON-NLS-1$ //$NON-NLS-2$
         List.of(E6), List.of(), List.of(), List.of(), List.of(), null, //$NON-NLS-1$
         "Call it before the query is executed against an infobase or written into code that " //$NON-NLS-1$
-            + "executes it. dcsMode=true checks a data composition schema; describeResult is skipped " //$NON-NLS-1$
+            + "executes it. dcsMode=true checks query text with data composition syntax; describeResult is skipped " //$NON-NLS-1$
             + "when the check reports errors."); //$NON-NLS-1$
 
     /** R5: the file event log of an infobase, and the boundary to live data. */

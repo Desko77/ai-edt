@@ -133,6 +133,19 @@ public class ProtocolBaseMethodsTest
             text.contains(ToolSettingsStore.getInstance().getActivePreset().getDisplayName()));
     }
 
+    /** The published routes describe refusal and the scope of DCS query validation. */
+    @Test
+    public void guidanceNamesDumpServiceRefusalAndDcsQuerySyntax()
+    {
+        String answer = call("resources/read", //$NON-NLS-1$
+            "{\"uri\":\"" + McpServerMeta.RESOURCE_GUIDANCE + "\"}"); //$NON-NLS-1$ //$NON-NLS-2$
+        String text = resultOf(answer).getAsJsonArray("contents").get(0).getAsJsonObject() //$NON-NLS-1$
+            .get("text").getAsString(); //$NON-NLS-1$
+        assertTrue(text, text.contains("unreachable dump service also refuses")); //$NON-NLS-1$
+        assertTrue(text, text.contains("dcsMode=true checks query text with data composition syntax")); //$NON-NLS-1$
+        assertFalse(text, text.contains("checks a data composition schema")); //$NON-NLS-1$
+    }
+
     /** A deeper path under the guidance address is an unknown resource, not a sub-page. */
     @Test
     public void aNestedGuidanceUriIsRefusedByName()
