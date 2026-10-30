@@ -68,10 +68,10 @@ public class QueryValidator
     {
         return "Validate 1C query text in a project, returning syntax and semantic errors with " //$NON-NLS-1$
             + "line numbers. Run it before the query is executed against an infobase and before " //$NON-NLS-1$
-            + "that query is written into code that executes it. dcsMode checks a data composition " //$NON-NLS-1$
-            + "schema. hints flags SQL keywords and УБЫВАНИЕ used instead of 1C QL, and is empty " //$NON-NLS-1$
-            + "when the query is correct. describeResult=true names each result table's columns " //$NON-NLS-1$
-            + "and types; an asterisk expands into the fields it stands for."; //$NON-NLS-1$
+            + "that query is written into code that executes it. dcsMode accepts data composition " //$NON-NLS-1$
+            + "(DCS) query syntax. hints flags SQL keywords and УБЫВАНИЕ used instead of 1C QL, " //$NON-NLS-1$
+            + "and is empty for a correct query. describeResult=true names each result table's " //$NON-NLS-1$
+            + "columns and types; an asterisk expands to its fields."; //$NON-NLS-1$
     }
 
     @Override

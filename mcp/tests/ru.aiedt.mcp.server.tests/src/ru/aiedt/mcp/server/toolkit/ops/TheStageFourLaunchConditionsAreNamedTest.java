@@ -45,12 +45,14 @@ public class TheStageFourLaunchConditionsAreNamedTest
         for (String schema : new String[] { facade, client })
         {
             require(schema, "saved configuration is not changed", "/Execute",
-                "alreadyRunning", "Explicit true is refused");
+                "external-object binding", "alreadyRunning", "Explicit true is refused",
+                "allowSecondSession");
         }
         require(facade, "/C only"); //$NON-NLS-1$
         require(client, "/C startup string only"); //$NON-NLS-1$
         require(new ClientSessionStarter().getDescription(), "1cv8.exe", "launch_debugger",
-            "Dump readiness is not checked", "externalObjectName", "alreadyRunning");
+            "saved EDT launch configuration", "attributes", "Dump readiness is not checked",
+            "externalObjectName", "alreadyRunning");
     }
 
     /**
@@ -61,15 +63,21 @@ public class TheStageFourLaunchConditionsAreNamedTest
     {
         String facade = new LaunchDebuggerTool().getInputSchema();
         require(facade, "/C only", "/Execute is set by the environment from externalObjectName",
-            "Nothing was launched", "write door", "import_external_object", "SKIPPED_BY_PRESET");
+            "saved configuration is not changed", "Nothing was launched", "Attach",
+            "client launch configuration", "external-object project", "import_external_object",
+            "SKIPPED_BY_PRESET", "default true", "write door of a preset that blocks writing");
         assertFalse("the facade schema must say the launch is refused, not that the client starts empty", //$NON-NLS-1$
             facade.contains("starts empty")); //$NON-NLS-1$
 
         String standalone = new DebugSessionStarter().getInputSchema();
-        require(standalone, "/Execute", "write door", "external_object_workshop",
-            "Nothing was launched", "unreachable dump service");
-        assertTrue("the standalone schema still says what an off dump would have opened", //$NON-NLS-1$
-            standalone.contains("nothing open") || standalone.contains("starts empty")); //$NON-NLS-1$ //$NON-NLS-2$
+        require(standalone, "/Execute", "write door of a preset that blocks writing",
+            "external_object_workshop", "Nothing was launched", "unreachable dump service",
+            "launch is refused", "rather than starting a client with nothing open",
+            "SKIPPED_BY_PRESET", "default true");
+        assertFalse("the standalone schema must not describe a client that starts without the object", //$NON-NLS-1$
+            standalone.contains("the client starts with nothing open")); //$NON-NLS-1$
+        assertFalse("the standalone schema must not promise an empty client", //$NON-NLS-1$
+            standalone.contains("starts empty")); //$NON-NLS-1$
     }
 
     /**
@@ -84,8 +92,12 @@ public class TheStageFourLaunchConditionsAreNamedTest
         String workflow = new LaunchDebuggerTool().execute(call);
 
         require(workflow, "externalObjectName", "externalObjectProject", "client configuration", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-            "Attach", "Nothing was launched", "dump service", "write door", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "Attach", "launches nothing", "when the dump service answers", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "unreachable dump service", "Nothing was launched", //$NON-NLS-1$ //$NON-NLS-2$
+            "write door of a preset that blocks writing", "changes the project setting", //$NON-NLS-1$ //$NON-NLS-2$
             "import_external_object", "enableExternalObjectDump"); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the dump setting is refused only by a preset that blocks writing", //$NON-NLS-1$
+            workflow.contains("is refused by the write door.")); //$NON-NLS-1$
     }
 
     /**
@@ -170,7 +182,10 @@ public class TheStageFourLaunchConditionsAreNamedTest
             "launch_debugger action=launch"); //$NON-NLS-1$
 
         String query = new QueryValidator().getDescription();
-        require(query, "before the query is executed", "written into code", "describeResult"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        require(query, "before the query is executed", "written into code", "describeResult", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "dcsMode accepts data composition (DCS) query syntax"); //$NON-NLS-1$
+        assertFalse("dcsMode parses the query text in DCS mode; it does not check a data " //$NON-NLS-1$
+            + "composition schema", query.contains("checks a data composition schema")); //$NON-NLS-1$
 
         for (String description : new String[] {
             new InfobaseAdminFacadeTool().getDescription(),

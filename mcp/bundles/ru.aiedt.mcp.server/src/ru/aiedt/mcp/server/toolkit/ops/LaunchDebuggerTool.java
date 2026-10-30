@@ -543,7 +543,8 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "launches nothing. Dump generation off refuses when the dump service answers; " //$NON-NLS-1$
                 + "an unreachable dump service also refuses (Nothing was launched). " //$NON-NLS-1$
                 + "enableExternalObjectDump=true changes the project setting and is refused by " //$NON-NLS-1$
-                + "the write door. A ready .epf/.erf is imported first via " //$NON-NLS-1$
+                + "the write door of a preset that blocks writing. A ready .epf/.erf is imported " //$NON-NLS-1$
+                + "first via " //$NON-NLS-1$
                 + "external_object_workshop operation=import_external_object.\n"); //$NON-NLS-1$
             return sb.toString();
         }

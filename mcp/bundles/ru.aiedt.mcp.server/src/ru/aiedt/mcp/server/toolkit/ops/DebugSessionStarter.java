@@ -199,10 +199,10 @@ public final class DebugSessionStarter implements IMcpTool
                     + "ignores it.") //$NON-NLS-1$
             .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
                 "Turn dump generation on in the external-object project's settings. With " //$NON-NLS-1$
-                    + "generation off the client starts with nothing open, so the launch is refused " //$NON-NLS-1$
-                    + "when the dump service answers; an unreachable dump service also refuses " //$NON-NLS-1$
-                    + "(Nothing was launched). true changes the project setting and is refused by " //$NON-NLS-1$
-                    + "the write door of a preset that blocks writing. Default false.", //$NON-NLS-1$
+                    + "generation off the launch is refused when the dump service answers, rather " //$NON-NLS-1$
+                    + "than starting a client with nothing open; an unreachable dump service also " //$NON-NLS-1$
+                    + "refuses (Nothing was launched). true changes the project setting and is " //$NON-NLS-1$
+                    + "refused by the write door of a preset that blocks writing. Default false.", //$NON-NLS-1$
                 false)
             .stringProperty("externalObjectName", //$NON-NLS-1$
                 "Open this external data processor or report in the client that starts, so its code " //$NON-NLS-1$
