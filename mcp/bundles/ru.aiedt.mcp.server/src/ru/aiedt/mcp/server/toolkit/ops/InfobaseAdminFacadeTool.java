@@ -397,15 +397,18 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "launch configuration (preferred over projectName + applicationId - see " //$NON-NLS-1$
                     + "list_configurations).") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "start_client: update the infobase before starting, and refuse to start when it " //$NON-NLS-1$
-                    + "cannot be brought up to date (default false).") //$NON-NLS-1$
+                "start_client: update before starting (default false). Explicit true is refused " //$NON-NLS-1$
+                    + "when a preset disabled update_database. A running client with no " //$NON-NLS-1$
+                    + "startupOption, waitForEndpoint, clientType or runMode answers " //$NON-NLS-1$
+                    + "alreadyRunning (started=false) before that gate.") //$NON-NLS-1$
             .booleanProperty("allowSecondSession", //$NON-NLS-1$
                 "start_client: start even when this configuration already has a client running " //$NON-NLS-1$
                     + "(default false - the running one is reported instead).") //$NON-NLS-1$
             .stringProperty("startupOption", //$NON-NLS-1$
-                "start_client: the /C startup string for the client that starts; the saved " //$NON-NLS-1$
-                    + "configuration is not changed. Refused while its client is already running - " //$NON-NLS-1$
-                    + "that one was not started with it.") //$NON-NLS-1$
+                "start_client: /C only, on this launch's copy; the saved configuration is not " //$NON-NLS-1$
+                    + "changed. An external-object binding and /Execute are set by the environment " //$NON-NLS-1$
+                    + "from that configuration, not by this argument. Refused while its client is " //$NON-NLS-1$
+                    + "already running.") //$NON-NLS-1$
             .stringProperty("clientType", //$NON-NLS-1$
                 "start_client: the client to start - thin, thick or web. Omitted: the launch " //$NON-NLS-1$
                     + "configuration's own, thin for one created here, and thick whenever the run " //$NON-NLS-1$
@@ -445,18 +448,14 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                     + "runtime-client sessions so they cannot keep the infobase locked " //$NON-NLS-1$
                     + "(default false).") //$NON-NLS-1$
             .stringProperty("timeoutSeconds", //$NON-NLS-1$
-                "update_database: soft wait limit in seconds (5-120, default 30) before " //$NON-NLS-1$
-                    + "replying Pending with a runKey to resume. export_database_snapshot / " //$NON-NLS-1$
-                    + "restore_database_snapshot: the same soft wait (waitSeconds is accepted as " //$NON-NLS-1$
-                    + "an alias); a dump or load of a large infobase routinely outlives it and is " //$NON-NLS-1$
-                    + "collected with the runKey. sync_control " //$NON-NLS-1$
-                    + "syncOperation=rebuild_dump_info: how long each Designer run is waited " //$NON-NLS-1$
-                    + "for (60-3600, default 600). sync_control " //$NON-NLS-1$
-                    + "syncOperation=retrieve_database_changes: how long this call waits before " //$NON-NLS-1$
-                    + "answering Pending with a runKey (30-3600, default 300). The same budget is " //$NON-NLS-1$
-                    + "the derived-data wait of BuildTaskHelper.waitForBuildAndDerivedData; the " //$NON-NLS-1$
-                    + "build-job wait is not bounded, and running out of that budget ends quietly. " //$NON-NLS-1$
-                    + "The platform pull is not cancelled when the budget runs out.") //$NON-NLS-1$
+                "update_database: soft wait in seconds (5-120, default 30) before Pending and a " //$NON-NLS-1$
+                    + "runKey. export_database_snapshot / restore_database_snapshot: the same wait " //$NON-NLS-1$
+                    + "(alias waitSeconds); a large dump or load outlives it and is collected with " //$NON-NLS-1$
+                    + "the runKey. sync_control rebuild_dump_info: each Designer run (60-3600, " //$NON-NLS-1$
+                    + "default 600). retrieve_database_changes: wait before Pending (30-3600, " //$NON-NLS-1$
+                    + "default 300). That budget also bounds " //$NON-NLS-1$
+                    + "BuildTaskHelper.waitForBuildAndDerivedData; the build-job wait is unbounded " //$NON-NLS-1$
+                    + "and running out ends quietly. The platform pull is not cancelled.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "update_database / export_database_snapshot / restore_database_snapshot: " //$NON-NLS-1$
                     + "resumes a Pending run issued earlier with this runKey; other params are " //$NON-NLS-1$
@@ -751,8 +750,14 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "ConfigDumpInfo.xml with the platform's own Designer dump. " //$NON-NLS-1$
                 + "retrieve_database_changes pulls the infobase's changes into the project " //$NON-NLS-1$
                 + "(replaceLocal, markSynchronized); a slow pull answers Pending with a runKey.\n"); //$NON-NLS-1$
-            sb.append("- **start_client** - start a 1C client from a launch configuration, " //$NON-NLS-1$
-                + "without a debugger. Use it instead of building a 1cv8.exe command line.\n"); //$NON-NLS-1$
+            sb.append("- **start_client** - start a 1C client from a saved launch configuration, " //$NON-NLS-1$
+                + "with that configuration's attributes, without a debugger. Dump readiness is " //$NON-NLS-1$
+                + "not checked. An external object under debug is launch_debugger action=launch " //$NON-NLS-1$
+                + "with externalObjectName. startupOption carries /C only; the external-object " //$NON-NLS-1$
+                + "binding and /Execute come from that configuration. updateBeforeLaunch defaults " //$NON-NLS-1$
+                + "to false; explicit true is refused when a preset disabled update_database. A " //$NON-NLS-1$
+                + "running client with no startupOption, waitForEndpoint, clientType or runMode " //$NON-NLS-1$
+                + "answers alreadyRunning (started=false) before that gate.\n"); //$NON-NLS-1$
             sb.append("- **branch_infobase** - bind a git branch to an application, so that " //$NON-NLS-1$
                 + "update_database refuses an infobase belonging to another branch. Actions: " //$NON-NLS-1$
                 + "current (default) / list / bind / unbind. For an extension project the " //$NON-NLS-1$
@@ -760,7 +765,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             sb.append("- **read_event_log** - read a FILE infobase's event log: who logged in, " //$NON-NLS-1$
                 + "what was posted, what the platform refused. Filterable by from / to / event " //$NON-NLS-1$
                 + "/ user / severity.\n"); //$NON-NLS-1$
-            sb.append("- **help** - this catalog. Pass topic=workflow for the operation-picker " //$NON-NLS-1$
+            sb.append("- **help** - this catalog. Pass topic=workflow for the operation picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
             return sb.toString();
         }
@@ -790,6 +795,17 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "restore_database_snapshot |\n"); //$NON-NLS-1$
             sb.append("| Predict or control whether the next update is FULL or incremental | " //$NON-NLS-1$
                 + "sync_control (syncOperation=status / diagnose / suppress / ...) |\n"); //$NON-NLS-1$
+            sb.append("| Start a client from a saved launch configuration, without a debugger | " //$NON-NLS-1$
+                + "start_client |\n"); //$NON-NLS-1$
+            sb.append("| Read a FILE infobase event log | read_event_log |\n"); //$NON-NLS-1$
+            sb.append("\nstart_client uses the saved configuration and its attributes. Dump " //$NON-NLS-1$
+                + "readiness is not checked. An external object under debug is launch_debugger " //$NON-NLS-1$
+                + "action=launch with externalObjectName. startupOption carries /C only; the " //$NON-NLS-1$
+                + "external-object binding and /Execute come from that configuration. " //$NON-NLS-1$
+                + "updateBeforeLaunch defaults to false; explicit true is refused when a preset " //$NON-NLS-1$
+                + "disabled update_database. A running client with no startupOption, " //$NON-NLS-1$
+                + "waitForEndpoint, clientType or runMode answers alreadyRunning " //$NON-NLS-1$
+                + "(started=false) before that gate.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         return FacadeParameterHelp.answer(topic, DESCRIBED, OPS.keySet(),

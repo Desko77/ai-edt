@@ -123,18 +123,22 @@ public class LaunchDebuggerTool implements IMcpTool
             .integerProperty("debugServerPort", //$NON-NLS-1$
                 "launch: debug server port, 1..65535, when another 1C:EDT holds the default.") //$NON-NLS-1$
             .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
-                "launch: build the external object when its project has dumps off; without " //$NON-NLS-1$
-                    + "it the client starts empty. A preset that blocks writing refuses true.", false) //$NON-NLS-1$
+                "launch: turn dump generation on in the project settings. Off refuses when the " //$NON-NLS-1$
+                    + "dump service answers; an unreachable service also refuses (Nothing was " //$NON-NLS-1$
+                    + "launched). true is refused by the write door of a preset that blocks " //$NON-NLS-1$
+                    + "writing.", false) //$NON-NLS-1$
             .stringProperty("externalObjectName", //$NON-NLS-1$
-                "launch: open this data processor or report in the client to debug its code. " //$NON-NLS-1$
-                    + "A ready .epf goes in through " //$NON-NLS-1$
-                    + "external_object_workshop operation=import_external_object. Not for Attach.") //$NON-NLS-1$
+                "launch: open this processor or report in a client launch configuration. It is an " //$NON-NLS-1$
+                    + "external-object project; a ready .epf/.erf is imported first via " //$NON-NLS-1$
+                    + "external_object_workshop operation=import_external_object. Attach refuses " //$NON-NLS-1$
+                    + "it and launches nothing.") //$NON-NLS-1$
             .stringProperty("externalObjectProject", //$NON-NLS-1$
-                "launch: the external-object project holding externalObjectName.") //$NON-NLS-1$
+                "launch: the external-object project holding externalObjectName. Client " //$NON-NLS-1$
+                    + "configurations only; Attach refuses it.") //$NON-NLS-1$
             .stringProperty("startupOption", //$NON-NLS-1$
-                "launch: the /C startup string for the client that starts; the saved configuration " //$NON-NLS-1$
-                    + "is not changed. An Attach configuration starts no client, so it is refused " //$NON-NLS-1$
-                    + "there, and so is a session already running - it was not started with it.") //$NON-NLS-1$
+                "launch: /C only, on this launch's copy; the saved configuration is not changed. " //$NON-NLS-1$
+                    + "/Execute is set by the environment from externalObjectName, not by this " //$NON-NLS-1$
+                    + "argument. Refused for Attach and for a client already running.") //$NON-NLS-1$
             .stringProperty("clientType", //$NON-NLS-1$
                 "launch: the client to start - thin, thick or web. Omitted: the launch " //$NON-NLS-1$
                     + "configuration's own, thin for one created here, and thick whenever the run " //$NON-NLS-1$
@@ -159,10 +163,9 @@ public class LaunchDebuggerTool implements IMcpTool
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("line", "Line number for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("breakpoints", //$NON-NLS-1$
-                "add_breakpoint batch: a JSON array of breakpoint objects, each " //$NON-NLS-1$
-                    + "{modulePath|module, line|lineNumber, ...optional condition / hitCount / " //$NON-NLS-1$
-                    + "hitCondition / logExpression}. Sets many breakpoints in one add_breakpoint " //$NON-NLS-1$
-                    + "call; projectName is inherited by items that omit it.") //$NON-NLS-1$
+                "add_breakpoint batch: JSON array of {modulePath|module, line|lineNumber, " //$NON-NLS-1$
+                    + "optional condition, hitCount, hitCondition, logExpression}. projectName is " //$NON-NLS-1$
+                    + "inherited by items that omit it.") //$NON-NLS-1$
             .stringProperty("breakpointId", "Breakpoint identifier for remove_breakpoint and " //$NON-NLS-1$
                 + "set_breakpoint_state.") //$NON-NLS-1$
             .booleanProperty("breakpointEnabled", //$NON-NLS-1$
@@ -184,13 +187,10 @@ public class LaunchDebuggerTool implements IMcpTool
                 + "get_variables / set_variable (default 0).") //$NON-NLS-1$
             .stringProperty("expandPath", "get_variables: dot-separated path into a nested variable to " //$NON-NLS-1$
                 + "expand (e.g. Struct.Field).") //$NON-NLS-1$
-            .stringProperty("scope", "get_variables: which variables to list - locals (default) / module " //$NON-NLS-1$
-                + "(module-level variables) / all (locals plus module variables plus module properties). " //$NON-NLS-1$
-                + "Ignored when expandPath is set.") //$NON-NLS-1$
+            .stringProperty("scope", "get_variables: locals (default), module, or all (locals, " //$NON-NLS-1$
+                + "module variables and module properties). Ignored when expandPath is set.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
-                "Step mode for the bare 'step' action: over / into / out. " //$NON-NLS-1$
-                + "step_over / step_into / step_out also work as top-level actions and " //$NON-NLS-1$
-                + "set this internally.") //$NON-NLS-1$
+                "Bare step action: over, into or out. step_over, step_into and step_out set it.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
                 "wait_for_break / step timeout in seconds, 1..50; a longer ask is cut to 50 " //$NON-NLS-1$
                     + "and said so. Aliases: timeoutMs, waitSeconds, timeout.") //$NON-NLS-1$
@@ -536,6 +536,16 @@ public class LaunchDebuggerTool implements IMcpTool
             sb.append("7. `launch_debugger action=step_over` / `step_into` / `resume`.\n"); //$NON-NLS-1$
             sb.append("8. `launch_debugger action=remove_breakpoint breakpointId=...` " //$NON-NLS-1$
                 + "when done.\n"); //$NON-NLS-1$
+            sb.append("\nOpening an external object: externalObjectName names the processor or " //$NON-NLS-1$
+                + "report, externalObjectProject the external-object project that holds it, and " //$NON-NLS-1$
+                + "the launch configuration has to be a client configuration. An Attach " //$NON-NLS-1$
+                + "configuration refuses externalObjectName and externalObjectProject and " //$NON-NLS-1$
+                + "launches nothing. Dump generation off refuses when the dump service answers; " //$NON-NLS-1$
+                + "an unreachable dump service also refuses (Nothing was launched). " //$NON-NLS-1$
+                + "enableExternalObjectDump=true changes the project setting and is refused by " //$NON-NLS-1$
+                + "the write door of a preset that blocks writing. A ready .epf/.erf is imported " //$NON-NLS-1$
+                + "first via " //$NON-NLS-1$
+                + "external_object_workshop operation=import_external_object.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         return "# Unknown topic '" + topic + "'." //$NON-NLS-1$
