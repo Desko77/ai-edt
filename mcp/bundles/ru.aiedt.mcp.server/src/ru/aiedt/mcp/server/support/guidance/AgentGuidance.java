@@ -21,6 +21,7 @@ import ru.aiedt.mcp.server.support.ToolGate;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.McpToolCatalog;
 import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
+import ru.aiedt.mcp.server.toolkit.ops.EditMetadataTool;
 import ru.aiedt.mcp.server.toolkit.ops.ExternalObjectWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseAdminFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchDebuggerTool;
@@ -119,6 +120,59 @@ public final class AgentGuidance
     private static final Entry E11 = new Entry("E11", ConfigIoFacadeTool.NAME, //$NON-NLS-1$
         "export_database_extension", //$NON-NLS-1$ //$NON-NLS-2$
         ConfigIoFacadeTool.gateChecksOf("export_database_extension")); //$NON-NLS-1$
+
+    /** The tool another bundle publishes; its absence is a normal installation, not a defect. */
+    private static final String ORDINARY_FORMS = "ordinary_forms"; //$NON-NLS-1$
+
+    /** The write door of the ordinary-forms tool, whichever bundle publishes it. */
+    private static final String ORDINARY_FORMS_WRITES = "ordinary_forms_writes"; //$NON-NLS-1$
+
+    /** The write door of the edit_metadata facade that keeps the routed creation. */
+    private static final String EDIT_METADATA_WRITES = "edit_metadata_writes"; //$NON-NLS-1$
+
+    /** R7 entry point: a new ordinary form created on its owner. */
+    private static final Entry E12 = new Entry("E12", ORDINARY_FORMS, "create_form", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(GateCheck.writeDoor(ORDINARY_FORMS_WRITES)));
+
+    /** R8 entry point: the layout of one ordinary form. */
+    private static final Entry E13 = new Entry("E13", ORDINARY_FORMS, "layout", List.of()); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** R8 entry point: the read-only inspection of one ordinary form's layout. */
+    private static final Entry E14 = new Entry("E14", ORDINARY_FORMS, "inspect_layout", List.of()); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** R8 entry point: the representative layout write; the catalogue's help names the rest. */
+    private static final Entry E15 = new Entry("E15", ORDINARY_FORMS, "set_property", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(GateCheck.writeDoor(ORDINARY_FORMS_WRITES)));
+
+    /**
+     * R8 accompanying entry: the global module reader. Its name may be available without the
+     * ordinary-forms bundle, but the form's module address resolves only through that bundle's
+     * module provider, so this entry never makes the route available.
+     */
+    private static final Entry E16 = new Entry("E16", "read_module_source", null, List.of()); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /**
+     * R8 accompanying entry: the global module writer. The name itself is the preset gate, and the
+     * address has the same provider condition as E16.
+     */
+    private static final Entry E17 = new Entry("E17", "write_module_source", null, List.of()); //$NON-NLS-1$ //$NON-NLS-2$
+
+    /** R7 entry point: a form taken out of the project's infobase. */
+    private static final Entry E18 = new Entry("E18", ORDINARY_FORMS, "import_from_infobase", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(GateCheck.writeDoor(ORDINARY_FORMS_WRITES)));
+
+    /**
+     * R7 entry point: create_form routed through edit_metadata for formType=ORDINARY. The branch
+     * has the facade's own write door, the registered ordinary-forms tool it delegates to, and
+     * that tool's own write door - a missing or disabled tool closes the branch even with both
+     * doors open.
+     */
+    private static final Entry E19 = new Entry("E19", EditMetadataTool.NAME, "create_form", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(GateCheck.writeDoor(EDIT_METADATA_WRITES), GateCheck.enabled(ORDINARY_FORMS),
+            GateCheck.writeDoor(ORDINARY_FORMS_WRITES)));
+
+    /** R8 entry point: which forms of the project are ordinary. */
+    private static final Entry E20 = new Entry("E20", ORDINARY_FORMS, "audit", List.of()); //$NON-NLS-1$ //$NON-NLS-2$
 
     /** S1: the update step run through the infobase-admin facade. */
     private static final Entry S1 = new Entry("S1", InfobaseAdminFacadeTool.NAME, //$NON-NLS-1$
@@ -248,10 +302,86 @@ public final class AgentGuidance
             + "failed check block the export unless skipValidation=true; diagnostics " //$NON-NLS-1$
             + "operation=validate_for_export is the fuller check and does not affect availability."); //$NON-NLS-1$
 
-    private static final List<Route> ROUTES = List.of(R1, R2, R3, R4, R5, R6);
+    /** R7: a new ordinary form, or one taken from the infobase. */
+    private static final Route R7 = new Route("R7", "Create or import an ordinary form", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(E12, E18, E19), List.of(), List.of(), List.of(), List.of(), null, //$NON-NLS-1$
+        "audit names the ordinary forms of a project, and describe_owner (a read) names the owner's " //$NON-NLS-1$
+            + "attributes and tabular sections before a layout is planned. create_form creates a new " //$NON-NLS-1$
+            + "form on its owner: projectName, ownerFqn (Type.Object), name and purpose (ItemForm | " //$NON-NLS-1$
+            + "ListForm | ChoiceForm | FolderForm | RecordForm | RecordSetForm | None); the form FQN " //$NON-NLS-1$
+            + "is Type.Object.Form.Name. import_from_infobase takes projectName plus formFqn or " //$NON-NLS-1$
+            + "modulePath and optionally module=project|infobase and applicationId. The routed " //$NON-NLS-1$
+            + "edit_metadata operation=create_form formType=ORDINARY forwards only projectName, " //$NON-NLS-1$
+            + "ownerFqn, purpose, synonym, title, setAsDefault, dryRun and name; layout - and width, " //$NON-NLS-1$
+            + "height, withFields, withTables, withCommands, columns, tabularSections and language - " //$NON-NLS-1$
+            + "is refused there with a pointer to ordinary_forms create_form. That branch needs both " //$NON-NLS-1$
+            + "write doors - edit_metadata_writes for the facade's real write and " //$NON-NLS-1$
+            + "ordinary_forms_writes for the tool it delegates to - and a registered, enabled " //$NON-NLS-1$
+            + "ordinary_forms; without the tool the branch is refused and the managed path is not " //$NON-NLS-1$
+            + "taken. The facade lets dryRun=true pass a closed edit_metadata_writes as a preview, " //$NON-NLS-1$
+            + "while ordinary_forms refuses its write - dryRun included - when " //$NON-NLS-1$
+            + "ordinary_forms_writes is closed. A managed form or no form at the FQN answers No " //$NON-NLS-1$
+            + "Form.oform for <fqn> in <project>: the form is managed, does not exist, or the FQN is " //$NON-NLS-1$
+            + "not a form's. next: R8."); //$NON-NLS-1$
+
+    /** R8: what a form of the project says and what its layout and module edits do. */
+    private static final Route R8 = new Route("R8", "Read or edit an existing ordinary form in the project", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(), List.of(), List.of(), //$NON-NLS-1$
+        List.of(new Target("read", List.of(E13, E14, E20)), //$NON-NLS-1$
+            new Target("edit", List.of(E15))), //$NON-NLS-1$
+        List.of(E16, E17), List.of(), "R9", //$NON-NLS-1$ //$NON-NLS-2$
+        "Address the form by formFqn (Type.Object.Form.Name or CommonForm.Name) or by modulePath " //$NON-NLS-1$
+            + "<KindFolder>/<Object>/Forms/<Form>/Module.bsl, relative to src/ and without the project " //$NON-NLS-1$
+            + "name: projectName is a separate argument, and a leading <project>/ or src/ does not " //$NON-NLS-1$
+            + "resolve the ordinary form's module. The module FQN does not resolve an ordinary form's " //$NON-NLS-1$
+            + "module either: there is no file for it to name. A managed form or no form at an " //$NON-NLS-1$
+            + "address answers No Form.oform for <fqn> in <project>. layout reads the layout, " //$NON-NLS-1$
+            + "inspect_layout reports its " //$NON-NLS-1$
+            + "findings without correcting anything, audit names the project's ordinary forms, and " //$NON-NLS-1$
+            + "diff_form compares the container with HEAD. The representative layout write is " //$NON-NLS-1$
+            + "set_property; ordinary_forms operation=help lists the other layout operations, so no " //$NON-NLS-1$
+            + "second catalogue is kept here. dryRun=true on a layout write is a preview only (nothing " //$NON-NLS-1$
+            + "was written; the outcome is what the write would do), and a closed " //$NON-NLS-1$
+            + "ordinary_forms_writes refuses that preview too. A module write defaults to searchReplace; " //$NON-NLS-1$
+            + "replaceMethod swaps one named method end-to-end, and replace rewrites the whole module " //$NON-NLS-1$
+            + "and is not the default. The write accepts handlerChanges=warn|refuse, which refuses a " //$NON-NLS-1$
+            + "change that drops procedures the form still calls. Write refusals: a connected text " //$NON-NLS-1$
+            + "editor holding unsaved changes to the form or module entry the write replaces; a " //$NON-NLS-1$
+            + "container entry that changed since it was read; another form-editor session holding " //$NON-NLS-1$
+            + "unsaved changes to that entry - only while such a session is registered, which the " //$NON-NLS-1$
+            + "accepted bundle's mechanism needs and the editor that opens sessions is not part of this " //$NON-NLS-1$
+            + "build; and handlerChanges=refuse when a handler the form still calls would be dropped. " //$NON-NLS-1$
+            + "A removal above 30% of the module warns, and a write stripping more than 50% needs " //$NON-NLS-1$
+            + "confirmFullReplace. layout, inspect_layout and the module answers carry unsavedInEditor=true while " //$NON-NLS-1$
+            + "a registered form-editor session holds unsaved changes to the container. A write saves " //$NON-NLS-1$
+            + "the project and marks the owner; it does not update the infobase itself, and the answer " //$NON-NLS-1$
+            + "carries the delivery statement. The accompanying read_module_source and " //$NON-NLS-1$
+            + "write_module_source entries mark tool names, not address readiness: the tools are server " //$NON-NLS-1$
+            + "tools and stay callable without the ordinary-forms bundle, but " //$NON-NLS-1$
+            + "Forms/<Form>/Module.bsl has no file - the text lives in Form.oform - and the address " //$NON-NLS-1$
+            + "resolves only through the module provider that bundle registers, and only for a form " //$NON-NLS-1$
+            + "that exists. Without that provider the read answers Error: no such file: src/<path> and " //$NON-NLS-1$
+            + "/health carries ordinaryFormsRegistered=false. A registered ordinary_forms tool is not " //$NON-NLS-1$
+            + "proof that its module provider is registered. next: R9."); //$NON-NLS-1$
+
+    /** R9: the written form put into the infobase by the update the write prepared. */
+    private static final Route R9 = new Route("R9", "Deliver a written ordinary form to the infobase", //$NON-NLS-1$ //$NON-NLS-2$
+        List.of(S1, S2), List.of(), List.of(), List.of(), List.of(), null, //$NON-NLS-1$
+        "The write that saved the form has already marked its owner: the delivery statement in the " //$NON-NLS-1$
+            + "write answer names how many baselines read the owner as changed. Delivery is a real " //$NON-NLS-1$
+            + "update (dryRun=false); a dryRun=true update only previews what it would meet and does " //$NON-NLS-1$
+            + "not count as the step. The S1/S2 contract is the same as R6's: a Pending answer is " //$NON-NLS-1$
+            + "picked up by runKey, confirmationRequired has to be shown to the user, and a refusal or " //$NON-NLS-1$
+            + "an error stops the route; the update's own data-loss protection (protectData, " //$NON-NLS-1$
+            + "acceptDataLoss) stays in force. Only a successful update puts the written form into the " //$NON-NLS-1$
+            + "infobase; until then the form stays in the project. The platform validates the ordinary " //$NON-NLS-1$
+            + "form's module during this update - the tools run no module validation."); //$NON-NLS-1$
+
+    private static final List<Route> ROUTES = List.of(R1, R2, R3, R4, R5, R6, R7, R8, R9);
 
     private static final List<Entry> TARGET_ENTRIES =
-        List.of(E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11);
+        List.of(E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11,
+            E12, E13, E14, E15, E16, E17, E18, E19, E20);
 
     private static final List<Entry> UPDATE_STEPS = List.of(S1, S2);
 
@@ -316,7 +446,7 @@ public final class AgentGuidance
     }
 
     /**
-     * The entry points of the jobs, E1 through E11.
+     * The entry points of the jobs, E1 through E20.
      *
      * @return an unmodifiable list of entry points, never {@code null}
      */
@@ -578,6 +708,11 @@ public final class AgentGuidance
             {
                 if (check.refusal() != null)
                 {
+                    if (check.kind() == GateCheck.Kind.ENABLED
+                        && McpToolCatalog.getInstance().getTool(check.name()) == null)
+                    {
+                        return "off: " + check.name() + " is not registered"; //$NON-NLS-1$ //$NON-NLS-2$
+                    }
                     return "off: " + check.name() + " disabled"; //$NON-NLS-1$ //$NON-NLS-2$
                 }
             }
@@ -939,6 +1074,8 @@ public final class AgentGuidance
 
         private final List<Target> targets;
 
+        private final List<Entry> accompanyingEntries;
+
         private final List<Boundary> boundaries;
 
         private final String nextRouteId;
@@ -949,12 +1086,21 @@ public final class AgentGuidance
             List<Mode> modes, List<Target> targets, List<Boundary> boundaries, String nextRouteId,
             String conditions)
         {
+            this(id, task, entries, requiredSteps, modes, targets, List.of(), boundaries,
+                nextRouteId, conditions);
+        }
+
+        private Route(String id, String task, List<Entry> entries, List<Entry> requiredSteps,
+            List<Mode> modes, List<Target> targets, List<Entry> accompanyingEntries,
+            List<Boundary> boundaries, String nextRouteId, String conditions)
+        {
             this.id = Objects.requireNonNull(id, "id"); //$NON-NLS-1$
             this.task = Objects.requireNonNull(task, "task"); //$NON-NLS-1$
             this.entries = List.copyOf(entries);
             this.requiredSteps = List.copyOf(requiredSteps);
             this.modes = List.copyOf(modes);
             this.targets = List.copyOf(targets);
+            this.accompanyingEntries = List.copyOf(accompanyingEntries);
             this.boundaries = List.copyOf(boundaries);
             this.nextRouteId = nextRouteId;
             this.conditions = Objects.requireNonNull(conditions, "conditions"); //$NON-NLS-1$
@@ -1011,6 +1157,15 @@ public final class AgentGuidance
         }
 
         /**
+         * @return the entry points that accompany the route without deciding its availability -
+         *         tool names whose addresses depend on another bundle's provider
+         */
+        public List<Entry> accompanyingEntries()
+        {
+            return accompanyingEntries;
+        }
+
+        /**
          * @return the boundaries outside this server the route names
          */
         public List<Boundary> boundaries()
@@ -1057,7 +1212,7 @@ public final class AgentGuidance
 
         /**
          * @return whether at least one target entry point is callable now, and the required step -
-         *         when there is one - is callable too
+         *         when there is one - is callable too; an accompanying entry never decides this
          */
         public boolean available()
         {
@@ -1118,6 +1273,7 @@ public final class AgentGuidance
             {
                 all.addAll(target.entries());
             }
+            all.addAll(accompanyingEntries);
             return all;
         }
 
@@ -1175,6 +1331,11 @@ public final class AgentGuidance
             for (Target target : targets)
             {
                 parts.add(target.label());
+            }
+            for (Entry accompanying : accompanyingEntries)
+            {
+                parts.add("tool name only (" + accompanying.callName() + "): " //$NON-NLS-1$ //$NON-NLS-2$
+                    + accompanying.label());
             }
             for (Mode mode : modes)
             {
