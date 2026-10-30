@@ -513,7 +513,7 @@ public class AgentGuidanceTest
             "edit_metadata_writes", //$NON-NLS-1$
             "ordinary_forms_writes", //$NON-NLS-1$
             "ordinaryFormsRegistered=false", //$NON-NLS-1$
-            "handlerChanges=warn|refuse", //$NON-NLS-1$
+            "handlerChanges=warn\\|refuse", //$NON-NLS-1$
             "searchReplace", //$NON-NLS-1$
             "replaceMethod", //$NON-NLS-1$
             "confirmFullReplace", //$NON-NLS-1$
@@ -547,6 +547,62 @@ public class AgentGuidanceTest
         assertTrue(text, text.contains("R8 Read or edit an existing ordinary form in the project")); //$NON-NLS-1$
         assertTrue(text, text.contains("available via ordinary_forms operation=layout")); //$NON-NLS-1$
         assertTrue(text, text.contains("available via edit_metadata operation=create_form")); //$NON-NLS-1$
+    }
+
+    /**
+     * A pipe inside cell prose is a cell boundary to a markdown table: the row grows a column the
+     * header does not carry and a renderer drops the tail, the availability column among it. The
+     * document escapes every pipe inside cell text, so the R7 purpose enumeration, the
+     * module=project|infobase switch and the R8 handlerChanges switch stay inside their cell.
+     */
+    @Test
+    public void routeRowsKeepFourColumnsDespitePipesInTheirProse()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        String document = AgentGuidance.document();
+
+        List<String> table = new ArrayList<>();
+        for (String line : document.split("\n")) //$NON-NLS-1$
+        {
+            if (line.startsWith("|")) //$NON-NLS-1$
+            {
+                table.add(line);
+            }
+        }
+        assertEquals("the table is a header, a separator and one row per route", //$NON-NLS-1$
+            AgentGuidance.routes().size() + 2, table.size());
+        for (String row : table)
+        {
+            long boundaries = row.replace("\\|", "").chars().filter(c -> c == '|').count(); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("a row carries exactly four cells: " + row, 5, boundaries); //$NON-NLS-1$
+        }
+        assertTrue("the purpose enumeration stays inside its cell: " + document, //$NON-NLS-1$
+            document.contains("purpose (ItemForm \\| ListForm")); //$NON-NLS-1$
+        assertTrue("the module source switch stays inside its cell: " + document, //$NON-NLS-1$
+            document.contains("module=project\\|infobase")); //$NON-NLS-1$
+        assertTrue("the handler switch stays inside its cell: " + document, //$NON-NLS-1$
+            document.contains("handlerChanges=warn\\|refuse")); //$NON-NLS-1$
+    }
+
+    /**
+     * The module address of an ordinary form accepts a leading src/ - the writer strips it before
+     * the layout is judged, and the ordinary-form provider strips it when it locates the container -
+     * while a project-name prefix resolves nowhere. The document states the two prefixes
+     * separately; naming src/ among the prefixes that do not resolve would teach a caller to
+     * rewrite an address the tools accept.
+     */
+    @Test
+    public void theModuleAddressNamesSrcAsAcceptedAndTheProjectNameAsNotResolving()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        String document = AgentGuidance.document();
+
+        assertTrue("src/ is accepted and stripped: " + document, //$NON-NLS-1$
+            document.contains("A leading src/ is accepted and stripped")); //$NON-NLS-1$
+        assertTrue("the project-name prefix is the one that does not resolve: " + document, //$NON-NLS-1$
+            document.contains("a leading <project>/ does not resolve")); //$NON-NLS-1$
+        assertFalse("src/ must not be named as a prefix that does not resolve: " + document, //$NON-NLS-1$
+            document.contains("src/ does not")); //$NON-NLS-1$
     }
 
     private static boolean listed(String name)

@@ -332,9 +332,10 @@ public final class AgentGuidance
         List.of(E16, E17), List.of(), "R9", //$NON-NLS-1$ //$NON-NLS-2$
         "Address the form by formFqn (Type.Object.Form.Name or CommonForm.Name) or by modulePath " //$NON-NLS-1$
             + "<KindFolder>/<Object>/Forms/<Form>/Module.bsl, relative to src/ and without the project " //$NON-NLS-1$
-            + "name: projectName is a separate argument, and a leading <project>/ or src/ does not " //$NON-NLS-1$
-            + "resolve the ordinary form's module. The module FQN does not resolve an ordinary form's " //$NON-NLS-1$
-            + "module either: there is no file for it to name. A managed form or no form at an " //$NON-NLS-1$
+            + "name: projectName is a separate argument. A leading src/ is accepted and stripped; a " //$NON-NLS-1$
+            + "leading <project>/ does not resolve the ordinary form's module. The module FQN does " //$NON-NLS-1$
+            + "not resolve an ordinary form's module either: there is no file for it to name. " //$NON-NLS-1$
+            + "A managed form or no form at an " //$NON-NLS-1$
             + "address answers No Form.oform for <fqn> in <project>. layout reads the layout, " //$NON-NLS-1$
             + "inspect_layout reports its " //$NON-NLS-1$
             + "findings without correcting anything, audit names the project's ordinary forms, and " //$NON-NLS-1$
@@ -422,10 +423,10 @@ public final class AgentGuidance
         out.append("|---|---|---|---|\n"); //$NON-NLS-1$
         for (Route route : ROUTES)
         {
-            out.append("| ").append(route.id()).append(' ').append(route.task()).append(" | ") //$NON-NLS-1$
-                .append(route.entryPointsText()).append(" | ") //$NON-NLS-1$
-                .append(route.conditions()).append(" | ") //$NON-NLS-1$
-                .append(route.availabilityText()).append(" |\n"); //$NON-NLS-1$
+            out.append("| ").append(route.id()).append(' ').append(cell(route.task())).append(" | ") //$NON-NLS-1$
+                .append(cell(route.entryPointsText())).append(" | ") //$NON-NLS-1$
+                .append(cell(route.conditions())).append(" | ") //$NON-NLS-1$
+                .append(cell(route.availabilityText())).append(" |\n"); //$NON-NLS-1$
         }
         out.append("\n## Hidden names\n\n"); //$NON-NLS-1$
         out.append("A name in tools/list is an entry point, not a list of everything callable. The " //$NON-NLS-1$
@@ -433,6 +434,19 @@ public final class AgentGuidance
             + "them still answers a call; a preset that disables a name removes it from both sides. " //$NON-NLS-1$
             + "A name absent from tools/list is therefore not evidence that the route is off.\n"); //$NON-NLS-1$
         return out.toString();
+    }
+
+    /**
+     * Escapes the character a markdown table reads as a cell boundary.
+     *
+     * @param text the cell text as prose
+     * @return the same text with every pipe escaped, so an alternative named with a pipe - a value
+     *         enumeration, a warn/refuse switch - stays inside its cell; unescaped, the row grows a
+     *         column the header does not carry and a renderer drops the tail
+     */
+    private static String cell(String text)
+    {
+        return text.replace("|", "\\|"); //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
