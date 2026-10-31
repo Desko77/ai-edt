@@ -105,29 +105,15 @@ public class ThreeWayComparisonTool
     public String getDescription()
     {
         return "Compares an open project against a new delivery and, optionally, against the " //$NON-NLS-1$
-            + "delivery both came from - the three sides of an update on support. Reports node " //$NON-NLS-1$
-            + "counts, how many differ, how many exist on one side only, the metadata objects " //$NON-NLS-1$
-            + "that moved by name, and the problems the environment raises. With an ancestor " //$NON-NLS-1$
-            + "every changed object carries changedBy - OURS, VENDOR or BOTH - so a customisation " //$NON-NLS-1$
-            + "is told apart from a vendor change and BOTH marks the conflicts; without an " //$NON-NLS-1$
-            + "ancestor changedBy is UNKNOWN rather than guessed. Each object also reports the " //$NON-NLS-1$
-            + "merge rule the environment itself proposes. A MERGE also takes the vendor " //$NON-NLS-1$
-            + "support settings from the delivery - that cannot be prevented through the " //$NON-NLS-1$
-            + "environment's merge rules, so instead the support modes are counted before " //$NON-NLS-1$
-            + "and after and reported as supportModesBefore, supportModesAfter and " //$NON-NLS-1$
-            + "supportModesChanged. Decisions about " //$NON-NLS-1$
-            + "individual objects can be recorded and written to a settings file that EDT reads " //$NON-NLS-1$
-            + "back when a person runs the merge, and a file written earlier can be read back in " //$NON-NLS-1$
-            + "through decisionsFrom. Reading is the default and changes nothing. Passing " //$NON-NLS-1$
-            + "A configuration with no customisations updates in one call with " //$NON-NLS-1$
-            + "intent=UPDATE_UNCHANGED, which needs no decisions and refuses itself the moment " //$NON-NLS-1$
-            + "anything was changed here or on both sides. " //$NON-NLS-1$
-            + "intent=MERGE applies the decisions to the project, which is IRREVERSIBLE and is " //$NON-NLS-1$
-            + "refused when the environment raises a blocking problem or when no decisions were " //$NON-NLS-1$
-            + "given; after a merge the touched objects are revalidated and the errors standing " //$NON-NLS-1$
-            + "against them are reported. Before a changing intent a restore point of the project " //$NON-NLS-1$
-            + "files is taken; if it cannot be taken the merge does not start. git " //$NON-NLS-1$
-            + "restore_merge_point puts those files back and does not roll back the infobase."; //$NON-NLS-1$
+            + "delivery both came from - the three sides of an update on support. Changed objects " //$NON-NLS-1$
+            + "carry changedBy - OURS, VENDOR or BOTH when an ancestor is present; BOTH marks the " //$NON-NLS-1$
+            + "conflicts, and without an ancestor changedBy is UNKNOWN rather than guessed. A MERGE " //$NON-NLS-1$
+            + "also takes the vendor support settings from the delivery - this cannot be prevented " //$NON-NLS-1$
+            + "through the environment's merge rules - and reports supportModesBefore, " //$NON-NLS-1$
+            + "supportModesAfter and supportModesChanged. Recorded decisions can be written out, " //$NON-NLS-1$
+            + "and a file written earlier is read back in through decisionsFrom. Reading is the " //$NON-NLS-1$
+            + "default and changes nothing; intent carries the write modes - MERGE is IRREVERSIBLE " //$NON-NLS-1$
+            + "and is refused when no decisions were given - and the restore point taken before one."; //$NON-NLS-1$
     }
 
     /**
@@ -257,32 +243,28 @@ public class ThreeWayComparisonTool
                 "Directory holding the configuration to compare against (OTHER). Required for " //$NON-NLS-1$
                     + "every call except help.") //$NON-NLS-1$
             .stringProperty("parentId", //$NON-NLS-1$
-                "Which vendor configuration of the project the deliveries are measured " //$NON-NLS-1$
-                    + "against, by id or by name. Required when the project descends from more " //$NON-NLS-1$
-                    + "than one.") //$NON-NLS-1$
+                "Which vendor configuration the delivery is measured against, by id or by " //$NON-NLS-1$
+                    + "name. Required when the project descends from more than one.") //$NON-NLS-1$
             .stringProperty("ancestorPath", //$NON-NLS-1$
                 "Directory holding the common ancestor (COMMON_ANCESTOR). Omit for a two-sided " //$NON-NLS-1$
                     + "comparison.") //$NON-NLS-1$
             .stringProperty("decisions", //$NON-NLS-1$
-                "What to do with objects, as a JSON array: {\"object\":...,\"rule\":...} or " //$NON-NLS-1$
+                "What to do with objects as a JSON array: {\"object\":...,\"rule\":...} or " //$NON-NLS-1$
                     + "{\"select\":\"matching\",\"rule\":...}. Rules: GET_FROM_OTHER, DO_NOT_MERGE, " //$NON-NLS-1$
                     + "MERGE_PRIORITIZING_MAIN, MERGE_PRIORITIZING_OTHER, " //$NON-NLS-1$
-                    + "MERGE_USING_EXTERNAL_TOOL. CUSTOM_MERGE is refused - it composes the " //$NON-NLS-1$
-                    + "result in the merge editor. The rule each object ends up carrying is " //$NON-NLS-1$
-                    + "read back from the comparison.") //$NON-NLS-1$
+                    + "MERGE_USING_EXTERNAL_TOOL. CUSTOM_MERGE is refused. The resulting rule is " //$NON-NLS-1$
+                    + "read back.") //$NON-NLS-1$
             .stringProperty("decisionsPath", //$NON-NLS-1$
-                "Absolute path to write the recorded decisions to, in the format EDT reads back " //$NON-NLS-1$
-                    + "when a person runs the merge. Must end in .zip. Without it the decisions " //$NON-NLS-1$
-                    + "die with the comparison.") //$NON-NLS-1$
+                "Absolute path to write the recorded decisions to. Must end in .zip. Without it " //$NON-NLS-1$
+                    + "the decisions die with the comparison.") //$NON-NLS-1$
             .stringProperty("decisionsFrom", //$NON-NLS-1$
-                "Absolute path to a settings file (.zip) written earlier, whose decisions " //$NON-NLS-1$
-                    + "and object correspondences are applied before anything else.") //$NON-NLS-1$
+                "Absolute path to a settings file (.zip) written earlier; its decisions and " //$NON-NLS-1$
+                    + "correspondences are applied before anything else.") //$NON-NLS-1$
             .stringProperty("changedBy", //$NON-NLS-1$
-                "List only objects with this attribution: OURS, VENDOR, BOTH or UNKNOWN. The " //$NON-NLS-1$
-                    + "counts always cover everything; OURS is what a customisation-preserving " //$NON-NLS-1$
-                    + "update needs to enumerate.") //$NON-NLS-1$
+                "List only objects with this attribution: OURS, VENDOR, BOTH or UNKNOWN. " //$NON-NLS-1$
+                    + "Counts always cover everything.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
-                "List only objects of this metadata type, as the comparison qualifies names " //$NON-NLS-1$
+                "List only objects of this metadata type " //$NON-NLS-1$
                     + "(Catalog, Document, CommonModule).") //$NON-NLS-1$
             .booleanProperty("oneSided", //$NON-NLS-1$
                 "true lists only objects present on one side, false only those on both. Omit " //$NON-NLS-1$
@@ -297,43 +279,43 @@ public class ThreeWayComparisonTool
                 "Module pieces to skip before the page of sections starts. Default 0.") //$NON-NLS-1$
             .stringProperty("scope", //$NON-NLS-1$
                 "Compare only these objects, comma separated and named as this tool names " //$NON-NLS-1$
-                    + "them (Catalog.X,Document.Y). Omit for the whole configuration. What the " //$NON-NLS-1$
-                    + "environment added comes back in scopeExtendedBy, unrecognised names in " //$NON-NLS-1$
+                    + "them (Catalog.X). Omit for the whole configuration. What the environment " //$NON-NLS-1$
+                    + "added comes back in scopeExtendedBy; unrecognised names come back in " //$NON-NLS-1$
                     + "scopeUnrecognised rather than dropped.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
-                "Assemble the answer into one document a person can read before deciding to " //$NON-NLS-1$
-                    + "update: summary (ten names per section) or full.") //$NON-NLS-1$
+                "Assemble the answer into one document to read before updating: summary " //$NON-NLS-1$
+                    + "(ten names per section) or full.") //$NON-NLS-1$
             .booleanProperty("methodLevel", //$NON-NLS-1$
                 "Look inside modules, so a change is named CommonModule.X.Module.MethodName " //$NON-NLS-1$
                     + "and a decision can be addressed at one method. Off by default; " //$NON-NLS-1$
-                    + "comparedInMs comes back either way, so the cost is measurable.") //$NON-NLS-1$
+                    + "comparedInMs comes back either way.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
-                "Close the comparison after answering rather than keep it open for paging. " //$NON-NLS-1$
-                    + "Off by default; it expires after 20 idle minutes.") //$NON-NLS-1$
+                "Close the comparison after answering instead of keeping it for paging. " //$NON-NLS-1$
+                    + "Off by default; expires after 20 idle minutes.") //$NON-NLS-1$
             .booleanProperty("ignoreOriginMismatch", //$NON-NLS-1$
                 "Compare the sides even when they do not identify as the same configuration " //$NON-NLS-1$
                     + "in different versions. Off by default.") //$NON-NLS-1$
             .stringProperty("help", //$NON-NLS-1$
-                "Pass a word - help=parameters - to be told what the parameters mean and " //$NON-NLS-1$
-                    + "nothing else; the rest of the call is then ignored. An empty or " //$NON-NLS-1$
-                    + "whitespace-only value is not a request, so a client that fills every " //$NON-NLS-1$
-                    + "declared string still compares.") //$NON-NLS-1$
+                "Pass help=parameters for the parameter help only; the rest of the call is then " //$NON-NLS-1$
+                    + "ignored. An empty or whitespace-only value is not a request.") //$NON-NLS-1$
             .stringProperty("intent", //$NON-NLS-1$
                 "What the run does. REPORT (default) changes nothing in the project. MERGE " //$NON-NLS-1$
-                    + "and MERGE_IGNORING_PROBLEMS apply the decisions - IRREVERSIBLE. " //$NON-NLS-1$
-                    + "UPDATE_UNCHANGED takes the delivery whole. UPDATE_KEEPING_OURS is the " //$NON-NLS-1$
-                    + "ordinary update on support: objects both sides changed are merged with " //$NON-NLS-1$
-                    + "the delivery in front, methods only this side has stay, an object that " //$NON-NLS-1$
-                    + "will not take that merge is named in deliveryNotApplied, and it refuses " //$NON-NLS-1$
-                    + "outright when an object of ours could not be held at all. This applies " //$NON-NLS-1$
-                    + "only with methodLevel=true; WITHOUT it the comparison stops at the " //$NON-NLS-1$
-                    + "object and such an object is held instead. Putting the delivery in " //$NON-NLS-1$
-                    + "front does NOT guarantee that work only this side had survives - what " //$NON-NLS-1$
-                    + "came out identical to the delivery is named in ourContentLost. Why each " //$NON-NLS-1$
-                    + "mode behaves so, and when it refuses: help=parameters. A restore point of the " //$NON-NLS-1$
-                    + "project files is taken before a changing intent; without it the merge does " //$NON-NLS-1$
-                    + "not start. git restore_merge_point puts the files back and does not roll " //$NON-NLS-1$
-                    + "back the infobase.") //$NON-NLS-1$
+                    + "and MERGE_IGNORING_PROBLEMS apply the decisions - IRREVERSIBLE; intent=MERGE " //$NON-NLS-1$
+                    + "is refused on a blocking problem or when no decisions were given. " //$NON-NLS-1$
+                    + "intent=UPDATE_UNCHANGED takes the delivery whole; it needs no decisions and " //$NON-NLS-1$
+                    + "refuses itself when anything was changed here or on both sides. " //$NON-NLS-1$
+                    + "UPDATE_KEEPING_OURS is the ordinary update on support: objects both sides " //$NON-NLS-1$
+                    + "changed are merged with the delivery in front, methods only this side has " //$NON-NLS-1$
+                    + "stay, an object that will not take that merge is named in deliveryNotApplied, " //$NON-NLS-1$
+                    + "and it refuses outright when an object of ours could not be held at all. This " //$NON-NLS-1$
+                    + "applies only with methodLevel=true; WITHOUT it the comparison stops at the " //$NON-NLS-1$
+                    + "object and such an object is held instead. Putting the delivery in front does " //$NON-NLS-1$
+                    + "NOT guarantee that work only this side had survives; what came out identical is " //$NON-NLS-1$
+                    + "named in ourContentLost. After a merge the touched objects are revalidated and " //$NON-NLS-1$
+                    + "the errors standing against them are reported. Details: help=parameters. A " //$NON-NLS-1$
+                    + "restore point of the project files is taken before a changing intent; if it " //$NON-NLS-1$
+                    + "cannot be taken the merge does not start. git restore_merge_point puts the " //$NON-NLS-1$
+                    + "files back and does not roll back the infobase.") //$NON-NLS-1$
             .build();
     }
 

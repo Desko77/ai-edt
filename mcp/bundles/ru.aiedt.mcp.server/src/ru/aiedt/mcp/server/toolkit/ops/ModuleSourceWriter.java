@@ -108,12 +108,7 @@ public class ModuleSourceWriter implements IMcpTool
     public String getDescription()
     {
         return "Writes BSL source into a 1C metadata object module. " //$NON-NLS-1$
-            + "Eight modes: searchReplace (locate oldSource in the file and swap in source; the default), " //$NON-NLS-1$
-            + "replace (overwrite the whole module), append (add text at the end), " //$NON-NLS-1$
-            + "replaceLines (overwrite a range of lines), replaceMethod (swap out one method found by name), " //$NON-NLS-1$
-            + "replaceMethods (atomic multi-method swap via methods[]; every target must be found or nothing is written), " //$NON-NLS-1$
-            + "insertBefore (place source ahead of line N), insertAfter (place source right after line N). " //$NON-NLS-1$
-            + "Identify the target via modulePath, or via objectName plus moduleType. " //$NON-NLS-1$
+            + "Eight modes pick a whole-module replacement or a point edit; the mode argument names them. " //$NON-NLS-1$
             + "Before the write, a BSL syntax pass verifies that Procedure/EndProcedure, " //$NON-NLS-1$
             + "Function/EndFunction, If/EndIf and similar pairs stay balanced - " //$NON-NLS-1$
             + "any mismatch blocks the write. Pass skipSyntaxCheck=true to override it. " //$NON-NLS-1$
@@ -132,95 +127,84 @@ public class ModuleSourceWriter implements IMcpTool
         return SchemaComposer.object()
             .stringProperty("projectName", "Name of the EDT project to work in", true) //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("modulePath", //$NON-NLS-1$
-                "Path to the module from the src/ folder, e.g. 'CommonModules/MyModule/Module.bsl' " //$NON-NLS-1$
-                    + "or 'Documents/MyDoc/ObjectModule.bsl'; a leading 'src/' is stripped. " //$NON-NLS-1$
-                    + "A write refuses a misspelled kind folder or an object the configuration does " //$NON-NLS-1$
-                    + "not hold, naming the canonical path. Or supply objectName + moduleType instead.") //$NON-NLS-1$
+                "Path to the module from the src/ folder, e.g. 'CommonModules/MyModule/Module.bsl'; " //$NON-NLS-1$
+                    + "a leading 'src/' is stripped. A write refuses a misspelled kind folder " //$NON-NLS-1$
+                    + "or an object the configuration does not hold, naming the canonical path. " //$NON-NLS-1$
+                    + "Or supply objectName + moduleType instead.") //$NON-NLS-1$
             .stringProperty("objectName", //$NON-NLS-1$
-                "The object's fully-qualified name, e.g. 'Document.MyDoc' or 'DataProcessor.MyProcessor'. " //$NON-NLS-1$
-                    + "Metadata names in Russian work too (e.g. 'Документ.МойДок'). " //$NON-NLS-1$
-                    + "An alternative to modulePath.") //$NON-NLS-1$
+                "The object's fully-qualified name, e.g. 'Document.MyDoc'. " //$NON-NLS-1$
+                    + "Metadata names in Russian work too. An alternative to modulePath.") //$NON-NLS-1$
             .stringProperty("moduleType", //$NON-NLS-1$
-                "Which kind of module (paired with objectName): ObjectModule (default), ManagerModule, " //$NON-NLS-1$
+                "Module kind, paired with objectName: ObjectModule (default), ManagerModule, " //$NON-NLS-1$
                     + "FormModule, CommandModule, RecordSetModule.") //$NON-NLS-1$
             .stringProperty("source", //$NON-NLS-1$
-                "The BSL text to write (aliases accepted: content, sourceCode, code, text). Needed " //$NON-NLS-1$
-                    + "for every mode EXCEPT replaceMethods (there, each method brings its own source " //$NON-NLS-1$
-                    + "inside the methods[] array). For replace: the module's entire new content. For " //$NON-NLS-1$
-                    + "searchReplace: what to put in place of oldSource. For append: the text being added. For " //$NON-NLS-1$
-                    + "replaceMethod/replaceMethods: the full method, start to finish (Procedure/Function ... " //$NON-NLS-1$
-                    + "EndProcedure/EndFunction). If source opens with a // header comment, " //$NON-NLS-1$
-                    + "it takes the place of the method's existing header comment (never leaving a duplicate); when " //$NON-NLS-1$
-                    + "there is no leading comment, whatever header was already there is left alone. To drop an " //$NON-NLS-1$
-                    + "existing header comment without putting in a new one, use searchReplace instead.") //$NON-NLS-1$
+                "The BSL text to write (aliases accepted: content, sourceCode, code, text). " //$NON-NLS-1$
+                    + "Needed for every mode EXCEPT replaceMethods, where each method brings its own " //$NON-NLS-1$
+                    + "source inside the methods[] array. For replace: the module's entire new content. " //$NON-NLS-1$
+                    + "For searchReplace: what to put in place of oldSource. For append: the text being " //$NON-NLS-1$
+                    + "added. For replaceMethod/replaceMethods: the full method. A leading // header " //$NON-NLS-1$
+                    + "comment takes the place of the method's existing header comment (never leaving " //$NON-NLS-1$
+                    + "a duplicate); without one, the old header is left alone. To drop a header without " //$NON-NLS-1$
+                    + "a new one, use searchReplace instead.") //$NON-NLS-1$
             .stringProperty("oldSource", //$NON-NLS-1$
-                "The fragment to find and swap out (required for searchReplace mode). It has to " //$NON-NLS-1$
-                    + "match exactly one spot in the file - which is also proof you actually read the current " //$NON-NLS-1$
-                    + "file contents.") //$NON-NLS-1$
+                "Fragment to find and swap (required for searchReplace mode); it must match " //$NON-NLS-1$
+                    + "exactly one spot, which is also proof you actually read the current file contents.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
-                "Picks the write mode: 'searchReplace' (find oldSource and swap in source; the default), " //$NON-NLS-1$
+                "Write mode: 'searchReplace' (find oldSource and swap in source; the default), " //$NON-NLS-1$
                     + "'replace' (overwrite the entire file), 'append' (add text at the end), 'replaceLines' " //$NON-NLS-1$
                     + "(overwrite a range of lines), 'replaceMethod' (swap out one named method end-to-end), " //$NON-NLS-1$
                     + "'replaceMethods' (atomic multi-method swap - see methods[]; every target " //$NON-NLS-1$
-                    + "must be found, or nothing gets written), 'insertBefore' (drop source ahead of line N), " //$NON-NLS-1$
-                    + "'insertAfter' (drop source right after line N).") //$NON-NLS-1$
+                    + "must be found, or nothing gets written), 'insertBefore' (source ahead of line N), " //$NON-NLS-1$
+                    + "'insertAfter' (source right after line N).") //$NON-NLS-1$
             .stringProperty("formName", //$NON-NLS-1$
-                "The form's name; required when moduleType=FormModule (e.g. 'ItemForm').") //$NON-NLS-1$
+                "The form's name; required when moduleType=FormModule.") //$NON-NLS-1$
             .stringProperty("commandName", //$NON-NLS-1$
-                "The command's name; required when moduleType=CommandModule (e.g. 'FillByTemplate').") //$NON-NLS-1$
+                "The command's name; required when moduleType=CommandModule.") //$NON-NLS-1$
             .integerProperty("lineFrom", //$NON-NLS-1$
-                "Starting line number for replaceLines mode (1-based, inclusive)") //$NON-NLS-1$
+                "Starting line for replaceLines mode (1-based, inclusive)") //$NON-NLS-1$
             .integerProperty("lineTo", //$NON-NLS-1$
-                "Ending line number for replaceLines mode (1-based, inclusive)") //$NON-NLS-1$
+                "Ending line for replaceLines mode (1-based, inclusive)") //$NON-NLS-1$
             .stringProperty("expectedText", //$NON-NLS-1$
-                "An optional safety net for replaceLines: paste in what you believe currently " //$NON-NLS-1$
-                    + "sits on lines lineFrom..lineTo. If it does not match (the module " //$NON-NLS-1$
-                    + "changed since you last read it, so the line numbers are stale), the edit gets " //$NON-NLS-1$
-                    + "REJECTED and you get an expected-vs-actual diff back instead of a silent overwrite of " //$NON-NLS-1$
-                    + "the wrong lines. Strongly recommended - echo back the lines you plan to " //$NON-NLS-1$
-                    + "replace.") //$NON-NLS-1$
+                "Safety net for replaceLines: the text you believe sits on lines lineFrom..lineTo. " //$NON-NLS-1$
+                    + "If it does not match (the module changed since you read it, so the lines are stale), " //$NON-NLS-1$
+                    + "the edit gets REJECTED and you get an expected-vs-actual diff instead of a silent " //$NON-NLS-1$
+                    + "overwrite of the wrong lines.") //$NON-NLS-1$
             .stringProperty("methodName", //$NON-NLS-1$
-                "The method's name for replaceMethod mode (looked up as a Procedure/Function by that name). The " //$NON-NLS-1$
-                    + "span being replaced also picks up any preceding &-directives, plus the old // header " //$NON-NLS-1$
-                    + "comment when the new source itself opens with one.") //$NON-NLS-1$
+                "The method's name for replaceMethod mode (looked up as a Procedure/Function by that " //$NON-NLS-1$
+                    + "name). The replaced span also picks up preceding &-directives and the old // header " //$NON-NLS-1$
+                    + "comment when the new source opens with one.") //$NON-NLS-1$
             .stringProperty("methods", //$NON-NLS-1$
-                "In replaceMethods mode, supply a JSON array of {methodName, source} objects, for instance " //$NON-NLS-1$
-                    + "[{\"methodName\":\"ПриСоздании\"," //$NON-NLS-1$
-                    + "\"source\":\"Процедура " //$NON-NLS-1$
-                    + "ПриСоздании()\\n...\\n" //$NON-NLS-1$
-                    + "КонецПроцедуры\"}, " //$NON-NLS-1$
-                    + "{\"methodName\":\"ПриЗаписи\"," //$NON-NLS-1$
-                    + "\"source\":\"...\"}]. Every referenced method has to already exist, or the call writes nothing " //$NON-NLS-1$
-                    + "(all-or-nothing). Per entry, 'name' works as an alias for methodName, and content/sourceCode/code/text " //$NON-NLS-1$
-                    + "are all accepted as aliases for source.") //$NON-NLS-1$
+                "In replaceMethods mode, supply a JSON array of {methodName, source} objects, e.g. " //$NON-NLS-1$
+                    + "[{\"methodName\":\"X\",\"source\":\"...\"}]. Every referenced method has to already exist, " //$NON-NLS-1$
+                    + "or the call writes nothing (all-or-nothing). Per entry, 'name' works as an alias " //$NON-NLS-1$
+                    + "for methodName, and content/sourceCode/code/text are all accepted as aliases for source.") //$NON-NLS-1$
             .integerProperty("line", //$NON-NLS-1$
-                "1-based line number for insertBefore/insertAfter. insertBefore: source is placed " //$NON-NLS-1$
-                    + "right before line N (the old line N moves down to N+sourceLines). insertAfter: " //$NON-NLS-1$
-                    + "source is placed right after line N (the old line N+1 moves further down).") //$NON-NLS-1$
+                "1-based line number for insertBefore/insertAfter. insertBefore places source right " //$NON-NLS-1$
+                    + "before line N (the old line N moves down to N+sourceLines); insertAfter places it " //$NON-NLS-1$
+                    + "right after line N (the old line N+1 moves further down).") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
-                "Shows what the write would produce without touching the file. Reports diff stats " //$NON-NLS-1$
+                "Previews the write without touching the file. Reports diff stats " //$NON-NLS-1$
                     + "(linesBefore, linesAfter, removedLines, addedLines)") //$NON-NLS-1$
             .booleanProperty("normalizeInvalidCharacters", //$NON-NLS-1$
                 "Replaces dashes, no-break spaces and soft hyphens outside string literals with plain " //$NON-NLS-1$
                     + "characters and reports where. Default: true.") //$NON-NLS-1$
             .booleanProperty("skipSyntaxCheck", //$NON-NLS-1$
-                "Bypasses the BSL syntax check (default: false). At the default, it confirms balanced " //$NON-NLS-1$
+                "Bypasses the BSL syntax check (default: false). At the default it confirms balanced " //$NON-NLS-1$
                     + "Procedure/EndProcedure, Function/EndFunction, If/EndIf, While/EndDo, " //$NON-NLS-1$
                     + "For/EndDo, Try/EndTry pairs. Set true to push the write through regardless.") //$NON-NLS-1$
             .booleanProperty("validateAfterWrite", //$NON-NLS-1$
-                "Runs EDT validation right after a successful write and folds the outcome into the response " //$NON-NLS-1$
-                    + "(default: true). Adds a 'validation' section with errors / warnings / " //$NON-NLS-1$
-                    + "codeStyle counts, plus a short hint. Pass false while writing in a batch and call " //$NON-NLS-1$
-                    + "get_project_errors once at the very end instead.") //$NON-NLS-1$
+                "Runs EDT validation after a successful write and folds the outcome into the response " //$NON-NLS-1$
+                    + "(default: true). Adds a 'validation' section with errors / warnings / codeStyle " //$NON-NLS-1$
+                    + "counts, plus a hint. Pass false while writing in a batch and call get_project_errors " //$NON-NLS-1$
+                    + "once at the end instead.") //$NON-NLS-1$
             .booleanProperty("confirmFullReplace", //$NON-NLS-1$
-                "Has to be true when a write would strip away more than 50% of an existing module's lines. " //$NON-NLS-1$
-                    + "Prevents accidentally wiping out hundreds of lines when the goal was only to touch " //$NON-NLS-1$
-                    + "one method or fragment. Removals above 30% still proceed but come back with a non-blocking " //$NON-NLS-1$
-                    + "'protection' warning. Applies to every mode that can remove lines - searchReplace, " //$NON-NLS-1$
-                    + "replaceLines, replaceMethod, replaceMethods and replace (a replace that strips more " //$NON-NLS-1$
-                    + "than half of the existing module still has to be confirmed, so an accidental stub " //$NON-NLS-1$
-                    + "replacement cannot silently wipe a large module); the additive modes (append, " //$NON-NLS-1$
-                    + "insertBefore, insertAfter) only add lines and are never gated.") //$NON-NLS-1$
+                "Has to be true when a write would strip away more than 50% of an existing module's lines; " //$NON-NLS-1$
+                    + "this prevents an accidental stub replacement from silently wiping a large module. " //$NON-NLS-1$
+                    + "Removals above 30% still proceed but come back with a non-blocking 'protection' " //$NON-NLS-1$
+                    + "warning. Applies to every mode that can remove lines - searchReplace, replaceLines, " //$NON-NLS-1$
+                    + "replaceMethod, replaceMethods and replace (a replace that strips more than half " //$NON-NLS-1$
+                    + "still has to be confirmed); the additive modes (append, insertBefore, insertAfter) " //$NON-NLS-1$
+                    + "only add lines and are never gated.") //$NON-NLS-1$
             .build();
     }
 
