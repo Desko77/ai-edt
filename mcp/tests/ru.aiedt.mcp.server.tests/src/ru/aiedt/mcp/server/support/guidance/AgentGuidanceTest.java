@@ -24,6 +24,8 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import com.google.gson.JsonParser;
+
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.settings.ToolProfile;
@@ -40,11 +42,15 @@ import ru.aiedt.mcp.server.toolkit.ops.ClientSessionStarter;
 import ru.aiedt.mcp.server.toolkit.ops.ConfigIoFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.DatabaseUpdater;
 import ru.aiedt.mcp.server.toolkit.ops.DebugSessionStarter;
+import ru.aiedt.mcp.server.toolkit.ops.EditMetadataTool;
 import ru.aiedt.mcp.server.toolkit.ops.EventLogTool;
 import ru.aiedt.mcp.server.toolkit.ops.ExternalObjectWorkshopTool;
 import ru.aiedt.mcp.server.toolkit.ops.InfobaseAdminFacadeTool;
 import ru.aiedt.mcp.server.toolkit.ops.LaunchDebuggerTool;
+import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceReader;
+import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceWriter;
 import ru.aiedt.mcp.server.toolkit.ops.QueryValidator;
+import ru.aiedt.mcp.server.wire.McpRequestRouter;
 import ru.aiedt.mcp.server.wire.McpServerMeta;
 
 /**
@@ -66,6 +72,8 @@ import ru.aiedt.mcp.server.wire.McpServerMeta;
 public class AgentGuidanceTest
 {
     private McpToolCatalog catalog;
+
+    private OrdinaryFormsProbe ordinaryForms;
 
     private IPreferenceStore store;
 
@@ -89,6 +97,14 @@ public class AgentGuidanceTest
         register(new EventLogTool());
         register(new ConfigIoFacadeTool());
         register(new DatabaseUpdater());
+        register(new EditMetadataTool());
+        register(new ModuleSourceReader());
+        register(new ModuleSourceWriter());
+
+        // The ordinary-forms tool lives in an optional bundle. The probe carries the same
+        // contract that bundle declares: it writes, and it gates every write on its own door.
+        ordinaryForms = new OrdinaryFormsProbe();
+        catalog.registerExternal(ordinaryForms, true);
 
         store = Activator.getDefault().getPreferenceStore();
         presetBefore = store.getString(PrefKeys.PREF_TOOL_PRESET);
@@ -99,6 +115,8 @@ public class AgentGuidanceTest
     @After
     public void theRegistryAndTheStoreGoBack()
     {
+        // An external tool survives clear(), so it leaves through its own door first.
+        catalog.unregisterExternal(ordinaryForms);
         catalog.clear();
         store.setValue(PrefKeys.PREF_DISABLED_TOOLS, disabledBefore);
         store.setValue(PrefKeys.PREF_UNLISTED_TOOLS, unlistedBefore);
@@ -114,11 +132,21 @@ public class AgentGuidanceTest
     @Test
     public void everyEntryPointOfEverySetIsDeclared()
     {
-        assertEquals("E set", 11, AgentGuidance.targetEntries().size()); //$NON-NLS-1$
+        assertEquals("E set", 20, AgentGuidance.targetEntries().size()); //$NON-NLS-1$
         assertEquals("S set", 2, AgentGuidance.updateStepEntries().size()); //$NON-NLS-1$
         assertEquals("M set", 3, AgentGuidance.modes().size()); //$NON-NLS-1$
         assertEquals("P set", 7, AgentGuidance.argumentPlaces().size()); //$NON-NLS-1$
         assertEquals("X set", 2, AgentGuidance.boundaries().size()); //$NON-NLS-1$
+        assertEquals("R set", 9, AgentGuidance.routes().size()); //$NON-NLS-1$
+        for (String id : List.of("R7", "R8", "R9")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            assertNotNull("the route " + id + " is not declared", AgentGuidance.route(id)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        for (String id : List.of("E12", "E13", "E14", "E15", "E16", "E17", "E18", "E19", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "E20")) //$NON-NLS-1$ //$NON-NLS-2$
+        {
+            assertNotNull("the entry point " + id + " is not declared", AgentGuidance.entry(id)); //$NON-NLS-1$ //$NON-NLS-2$
+        }
 
         assertUniqueIds();
         for (Entry entry : AgentGuidance.targetEntries())
@@ -283,6 +311,310 @@ public class AgentGuidanceTest
                 route.availability().contains("off")); //$NON-NLS-1$
             assertTrue(route.id() + " must be available under Canonical", route.available()); //$NON-NLS-1$
         }
+    }
+
+    /**
+     * Without the optional bundle the ordinary operations are off, while the two global module
+     * tools keep their name - the module address, not the tool name, is what the bundle resolves.
+     */
+    @Test
+    public void ordinaryRoutesWithoutTheOptionalToolAreNotAvailable()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        catalog.unregisterExternal(ordinaryForms);
+        assertFalse("this scenario has both routed doors open", //$NON-NLS-1$
+            catalog.isDisabledByPreset("edit_metadata_writes")); //$NON-NLS-1$
+        assertFalse("this scenario has both routed doors open", //$NON-NLS-1$
+            catalog.isDisabledByPreset("ordinary_forms_writes")); //$NON-NLS-1$
+
+        for (String id : List.of("E12", "E13", "E14", "E15", "E18", "E19", "E20")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {
+            assertEquals(id + " has to be off without ordinary_forms", //$NON-NLS-1$
+                State.OFF, AgentGuidance.entry(id).state());
+        }
+        assertEquals("off: ordinary_forms is not registered", AgentGuidance.entry("E12").label()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals("off: ordinary_forms is not registered", AgentGuidance.entry("E19").label()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the global module reader keeps its name: " + AgentGuidance.entry("E16").label(), //$NON-NLS-1$ //$NON-NLS-2$
+            AgentGuidance.entry("E16").callable());
+        assertTrue("the global module writer keeps its name: " + AgentGuidance.entry("E17").label(), //$NON-NLS-1$ //$NON-NLS-2$
+            AgentGuidance.entry("E17").callable());
+
+        assertFalse("R7 needs the optional tool", AgentGuidance.route("R7").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the read target is not available through a module name", //$NON-NLS-1$
+            AgentGuidance.route("R8").target("read").available()); //$NON-NLS-1$
+        assertFalse("R8 needs the optional tool for what it reads and edits", //$NON-NLS-1$
+            AgentGuidance.route("R8").available());
+        assertTrue("R9 is the existing update and does not depend on the bundle", //$NON-NLS-1$
+            AgentGuidance.route("R9").available());
+
+        String document = AgentGuidance.document();
+        assertTrue(document, document.contains("off: ordinary_forms is not registered")); //$NON-NLS-1$
+        assertFalse(document, document.contains("available via ordinary_forms")); //$NON-NLS-1$
+        assertTrue("the module address condition is named: " + document, //$NON-NLS-1$
+            document.contains("ordinaryFormsRegistered=false")); //$NON-NLS-1$
+        assertTrue("the module entry is a name only: " + AgentGuidance.route("R8").availability(), //$NON-NLS-1$ //$NON-NLS-2$
+            AgentGuidance.route("R8").availability().contains("tool name only (read_module_source)")); //$NON-NLS-1$
+    }
+
+    /** The registered optional tool makes its own operations available under Canonical. */
+    @Test
+    public void ordinaryRoutesAreAvailableWhenTheToolIsRegisteredAndEnabled()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+
+        assertEquals("available via ordinary_forms operation=create_form", //$NON-NLS-1$
+            AgentGuidance.entry("E12").label()); //$NON-NLS-1$
+        assertEquals("available via ordinary_forms operation=layout", //$NON-NLS-1$
+            AgentGuidance.entry("E13").label()); //$NON-NLS-1$
+        assertEquals("available via ordinary_forms operation=inspect_layout", //$NON-NLS-1$
+            AgentGuidance.entry("E14").label()); //$NON-NLS-1$
+        assertEquals("available via ordinary_forms operation=set_property", //$NON-NLS-1$
+            AgentGuidance.entry("E15").label()); //$NON-NLS-1$
+        assertEquals("available via ordinary_forms operation=import_from_infobase", //$NON-NLS-1$
+            AgentGuidance.entry("E18").label()); //$NON-NLS-1$
+        assertEquals("available via ordinary_forms operation=audit", //$NON-NLS-1$
+            AgentGuidance.entry("E20").label()); //$NON-NLS-1$
+        assertEquals("available via edit_metadata operation=create_form", //$NON-NLS-1$
+            AgentGuidance.entry("E19").label()); //$NON-NLS-1$
+
+        assertTrue(AgentGuidance.route("R7").available()); //$NON-NLS-1$
+        assertTrue(AgentGuidance.route("R8").available()); //$NON-NLS-1$
+        assertTrue(AgentGuidance.route("R9").available()); //$NON-NLS-1$
+        assertTrue(AgentGuidance.route("R8").target("read").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(AgentGuidance.route("R8").target("edit").available()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** Hidden is callable: the route stays open and the label says so. */
+    @Test
+    public void hiddenOrdinaryFormsStaysCallableOnItsRoutes()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        ToolSettingsStore.getInstance().setUnlistedTools(Set.of("ordinary_forms")); //$NON-NLS-1$
+
+        assertEquals(State.HIDDEN, AgentGuidance.entry("E12").state()); //$NON-NLS-1$
+        assertTrue("hidden is not off: " + AgentGuidance.entry("E12").label(), //$NON-NLS-1$ //$NON-NLS-2$
+            AgentGuidance.entry("E12").label()
+                .startsWith("hidden, callable via ordinary_forms operation=create_form")); //$NON-NLS-1$
+        assertTrue(AgentGuidance.entry("E12").callable()); //$NON-NLS-1$
+        assertTrue("the routed entry is still listed", AgentGuidance.entry("E19").callable()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(AgentGuidance.route("R7").available()); //$NON-NLS-1$
+        assertTrue(AgentGuidance.route("R8").available()); //$NON-NLS-1$
+        assertFalse("the ordinary tool is absent from tools/list", //$NON-NLS-1$
+            listed("ordinary_forms")); //$NON-NLS-1$
+    }
+
+    /** A disabled tool is off, and so is the routed branch that would delegate to it. */
+    @Test
+    public void disabledOrdinaryFormsClosesDirectAndRoutedEntries()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        ToolSettingsStore.getInstance().setDisabledTools(Set.of("ordinary_forms")); //$NON-NLS-1$
+
+        for (String id : List.of("E12", "E13", "E14", "E15", "E18", "E20")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {
+            assertEquals(id + " is off with the tool", State.OFF, AgentGuidance.entry(id).state()); //$NON-NLS-1$
+            assertTrue(AgentGuidance.entry(id).label(), //$NON-NLS-1$
+                AgentGuidance.entry(id).label().contains("off by preset ordinary_forms")); //$NON-NLS-1$
+        }
+        assertEquals(State.OFF, AgentGuidance.entry("E19").state()); //$NON-NLS-1$
+        assertTrue("the routed branch names the optional tool: " + AgentGuidance.entry("E19").label(), //$NON-NLS-1$ //$NON-NLS-2$
+            AgentGuidance.entry("E19").label().contains("ordinary_forms")); //$NON-NLS-1$
+        assertFalse(AgentGuidance.route("R7").available()); //$NON-NLS-1$
+        assertFalse(AgentGuidance.route("R8").available()); //$NON-NLS-1$
+        assertTrue("the module reader does not depend on that name", //$NON-NLS-1$
+            AgentGuidance.entry("E16").callable()); //$NON-NLS-1$
+    }
+
+    /**
+     * The mixed-tool contract: with its write door closed the tool keeps its reads, while every
+     * write - a dryRun preview included - is refused, and the routed branch shares the door.
+     */
+    @Test
+    public void closedOrdinaryWriteDoorKeepsReadsAndRefusesEveryWrite()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        ToolSettingsStore.getInstance().setDisabledTools(Set.of("ordinary_forms_writes")); //$NON-NLS-1$
+
+        assertTrue("the mixed tool stays callable for its reads", //$NON-NLS-1$
+            catalog.isToolEnabled("ordinary_forms")); //$NON-NLS-1$
+        assertTrue(catalog.isDisabledByPreset("ordinary_forms_writes")); //$NON-NLS-1$
+        for (String id : List.of("E12", "E15", "E18")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            assertEquals(id + " writes", State.OFF, AgentGuidance.entry(id).state()); //$NON-NLS-1$
+            assertEquals("off: ordinary_forms_writes disabled", AgentGuidance.entry(id).label()); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        assertEquals("the routed write shares the tool's door", //$NON-NLS-1$
+            "off: ordinary_forms_writes disabled", AgentGuidance.entry("E19").label()); //$NON-NLS-1$ //$NON-NLS-2$
+        for (String id : List.of("E13", "E14", "E20", "E16")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {
+            assertEquals(id + " reads", State.AVAILABLE, AgentGuidance.entry(id).state()); //$NON-NLS-1$
+        }
+        assertFalse(AgentGuidance.route("R7").available()); //$NON-NLS-1$
+        assertTrue("reads stay: " + AgentGuidance.route("R8").availability(), //$NON-NLS-1$ //$NON-NLS-2$
+            AgentGuidance.route("R8").available());
+        assertTrue(AgentGuidance.route("R8").target("read").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse(AgentGuidance.route("R8").target("edit").available()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /** A closed facade door does not reach the direct ordinary creation; the routed branch fails. */
+    @Test
+    public void closedFacadeWriteDoorLeavesDirectOrdinaryCreationOpen()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        ToolSettingsStore.getInstance().setDisabledTools(Set.of("edit_metadata_writes")); //$NON-NLS-1$
+
+        assertEquals(State.AVAILABLE, AgentGuidance.entry("E12").state()); //$NON-NLS-1$
+        assertEquals(State.AVAILABLE, AgentGuidance.entry("E18").state()); //$NON-NLS-1$
+        assertEquals(State.AVAILABLE, AgentGuidance.entry("E15").state()); //$NON-NLS-1$
+        assertEquals(State.OFF, AgentGuidance.entry("E19").state()); //$NON-NLS-1$
+        assertEquals("off: edit_metadata_writes disabled", AgentGuidance.entry("E19").label()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue("the direct creation is untouched", AgentGuidance.route("R7").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(AgentGuidance.route("R8").target("edit").available()); //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The update is delivery, not a condition of reading or editing: without update_database the
+     * read and edit targets stay open and only R9 closes.
+     */
+    @Test
+    public void closedUpdateDatabaseLeavesReadsAndEditsAndClosesDelivery()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        ToolSettingsStore.getInstance().setDisabledTools(Set.of("update_database")); //$NON-NLS-1$
+
+        for (String id : List.of("E13", "E14", "E20", "E15")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+        {
+            assertEquals(id + " does not need update_database", State.AVAILABLE, AgentGuidance.entry(id).state()); //$NON-NLS-1$
+        }
+        assertTrue(AgentGuidance.route("R8").available()); //$NON-NLS-1$
+        assertTrue(AgentGuidance.route("R8").target("read").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertTrue(AgentGuidance.route("R8").target("edit").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("delivery needs a real update", AgentGuidance.route("R9").available()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertFalse("the read and edit availability does not name the update", //$NON-NLS-1$
+            AgentGuidance.route("R8").availability().contains("update_database")); //$NON-NLS-1$
+    }
+
+    /** The resource text names the route, the addresses, the two doors and the provider condition. */
+    @Test
+    public void theDocumentNamesTheOrdinaryRoutesAndTheirConditions()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        String document = AgentGuidance.document();
+
+        for (String route : List.of("R7", "R8", "R9")) //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+        {
+            assertTrue(route + " is missing from the document", //$NON-NLS-1$
+                document.contains(route + " " + AgentGuidance.route(route).task())); //$NON-NLS-1$
+        }
+        for (String fragment : List.of("Forms/<Form>/Module.bsl", //$NON-NLS-1$
+            "relative to src/", //$NON-NLS-1$
+            "projectName is a separate argument", //$NON-NLS-1$
+            "import_from_infobase", //$NON-NLS-1$
+            "edit_metadata_writes", //$NON-NLS-1$
+            "ordinary_forms_writes", //$NON-NLS-1$
+            "ordinaryFormsRegistered=false", //$NON-NLS-1$
+            "handlerChanges=warn\\|refuse", //$NON-NLS-1$
+            "searchReplace", //$NON-NLS-1$
+            "replaceMethod", //$NON-NLS-1$
+            "confirmFullReplace", //$NON-NLS-1$
+            "the form or module entry the write replaces", //$NON-NLS-1$
+            "unsavedInEditor=true", //$NON-NLS-1$
+            "No Form.oform", //$NON-NLS-1$
+            "runKey", //$NON-NLS-1$
+            "protectData", //$NON-NLS-1$
+            "acceptDataLoss", //$NON-NLS-1$
+            "delivery statement", //$NON-NLS-1$
+            "registered ordinary_forms tool is not proof that its module provider is registered", //$NON-NLS-1$
+            "next: R8", //$NON-NLS-1$
+            "next: R9")) //$NON-NLS-1$
+        {
+            assertTrue("missing from the guidance document: " + fragment + "\n" + document, //$NON-NLS-1$ //$NON-NLS-2$
+                document.contains(fragment));
+        }
+    }
+
+    /** The same states are what resources/read hands a client through the router. */
+    @Test
+    public void theResourceReadThroughTheRouterCarriesTheOrdinaryRoutes()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        String body = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"resources/read\",\"params\":{\"uri\":\"" //$NON-NLS-1$
+            + McpServerMeta.RESOURCE_GUIDANCE + "\"}}"; //$NON-NLS-1$
+        String answer = new McpRequestRouter().processRequest(body);
+        String text = JsonParser.parseString(answer).getAsJsonObject().getAsJsonObject("result") //$NON-NLS-1$
+            .getAsJsonArray("contents").get(0).getAsJsonObject().get("text").getAsString(); //$NON-NLS-1$ //$NON-NLS-2$
+
+        assertTrue(text, text.contains("R8 Read or edit an existing ordinary form in the project")); //$NON-NLS-1$
+        assertTrue(text, text.contains("available via ordinary_forms operation=layout")); //$NON-NLS-1$
+        assertTrue(text, text.contains("available via edit_metadata operation=create_form")); //$NON-NLS-1$
+    }
+
+    /**
+     * A pipe inside cell prose is a cell boundary to a markdown table: the row grows a column the
+     * header does not carry and a renderer drops the tail, the availability column among it. The
+     * document escapes every pipe inside cell text, so the R7 purpose enumeration, the
+     * module=project|infobase switch and the R8 handlerChanges switch stay inside their cell.
+     */
+    @Test
+    public void routeRowsKeepFourColumnsDespitePipesInTheirProse()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        String document = AgentGuidance.document();
+
+        List<String> table = new ArrayList<>();
+        for (String line : document.split("\n")) //$NON-NLS-1$
+        {
+            if (line.startsWith("|")) //$NON-NLS-1$
+            {
+                table.add(line);
+            }
+        }
+        assertEquals("the table is a header, a separator and one row per route", //$NON-NLS-1$
+            AgentGuidance.routes().size() + 2, table.size());
+        for (String row : table)
+        {
+            long boundaries = row.replace("\\|", "").chars().filter(c -> c == '|').count(); //$NON-NLS-1$ //$NON-NLS-2$
+            assertEquals("a row carries exactly four cells: " + row, 5, boundaries); //$NON-NLS-1$
+        }
+        assertTrue("the purpose enumeration stays inside its cell: " + document, //$NON-NLS-1$
+            document.contains("purpose (ItemForm \\| ListForm")); //$NON-NLS-1$
+        assertTrue("the module source switch stays inside its cell: " + document, //$NON-NLS-1$
+            document.contains("module=project\\|infobase")); //$NON-NLS-1$
+        assertTrue("the handler switch stays inside its cell: " + document, //$NON-NLS-1$
+            document.contains("handlerChanges=warn\\|refuse")); //$NON-NLS-1$
+    }
+
+    /**
+     * The module address of an ordinary form accepts a leading src/ - the writer strips it before
+     * the layout is judged, and the ordinary-form provider strips it when it locates the container -
+     * while a project-name prefix resolves nowhere. The document states the two prefixes
+     * separately; naming src/ among the prefixes that do not resolve would teach a caller to
+     * rewrite an address the tools accept.
+     */
+    @Test
+    public void theModuleAddressNamesSrcAsAcceptedAndTheProjectNameAsNotResolving()
+    {
+        ToolSettingsStore.getInstance().applyPreset(ToolProfile.CANONICAL);
+        String document = AgentGuidance.document();
+
+        assertTrue("src/ is accepted and stripped: " + document, //$NON-NLS-1$
+            document.contains("A leading src/ is accepted and stripped")); //$NON-NLS-1$
+        assertTrue("the project-name prefix is the one that does not resolve: " + document, //$NON-NLS-1$
+            document.contains("a leading <project>/ does not resolve")); //$NON-NLS-1$
+        assertFalse("src/ must not be named as a prefix that does not resolve: " + document, //$NON-NLS-1$
+            document.contains("src/ does not")); //$NON-NLS-1$
+    }
+
+    private static boolean listed(String name)
+    {
+        for (IMcpTool tool : McpToolCatalog.getInstance().getEnabledTools())
+        {
+            if (tool.getName().equals(name))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -454,5 +786,44 @@ public class AgentGuidanceTest
         ToolSettingsStore store = ToolSettingsStore.getInstance();
         store.setDisabledTools(names.length == 0 ? Set.of() : Set.of(names));
         store.setUnlistedTools(Set.of());
+    }
+
+    /**
+     * A stand-in for the optional ordinary-forms tool. It carries the two facts the real bundle
+     * declares - it writes and it gates those writes on {@code ordinary_forms_writes} - and its
+     * answer names the operations the guidance registry describes, so the census can ask it for
+     * its catalogue exactly as it asks a facade.
+     */
+    private static final class OrdinaryFormsProbe implements IMcpTool
+    {
+        @Override
+        public String getName()
+        {
+            return "ordinary_forms"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String getDescription()
+        {
+            return "a stand-in for the optional ordinary-forms tool"; //$NON-NLS-1$
+        }
+
+        @Override
+        public String getInputSchema()
+        {
+            return "{\"type\":\"object\"}"; //$NON-NLS-1$
+        }
+
+        @Override
+        public List<String> getGatedWriteNames()
+        {
+            return List.of("ordinary_forms_writes"); //$NON-NLS-1$
+        }
+
+        @Override
+        public String execute(Map<String, String> params)
+        {
+            return "create_form import_from_infobase layout inspect_layout audit set_property"; //$NON-NLS-1$
+        }
     }
 }
