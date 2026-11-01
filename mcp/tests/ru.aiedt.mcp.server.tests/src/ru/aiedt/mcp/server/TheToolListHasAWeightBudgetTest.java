@@ -262,8 +262,13 @@ public class TheToolListHasAWeightBudgetTest
      * And from 193342 to 193361 for the sentence on enableExternalObjectDump that a preset which
      * blocks writing refuses true. Measured 25.10: 193361.
      * </p>
+     * <p>
+     * And lowered from 193361 to 191664 by the prose cut of insights and config_io: 720 and 977
+     * bytes of an operation list the operation argument already carried, and schema prose
+     * repeating what the help topics and the delegate schemas say. Measured 01.11.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 193361;
+    private static final int DOCUMENT_BUDGET = 191664;
 
     private LiveServer server;
 
@@ -408,7 +413,10 @@ public class TheToolListHasAWeightBudgetTest
         // for create_merge_restore_point and restore_merge_point with pointId (measured 29.09: 4040).
         BUDGETS.put("git", Integer.valueOf(4040)); //$NON-NLS-1$
         BUDGETS.put("compare_three_way", Integer.valueOf(10227)); //$NON-NLS-1$
-        BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
+        // Lowered from 9614 to 8984 by the prose cut: the operation list left the tool
+        // description because the operation argument already carried it, and the schema prose
+        // lost its repetitions of the help rules. Measured 01.11: 8984.
+        BUDGETS.put("insights", Integer.valueOf(8984)); //$NON-NLS-1$
         // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a
         // parameter lists the settings that still reference it, and the schema says so.
         BUDGETS.put("dcs_workshop", Integer.valueOf(9341)); //$NON-NLS-1$
@@ -436,7 +444,10 @@ public class TheToolListHasAWeightBudgetTest
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
         // description says an old file can never pass as the result (measured 28.09: 7748).
-        BUDGETS.put("config_io", Integer.valueOf(7748)); //$NON-NLS-1$
+        // Lowered to 6753 by the prose cut: the operation list left the tool description and
+        // the schema prose lost its repetitions of the delegate schemas the per-operation help
+        // renders. Measured 01.11: 6753.
+        BUDGETS.put("config_io", Integer.valueOf(6753)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
         // sentence in the tool's own description that names the way they compose an action.
         // Raised from 7160 to 7834 for the sentence that a timeout held by a 1C window returns

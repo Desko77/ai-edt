@@ -88,18 +88,11 @@ public class InsightsFacadeTool implements IMcpTool
     {
         return "Configuration insight and analysis - metrics, dependency graph, config " //$NON-NLS-1$
             + "comparison, query anti-patterns, health snapshot, impact analysis, object " //$NON-NLS-1$
-            + "summary, database tables of an object, semantic metadata search. Operations: " //$NON-NLS-1$
-            + "project_metrics, dependency_graph, compare_configurations, " //$NON-NLS-1$
-            + "compare_three_way, detect_query_anti_patterns, generate_health_snapshot, " //$NON-NLS-1$
-            + "impact_analysis, object_summary, describe_db_tables, " //$NON-NLS-1$
-            + "semantic_metadata_search, help. Pass " //$NON-NLS-1$
-            + "operation=<name> (snake_case canonical; camelCase like projectMetrics is also " //$NON-NLS-1$
-            + "accepted); remaining parameters follow the per-operation contracts (call " //$NON-NLS-1$
-            + "operation=help for the catalog, or operation=help topic=<operation> for one " //$NON-NLS-1$
-            + "operation's parameters). Every operation reads only, except compare_three_way " //$NON-NLS-1$
-            + "with an intent other than REPORT, which writes into the project and is refused " //$NON-NLS-1$
-            + "under a preset without write rights. The standalone tools remain available for " //$NON-NLS-1$
-            + "back-compat."; //$NON-NLS-1$
+            + "summary, database tables of an object, semantic metadata search. Pass " //$NON-NLS-1$
+            + "operation=<name>; the operation argument lists them, and operation=help " //$NON-NLS-1$
+            + "topic=<operation> answers one operation's parameters. Every operation reads " //$NON-NLS-1$
+            + "only, except compare_three_way with an intent other than REPORT, which writes " //$NON-NLS-1$
+            + "into the project and is refused under a preset without write rights."; //$NON-NLS-1$
     }
 
     @Override
@@ -111,8 +104,8 @@ public class InsightsFacadeTool implements IMcpTool
                     + "compare_three_way / detect_query_anti_patterns / generate_health_snapshot " //$NON-NLS-1$
                     + "/ impact_analysis / object_summary / describe_db_tables / " //$NON-NLS-1$
                     + "semantic_metadata_search / help (snake_case canonical; camelCase like " //$NON-NLS-1$
-                    + "projectMetrics is also accepted). operation=help topic=<operation> " //$NON-NLS-1$
-                    + "answers what that operation takes.", true) //$NON-NLS-1$
+                    + "projectMetrics also accepted). help topic=<operation> answers what that " //$NON-NLS-1$
+                    + "operation takes.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
                 "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
                     + "one-line summaries.") //$NON-NLS-1$
@@ -126,38 +119,35 @@ public class InsightsFacadeTool implements IMcpTool
                 "project_metrics: project / subsystem (default project). dependency_graph: " //$NON-NLS-1$
                     + "project / subsystem / object / module. " //$NON-NLS-1$
                     + "detect_query_anti_patterns: project / module / method (default project). " //$NON-NLS-1$
-                    + "compare_configurations: project / objectFqn (default project); " //$NON-NLS-1$
-                    + "objectFqn narrows the comparison to one object.") //$NON-NLS-1$
+                    + "compare_configurations: project / objectFqn (default project).") //$NON-NLS-1$
             .stringProperty("subsystemName", //$NON-NLS-1$
                 "Subsystem name when scope=subsystem (project_metrics, dependency_graph).") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
-                "Module FQN when scope=module (dependency_graph) or scope=module/method " //$NON-NLS-1$
-                    + "(detect_query_anti_patterns).") //$NON-NLS-1$
+                "Module FQN when scope=module or method (dependency_graph, " //$NON-NLS-1$
+                    + "detect_query_anti_patterns).") //$NON-NLS-1$
             .stringProperty("methodName", //$NON-NLS-1$
                 "detect_query_anti_patterns: method inside moduleFqn.") //$NON-NLS-1$
             .stringProperty("level", //$NON-NLS-1$
-                "dependency_graph: metadata / modules / mixed (default metadata) - what " //$NON-NLS-1$
-                    + "the graph nodes are. compare_configurations: object / attribute / module " //$NON-NLS-1$
-                    + "/ template (default object) - granularity of the diff; attribute needs " //$NON-NLS-1$
-                    + "mode=projects.") //$NON-NLS-1$
+                "dependency_graph: node kind - metadata / modules / mixed (default metadata). " //$NON-NLS-1$
+                    + "compare_configurations: diff granularity - object / attribute / module " //$NON-NLS-1$
+                    + "/ template (default object); attribute needs mode=projects.") //$NON-NLS-1$
             .integerProperty("depth", //$NON-NLS-1$
                 "dependency_graph: BFS depth, 1-5 (default 2).") //$NON-NLS-1$
             .stringProperty("direction", //$NON-NLS-1$
                 "dependency_graph: in / out / both (default both).") //$NON-NLS-1$
             .stringProperty("edgeKinds", //$NON-NLS-1$
-                "dependency_graph: via values to keep, comma-separated or a JSON array. " //$NON-NLS-1$
-                    + "Omit - or pass an empty list - to keep every kind; the answer writes no " //$NON-NLS-1$
-                    + "edgeKinds field for an empty list.") //$NON-NLS-1$
+                "dependency_graph: via values to keep, comma-separated or a JSON array; " //$NON-NLS-1$
+                    + "omit or an empty list to keep every kind.") //$NON-NLS-1$
             .integerProperty("maxNodes", //$NON-NLS-1$
                 "dependency_graph: node cap, default 200, at most 2000.") //$NON-NLS-1$
             .integerProperty("maxEdges", //$NON-NLS-1$
                 "dependency_graph: edge cap, default 500, at most 5000.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
-                "compare_configurations: projects / files. Required for that operation. The " //$NON-NLS-1$
-                    + "answer's failed / failedCount name what the comparison could not read.") //$NON-NLS-1$
+                "compare_configurations: projects / files, required. The answer's failed / " //$NON-NLS-1$
+                    + "failedCount name what the comparison could not read.") //$NON-NLS-1$
             .stringProperty("target", //$NON-NLS-1$
-                "compare_configurations: for mode=projects, the second project's name; for " //$NON-NLS-1$
-                    + "mode=files, the path to the second export.") //$NON-NLS-1$
+                "compare_configurations: mode=projects - the second project's name; " //$NON-NLS-1$
+                    + "mode=files - the path to the second export.") //$NON-NLS-1$
             .stringProperty("otherPath", //$NON-NLS-1$
                 "compare_three_way: directory holding the configuration to compare against " //$NON-NLS-1$
                     + "(OTHER).") //$NON-NLS-1$
@@ -186,8 +176,8 @@ public class InsightsFacadeTool implements IMcpTool
                     + "true). object_summary: run get_project_errors to count validation " //$NON-NLS-1$
                     + "problems (default true).") //$NON-NLS-1$
             .stringProperty("action", //$NON-NLS-1$
-                "impact_analysis: planned action - delete / rename / modify. Optional, " //$NON-NLS-1$
-                    + "influences the recommendation text only.") //$NON-NLS-1$
+                "impact_analysis: planned action - delete / rename / modify; influences " //$NON-NLS-1$
+                    + "the recommendation text only.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
                 "impact_analysis: maximum references per category (default 100). " //$NON-NLS-1$
                     + "semantic_metadata_search: maximum results (default 50).") //$NON-NLS-1$
@@ -202,11 +192,10 @@ public class InsightsFacadeTool implements IMcpTool
                     + "(default true).") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
                 "semantic_metadata_search: free-text query, matched case-insensitively " //$NON-NLS-1$
-                    + "against name, synonym and comment of every object.") //$NON-NLS-1$
+                    + "against name, synonym and comment.") //$NON-NLS-1$
             .stringProperty("metadataType", //$NON-NLS-1$
-                "semantic_metadata_search: optional filter by type (English singular: " //$NON-NLS-1$
-                    + "Catalog / Document / InformationRegister / ... or Russian " //$NON-NLS-1$
-                    + "equivalent).") //$NON-NLS-1$
+                "semantic_metadata_search: optional filter by type - English singular " //$NON-NLS-1$
+                    + "(Catalog, Document) or Russian equivalent.") //$NON-NLS-1$
             .stringProperty("format", //$NON-NLS-1$
                 "project_metrics, compare_configurations and detect_query_anti_patterns: " //$NON-NLS-1$
                     + "json (default) or markdown. dependency_graph: json (default) / " //$NON-NLS-1$
@@ -242,7 +231,7 @@ public class InsightsFacadeTool implements IMcpTool
                     + "environment called blocking.") //$NON-NLS-1$
             .stringProperty("changedBy", //$NON-NLS-1$
                 "compare_three_way: list only objects with this attribution - OURS, VENDOR, BOTH " //$NON-NLS-1$
-                    + "or UNKNOWN. The counts always cover everything; this narrows the listing.") //$NON-NLS-1$
+                    + "or UNKNOWN; the counts always cover everything.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "compare_three_way: list only objects of this metadata type (Catalog, Document).") //$NON-NLS-1$
             .booleanProperty("oneSided", //$NON-NLS-1$
@@ -260,12 +249,11 @@ public class InsightsFacadeTool implements IMcpTool
                     + "the same configuration in different versions.") //$NON-NLS-1$
             .stringProperty("report", //$NON-NLS-1$
                 "compare_three_way: assemble the answer into one document - the sides, what " //$NON-NLS-1$
-                    + "moved and on whose side, what an update overwrites if nobody intervenes, " //$NON-NLS-1$
-                    + "the conflicts to decide by hand, the support state, and what the run did " //$NON-NLS-1$
-                    + "NOT check. summary or full.") //$NON-NLS-1$
+                    + "moved and on whose side, what an update overwrites, the conflicts, the " //$NON-NLS-1$
+                    + "support state, and what the run did NOT check. summary or full.") //$NON-NLS-1$
             .booleanProperty("methodLevel", //$NON-NLS-1$
-                "compare_three_way: look inside modules, so a change comes back named by " //$NON-NLS-1$
-                    + "the method it is in - CommonModule.X.Module.MethodName - with its own " //$NON-NLS-1$
+                "compare_three_way: look inside modules - a change comes back named by " //$NON-NLS-1$
+                    + "the method it is in (CommonModule.X.Module.MethodName) with its own " //$NON-NLS-1$
                     + "attribution, and a decision can be addressed at one method without " //$NON-NLS-1$
                     + "touching its neighbours.") //$NON-NLS-1$
             .booleanProperty("closeSession", //$NON-NLS-1$
@@ -459,7 +447,7 @@ public class InsightsFacadeTool implements IMcpTool
                 + "names, synonyms and comments.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the " //$NON-NLS-1$
                 + "operation-picker guide, or topic=<operation> for that operation's " //$NON-NLS-1$
-                + "parameters.\n"); //$NON-NLS-1$
+                + "parameters. The standalone tools behind the operations stay callable.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         if ("workflow".equals(topic)) //$NON-NLS-1$
