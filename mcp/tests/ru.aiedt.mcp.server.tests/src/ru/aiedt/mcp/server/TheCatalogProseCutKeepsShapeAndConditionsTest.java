@@ -457,7 +457,7 @@ public class TheCatalogProseCutKeepsShapeAndConditionsTest
             "required for every export operation",
             "a directory for the Designer-XML dump",
             "created if missing; existing contents overwritten",
-            "the .epf/.erf file path (extension decides the kind)",
+            "the .epf/.erf file path (extension decides the kind, or it is auto-detected)",
             "a FILE path, or a DIRECTORY path when allVariants=true",
             "the .cf file path",
             "a DIRECTORY path that must be absent or empty",

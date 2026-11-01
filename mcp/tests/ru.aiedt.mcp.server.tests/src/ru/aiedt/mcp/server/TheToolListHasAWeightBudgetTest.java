@@ -273,8 +273,14 @@ public class TheToolListHasAWeightBudgetTest
      * 14 bytes, and the document below the 191664 the cut left measures 191129 with it.
      * Measured 01.11: 191129.
      * </p>
+     * <p>
+     * And raised from 191129 to 191153 with the auto-detected kind branch of export_object
+     * back in the config_io record: a path without .epf or .erf gets its kind read from the
+     * project nature, and the schema is where a client reads that before naming the file.
+     * Measured 01.11: 191153.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 191129;
+    private static final int DOCUMENT_BUDGET = 191153;
 
     private LiveServer server;
 
@@ -456,7 +462,10 @@ public class TheToolListHasAWeightBudgetTest
         // Lowered to 6753 by the prose cut: the operation list left the tool description and
         // the schema prose lost its repetitions of the delegate schemas the per-operation help
         // renders. Measured 01.11: 6753.
-        BUDGETS.put("config_io", Integer.valueOf(6753)); //$NON-NLS-1$
+        // Raised from 6753 to 6777: export_object's outputPath names the auto-detected kind
+        // branch again - the extension decides, or the kind is auto-detected. Measured 01.11:
+        // 6777.
+        BUDGETS.put("config_io", Integer.valueOf(6777)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
         // sentence in the tool's own description that names the way they compose an action.
         // Raised from 7160 to 7834 for the sentence that a timeout held by a 1C window returns

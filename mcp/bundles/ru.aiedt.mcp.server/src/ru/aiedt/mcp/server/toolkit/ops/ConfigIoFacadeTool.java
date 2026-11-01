@@ -277,7 +277,8 @@ public class ConfigIoFacadeTool implements IMcpTool
                 "Absolute output path, required for every export operation. " //$NON-NLS-1$
                     + "export_configuration_to_xml: a directory for the Designer-XML dump " //$NON-NLS-1$
                     + "(created if missing; existing contents overwritten). export_object: " //$NON-NLS-1$
-                    + "the .epf/.erf file path (extension decides the kind). export_common_picture: " //$NON-NLS-1$
+                    + "the .epf/.erf file path (extension decides the kind, or it is " //$NON-NLS-1$
+                    + "auto-detected). export_common_picture: " //$NON-NLS-1$
                     + "a FILE path, or a DIRECTORY path when allVariants=true. " //$NON-NLS-1$
                     + "export_configuration_to_cf: the .cf file path. " //$NON-NLS-1$
                     + "export_infobase_objects: a DIRECTORY path that must be absent or empty. " //$NON-NLS-1$

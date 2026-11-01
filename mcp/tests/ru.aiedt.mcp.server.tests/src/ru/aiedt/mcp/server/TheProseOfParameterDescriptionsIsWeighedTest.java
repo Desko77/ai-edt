@@ -306,7 +306,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // applicationId and outputPath gained naming the two operations (measured 28.09: 4734).
         // Lowered from 4734 to 4155 by the prose cut: schema sentences that repeated the delegate
         // schemas the per-operation help renders left the record. Measured 01.11: 4155.
-        PROSE.put("config_io", Integer.valueOf(4155));
+        // Raised from 4155 to 4179: export_object's outputPath names the auto-detected kind
+        // branch again - the extension decides, or the kind is auto-detected. Measured 01.11:
+        // 4179.
+        PROSE.put("config_io", Integer.valueOf(4179));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
@@ -731,6 +734,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * 14 bytes, and the prose below the 106998 the cut left measures 106930 with it. Measured
      * 01.11: 106930.
      * </p>
+     * <p>
+     * And raised from 106930 to 106954 with the auto-detected kind branch of export_object
+     * back in the config_io record: a path without .epf or .erf gets its kind read from the
+     * project nature, and the schema is where a client reads that before naming the file.
+     * Measured 01.11: 106954.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 106930;
+    private static final int DOCUMENT_PROSE = 106954;
 }
