@@ -123,8 +123,8 @@ public class InsightsFacadeTool implements IMcpTool
             .stringProperty("subsystemName", //$NON-NLS-1$
                 "Subsystem name when scope=subsystem (project_metrics, dependency_graph).") //$NON-NLS-1$
             .stringProperty("moduleFqn", //$NON-NLS-1$
-                "Module FQN when scope=module or method (dependency_graph, " //$NON-NLS-1$
-                    + "detect_query_anti_patterns).") //$NON-NLS-1$
+                "Module FQN when scope=module (dependency_graph) or scope=module/method " //$NON-NLS-1$
+                    + "(detect_query_anti_patterns).") //$NON-NLS-1$
             .stringProperty("methodName", //$NON-NLS-1$
                 "detect_query_anti_patterns: method inside moduleFqn.") //$NON-NLS-1$
             .stringProperty("level", //$NON-NLS-1$

@@ -267,8 +267,14 @@ public class TheToolListHasAWeightBudgetTest
      * bytes of an operation list the operation argument already carried, and schema prose
      * repeating what the help topics and the delegate schemas say. Measured 01.11.
      * </p>
+     * <p>
+     * And weighed again with the moduleFqn sentence on insights back in - each operation names
+     * its own scope values, because dependency_graph refuses scope=method: the sentence weighs
+     * 14 bytes, and the document below the 191664 the cut left measures 191129 with it.
+     * Measured 01.11: 191129.
+     * </p>
      */
-    private static final int DOCUMENT_BUDGET = 191664;
+    private static final int DOCUMENT_BUDGET = 191129;
 
     private LiveServer server;
 
@@ -416,7 +422,10 @@ public class TheToolListHasAWeightBudgetTest
         // Lowered from 9614 to 8984 by the prose cut: the operation list left the tool
         // description because the operation argument already carried it, and the schema prose
         // lost its repetitions of the help rules. Measured 01.11: 8984.
-        BUDGETS.put("insights", Integer.valueOf(8984)); //$NON-NLS-1$
+        // Raised from 8984 to 8998: moduleFqn names each operation's own scope values again -
+        // dependency_graph takes scope=module only, detect_query_anti_patterns also method,
+        // which dependency_graph refuses. Measured 01.11: 8998.
+        BUDGETS.put("insights", Integer.valueOf(8998)); //$NON-NLS-1$
         // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a
         // parameter lists the settings that still reference it, and the schema says so.
         BUDGETS.put("dcs_workshop", Integer.valueOf(9341)); //$NON-NLS-1$

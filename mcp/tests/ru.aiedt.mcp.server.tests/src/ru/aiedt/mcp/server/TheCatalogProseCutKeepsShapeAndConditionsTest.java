@@ -315,7 +315,7 @@ public class TheCatalogProseCutKeepsShapeAndConditionsTest
             "project / module / method (default project)",
             "compare_configurations: project / objectFqn (default project)",
             "Subsystem name when scope=subsystem",
-            "Module FQN when scope=module or method",
+            "Module FQN when scope=module (dependency_graph) or scope=module/method",
             "method inside moduleFqn",
             "metadata / modules / mixed (default metadata)",
             "object / attribute / module / template (default object)",

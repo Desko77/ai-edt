@@ -269,7 +269,10 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // export; the intent sentence names the merge restore point.
         // Lowered from 6079 to 5823 by the prose cut: schema sentences that repeated the help
         // rules left the record. Measured 01.11: 5823.
-        PROSE.put("insights", Integer.valueOf(5823));
+        // Raised from 5823 to 5837: moduleFqn names each operation's own scope values again -
+        // dependency_graph takes scope=module only, detect_query_anti_patterns also method,
+        // which dependency_graph refuses. Measured 01.11: 5837.
+        PROSE.put("insights", Integer.valueOf(5837));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
@@ -722,6 +725,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And lowered from 107843 to 106998 by the prose cut of insights and config_io: 310 and 535
      * bytes of schema prose repeating the help rules and the delegate schemas. Measured 01.11.
      * </p>
+     * <p>
+     * And weighed again with the moduleFqn sentence on insights back in - each operation names
+     * its own scope values, because dependency_graph refuses scope=method: the sentence weighs
+     * 14 bytes, and the prose below the 106998 the cut left measures 106930 with it. Measured
+     * 01.11: 106930.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 106998;
+    private static final int DOCUMENT_PROSE = 106930;
 }
