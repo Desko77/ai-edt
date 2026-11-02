@@ -261,7 +261,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // door (measured 08.10: 1587).
         PROSE.put("tag_admin", Integer.valueOf(1587));
         // Grown to 3747: the intent sentence says a changing run records a restore point first.
-        PROSE.put("compare_three_way", Integer.valueOf(3747));
+        // Cut from 3747 by the tools/list prose pass: the rules behind the modes stay in
+        // help=parameters, and the merge conditions stay in the intent sentence. Measured 31.10: 3552.
+        PROSE.put("compare_three_way", Integer.valueOf(3552));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
         // compare_configurations: mode says that the answer's failed and failedCount name what the
@@ -272,7 +274,9 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
         PROSE.put("dcs_workshop", Integer.valueOf(4986));
-        PROSE.put("write_module_source", Integer.valueOf(4985));
+        // Cut from 4985 (measured 5108) by the same pass: the mode list, the source rules and the
+        // protection sentence lost their repetition, not their conditions. Measured 31.10: 4288.
+        PROSE.put("write_module_source", Integer.valueOf(4288));
         PROSE.put("code_search", Integer.valueOf(3357));
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
         // infobase is named by the string, and the flag says whether it becomes the default. And
@@ -714,6 +718,11 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * true writes the external-object project's dump setting, and a preset that blocks writing
      * refuses it. Measured 25.10: 107843.
      * </p>
+     * <p>
+     * Lowered from 107843 to 106746 by the tools/list prose pass on write_module_source and
+     * compare_three_way: their conditions stayed, the prose around them did not. Measured 31.10:
+     * 106746.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107843;
+    private static final int DOCUMENT_PROSE = 106746;
 }

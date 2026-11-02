@@ -1,0 +1,624 @@
+{
+  "write_module_source": [
+    {
+      "id": "W1",
+      "property": "projectName",
+      "requires": [
+        "EDT project"
+      ]
+    },
+    {
+      "id": "W2",
+      "property": "modulePath",
+      "requires": [
+        "from the src/ folder",
+        "leading 'src/' is stripped",
+        "misspelled kind folder",
+        "object the configuration does not hold",
+        "canonical path",
+        "objectName + moduleType"
+      ]
+    },
+    {
+      "id": "W3",
+      "property": "objectName",
+      "requires": [
+        "fully-qualified name",
+        "Document.MyDoc",
+        "Russian",
+        "alternative to modulePath"
+      ]
+    },
+    {
+      "id": "W4",
+      "property": "moduleType",
+      "requires": [
+        "paired with objectName",
+        "ObjectModule (default)",
+        "ManagerModule",
+        "FormModule",
+        "CommandModule",
+        "RecordSetModule"
+      ]
+    },
+    {
+      "id": "W5",
+      "property": "source",
+      "requires": [
+        "aliases accepted: content, sourceCode, code, text",
+        "Needed for every mode EXCEPT replaceMethods",
+        "inside the methods[] array"
+      ]
+    },
+    {
+      "id": "W6",
+      "property": "source",
+      "requires": [
+        "For replace: the module's entire new content",
+        "For searchReplace: what to put in place of oldSource",
+        "For append: the text being added",
+        "For replaceMethod/replaceMethods: the full method",
+        "header comment",
+        "never leaving a duplicate",
+        "left alone",
+        "use searchReplace instead"
+      ]
+    },
+    {
+      "id": "W7",
+      "property": "oldSource",
+      "requires": [
+        "required for searchReplace mode",
+        "exactly one spot",
+        "proof you actually read the current file contents"
+      ]
+    },
+    {
+      "id": "W8",
+      "property": "mode",
+      "requires": [
+        "'searchReplace'",
+        "the default"
+      ]
+    },
+    {
+      "id": "W9",
+      "property": "mode",
+      "requires": [
+        "'replace'",
+        "overwrite the entire file"
+      ]
+    },
+    {
+      "id": "W10",
+      "property": "mode",
+      "requires": [
+        "'append'",
+        "add text at the end"
+      ]
+    },
+    {
+      "id": "W11",
+      "property": "mode",
+      "requires": [
+        "'replaceLines'",
+        "overwrite a range of lines"
+      ]
+    },
+    {
+      "id": "W12",
+      "property": "mode",
+      "requires": [
+        "'replaceMethod'",
+        "one named method"
+      ]
+    },
+    {
+      "id": "W13",
+      "property": "mode",
+      "requires": [
+        "'replaceMethods'",
+        "atomic multi-method",
+        "every target must be found",
+        "nothing gets written"
+      ]
+    },
+    {
+      "id": "W14",
+      "property": "mode",
+      "requires": [
+        "'insertBefore'",
+        "ahead of line N"
+      ]
+    },
+    {
+      "id": "W15",
+      "property": "mode",
+      "requires": [
+        "'insertAfter'",
+        "right after line N"
+      ]
+    },
+    {
+      "id": "W16",
+      "property": "formName",
+      "requires": [
+        "required when moduleType=FormModule"
+      ]
+    },
+    {
+      "id": "W17",
+      "property": "commandName",
+      "requires": [
+        "required when moduleType=CommandModule"
+      ]
+    },
+    {
+      "id": "W18",
+      "property": "lineFrom",
+      "requires": [
+        "replaceLines mode",
+        "1-based, inclusive"
+      ]
+    },
+    {
+      "id": "W19",
+      "property": "lineTo",
+      "requires": [
+        "replaceLines mode",
+        "1-based, inclusive"
+      ]
+    },
+    {
+      "id": "W20",
+      "property": "expectedText",
+      "requires": [
+        "safety net for replaceLines",
+        "lineFrom..lineTo",
+        "does not match",
+        "REJECTED",
+        "expected-vs-actual diff",
+        "silent overwrite",
+        "wrong lines"
+      ]
+    },
+    {
+      "id": "W21",
+      "property": "methodName",
+      "requires": [
+        "The method's name for replaceMethod mode",
+        "Procedure/Function by that name",
+        "&-directives",
+        "header comment",
+        "opens with one"
+      ]
+    },
+    {
+      "id": "W22",
+      "property": "methods",
+      "requires": [
+        "In replaceMethods mode",
+        "JSON array of {methodName, source} objects",
+        "Every referenced method has to already exist",
+        "the call writes nothing (all-or-nothing)",
+        "'name' works as an alias for methodName",
+        "content/sourceCode/code/text are all accepted as aliases for source"
+      ]
+    },
+    {
+      "id": "W23",
+      "property": "line",
+      "requires": [
+        "1-based",
+        "insertBefore/insertAfter",
+        "right before line N",
+        "N+sourceLines",
+        "right after line N",
+        "N+1 moves further down"
+      ]
+    },
+    {
+      "id": "W24",
+      "property": "dryRun",
+      "requires": [
+        "without touching the file",
+        "diff stats",
+        "linesBefore",
+        "linesAfter",
+        "removedLines",
+        "addedLines"
+      ]
+    },
+    {
+      "id": "W25",
+      "property": "normalizeInvalidCharacters",
+      "requires": [
+        "Default: true",
+        "dashes",
+        "no-break spaces",
+        "soft hyphens",
+        "outside string literals",
+        "reports where"
+      ]
+    },
+    {
+      "id": "W26",
+      "property": "skipSyntaxCheck",
+      "requires": [
+        "default: false",
+        "balanced",
+        "Procedure/EndProcedure",
+        "Function/EndFunction",
+        "If/EndIf",
+        "While/EndDo",
+        "For/EndDo",
+        "Try/EndTry",
+        "regardless"
+      ]
+    },
+    {
+      "id": "W27",
+      "property": "validateAfterWrite",
+      "requires": [
+        "default: true",
+        "'validation' section",
+        "errors / warnings / codeStyle",
+        "Pass false",
+        "batch",
+        "get_project_errors"
+      ]
+    },
+    {
+      "id": "W28",
+      "property": "confirmFullReplace",
+      "requires": [
+        "Has to be true",
+        "more than 50%",
+        "strip away",
+        "Removals above 30%",
+        "protection' warning",
+        "searchReplace",
+        "replaceLines",
+        "replaceMethod",
+        "replaceMethods",
+        "replace (a replace that strips more than half",
+        "append",
+        "insertBefore",
+        "insertAfter",
+        "never gated"
+      ]
+    },
+    {
+      "id": "W29",
+      "property": null,
+      "requires": [
+        "Eight modes",
+        "BSL syntax",
+        "balanced",
+        "blocks the write",
+        "skipSyntaxCheck=true",
+        "dryRun=true",
+        "without writing anything"
+      ]
+    }
+  ],
+  "compare_three_way": [
+    {
+      "id": "T1",
+      "property": null,
+      "requires": [
+        "Compares an open project",
+        "new delivery",
+        "delivery both came from",
+        "three sides",
+        "update on support"
+      ]
+    },
+    {
+      "id": "T2",
+      "property": null,
+      "requires": [
+        "changedBy",
+        "OURS, VENDOR or BOTH",
+        "conflicts",
+        "without an ancestor",
+        "UNKNOWN rather than guessed"
+      ]
+    },
+    {
+      "id": "T4",
+      "property": null,
+      "requires": [
+        "A MERGE also takes the vendor support settings",
+        "cannot be prevented",
+        "supportModesBefore",
+        "supportModesAfter",
+        "supportModesChanged"
+      ]
+    },
+    {
+      "id": "T5",
+      "property": null,
+      "requires": [
+        "Reading is the default",
+        "changes nothing"
+      ]
+    },
+    {
+      "id": "T6",
+      "property": "intent",
+      "requires": [
+        "intent=MERGE",
+        "IRREVERSIBLE",
+        "blocking problem",
+        "no decisions were given"
+      ],
+      "before": null
+    },
+    {
+      "id": "T7",
+      "property": "intent",
+      "requires": [
+        "restore point of the project files is taken",
+        "cannot be taken",
+        "merge does not start",
+        "git restore_merge_point",
+        "does not roll back the infobase"
+      ],
+      "before": null
+    },
+    {
+      "id": "T8",
+      "property": "intent",
+      "requires": [
+        "revalidated",
+        "errors standing against them are reported"
+      ],
+      "before": null
+    },
+    {
+      "id": "T9",
+      "property": "intent",
+      "requires": [
+        "intent=UPDATE_UNCHANGED",
+        "needs no decisions",
+        "refuses itself",
+        "anything was changed here or on both sides"
+      ],
+      "before": null
+    },
+    {
+      "id": "T11",
+      "property": "projectName",
+      "requires": [
+        "plays our side (MAIN)",
+        "Required for every call except help"
+      ]
+    },
+    {
+      "id": "T12",
+      "property": "otherPath",
+      "requires": [
+        "(OTHER)",
+        "Required for every call except help"
+      ]
+    },
+    {
+      "id": "T13",
+      "property": "parentId",
+      "requires": [
+        "Which vendor configuration",
+        "by id or by name",
+        "Required when the project descends from more than one"
+      ]
+    },
+    {
+      "id": "T14",
+      "property": "ancestorPath",
+      "requires": [
+        "common ancestor",
+        "Omit for a two-sided comparison"
+      ]
+    },
+    {
+      "id": "T15",
+      "property": "decisions",
+      "requires": [
+        "JSON array: {\"object\":...,\"rule\":...}",
+        "{\"select\":\"matching\",\"rule\":...}",
+        "Rules: GET_FROM_OTHER",
+        "DO_NOT_MERGE",
+        "MERGE_PRIORITIZING_MAIN",
+        "MERGE_PRIORITIZING_OTHER",
+        "MERGE_USING_EXTERNAL_TOOL",
+        "CUSTOM_MERGE is refused"
+      ]
+    },
+    {
+      "id": "T16",
+      "property": "decisionsPath",
+      "requires": [
+        "Absolute path",
+        "Must end in .zip",
+        "decisions die with the comparison"
+      ]
+    },
+    {
+      "id": "T17",
+      "property": "decisionsFrom",
+      "requires": [
+        "settings file (.zip) written earlier",
+        "applied before anything else"
+      ]
+    },
+    {
+      "id": "T18",
+      "property": "changedBy",
+      "requires": [
+        "OURS, VENDOR, BOTH or UNKNOWN",
+        "counts always cover everything"
+      ]
+    },
+    {
+      "id": "T19",
+      "property": "type",
+      "requires": [
+        "metadata type",
+        "Catalog, Document, CommonModule"
+      ]
+    },
+    {
+      "id": "T20",
+      "property": "oneSided",
+      "requires": [
+        "present on one side",
+        "those on both",
+        "Omit for either"
+      ]
+    },
+    {
+      "id": "T21",
+      "property": "mustBeMergedOnly",
+      "requires": [
+        "must take part in a merge"
+      ]
+    },
+    {
+      "id": "T22",
+      "property": "offset",
+      "requires": [
+        "Default 0"
+      ]
+    },
+    {
+      "id": "T23",
+      "property": "limit",
+      "requires": [
+        "Default and maximum 500"
+      ]
+    },
+    {
+      "id": "T24",
+      "property": "sectionsOffset",
+      "requires": [
+        "Module pieces",
+        "page of sections",
+        "Default 0"
+      ]
+    },
+    {
+      "id": "T25",
+      "property": "scope",
+      "requires": [
+        "comma separated",
+        "Omit for the whole configuration",
+        "scopeUnrecognised",
+        "rather than dropped"
+      ]
+    },
+    {
+      "id": "T26",
+      "property": "report",
+      "requires": [
+        "summary",
+        "full"
+      ]
+    },
+    {
+      "id": "T27",
+      "property": "methodLevel",
+      "requires": [
+        "CommonModule.X.Module.MethodName",
+        "decision can be addressed at one method",
+        "Off by default",
+        "comparedInMs"
+      ]
+    },
+    {
+      "id": "T28",
+      "property": "closeSession",
+      "requires": [
+        "Off by default",
+        "20 idle minutes"
+      ]
+    },
+    {
+      "id": "T29",
+      "property": "ignoreOriginMismatch",
+      "requires": [
+        "do not identify as the same configuration",
+        "different versions",
+        "Off by default"
+      ]
+    },
+    {
+      "id": "T30",
+      "property": "help",
+      "requires": [
+        "help=parameters",
+        "the rest of the call is then ignored",
+        "empty or whitespace-only value is not a request"
+      ]
+    },
+    {
+      "id": "T31",
+      "property": "intent",
+      "requires": [
+        "REPORT (default) changes nothing"
+      ]
+    },
+    {
+      "id": "T32",
+      "property": "intent",
+      "requires": [
+        "MERGE and MERGE_IGNORING_PROBLEMS",
+        "apply the decisions",
+        "IRREVERSIBLE"
+      ]
+    },
+    {
+      "id": "T33",
+      "property": "intent",
+      "requires": [
+        "UPDATE_UNCHANGED",
+        "needs no decisions",
+        "refuses itself",
+        "anything was changed here or on both sides"
+      ],
+      "before": null
+    },
+    {
+      "id": "T34",
+      "property": "intent",
+      "requires": [
+        "UPDATE_KEEPING_OURS",
+        "ordinary update on support",
+        "delivery in front",
+        "methods only this side has stay",
+        "deliveryNotApplied",
+        "could not be held at all",
+        "only with methodLevel=true",
+        "WITHOUT it",
+        "held instead",
+        "ourContentLost"
+      ]
+    },
+    {
+      "id": "T35",
+      "property": "intent",
+      "requires": [
+        "restore point of the project files",
+        "changing intent",
+        "git restore_merge_point",
+        "does not roll back the infobase"
+      ]
+    },
+    {
+      "id": "T36",
+      "property": "intent",
+      "requires": [
+        "UPDATE_UNCHANGED takes the delivery whole"
+      ]
+    }
+  ]
+}
