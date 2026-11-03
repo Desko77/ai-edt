@@ -80,6 +80,7 @@ final class SessionProbe
     {
         V8Container v8 = V8Container.empty();
         v8.add(V8Container.Entry.of(OrdinaryFormFile.FORM_ENTRY, withBom(layoutText)));
+        v8.add(V8Container.Entry.of("unknown", new byte[] { 0, 1, -1, 42 })); //$NON-NLS-1$
         return built(projectName, v8);
     }
 

@@ -327,6 +327,12 @@ public final class OrdinaryFormFile
         return container.write();
     }
 
+    /** Removes the module entry if present, leaving all other entries unchanged. */
+    public void removeModule()
+    {
+        container.remove(MODULE_ENTRY);
+    }
+
     private String textOf(String entryName)
     {
         return textOf(container, entryName);

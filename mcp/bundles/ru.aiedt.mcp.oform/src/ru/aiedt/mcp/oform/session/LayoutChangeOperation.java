@@ -24,8 +24,7 @@ import org.eclipse.core.runtime.Status;
  * record touched, and only when that entry's current text is the one this record expects. A
  * file the session has not seen is reconciled first; the record is not applied over a text that
  * no longer matches. A {@code null} side of the module is the entry's absence, not the absence
- * of a change: while the baseline holds a module entry, the session cannot stand on one that
- * does not exist, and no write of the editor removes a module entry from the container.</p>
+ * of a change; it is restored and saved as an absent entry.</p>
  */
 public final class LayoutChangeOperation extends AbstractOperation
 {
@@ -50,11 +49,11 @@ public final class LayoutChangeOperation extends AbstractOperation
     {
         super("Ordinary form layout"); //$NON-NLS-1$
         this.session = session;
-        this.formBefore = formBefore;
-        this.formAfter = formAfter;
+        this.formBefore = formTouched ? formBefore : null;
+        this.formAfter = formTouched ? formAfter : null;
         this.formTouched = formTouched;
-        this.moduleBefore = moduleBefore;
-        this.moduleAfter = moduleAfter;
+        this.moduleBefore = moduleTouched ? moduleBefore : null;
+        this.moduleAfter = moduleTouched ? moduleAfter : null;
         this.moduleTouched = moduleTouched;
     }
 
@@ -79,17 +78,6 @@ public final class LayoutChangeOperation extends AbstractOperation
             return false;
         }
         return !moduleTouched || Objects.equals(module, undoing ? moduleAfter : moduleBefore);
-    }
-
-    /**
-     * Whether the side this undo or redo would restore is the module entry's absence.
-     *
-     * @param undoing {@code true} for undo, which restores the text from before the record
-     * @return whether the record touched the module and the side to restore is {@code null}
-     */
-    boolean restoresAnAbsentModule(boolean undoing)
-    {
-        return moduleTouched && (undoing ? moduleBefore : moduleAfter) == null;
     }
 
     /**

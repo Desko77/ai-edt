@@ -124,6 +124,8 @@ public final class V8Container
         }
     }
 
+    private boolean entriesRemoved;
+
     private final List<Entry> entries;
 
     private final byte[] original;
@@ -237,10 +239,25 @@ public final class V8Container
         entries.add(entry);
     }
 
-    /** @return whether any entry was changed or added since the container was read */
+    /**
+     * Removes the first entry with the given name, if present; an absent name leaves the container unchanged.
+     *
+     * @param name the entry name to remove
+     */
+    public void remove(String name)
+    {
+        Entry entry = find(name);
+        if (entry != null)
+        {
+            entries.remove(entry);
+            entriesRemoved = true;
+        }
+    }
+
+    /** @return whether any entry was changed, added or removed since the container was read, or the container is new */
     public boolean isDirty()
     {
-        if (original == null)
+        if (original == null || entriesRemoved)
         {
             return true;
         }

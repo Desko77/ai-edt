@@ -84,10 +84,9 @@ import ru.aiedt.mcp.oform.ops.OperationsCatalog;
  *
  * <p>Each edit that changes a text is one record of the workspace operation history, on this
  * session's own undo context. Undo and redo run under the same lock and put back only the
- * entries that record touched; a record whose side is the module entry's absence is not
- * applied while the baseline holds that entry, for no write of this editor removes a module
- * entry from the container. The history is disposed when the last editor closes, when the
- * layout is reread, and when a foreign module write meets a record that touched the module.</p>
+ * entries that record touched, including restoring the absence of a module. The history is
+ * disposed when the last editor closes, when the layout is reread, and when a foreign module
+ * write meets a record that touched the module.</p>
  */
 public final class FormEditingSession
 {
@@ -134,8 +133,11 @@ public final class FormEditingSession
     /** The session's layout text, or {@code null} while no edit moved it off the baseline. */
     private String formText;
 
-    /** The session's module text, or {@code null} while no edit moved it off the baseline. */
+    /** The held module text; {@code null} also represents an absent entry when held. */
     private String moduleText;
+
+    /** Whether moduleText overrides the baseline, including with an absent entry. */
+    private boolean moduleHeld;
 
     private boolean readOnly;
 
@@ -223,7 +225,7 @@ public final class FormEditingSession
     /** @return whether the session's module text differs from the baseline */
     public boolean moduleChanged()
     {
-        return moduleText != null && !moduleText.equals(baseModule);
+        return moduleHeld && !Objects.equals(moduleText, baseModule);
     }
 
     // ---- the edit --------------------------------------------------------------------------
@@ -284,7 +286,7 @@ public final class FormEditingSession
             formText = applied.layoutText;
             if (applied.moduleText != null)
             {
-                moduleText = applied.moduleText;
+                holdModule(applied.moduleText);
             }
             record(beforeForm, beforeModule);
             return new Edit(true, applied.message, null, applied.elementId, null);
@@ -391,7 +393,7 @@ public final class FormEditingSession
             formText = last.layoutText;
             if (moduleWritten)
             {
-                moduleText = moduleKept;
+                holdModule(moduleKept);
             }
             record(beforeForm, beforeModule);
             return new Edit(true, last.message, null, last.elementId, null);
@@ -685,9 +687,10 @@ public final class FormEditingSession
             return new Save(false, null, null);
         }
         String formOut = formChanged() ? formText : null;
-        String moduleOut = moduleChanged() ? moduleText : null;
+        boolean moduleChanged = moduleChanged();
+        String moduleOut = moduleChanged ? currentModuleText() : null;
         OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut,
-            id(), true);
+            id(), true, moduleChanged && moduleOut == null);
         if (!outcome.written)
         {
             return new Save(false, null, null);
@@ -699,10 +702,11 @@ public final class FormEditingSession
             baseForm = formOut;
             formText = null;
         }
-        if (moduleOut != null)
+        if (moduleChanged)
         {
             baseModule = moduleOut;
             moduleText = null;
+            moduleHeld = false;
         }
         return new Save(true, null, null);
     }
@@ -812,6 +816,7 @@ public final class FormEditingSession
         baseModule = module;
         formText = null;
         moduleText = null;
+        moduleHeld = false;
         disposeHistory();
         if (dirty)
         {
@@ -1033,17 +1038,6 @@ public final class FormEditingSession
             return LayoutChangeOperation.notDone(IStatus.ERROR,
                 which + " is not available: the text is not the one this operation left"); //$NON-NLS-1$
         }
-        // The side to restore is the module entry's absence, which is not the same as the
-        // absence of a change: a save has fixed the entry in the baseline, and holding the
-        // saved text as though it were that state would answer an undo that restored nothing.
-        // No write of this editor removes a module entry, so the step is not available.
-        if (operation.restoresAnAbsentModule(undoing) && baseModule != null)
-        {
-            String which = undoing ? "undo" : "redo"; //$NON-NLS-1$ //$NON-NLS-2$
-            return LayoutChangeOperation.notDone(IStatus.ERROR, which + " is not available: the module entry this " //$NON-NLS-1$
-                + "change " + (undoing ? "created" : "removed") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-                + " is in the saved baseline, and no write of the editor removes a module entry"); //$NON-NLS-1$
-        }
         Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
         operation.apply(undoing);
         return Status.OK_STATUS;
@@ -1121,7 +1115,7 @@ public final class FormEditingSession
     /** @return the session's module text, the baseline while no edit holds another */
     String currentModuleText()
     {
-        return moduleText == null ? baseModule : moduleText;
+        return moduleHeld ? moduleText : baseModule;
     }
 
     /**
@@ -1142,7 +1136,8 @@ public final class FormEditingSession
      */
     void holdModule(String text)
     {
-        moduleText = Objects.equals(text, baseModule) ? null : text;
+        moduleHeld = !Objects.equals(text, baseModule);
+        moduleText = moduleHeld ? text : null;
     }
 
     /**
@@ -1170,7 +1165,7 @@ public final class FormEditingSession
     /** The operation's target: the baseline container with the session's texts in. */
     private Target target() throws IOException
     {
-        return targetOver(formText == null ? baseForm : formText, moduleText);
+        return targetOver(formText == null ? baseForm : formText, currentModuleText());
     }
 
     /**
@@ -1179,7 +1174,7 @@ public final class FormEditingSession
      * baseline container as it was read.
      *
      * @param form the layout text the step reads, or {@code null} to keep the baseline layout
-     * @param moduleSource the module text the step reads, or {@code null} to keep the baseline module
+     * @param moduleSource the module text the step reads, or {@code null} when it is absent
      * @return the target
      * @throws IOException when the container does not lie at a form module's address
      */
@@ -1197,6 +1192,10 @@ public final class FormEditingSession
         if (moduleSource != null)
         {
             current.setModuleText(moduleSource);
+        }
+        else
+        {
+            current.removeModule();
         }
         return Target.of(this.module, fqn, current);
     }
