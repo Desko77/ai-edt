@@ -267,7 +267,8 @@ public class TheToolListHasAWeightBudgetTest
      * compare_three_way. Measured 31.10: 190393.
      * </p>
      */
-    private static final int DOCUMENT_BUDGET = 190393;
+    // Measured: the current Canonical catalogue occupies 188734 compact UTF-8 bytes.
+    private static final int DOCUMENT_BUDGET = 188734;
 
     private LiveServer server;
 
@@ -413,7 +414,8 @@ public class TheToolListHasAWeightBudgetTest
         BUDGETS.put("git", Integer.valueOf(4040)); //$NON-NLS-1$
         // Cut from 10227 by the tools/list prose pass. Measured 31.10: 5571.
         BUDGETS.put("compare_three_way", Integer.valueOf(5571)); //$NON-NLS-1$
-        BUDGETS.put("insights", Integer.valueOf(9614)); //$NON-NLS-1$
+        // Measured: insights occupies 8998 UTF-8 bytes.
+        BUDGETS.put("insights", Integer.valueOf(8998)); //$NON-NLS-1$
         // Raised from 8523 to 9341 for reportAffectedSettings: removing a dataset, a field or a
         // parameter lists the settings that still reference it, and the schema says so.
         BUDGETS.put("dcs_workshop", Integer.valueOf(9341)); //$NON-NLS-1$
@@ -442,7 +444,13 @@ public class TheToolListHasAWeightBudgetTest
         // Raised by 1803 for export_database_configuration and export_database_extension: the
         // guarded .cf/.cfe dumps declare overwrite and allowOutOfSync in the schema, and the
         // description says an old file can never pass as the result (measured 28.09: 7748).
-        BUDGETS.put("config_io", Integer.valueOf(7748)); //$NON-NLS-1$
+        // Lowered to 6753 by the prose cut: the operation list left the tool description and
+        // the schema prose lost its repetitions of the delegate schemas the per-operation help
+        // renders. Measured 01.11: 6753.
+        // Raised from 6753 to 6777: export_object's outputPath names the auto-detected kind
+        // branch again - the extension decides, or the kind is auto-detected. Measured 01.11:
+        // 6777.
+        BUDGETS.put("config_io", Integer.valueOf(6777)); //$NON-NLS-1$
         // Raised from 5405 by 1755 for the ten list-action arguments, one sentence each, and the
         // sentence in the tool's own description that names the way they compose an action.
         // Raised from 7160 to 7834 for the sentence that a timeout held by a 1C window returns
