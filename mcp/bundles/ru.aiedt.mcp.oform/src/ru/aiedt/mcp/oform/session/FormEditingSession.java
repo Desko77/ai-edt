@@ -20,6 +20,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
+import org.eclipse.core.commands.ExecutionException;
+import org.eclipse.core.commands.operations.IOperationHistory;
+import org.eclipse.core.commands.operations.IUndoContext;
+import org.eclipse.core.commands.operations.IUndoableOperation;
+import org.eclipse.core.commands.operations.ObjectUndoContext;
+import org.eclipse.core.commands.operations.OperationHistoryFactory;
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
@@ -29,7 +35,9 @@ import org.eclipse.core.resources.IWorkspaceRunnable;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.Status;
 
 import ru.aiedt.mcp.oform.BraceTree;
 import ru.aiedt.mcp.oform.BraceTree.ListNode;
@@ -73,9 +81,21 @@ import ru.aiedt.mcp.oform.ops.OperationsCatalog;
  * earlier edits are in the module the next handler reads. A layout version outside the measured
  * set, or a container that will not read, puts the session into read-only: edits and saves are
  * refused until a reconciliation finds a readable container again.</p>
+ *
+ * <p>Each edit that changes a text is one record of the workspace operation history, on this
+ * session's own undo context. Undo and redo run under the same lock and put back only the
+ * entries that record touched, including restoring the absence of a module. The history is
+ * disposed when the last editor closes, when the layout is reread, and when a foreign module
+ * write meets a record that touched the module.</p>
  */
 public final class FormEditingSession
 {
+    /** How many operations one session's undo history keeps. */
+    public static final int HISTORY_LIMIT = 100;
+
+    /** The line shown when a foreign module write drops a history that touched the module. */
+    static final String HISTORY_CLEARED = "история отмены очищена: модуль изменен вне редактора"; //$NON-NLS-1$
+
     /** The standard attribute names a data path can name under the form's main attribute. */
     private static final List<String> STANDARD_ATTRIBUTE_NAMES = List.of("Код", "Наименование", "Родитель", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         "Владелец", "Номер", "Дата", "Выполнена", "НомерОтправленного", "НомерПринятого", "ТипЗначения", "Период"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$ //$NON-NLS-7$
@@ -85,6 +105,12 @@ public final class FormEditingSession
         "Chart"); //$NON-NLS-1$
 
     private final String id;
+
+    /** This session's undo context. The history keeps {@link #HISTORY_LIMIT} records of it. */
+    private final IUndoContext undoContext;
+
+    /** The reconciliation an undo or redo in progress reached; {@code null} when the baseline held. */
+    private Reconciliation reconciledDuringStep;
 
     private final IFile file;
 
@@ -107,8 +133,11 @@ public final class FormEditingSession
     /** The session's layout text, or {@code null} while no edit moved it off the baseline. */
     private String formText;
 
-    /** The session's module text, or {@code null} while no edit moved it off the baseline. */
+    /** The held module text; {@code null} also represents an absent entry when held. */
     private String moduleText;
+
+    /** Whether moduleText overrides the baseline, including with an absent entry. */
+    private boolean moduleHeld;
 
     private boolean readOnly;
 
@@ -117,6 +146,8 @@ public final class FormEditingSession
     FormEditingSession(IFile file)
     {
         this.id = UUID.randomUUID().toString();
+        this.undoContext = new ObjectUndoContext(this);
+        OperationHistoryFactory.getOperationHistory().setLimit(undoContext, HISTORY_LIMIT);
         this.file = file;
         IProject project = file.getProject();
         String relative = file.getProjectRelativePath().toString().replace('\\', '/');
@@ -194,7 +225,7 @@ public final class FormEditingSession
     /** @return whether the session's module text differs from the baseline */
     public boolean moduleChanged()
     {
-        return moduleText != null && !moduleText.equals(baseModule);
+        return moduleHeld && !Objects.equals(moduleText, baseModule);
     }
 
     // ---- the edit --------------------------------------------------------------------------
@@ -249,13 +280,223 @@ public final class FormEditingSession
             {
                 return new Edit(false, applied.message, applied.refusedVersion, null, null);
             }
+            String beforeForm = currentFormText();
+            String beforeModule = currentModuleText();
             Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
             formText = applied.layoutText;
             if (applied.moduleText != null)
             {
-                moduleText = applied.moduleText;
+                holdModule(applied.moduleText);
             }
+            record(beforeForm, beforeModule);
             return new Edit(true, applied.message, null, applied.elementId, null);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Undoes the newest record of this session. Nothing moves when the session is read-only or
+     * the history has no record to undo. A file the session has not seen is reconciled under the
+     * same lock before the record is applied, and the record is not applied when the current
+     * text is no longer the one it left.
+     *
+     * @return whether the record was undone, and the reconciliation when one ran
+     */
+    public Reversal undo()
+    {
+        return step(true);
+    }
+
+    /**
+     * Redoes the newest undone record of this session. Nothing moves when the session is
+     * read-only or the history has no record to redo.
+     *
+     * @return whether the record was redone, and the reconciliation when one ran
+     */
+    public Reversal redo()
+    {
+        return step(false);
+    }
+
+    /**
+     * Applies several layout operations as one change: one baseline check, one fixation and one
+     * history record. Each step reads the layout and the module the earlier steps of this gesture
+     * produced; the session's texts move only after every step has landed. A refusal or a throw
+     * of any step leaves the session exactly as it was, and no record is kept.
+     *
+     * @param steps the operations, in order; each is one {@link OperationsCatalog} layout operation
+     * @return what the last step did, when every step was fixed
+     */
+    public Edit gesture(List<Step> steps)
+    {
+        if (steps == null || steps.isEmpty())
+        {
+            return Edit.refused("a gesture names no operation."); //$NON-NLS-1$
+        }
+        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
+        lock.lock();
+        try
+        {
+            if (readOnly)
+            {
+                return Edit.refused(problem);
+            }
+            if (!baselineHolds())
+            {
+                Reconciliation reconciliation = reconcileLocked();
+                String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
+                return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
+                    reconciliation.outcome);
+            }
+            String beforeForm = currentFormText();
+            String beforeModule = currentModuleText();
+            Applied last = null;
+            String formKept = beforeForm;
+            String moduleKept = beforeModule;
+            boolean moduleWritten = false;
+            for (Step step : steps)
+            {
+                OperationSpec spec = OperationsCatalog.find(step.operation);
+                if (spec == null || spec.kind != OperationSpec.Kind.LAYOUT)
+                {
+                    return Edit.refused(step.operation + " is not a layout operation of ordinary_forms."); //$NON-NLS-1$
+                }
+                Applied applied;
+                try
+                {
+                    applied = LayoutOperations.applyTo(spec, targetOver(formKept, moduleKept), step.params);
+                }
+                catch (IOException | RuntimeException e)
+                {
+                    return Edit.refused(e.getMessage());
+                }
+                if (applied.refusedVersion != null || !applied.done)
+                {
+                    return new Edit(false, applied.message, applied.refusedVersion, null, null);
+                }
+                last = applied;
+                formKept = applied.layoutText;
+                if (applied.moduleText != null)
+                {
+                    moduleKept = applied.moduleText;
+                    moduleWritten = true;
+                }
+            }
+            if (last == null)
+            {
+                return Edit.refused("a gesture names no operation."); //$NON-NLS-1$
+            }
+            Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
+            formText = last.layoutText;
+            if (moduleWritten)
+            {
+                holdModule(moduleKept);
+            }
+            record(beforeForm, beforeModule);
+            return new Edit(true, last.message, null, last.elementId, null);
+        }
+        finally
+        {
+            lock.unlock();
+        }
+    }
+
+    /** @return this session's undo context */
+    public IUndoContext undoContext()
+    {
+        return undoContext;
+    }
+
+    /** @return whether this session has a record to undo */
+    boolean canUndo()
+    {
+        return history().canUndo(undoContext);
+    }
+
+    /** @return whether this session has a record to redo */
+    boolean canRedo()
+    {
+        return history().canRedo(undoContext);
+    }
+
+    /**
+     * The records waiting to be undone, oldest first.
+     *
+     * @return the records
+     */
+    LayoutChangeOperation[] undoRecords()
+    {
+        return records(history().getUndoHistory(undoContext));
+    }
+
+    /**
+     * The records waiting to be redone, oldest first.
+     *
+     * @return the records
+     */
+    LayoutChangeOperation[] redoRecords()
+    {
+        return records(history().getRedoHistory(undoContext));
+    }
+
+    /** The history's records of this context, when every one of them is a layout change. */
+    private static LayoutChangeOperation[] records(IUndoableOperation[] operations)
+    {
+        LayoutChangeOperation[] records = new LayoutChangeOperation[operations.length];
+        for (int index = 0; index < operations.length; index++)
+        {
+            if (!(operations[index] instanceof LayoutChangeOperation record))
+            {
+                throw new IllegalStateException(operations[index].getClass().getName());
+            }
+            records[index] = record;
+        }
+        return records;
+    }
+
+    /** Undo or redo under the registry lock, through the operation history. */
+    private Reversal step(boolean undoing)
+    {
+        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
+        lock.lock();
+        try
+        {
+            if (readOnly)
+            {
+                return new Reversal(false, problem, null);
+            }
+            IOperationHistory history = history();
+            boolean available = undoing ? history.canUndo(undoContext) : history.canRedo(undoContext);
+            if (!available)
+            {
+                return new Reversal(false, null, null);
+            }
+            reconciledDuringStep = null;
+            IStatus status;
+            try
+            {
+                status = undoing ? history.undo(undoContext, new NullProgressMonitor(), null)
+                    : history.redo(undoContext, new NullProgressMonitor(), null);
+            }
+            catch (ExecutionException e)
+            {
+                return new Reversal(false, e.getMessage(), null);
+            }
+            Reconciliation seen = reconciledDuringStep;
+            String outcome = seen == null ? null : seen.outcome;
+            if (status.isOK())
+            {
+                return new Reversal(true, seen == null ? null : seen.message, outcome);
+            }
+            String message = status.getMessage();
+            if ((message == null || message.isEmpty()) && seen != null)
+            {
+                message = seen.message != null ? seen.message : seen.outcome;
+            }
+            return new Reversal(false, message, outcome);
         }
         finally
         {
@@ -446,9 +687,10 @@ public final class FormEditingSession
             return new Save(false, null, null);
         }
         String formOut = formChanged() ? formText : null;
-        String moduleOut = moduleChanged() ? moduleText : null;
+        boolean moduleChanged = moduleChanged();
+        String moduleOut = moduleChanged ? currentModuleText() : null;
         OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut,
-            id(), true);
+            id(), true, moduleChanged && moduleOut == null);
         if (!outcome.written)
         {
             return new Save(false, null, null);
@@ -460,10 +702,11 @@ public final class FormEditingSession
             baseForm = formOut;
             formText = null;
         }
-        if (moduleOut != null)
+        if (moduleChanged)
         {
             baseModule = moduleOut;
             moduleText = null;
+            moduleHeld = false;
         }
         return new Save(true, null, null);
     }
@@ -559,6 +802,11 @@ public final class FormEditingSession
             baseBytes = bytes;
             baseStamp = stamp;
             baseModule = module;
+            if (historyTouchesModule())
+            {
+                disposeHistory();
+                return new Reconciliation(Reconciliation.MODULE_ACCEPTED, HISTORY_CLEARED);
+            }
             return new Reconciliation(Reconciliation.MODULE_ACCEPTED, null);
         }
         boolean dirty = isDirty();
@@ -568,6 +816,8 @@ public final class FormEditingSession
         baseModule = module;
         formText = null;
         moduleText = null;
+        moduleHeld = false;
+        disposeHistory();
         if (dirty)
         {
             return new Reconciliation(Reconciliation.CHANGES_DISCARDED,
@@ -719,6 +969,177 @@ public final class FormEditingSession
 
     // ---- the plumbing ----------------------------------------------------------------------
 
+    /** The workspace operation history. */
+    private static IOperationHistory history()
+    {
+        return OperationHistoryFactory.getOperationHistory();
+    }
+
+    /**
+     * Keeps one history record when a fixed edit changed a text. A success that leaves both
+     * texts as they were keeps nothing, and a new record clears the redo of this context.
+     */
+    private void record(String beforeForm, String beforeModule)
+    {
+        String afterForm = currentFormText();
+        String afterModule = currentModuleText();
+        boolean formTouched = !Objects.equals(beforeForm, afterForm);
+        boolean moduleTouched = !Objects.equals(beforeModule, afterModule);
+        if (!formTouched && !moduleTouched)
+        {
+            return;
+        }
+        LayoutChangeOperation operation = new LayoutChangeOperation(this, beforeForm, afterForm, formTouched,
+            beforeModule, afterModule, moduleTouched);
+        operation.addContext(undoContext);
+        history().add(operation);
+    }
+
+    /**
+     * Applies one recorded undo or redo. The caller holds the file's registry lock, and so does
+     * the history's own call into the operation. A stale baseline is reconciled first; the
+     * record is applied only when every touched entry still holds the text the record expects,
+     * and a reconciliation that disposed the history answers with a status the history does not
+     * push back onto a stack.
+     *
+     * @param operation the record
+     * @param undoing {@code true} for undo
+     * @return {@link Status#OK_STATUS} when the record was applied
+     */
+    IStatus revertRecorded(LayoutChangeOperation operation, boolean undoing)
+    {
+        reconciledDuringStep = null;
+        if (readOnly)
+        {
+            return LayoutChangeOperation.notDone(IStatus.ERROR,
+                problem != null ? problem : "the session is read-only"); //$NON-NLS-1$
+        }
+        if (!baselineHolds())
+        {
+            reconciledDuringStep = reconcileLocked();
+        }
+        if (readOnly)
+        {
+            return LayoutChangeOperation.notDone(IStatus.CANCEL, reversalMessage(reconciledDuringStep));
+        }
+        // The history removes a record only after undo returns OK. Absence here means the
+        // reconciliation disposed the context, and applying the record would put it back.
+        if (reconciledDuringStep != null && !historyKeeps(operation))
+        {
+            return LayoutChangeOperation.notDone(IStatus.CANCEL, reversalMessage(reconciledDuringStep));
+        }
+        if (!operation.matches(currentFormText(), currentModuleText(), undoing))
+        {
+            if (reconciledDuringStep != null)
+            {
+                return LayoutChangeOperation.notDone(IStatus.CANCEL, reversalMessage(reconciledDuringStep));
+            }
+            String which = undoing ? "undo" : "redo"; //$NON-NLS-1$ //$NON-NLS-2$
+            return LayoutChangeOperation.notDone(IStatus.ERROR,
+                which + " is not available: the text is not the one this operation left"); //$NON-NLS-1$
+        }
+        Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
+        operation.apply(undoing);
+        return Status.OK_STATUS;
+    }
+
+    /** The line a reversal reports for a reconciliation, the outcome when it has no line of its own. */
+    private static String reversalMessage(Reconciliation reconciliation)
+    {
+        if (reconciliation == null)
+        {
+            return "the session is read-only"; //$NON-NLS-1$
+        }
+        return reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
+    }
+
+    /** Drops this session's undo and redo. Called when the last editor closes and when a reread drops the records. */
+    void disposeHistory()
+    {
+        history().dispose(undoContext, true, true, true);
+    }
+
+    /**
+     * Whether this record is still on the session's undo or redo. A reconciliation that disposed
+     * the context has already removed it; the history itself removes a record only after undo
+     * returns OK.
+     *
+     * @param operation the record an undo or redo is applying
+     * @return whether the history still lists the record
+     */
+    private boolean historyKeeps(LayoutChangeOperation operation)
+    {
+        return listed(history().getUndoHistory(undoContext), operation)
+            || listed(history().getRedoHistory(undoContext), operation);
+    }
+
+    /** @return whether the record is one of the operations, by identity */
+    private static boolean listed(IUndoableOperation[] operations, LayoutChangeOperation operation)
+    {
+        for (IUndoableOperation one : operations)
+        {
+            if (one == operation)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @return whether any record still on this session's undo or redo changed the module */
+    private boolean historyTouchesModule()
+    {
+        return touchesModule(history().getUndoHistory(undoContext))
+            || touchesModule(history().getRedoHistory(undoContext));
+    }
+
+    /** @return whether any of the records changed the module */
+    private static boolean touchesModule(IUndoableOperation[] operations)
+    {
+        for (IUndoableOperation operation : operations)
+        {
+            if (operation instanceof LayoutChangeOperation layout && layout.touchesModule())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** @return the session's layout text, the baseline while no edit holds another */
+    String currentFormText()
+    {
+        return formText == null ? baseForm : formText;
+    }
+
+    /** @return the session's module text, the baseline while no edit holds another */
+    String currentModuleText()
+    {
+        return moduleHeld ? moduleText : baseModule;
+    }
+
+    /**
+     * Holds a layout text. A text equal to the baseline is held as {@code null}, so the session
+     * is clean when both texts are back on the baseline.
+     *
+     * @param text the layout text to hold
+     */
+    void holdForm(String text)
+    {
+        formText = Objects.equals(text, baseForm) ? null : text;
+    }
+
+    /**
+     * Holds a module text. A text equal to the baseline is held as {@code null}.
+     *
+     * @param text the module text to hold
+     */
+    void holdModule(String text)
+    {
+        moduleHeld = !Objects.equals(text, baseModule);
+        moduleText = moduleHeld ? text : null;
+    }
+
     /**
      * Whether the file still holds the baseline. A file that was rewritten with the very same
      * bytes still holds it; the stamp is taken over then.
@@ -744,28 +1165,39 @@ public final class FormEditingSession
     /** The operation's target: the baseline container with the session's texts in. */
     private Target target() throws IOException
     {
+        return targetOver(formText == null ? baseForm : formText, currentModuleText());
+    }
+
+    /**
+     * A target over the given texts, not over whatever the session holds. A gesture feeds each
+     * step the texts the earlier steps produced. A {@code null} text leaves that entry of the
+     * baseline container as it was read.
+     *
+     * @param form the layout text the step reads, or {@code null} to keep the baseline layout
+     * @param moduleSource the module text the step reads, or {@code null} when it is absent
+     * @return the target
+     * @throws IOException when the container does not lie at a form module's address
+     */
+    private Target targetOver(String form, String moduleSource) throws IOException
+    {
         if (module == null)
         {
             throw new IOException("the container does not lie at a form module's address."); //$NON-NLS-1$
         }
-        OrdinaryFormFile current = currentFile();
-        return Target.of(module, fqn, current);
-    }
-
-    /** The baseline container with the session's texts put in; the baseline stays what a write compares against. */
-    private OrdinaryFormFile currentFile()
-    {
         OrdinaryFormFile current = baselineFile();
-        String form = formText == null ? baseForm : formText;
         if (form != null)
         {
             current.setFormText(form);
         }
-        if (moduleText != null)
+        if (moduleSource != null)
         {
-            current.setModuleText(moduleText);
+            current.setModuleText(moduleSource);
         }
-        return current;
+        else
+        {
+            current.removeModule();
+        }
+        return Target.of(this.module, fqn, current);
     }
 
     /** The baseline container, its observed texts the write compares the file with. */
@@ -1015,6 +1447,46 @@ public final class FormEditingSession
         {
             this.path = path;
             this.valueType = valueType;
+        }
+    }
+
+    /** What an undo or a redo did. */
+    public static final class Reversal
+    {
+        /** Whether the record was applied. */
+        public final boolean done;
+
+        /** The reconciliation's line, or why the record was not applied; {@code null} when there was nothing to do. */
+        public final String message;
+
+        /** The outcome the reconciliation reached, one of {@link Reconciliation}'s constants; {@code null} when none ran. */
+        public final String reconciliation;
+
+        Reversal(boolean done, String message, String reconciliation)
+        {
+            this.done = done;
+            this.message = message;
+            this.reconciliation = reconciliation;
+        }
+    }
+
+    /** One operation of a {@link #gesture}. */
+    public static final class Step
+    {
+        /** The operation's name, one of the writing layout operations. */
+        public final String operation;
+
+        /** The operation's arguments, as the tool takes them. */
+        public final Map<String, String> params;
+
+        /**
+         * @param operation the operation's name
+         * @param params the operation's arguments
+         */
+        public Step(String operation, Map<String, String> params)
+        {
+            this.operation = operation;
+            this.params = params;
         }
     }
 }

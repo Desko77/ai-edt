@@ -118,25 +118,44 @@ public final class OpenFormSessions
      *
      * @param session the session one editor of which closes
      */
-    public static synchronized void release(FormEditingSession session)
+    public static void release(FormEditingSession session)
+    {
+        FormEditingSession ending = endingOf(session);
+        if (ending != null)
+        {
+            ending.disposeHistory();
+        }
+    }
+
+    /**
+     * Counts one editor out. The session ends when the last editor closes; the history is
+     * disposed by the caller after this returns, so the registry lock is not taken here and the
+     * history is not disposed while this class lock is held.
+     *
+     * @param session the session one editor of which closes
+     * @return the session when this was its last editor; {@code null} when it stays open
+     */
+    private static synchronized FormEditingSession endingOf(FormEditingSession session)
     {
         if (session == null)
         {
-            return;
+            return null;
         }
         String key = keyOf(session.file());
         Held held = BY_FILE.get(key);
         if (held == null || held.session != session)
         {
-            return;
+            return null;
         }
         held.editors--;
         if (held.editors > 0)
         {
-            return;
+            return null;
         }
+        FormEditingSession ending = held.session;
         held.session = null;
         dropIfIdle(key, held);
+        return ending;
     }
 
     /** @param file the {@code Form.oform} @return whether a live session holds the file */
