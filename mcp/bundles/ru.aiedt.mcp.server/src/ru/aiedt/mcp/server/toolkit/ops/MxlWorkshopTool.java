@@ -84,15 +84,7 @@ public class MxlWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "MXL spreadsheet template constructor. 18 operations: create_template, " //$NON-NLS-1$
-            + "set_cell, format_cells, merge_cells, draw, add_drawing, remove_drawing, " //$NON-NLS-1$
-            + "read_template, add_named_area, list_named_areas, remove_named_area, " //$NON-NLS-1$
-            + "insert_rows, delete_rows, copy_rows, insert_columns, delete_columns, " //$NON-NLS-1$
-            + "copy_columns, check_print_width. " //$NON-NLS-1$
-            + "They manipulate (or, for read_template, read back) the moxel " //$NON-NLS-1$
-            + "SpreadsheetDocument model directly. Coordinates are 1-based. " //$NON-NLS-1$
-            + "check_print_width reads the model alone: whether the print area fits the sheet " //$NON-NLS-1$
-            + "by width, and which page defaults the answer took. It changes nothing."; //$NON-NLS-1$
+        return "MXL spreadsheet template constructor. format_cells covers placement, font, borders and print settings; insert_rows / delete_rows and insert_columns / delete_columns shift every holder of a row or column number; copy_rows / copy_columns replace cells without shifting coordinates. read_template and check_print_width read the moxel model only and change nothing. Coordinates are 1-based."; //$NON-NLS-1$
     }
 
     @Override
@@ -108,126 +100,72 @@ public class MxlWorkshopTool implements IMcpTool
             .stringProperty("operation", //$NON-NLS-1$
                 "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / insert_rows / delete_rows / copy_rows / insert_columns / delete_columns / copy_columns / check_print_width / help", //$NON-NLS-1$
                 true)
-            .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("ownerFqn", //$NON-NLS-1$
-                "Template owner FQN (Catalog.X / Document.X), or CommonTemplate.X itself") //$NON-NLS-1$
-            .stringProperty("templateName", "Template name") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("templateType", //$NON-NLS-1$
-                "SpreadsheetDocument (default) / TextDocument / DataCompositionSchema / etc.") //$NON-NLS-1$
-            .integerProperty("row", //$NON-NLS-1$
-                "Cell row (1-based); insert_rows puts the new rows before it, delete_rows " //$NON-NLS-1$
-                    + "removes from it") //$NON-NLS-1$
-            .integerProperty("col", //$NON-NLS-1$
-                "Cell column (1-based); insert_columns puts the new columns before it, " //$NON-NLS-1$
-                    + "delete_columns removes from it") //$NON-NLS-1$
-            .stringProperty("text", "Cell text content") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("fillType", //$NON-NLS-1$
-                "set_cell: how the cell is filled - text, parameter or template. " //$NON-NLS-1$
-                    + "A parameter name without fillType is read as parameter.") //$NON-NLS-1$
-            .stringProperty("parameter", //$NON-NLS-1$
-                "set_cell: template parameter name. BSL fills it through the area's parameters.") //$NON-NLS-1$
-            .stringProperty("language", //$NON-NLS-1$
-                "Language tag for the LocalString content (default 'ru')") //$NON-NLS-1$
-            .stringProperty("areaName", //$NON-NLS-1$
-                "Named area name for the named-area operations. The mechanism that loads data from a " //$NON-NLS-1$
-                + "file reads a template by these: the area name becomes the loaded column name.") //$NON-NLS-1$
-            .stringProperty("areaKind", //$NON-NLS-1$
-                "add_named_area: columns (default for a load template), rows, or rect. Bounds come " //$NON-NLS-1$
-                + "from fromRow/fromCol/toRow/toCol; columns reads the column pair, rows the row pair.") //$NON-NLS-1$
-            .integerProperty("fromRow", "Merge range from-row; copy_rows: first source row") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("fromCol", //$NON-NLS-1$
-                "Merge range from-col; copy_columns: first source column") //$NON-NLS-1$
-            .integerProperty("toRow", "Merge range to-row; copy_rows: first target row") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("toCol", //$NON-NLS-1$
-                "Merge range to-col; copy_columns: first target column") //$NON-NLS-1$
-            .integerProperty("count", //$NON-NLS-1$
-                "insert_rows / delete_rows / copy_rows / insert_columns / delete_columns / " //$NON-NLS-1$
-                    + "copy_columns: how many rows or columns (default 1)") //$NON-NLS-1$
-            .stringProperty("formatFrom", //$NON-NLS-1$
-                "insert_rows: where the new rows take the row format and cell formats from - " //$NON-NLS-1$
-                    + "above (default, and none at row 1), below or none; insert_columns: where " //$NON-NLS-1$
-                    + "the new columns take the column format and cell formats from - left " //$NON-NLS-1$
-                    + "(default, and none at col 1), right or none. Text and parameters " //$NON-NLS-1$
-                    + "are not copied") //$NON-NLS-1$
-            .stringProperty("layout", //$NON-NLS-1$
-                "JSON layout for draw: {cells:[{row,col,text}],merges:[{from,to}]}") //$NON-NLS-1$
-            .stringProperty("drawingType", //$NON-NLS-1$
-                "add_drawing: Line / Rectangle / Ellipse / Text (RU aliases ok)") //$NON-NLS-1$
-            .integerProperty("beginRow", "add_drawing: top-left anchor row (1-based)") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("beginColumn", "add_drawing: top-left anchor column (1-based)") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("endRow", "add_drawing: bottom-right anchor row (>= beginRow)") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("endColumn", //$NON-NLS-1$
-                "add_drawing: bottom-right anchor column (>= beginColumn)") //$NON-NLS-1$
-            .integerProperty("beginRowOffset", //$NON-NLS-1$
-                "add_drawing: intra-cell offset for begin row (default 0)") //$NON-NLS-1$
-            .integerProperty("beginColumnOffset", //$NON-NLS-1$
-                "add_drawing: intra-cell offset for begin column (default 0)") //$NON-NLS-1$
-            .integerProperty("endRowOffset", //$NON-NLS-1$
-                "add_drawing: intra-cell offset for end row (default 0)") //$NON-NLS-1$
-            .integerProperty("endColumnOffset", //$NON-NLS-1$
-                "add_drawing: intra-cell offset for end column (default 0)") //$NON-NLS-1$
-            .integerProperty("formatIndex", //$NON-NLS-1$
-                "add_drawing: format-table index for stroke/fill (default: a fresh empty format)") //$NON-NLS-1$
-            .integerProperty("zOrder", "add_drawing: explicit z-order (default = drawing id)") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("drawingId", "remove_drawing: id of the drawing to remove") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("textPlacement", //$NON-NLS-1$
-                "format_cells: how text behaves when it does not fit - auto / cut / block / wrap.") //$NON-NLS-1$
-            .integerProperty("textOrientation", //$NON-NLS-1$
-                "format_cells: text rotation in degrees, from 0 to 360. The template stores " //$NON-NLS-1$
-                    + "tenths of a degree, so 90 is written as 900.") //$NON-NLS-1$
-            .integerProperty("rowHeight", //$NON-NLS-1$
-                "format_cells: explicit row height. There is no auto-height flag in the model - a " //$NON-NLS-1$
-                    + "row with no explicit height whose cells wrap is what the platform grows to " //$NON-NLS-1$
-                    + "fit the text.") //$NON-NLS-1$
-            .booleanProperty("autoColumnWidth", //$NON-NLS-1$
-                "format_cells: let the column width follow its content.") //$NON-NLS-1$
+            .stringProperty("projectName", "EDT project name.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("ownerFqn", "Template owner FQN (Catalog.X / Document.X) or CommonTemplate.X.") //$NON-NLS-1$
+            .stringProperty("templateName", "Template name.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("templateType", "create_template: type (default SpreadsheetDocument); the other types are in help topic=workflow.") //$NON-NLS-1$
+            .integerProperty("row", "Cell row (1-based) for set_cell / format_cells; draw uses row in layout. insert_rows puts new rows before it; delete_rows removes from it.") //$NON-NLS-1$
+            .integerProperty("col", "Cell column (1-based) for set_cell / format_cells; draw uses col in layout. insert_columns puts new columns before it; delete_columns removes from it.") //$NON-NLS-1$
+            .stringProperty("text", "Cell text.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("fillType", "set_cell: text / parameter / template; a bare parameter name means parameter; otherwise omission keeps the current fill type.") //$NON-NLS-1$
+            .stringProperty("parameter", "set_cell: template parameter name, filled by BSL.") //$NON-NLS-1$
+            .stringProperty("language", "LocalString language tag (default 'ru').") //$NON-NLS-1$
+            .stringProperty("areaName", "Named area name; a load template uses it as the loaded column name.") //$NON-NLS-1$
+            .stringProperty("areaKind", "add_named_area: columns (default), rows or rect; bounds from fromRow/fromCol/toRow/toCol; columns reads the column pair, rows the row pair.") //$NON-NLS-1$
+            .integerProperty("fromRow", "Merge range / copy_rows: first source row.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("fromCol", "Merge range / copy_columns: first source column.") //$NON-NLS-1$
+            .integerProperty("toRow", "Merge range / copy_rows: first target row.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("toCol", "Merge range / copy_columns: first target column.") //$NON-NLS-1$
+            .integerProperty("count", "Row/column operations: how many (default 1).") //$NON-NLS-1$
+            .stringProperty("formatFrom", "insert_rows / insert_columns: take formats from above/left (default), below/right or none; text and parameters are not copied.") //$NON-NLS-1$
+            .stringProperty("layout", "draw: JSON {cells:[{row,col,text}],merges:[{from,to}]}.") //$NON-NLS-1$
+            .stringProperty("drawingType", "add_drawing: Line / Rectangle / Ellipse / Text (RU aliases accepted).") //$NON-NLS-1$
+            .integerProperty("beginRow", "add_drawing: top-left anchor row (1-based).") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("beginColumn", "add_drawing: top-left anchor column (1-based).") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("endRow", "add_drawing: bottom-right anchor row (>= beginRow).") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("endColumn", "add_drawing: bottom-right anchor column (>= beginColumn).") //$NON-NLS-1$
+            .integerProperty("beginRowOffset", "add_drawing: begin-row cell offset (default 0).") //$NON-NLS-1$
+            .integerProperty("beginColumnOffset", "add_drawing: begin-column cell offset (default 0).") //$NON-NLS-1$
+            .integerProperty("endRowOffset", "add_drawing: end-row cell offset (default 0).") //$NON-NLS-1$
+            .integerProperty("endColumnOffset", "add_drawing: end-column cell offset (default 0).") //$NON-NLS-1$
+            .integerProperty("formatIndex", "add_drawing: stroke/fill format index (default a fresh format).") //$NON-NLS-1$
+            .integerProperty("zOrder", "add_drawing: z-order (default = drawing id).") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("drawingId", "remove_drawing: id to remove (idempotent).") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("textPlacement", "format_cells: auto / cut / block / wrap.") //$NON-NLS-1$
+            .integerProperty("textOrientation", "format_cells: rotation in degrees, 0..360, stored as tenths (90 -> 900).") //$NON-NLS-1$
+            .integerProperty("rowHeight", "format_cells: explicit row height; without one, wrapped text grows the row.") //$NON-NLS-1$
+            .booleanProperty("autoColumnWidth", "format_cells: width follows content.") //$NON-NLS-1$
             .integerProperty("columnWidth", "format_cells: explicit column width.") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("columnWidthWeight", //$NON-NLS-1$
-                "format_cells: this column's share when the available width is distributed.") //$NON-NLS-1$
-            .stringProperty("border", //$NON-NLS-1$
-                "format_cells: line style on every side - None, Solid, Dotted, Double, " //$NON-NLS-1$
-                    + "ThinDashed, ThickDashed, LargeDashed.") //$NON-NLS-1$
-            .integerProperty("borderWidth", //$NON-NLS-1$
-                "format_cells: width of the borders this call adds. Defaults to 1.") //$NON-NLS-1$
-            .stringProperty("leftBorder", "format_cells: line style of the left side.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("topBorder", "format_cells: line style of the top side.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("rightBorder", "format_cells: line style of the right side.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("bottomBorder", "format_cells: line style of the bottom side.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("fontName", "format_cells: font face. A cell with no font yet starts from Arial.") //$NON-NLS-1$ //$NON-NLS-2$
-            .numberProperty("fontSize", "format_cells: font height in points, greater than 0.") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("columnWidthWeight", "format_cells: share of the available width.") //$NON-NLS-1$
+            .stringProperty("border", "format_cells: line style on every side; the style list is in help topic=workflow.") //$NON-NLS-1$
+            .integerProperty("borderWidth", "format_cells: border width (default 1).") //$NON-NLS-1$
+            .stringProperty("leftBorder", "format_cells: left border style.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("topBorder", "format_cells: top border style.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("rightBorder", "format_cells: right border style.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("bottomBorder", "format_cells: bottom border style.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("fontName", "format_cells: font face (Arial when none yet).") //$NON-NLS-1$ //$NON-NLS-2$
+            .numberProperty("fontSize", "format_cells: font size in points (> 0).") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontBold", "format_cells: bold.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontItalic", "format_cells: italic.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontUnderline", "format_cells: underline.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("fontStrikeout", "format_cells: strikeout.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("textColor", "format_cells: text color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("backColor", "format_cells: background color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("borderColor", "format_cells: border color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("patternColor", "format_cells: pattern color as #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("pattern", //$NON-NLS-1$
-                "format_cells: fill pattern - WithoutPattern, Solid, or Pattern1 through Pattern17.") //$NON-NLS-1$
-            .stringProperty("pageOrientation", //$NON-NLS-1$
-                "format_cells: page orientation, Portrait or Landscape. Applies to the whole template.") //$NON-NLS-1$
-            .integerProperty("scale", //$NON-NLS-1$
-                "format_cells: print scale in percent. Applies to the whole template.") //$NON-NLS-1$
-            .integerProperty("copies", "format_cells: number of copies. Applies to the whole template.") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("perPage", //$NON-NLS-1$
-                "format_cells: pages per sheet. Applies to the whole template.") //$NON-NLS-1$
-            .booleanProperty("fitToPage", //$NON-NLS-1$
-                "format_cells: scale the sheet to fit the page. Applies to the whole template.") //$NON-NLS-1$
-            .numberProperty("topMargin", //$NON-NLS-1$
-                "format_cells: top margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
-            .numberProperty("leftMargin", //$NON-NLS-1$
-                "format_cells: left margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
-            .numberProperty("bottomMargin", //$NON-NLS-1$
-                "format_cells: bottom margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
-            .numberProperty("rightMargin", //$NON-NLS-1$
-                "format_cells: right margin in millimetres. Applies to the whole template.") //$NON-NLS-1$
-            .integerProperty("smallScalePercent", //$NON-NLS-1$
-                "check_print_width: print scale below which the answer warns of unreadable type " //$NON-NLS-1$
-                    + "(10..100, default 75). help topic=printWidth says where 75 comes from.") //$NON-NLS-1$
-            .booleanProperty("dryRun", "Preview without applying (default false)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("topic", //$NON-NLS-1$
-                "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
+            .stringProperty("textColor", "format_cells: text color #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("backColor", "format_cells: background color #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("borderColor", "format_cells: border color #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("patternColor", "format_cells: pattern color #RRGGBB.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("pattern", "format_cells: WithoutPattern, Solid or Pattern1-17.") //$NON-NLS-1$
+            .stringProperty("pageOrientation", "format_cells: Portrait / Landscape (whole template).") //$NON-NLS-1$
+            .integerProperty("scale", "format_cells: print scale in percent (whole template).") //$NON-NLS-1$
+            .integerProperty("copies", "format_cells: number of copies (whole template).") //$NON-NLS-1$ //$NON-NLS-2$
+            .integerProperty("perPage", "format_cells: pages per sheet (whole template).") //$NON-NLS-1$
+            .booleanProperty("fitToPage", "format_cells: scale to fit the page (whole template).") //$NON-NLS-1$
+            .numberProperty("topMargin", "format_cells: top margin in mm (whole template).") //$NON-NLS-1$
+            .numberProperty("leftMargin", "format_cells: left margin in mm (whole template).") //$NON-NLS-1$
+            .numberProperty("bottomMargin", "format_cells: bottom margin in mm (whole template).") //$NON-NLS-1$
+            .numberProperty("rightMargin", "format_cells: right margin in mm (whole template).") //$NON-NLS-1$
+            .integerProperty("smallScalePercent", "check_print_width: warn below this print scale (10..100, default 75).") //$NON-NLS-1$
+            .booleanProperty("dryRun", "Preview without applying (default false).") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("topic", "Help topic (with operation=help).") //$NON-NLS-1$
             .build();
     }
 
@@ -2760,7 +2698,11 @@ public class MxlWorkshopTool implements IMcpTool
             sb.append("**Operations:**\n"); //$NON-NLS-1$
             sb.append("- create_template - creates the Template MdObject " //$NON-NLS-1$
                 + "(templateType=SpreadsheetDocument by default). " //$NON-NLS-1$
-                + "ownerFqn=CommonTemplate.X with templateName=X creates that common template.\n"); //$NON-NLS-1$
+                + "ownerFqn=CommonTemplate.X with templateName=X creates that common template. " //$NON-NLS-1$
+                + "Other templateType values: TextDocument / BinaryData / ActiveDocument / " //$NON-NLS-1$
+                + "GraphicalSchema / DataCompositionSchema / " //$NON-NLS-1$
+                + "DataCompositionAppearanceTemplate / GeographicalSchema / HTMLDocument / " //$NON-NLS-1$
+                + "AddIn.\n"); //$NON-NLS-1$
             sb.append("- set_cell - sets a cell's text or template parameter. Args: row, col, " //$NON-NLS-1$
                 + "text, language (default 'ru'), fillType (text / parameter / template), " //$NON-NLS-1$
                 + "parameter\n"); //$NON-NLS-1$
@@ -2768,7 +2710,9 @@ public class MxlWorkshopTool implements IMcpTool
                 + "row height, column width, borders, font, colors and print settings. " //$NON-NLS-1$
                 + "A cell range is row/col or fromRow/fromCol/toRow/toCol. Print settings " //$NON-NLS-1$
                 + "(pageOrientation, scale, copies, perPage, fitToPage, margins in millimetres) " //$NON-NLS-1$
-                + "apply to the whole template, not to the cells in the range, and need no range.\n"); //$NON-NLS-1$
+                + "apply to the whole template, not to the cells in the range, and need no range. " //$NON-NLS-1$
+                + "Border styles: None, Solid, Dotted, Double, ThinDashed, ThickDashed, " //$NON-NLS-1$
+                + "LargeDashed; borderWidth defaults to 1.\n"); //$NON-NLS-1$
             sb.append("- merge_cells - merges a rectangle. Args: fromRow, fromCol, toRow, toCol (1-based, both inclusive)\n"); //$NON-NLS-1$
             sb.append("- draw - batch: layout='{\"cells\":[{row,col,text,language}],\"merges\":[{fromRow,fromCol,toRow,toCol}]}'\n"); //$NON-NLS-1$
             sb.append("- add_drawing - places a graphic. Args: drawingType (Line/Rectangle/Ellipse/Text), beginRow, beginColumn, endRow, endColumn, [*Offset], [formatIndex], [zOrder], text (for Text). Returns drawingId\n"); //$NON-NLS-1$
@@ -2839,7 +2783,11 @@ public class MxlWorkshopTool implements IMcpTool
                         + "5. add_named_area areaName=Nomenclature areaKind=columns fromCol=1 " //$NON-NLS-1$
                         + "toCol=1 - a template the load-data-from-a-file mechanism reads is read " //$NON-NLS-1$
                         + "by these: the area name becomes the loaded column name\n" //$NON-NLS-1$
-                        + "6. list_named_areas reads them back; read_template reports them too\n") //$NON-NLS-1$
+                        + "6. list_named_areas reads them back; read_template reports them too\n" //$NON-NLS-1$
+                        + "Other templateType values: TextDocument / BinaryData / ActiveDocument / " //$NON-NLS-1$
+                        + "GraphicalSchema / DataCompositionSchema / DataCompositionAppearanceTemplate / " //$NON-NLS-1$
+                        + "GeographicalSchema / HTMLDocument / AddIn.\n" //$NON-NLS-1$
+                        + "Border styles: None, Solid, Dotted, Double, ThinDashed, ThickDashed, LargeDashed.\n") //$NON-NLS-1$
                     .toJson();
             case "printwidth": //$NON-NLS-1$
                 return ToolResult.success().put("topic", topic) //$NON-NLS-1$

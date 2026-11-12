@@ -1,0 +1,157 @@
+{
+  "name": "vanessa",
+  "beforeUtf8Bytes": 6390,
+  "shape": {
+    "name": "vanessa",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "featurePath": {
+          "type": "string"
+        },
+        "scenarioText": {
+          "type": "string"
+        },
+        "formToOpen": {
+          "type": "string"
+        },
+        "openStep": {
+          "type": "string"
+        },
+        "startStep": {
+          "type": "string"
+        },
+        "listKind": {
+          "type": "string"
+        },
+        "listName": {
+          "type": "string"
+        },
+        "tableName": {
+          "type": "string"
+        },
+        "column": {
+          "type": "string"
+        },
+        "columnValue": {
+          "type": "string"
+        },
+        "whenSeveral": {
+          "type": "string"
+        },
+        "buttonTitle": {
+          "type": "string"
+        },
+        "buttonName": {
+          "type": "string"
+        },
+        "windowTitle": {
+          "type": "string"
+        },
+        "windowWaitSeconds": {
+          "type": "integer"
+        },
+        "connectionString": {
+          "type": "string"
+        },
+        "async": {
+          "type": "boolean"
+        },
+        "runKey": {
+          "type": "string"
+        },
+        "cancel": {
+          "type": "boolean"
+        },
+        "waitSeconds": {
+          "type": "integer"
+        },
+        "vanessaParams": {
+          "type": "object"
+        },
+        "projectName": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "type": "integer"
+        },
+        "infobaseUser": {
+          "type": "string"
+        },
+        "testManager": {
+          "type": "boolean"
+        },
+        "testClient": {
+          "type": "boolean"
+        },
+        "testClientPort": {
+          "type": "integer"
+        },
+        "screenshots": {
+          "type": "boolean"
+        },
+        "keepOpen": {
+          "type": "boolean"
+        }
+      },
+      "required": []
+    },
+    "annotations": {
+      "openWorldHint": false
+    }
+  },
+  "root": "Run Gherkin UI scenarios through Vanessa Automation; yaxunit_tests tests code. Choose exactly one: featurePath, scenarioText, formToOpen, or compose a list action without any of those three. For a list action, listKind and listName open the list, column and columnValue select a row, buttonTitle or buttonName presses a button, and windowWaitSeconds controls the wait for the opened window. List actions and formToOpen default testManager and testClient to true and refuse false. Reports failed steps and screenshots. Requires vanessa-automation.epf and the 1C thick client configured in EDT preferences. A timeout blocked by a 1C window returns blockingWindows with its title, texts, buttons and imageFile and does not ask to raise timeoutSeconds.",
+  "descriptions": {
+    "featurePath": "File calls: .feature file/directory; alternatives: scenarioText, formToOpen, composed list action. With runKey: no featurePath/scenarioText. projectName resolves relative paths against its project.",
+    "scenarioText": "Gherkin text stored in a temporary run directory; steps depend on Vanessa version. Refused with featurePath.",
+    "formToOpen": "Form name in opening-step syntax; composes a scenario, not combined with featurePath/scenarioText. Add-in captures the test client's top window even when covered.",
+    "openStep": "Opening step: {form} is the name; default opens a common form. List/object/extension forms require version-specific Vanessa wording.",
+    "startStep": "Step acquiring a client; default launches TestClient or attaches to a running one.",
+    "listKind": "List metadata kind: catalog/document/documentJournal/chartOfCharacteristicTypes/chartOfAccounts/chartOfCalculationTypes/informationRegister/accumulationRegister/accountingRegister/calculationRegister.",
+    "listName": "Name of the metadata object whose list form the scenario opens.",
+    "tableName": "Name of the list's table on the form the steps address (default Список).",
+    "column": "Caption of the column the row to act on is found by.",
+    "columnValue": "Value of that column; an empty string is a value and is looked for as empty.",
+    "whenSeveral": "Matching rows: unique (default) requires exactly one before moving; first moves to the first match.",
+    "buttonTitle": "Button title to press; exactly one of buttonTitle/buttonName.",
+    "buttonName": "Button name to press; exactly one of buttonTitle/buttonName.",
+    "windowTitle": "Expected window title after pressing the button; omitted: wait for a title different from the pre-click title.",
+    "windowWaitSeconds": "Seconds the step that waits for the window waits (default 10).",
+    "connectionString": "1C infobase connection string, e.g. 'File=\"C:\\\\ib\";' or 'Srvr=\"host\";Ref=\"base\";'. Omitted: named project's bound infobase, already known to EDT. Server infobase: explicit string required. Pwd refused (client command-line exposure to every process); use password-free or OS authentication. Not accepted with runKey.",
+    "async": "Return runKey without waiting for the run; poll with it for results, or pass runKey and cancel=true to stop the client.",
+    "runKey": "The key from a Pending reply: comes back for that run rather than starting one.",
+    "cancel": "With runKey: stops client and worker processes; prior scenario writes to the infobase remain.",
+    "waitSeconds": "With runKey: how long to wait this time before answering Pending again.",
+    "vanessaParams": "VAParams.json additions as JSON (e.g. tag/scenario filters). Names are Vanessa-version-specific; unknown names ignored. Parameters used by this tool to read results are refused.",
+    "projectName": "Optional EDT project: resolves relative featurePath; its directory is the working directory.",
+    "timeoutSeconds": "Max seconds to wait for the run (default 300, max 3600).",
+    "infobaseUser": "1C login name for the run. For a base with users, omission opens a login window and the run waits its entire deadline. No password accepted here.",
+    "testManager": "Start as test manager (default false): required for UI-testing types in form-driving scenarios; otherwise a step returns Тип не определен. List action/formToOpen: omitted=true, false refused.",
+    "testClient": "Include a test client in VAParams for the start step to launch (default false). Without it the TestClient start step has no client; its result has an empty client type and PID 0. List action/formToOpen: omitted=true, false refused.",
+    "testClientPort": "Test client listening port (default 48010); change if another run or EDT holds it.",
+    "screenshots": "Capture a screenshot on step failure (default true).",
+    "keepOpen": "Keep 1C client open for observation (default false); run times out here because the client never exits."
+  },
+  "changedKeys": [
+    "connectionString",
+    "testManager",
+    "testClient",
+    "featurePath",
+    "listKind",
+    "infobaseUser",
+    "vanessaParams",
+    "formToOpen",
+    "openStep",
+    "async",
+    "windowTitle",
+    "scenarioText",
+    "keepOpen",
+    "whenSeveral",
+    "cancel",
+    "testClientPort",
+    "startStep",
+    "projectName",
+    "buttonTitle",
+    "buttonName"
+  ]
+}

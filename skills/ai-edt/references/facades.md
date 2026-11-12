@@ -7,6 +7,19 @@ This file is a map, not a contract. The authoritative catalogue is the server it
 `operation=help` on a facade for its operations, and `operation=help topic=<operation>` for the
 parameters of one. When this file and the server disagree, the server is right.
 
+## Compact catalogue and full help
+
+Tool and argument descriptions in `tools/list` are summaries. Read `operation=help topic=<operation>`
+for the selected operation before a call; where the facade offers `topic=parameters`, it expands
+shortened argument descriptions. `launch_debugger` dispatches help through `action=help`, and
+`yaxunit_tests` uses `help=<topic>`. `ordinary_forms operation=help topic=<operation>` returns a
+structured `operationHelp` contract without requiring a project or executing the operation.
+`find` is available only where the tool declares it; do not add it to every help call.
+
+For route selection, MCP `resources/read` with `uri=aiedt://guidance` returns current registry and
+preset availability. The handshake and `server/discover` point there through `instructions`.
+The resource does not replace operation help or the call's own checks.
+
 ## Read-only
 
 | Facade | Operations |
@@ -572,8 +585,8 @@ default port between all the environments running on it, and the second one to s
 refused by a dialog of the environment's own - this is how to step around that. The saved
 configuration is not changed.
 
-`startupOption` is a `/C` string for the client - `autostart;anything`, an `/Execute` target, a
-debugger URL - written into the working copy of the launch configuration, never the saved one.
+`startupOption` is only a `/C` string for the client, written into the working copy of the launch
+configuration, never the saved one. It does not select an `/Execute` target or a debugger URL.
 An Attach configuration refuses it, and so does a client already running without these arguments.
 `waitForEndpoint` with `endpointTimeoutSeconds` (1..50, 20 by default) turns the answer into a
 readiness report: a GET on the URL, ready when the final status is below 500, at most five
@@ -908,9 +921,9 @@ uses the same default when `returningValueType` is omitted; this operation accep
 `{nsUri}localName` or a bare local name with `returningValueTypeNs`. Read `returningValueType.applied`, `nsUri` and `localName` in the response;
 `returningValueTypeWarnings` reports application warnings.
 
-**An open editor outranks the file.** `read_module_source` returns the editor's unsaved text and marks it in the answer; `write_module_source` refuses while such an editor holds the file. What is read and what is written then describe one state rather than two.
+**A read takes the provider, then the dirty editor, then the file.** `read_module_source` and `read_method_source` choose a source in this order: a matching `IModuleSourceProvider`, otherwise the connected editor buffer when it is dirty, otherwise the physical file. A matching provider wins even when a physical file exists at the same address and its editor is dirty. For a provider or a dirty editor, `read_method_source` finds the method and its line bounds in the selected text, not in stale saved model bounds. An answer from a dirty editor carries an `Unsaved` origin note; an absent method may carry the same note, because the absence refers to the text that was chosen. `write_module_source` and `diff_module` do not follow that order: an existing physical file stays their target, and only an address with no physical file goes through a provider. On an address that has both a provider and a file, the reader note names the physical file as the target of the writer and the diff, not the provider text, so the read source and the write target can differ. A dirty physical editor still makes `write_module_source` refuse: save or revert it before repeating the write. The ordinary-form container provider still reports its own source and `unsavedInEditor` state; do not replace that with a physical text-file assumption.
 
-**A write goes only where the layout has a place for it.** When creating a new file-backed module, `write_module_source` checks `modulePath` against the layout before creating the file, `dryRun=true` included: the first segment has to be the kind folder as the layout spells it (`CommonModules`, not `CommonModule` - the refusal names the canonical path in full), every folder of the path has to exist, because a module is not created for an object, a form, a command or a nested object such as a table of an external data source that the configuration does not hold (the module file itself may be new, `ManagerModule.bsl` included), and the file name has to be a module name of the place the path reaches, not of the kind it opens with: a common module takes `Module.bsl` alone, a catalog takes `ObjectModule.bsl` and `ManagerModule.bsl`, a register takes `RecordSetModule.bsl` with its manager module, a constant takes `ValueManagerModule.bsl`, a form takes `Module.bsl`, a command takes `CommandModule.bsl`, a table of an external data source takes its object, record set and manager modules, a dimension table of a cube takes its object and manager modules, and a recalculation of a calculation register takes `RecordSetModule.bsl` alone. The refusal lists the names of the place when the file name is not one of them; a level folder the place above it does not hold, and a kind that owns no module of its own, are refused with the levels that place holds. An existing file skips these additional layout checks while retaining generic safety checks; a provider-held module is resolved by its provider rather than this file layout. The configuration root's own modules (`Configuration/SessionModule.bsl` and its three kin) keep their place beside the kind folders. Reading is unchanged apart from the wording: when the file is missing and the first segment spells the kind rather than its folder, the refusal names the canonical path.
+**A write goes only where the layout has a place for it.** When creating a new file-backed module, `write_module_source` checks `modulePath` against the layout before creating the file, `dryRun=true` included: the first segment has to be the kind folder as the layout spells it (`CommonModules`, not `CommonModule` - the refusal names the canonical path in full), every folder of the path has to exist, because a module is not created for an object, a form, a command or a nested object such as a table of an external data source that the configuration does not hold (the module file itself may be new, `ManagerModule.bsl` included), and the file name has to be a module name of the place the path reaches, not of the kind it opens with: a common module takes `Module.bsl` alone, a catalog takes `ObjectModule.bsl` and `ManagerModule.bsl`, a register takes `RecordSetModule.bsl` with its manager module, a constant takes `ValueManagerModule.bsl`, a form takes `Module.bsl`, a command takes `CommandModule.bsl`, a table of an external data source takes its object, record set and manager modules, a dimension table of a cube takes its object and manager modules, and a recalculation of a calculation register takes `RecordSetModule.bsl` alone. The refusal lists the names of the place when the file name is not one of them; a level folder the place above it does not hold, and a kind that owns no module of its own, are refused with the levels that place holds. An existing file skips these additional layout checks while retaining generic safety checks; a provider-held module is resolved by its provider rather than this file layout. The configuration root's own modules (`Configuration/SessionModule.bsl` and its three kin) keep their place beside the kind folders. Reading a file through this layout is otherwise unchanged: when the file is missing and the first segment spells the kind rather than its folder, the refusal names the canonical path.
 
 If the final bytes equal a synchronized file's contents, `write_module_source` returns
 `unchanged:true` without rewriting or force-exporting the module. An out-of-sync or unreadable

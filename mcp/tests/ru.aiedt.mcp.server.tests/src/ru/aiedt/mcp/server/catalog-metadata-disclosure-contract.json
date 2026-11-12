@@ -1,0 +1,682 @@
+{
+  "name": "edit_metadata",
+  "beforeUtf8Bytes": 19690,
+  "shape": {
+    "name": "edit_metadata",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "projectName": {
+          "type": "string"
+        },
+        "ownerFqn": {
+          "type": "string"
+        },
+        "property": {
+          "type": "string"
+        },
+        "valueFqn": {
+          "type": "string"
+        },
+        "autoRecord": {
+          "type": "string"
+        },
+        "use": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "valueListAllowed": {
+          "type": "boolean"
+        },
+        "denyIncompleteValues": {
+          "type": "boolean"
+        },
+        "subsystems": {
+          "type": "string"
+        },
+        "subsystem": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        },
+        "group": {
+          "type": "string"
+        },
+        "commands": {
+          "type": "string"
+        },
+        "visible": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "objectType": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "synonym": {
+          "type": "string"
+        },
+        "properties": {
+          "type": "object"
+        },
+        "server": {
+          "type": "boolean"
+        },
+        "externalConnection": {
+          "type": "boolean"
+        },
+        "clientOrdinaryApplication": {
+          "type": "boolean"
+        },
+        "serverCall": {
+          "type": "boolean"
+        },
+        "global": {
+          "type": "boolean"
+        },
+        "privileged": {
+          "type": "boolean"
+        },
+        "propertyName": {
+          "type": "string"
+        },
+        "propertyValue": {
+          "type": "string"
+        },
+        "listMode": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "multiLine": {
+          "type": "boolean"
+        },
+        "length": {
+          "type": "integer"
+        },
+        "precision": {
+          "type": "integer"
+        },
+        "fractionDigits": {
+          "type": "integer"
+        },
+        "nonNegative": {
+          "type": "boolean"
+        },
+        "dateFractions": {
+          "type": "string"
+        },
+        "allowedLength": {
+          "type": "string"
+        },
+        "fillChecking": {
+          "type": "string"
+        },
+        "fullTextSearch": {
+          "type": "string"
+        },
+        "indexing": {
+          "type": "string"
+        },
+        "toolTip": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "formFqn": {
+          "type": "string"
+        },
+        "itemPath": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "itemNames": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "keyParameter": {
+          "type": "boolean"
+        },
+        "formName": {
+          "type": "string"
+        },
+        "formType": {
+          "type": "string"
+        },
+        "layout": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "setAsDefault": {
+          "type": "boolean"
+        },
+        "templateName": {
+          "type": "string"
+        },
+        "templateType": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "points": {
+          "type": "string"
+        },
+        "transitions": {
+          "type": "string"
+        },
+        "bpFqn": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "addressingRegister": {
+          "type": "string"
+        },
+        "addressingAttributes": {
+          "type": "string"
+        },
+        "mainAddressingAttribute": {
+          "type": "string"
+        },
+        "currentPerformer": {
+          "type": "string"
+        },
+        "tabularSection": {
+          "type": "string"
+        },
+        "tabularSectionName": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "rootURL": {
+          "type": "string"
+        },
+        "aliases": {
+          "type": "string"
+        },
+        "reuseSessions": {
+          "type": "boolean"
+        },
+        "sessionMaxAge": {
+          "type": "integer"
+        },
+        "commandParameterType": {
+          "type": "string"
+        },
+        "dataObjectName": {
+          "type": "string"
+        },
+        "conditionType": {
+          "type": "string"
+        },
+        "conditionValue": {
+          "type": "string"
+        },
+        "appearance": {
+          "type": "string"
+        },
+        "urlTemplateName": {
+          "type": "string"
+        },
+        "urlTemplate": {
+          "type": "string"
+        },
+        "methodName": {
+          "type": "string"
+        },
+        "httpMethod": {
+          "type": "string"
+        },
+        "handler": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string"
+        },
+        "createModule": {
+          "type": "boolean"
+        },
+        "withHandlerStub": {
+          "type": "boolean"
+        },
+        "template": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "operationName": {
+          "type": "string"
+        },
+        "transactional": {
+          "type": "boolean"
+        },
+        "returningValueType": {
+          "type": "string"
+        },
+        "returningValueTypeNs": {
+          "type": "string"
+        },
+        "valueType": {
+          "type": "string"
+        },
+        "valueTypeNs": {
+          "type": "string"
+        },
+        "transferDirection": {
+          "type": "string"
+        },
+        "nillable": {
+          "type": "boolean"
+        },
+        "recalculationName": {
+          "type": "string"
+        },
+        "registerDimension": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "code": {
+          "type": "string"
+        },
+        "isFolder": {
+          "type": "boolean"
+        },
+        "accountType": {
+          "type": "string"
+        },
+        "offBalance": {
+          "type": "boolean"
+        },
+        "order": {
+          "type": "string"
+        },
+        "accountName": {
+          "type": "string"
+        },
+        "characteristicType": {
+          "type": "string"
+        },
+        "turnover": {
+          "type": "boolean"
+        },
+        "baseProjectName": {
+          "type": "string"
+        },
+        "targetFqn": {
+          "type": "string"
+        },
+        "rightName": {
+          "type": "string"
+        },
+        "value": {
+          "type": "boolean"
+        },
+        "cascadeDependencies": {
+          "type": "boolean"
+        },
+        "condition": {
+          "type": "string"
+        },
+        "objectFqn": {
+          "type": "string"
+        },
+        "childKind": {
+          "type": "string"
+        },
+        "containerFqn": {
+          "type": "string"
+        },
+        "parentPath": {
+          "type": "string"
+        },
+        "variantName": {
+          "type": "string"
+        },
+        "userSettingID": {
+          "type": "string"
+        },
+        "reportAffectedSettings": {
+          "type": "boolean"
+        },
+        "parentFqn": {
+          "type": "string"
+        },
+        "newName": {
+          "type": "string"
+        },
+        "disableIndices": {
+          "type": "string"
+        },
+        "maxResults": {
+          "type": "integer"
+        },
+        "scanLeftovers": {
+          "type": "boolean"
+        },
+        "itemName": {
+          "type": "string"
+        },
+        "attributeName": {
+          "type": "string"
+        },
+        "parentAttributeName": {
+          "type": "string"
+        },
+        "tableName": {
+          "type": "string"
+        },
+        "mainTable": {
+          "type": "string"
+        },
+        "commandName": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "parentName": {
+          "type": "string"
+        },
+        "elementType": {
+          "type": "string"
+        },
+        "dataPath": {
+          "type": "string"
+        },
+        "beforeName": {
+          "type": "string"
+        },
+        "standardCommand": {
+          "type": "string"
+        },
+        "handlerName": {
+          "type": "string"
+        },
+        "writeStub": {
+          "type": "boolean"
+        },
+        "picture": {
+          "type": "string"
+        },
+        "hyperlink": {
+          "type": "boolean"
+        },
+        "autoGenerateColumns": {
+          "type": "boolean"
+        },
+        "overwriteModel": {
+          "type": "boolean"
+        },
+        "dryRun": {
+          "type": "boolean"
+        },
+        "confirm": {
+          "type": "boolean"
+        },
+        "cascadeForms": {
+          "type": "boolean"
+        },
+        "batch": {
+          "type": "boolean"
+        },
+        "stopOnError": {
+          "type": "boolean"
+        },
+        "runKey": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "type": "integer"
+        },
+        "operations": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation"
+      ]
+    },
+    "annotations": {
+      "openWorldHint": false
+    }
+  },
+  "root": "Single constructor for metadata, forms, DCS, templates, extensions and reports. Pass operation=<name>; operation=help lists every operation and topic, and topic=parameters carries the full parameter rules. dryRun=true previews a call without applying it. Supports idempotent skip (propertyMismatch), cascade form cleanup (cascadeForms), object commands, form command-interface items, picture validation, batch operations and multi-language synonyms.",
+  "descriptions": {
+    "operation": "Operation name; 'help' lists operations and topics.",
+    "projectName": "EDT project name (most operations).",
+    "ownerFqn": "FQN of the owning metadata object.",
+    "property": "add/remove_object_reference: list-valued; set/clear_object_reference: scalar.",
+    "valueFqn": "Referenced object FQN for reference and content operations.",
+    "autoRecord": "add_exchange_plan_content: per-item auto change registration - Deny (default) or Allow.",
+    "use": "add_common_attribute_content: Auto (default) / Use / DontUse; schema parameter Auto/Always.",
+    "expression": "Schema parameter value expression.",
+    "valueListAllowed": "Schema parameter accepts a value list.",
+    "denyIncompleteValues": "Schema parameter refuses incomplete values.",
+    "subsystems": "set_subsystems_order: comma-separated top-level subsystems in the wanted leading order.",
+    "subsystem": "The subsystem whose command interface or section visibility to change.",
+    "command": "The command to place or show: CommonCommand.X or an object command such as Catalog.X.Command.Y.",
+    "group": "create_object_command / set_command_placement / set_command_order: group name, token or CommandGroup.<name>.",
+    "commands": "set_command_order: JSON command FQNs; set_excluded_commands: JSON names, case-insensitive; empty clears under mode=replace.",
+    "visible": "true shows, false hides, for the visibility operations.",
+    "role": "Visibility operations: optional role FQN; sets that role's value, not the common one.",
+    "objectType": "English-singular metadata type for createObject.",
+    "name": "Name of the new element (createObject / addObjectAttribute / ...).",
+    "synonym": "Synonym for a newly created object or field.",
+    "properties": "create_object: a JSON object of property name to value, applied in the creating transaction.",
+    "server": "create_object CommonModule: the Server context.",
+    "externalConnection": "create_object CommonModule: the External connection context.",
+    "clientOrdinaryApplication": "create_object CommonModule: the Client (ordinary application) context.",
+    "serverCall": "create_object CommonModule: whether server procedures are callable from the client.",
+    "global": "create_object CommonModule: the Global flag. Not an execution context on its own.",
+    "privileged": "create_object CommonModule: privileged mode.",
+    "propertyName": "set_object_property: which property to set.",
+    "propertyValue": "Text/JSON; localized default-language text or language map.",
+    "listMode": "List operation: replace (default), add, remove, clear.",
+    "type": "Attribute-creating ops / set_object_type: String, Number, Date, Boolean, UUID, CatalogRef.X, or comma-separated.",
+    "multiLine": "Multi-line input mode for the attribute (BasicFeature.multiLine). Optional.",
+    "length": "String/BinaryData max length (0 = unlimited, default 0).",
+    "precision": "Number total digits (default 10).",
+    "fractionDigits": "Number fraction digits (default 0).",
+    "nonNegative": "Number: non-negative only (default false).",
+    "dateFractions": "Date fractions (default Date).",
+    "allowedLength": "String length kind (default Variable).",
+    "fillChecking": "Fill-check mode for a new field: DontCheck or ShowError.",
+    "fullTextSearch": "Attribute ops: DontUse | Use (optional).",
+    "indexing": "Index mode for a new field: DontIndex, Index or IndexWithAdditionalOrder.",
+    "toolTip": "Attribute ops: tooltip text (stored under 'ru').",
+    "comment": "Attribute ops: developer comment.",
+    "formFqn": "FQN of the form for form operations.",
+    "itemPath": "set_excluded_commands: form / FormCommandPanelGlobalCommands / Item.<name>.",
+    "mode": "set_excluded_commands: replace (default), add or remove. add and remove need at least one name in commands.",
+    "itemNames": "add_form_appearance_rule: form items to style, comma-separated; omitted = whole form.",
+    "field": "add/remove_form_appearance_rule: data path the condition reads.",
+    "index": "remove_form_appearance_rule: 0-based rule index.",
+    "keyParameter": "add_form_parameter: key parameter (default false).",
+    "formName": "Form name for createForm.",
+    "formType": "create_form: ORDINARY or MANAGED (default MANAGED). Legacy purpose values are normalized to MANAGED.",
+    "layout": "Form layout for createForm: auto (typed defaults) / empty (manual layout) / standard.",
+    "purpose": "create_form: ItemForm / ListForm / ChoiceForm / FolderForm / RecordSetForm / RecordForm / Generic.",
+    "setAsDefault": "Set this form as the owner's default form (createForm).",
+    "templateName": "Template name.",
+    "templateType": "Template type for addTemplate: SpreadsheetDocument / TextDocument / BinaryData / ActiveDocument / GraphicalSchema / DataCompositionSchema / DataCompositionAppearanceTemplate / GeographicalSchema / HTMLDocument / AddIn.",
+    "content": "TextDocument / HTMLDocument body: filled on create, replaced by set_template_content, read by get_template_content.",
+    "points": "create_route_map: JSON array of route points, laid out top to bottom.",
+    "transitions": "create_route_map: JSON array of transitions.",
+    "bpFqn": "create/get/remove_route_map: BusinessProcess FQN (alias of ownerFqn).",
+    "overwrite": "create_route_map: replace an existing Flowchart.scheme (default false - refuses to clobber).",
+    "addressingRegister": "set_task_addressing: InformationRegister FQN.",
+    "addressingAttributes": "set_task_addressing: JSON array of {name,type,dimension}.",
+    "mainAddressingAttribute": "set_task_addressing: the attribute that addresses the task.",
+    "currentPerformer": "set_task_addressing: SessionParameter FQN of the current performer.",
+    "tabularSection": "Tabular-section name for TS attribute ops (alias tabularSectionName).",
+    "tabularSectionName": "Tabular section name for TS operations.",
+    "topic": "Help topic name (use with operation=help).",
+    "rootURL": "create_http_service: root URL of the service (no leading slashes - platform rejects them). Default = '<name>'.",
+    "aliases": "create_http_service: comma-separated alias paths (optional).",
+    "reuseSessions": "create_http_service: reuse HTTP sessions across requests.",
+    "sessionMaxAge": "create_http_service: session max age in seconds (optional).",
+    "commandParameterType": "create_object_command: parameter type; an unresolvable one fails the call.",
+    "dataObjectName": "add_data_set with dataSetType=Object: the object read; required there, refused otherwise.",
+    "conditionType": "add_conditional_appearance / add_appearance: comparison (default Equal); a partial condition is refused.",
+    "conditionValue": "add_conditional_appearance / add_appearance: the value the condition compares the field against.",
+    "appearance": "add_conditional_appearance / add_appearance / set_data_set_field_appearance: Name=Value pairs (TextColor, BackColor, BorderColor, Font, Format).",
+    "urlTemplateName": "create_http_service: name of the initial URLTemplate. Default 'Template1'.",
+    "urlTemplate": "create_http_service / add_url_template: URL pattern with leading slash.",
+    "methodName": "create_http_service: name of the initial Method. Default 'Get'.",
+    "httpMethod": "create_http_service / add_url_template_method: HTTP method (default GET); full list: topic=parameters.",
+    "handler": "Handler procedure: a name for the HTTP-service operations, a CommonModule.<Module>.<Method> reference for set_event_subscription.",
+    "source": "set_event_subscription: comma-separated source type FQNs; replaces the source.",
+    "event": "Platform event (set_event_subscription) or form event; Russian names accepted.",
+    "createModule": "create_http_service: write Module.bsl for the service. Default true.",
+    "withHandlerStub": "create_http_service / create_web_service: insert a stub handler procedure into Module.bsl. Default true.",
+    "template": "add_url_template: URL pattern (alias of urlTemplate for older call sites).",
+    "namespace": "create_web_service: XML URI namespace.",
+    "operationName": "create_web_service: initial Operation name (default 'Default'); add_operation_parameter: existing Operation name.",
+    "transactional": "create_web_service Operation.Transactional flag. Default false.",
+    "returningValueType": "add_web_service_operation: XDTO return type QName; default the XSD string; HTTP services are untyped.",
+    "returningValueTypeNs": "add_web_service_operation: namespace URI for returningValueType when given as a bare local name.",
+    "valueType": "add_operation_parameter: XDTO value type QName; default XSD namespace.",
+    "valueTypeNs": "add_operation_parameter: namespace URI for valueType when given as a bare local name.",
+    "transferDirection": "add_operation_parameter: parameter direction IN / OUT / IN_OUT. Default IN. Optional.",
+    "nillable": "add_operation_parameter: accepts xsi:nil (default false).",
+    "recalculationName": "add_recalculation_dimension: existing Recalculation name.",
+    "registerDimension": "add_recalculation_dimension: existing CalculationRegister dimension name.",
+    "description": "add_predefined_item: presentation/description of the predefined item (optional).",
+    "code": "add_predefined_item: item code, a number or text by the owner's code type. Optional.",
+    "isFolder": "add_predefined_item: create the item as a group/folder (Catalog / ChartOfCharacteristicTypes only).",
+    "accountType": "add_predefined_item (ChartOfAccounts): Active / Passive / ActivePassive (RU aliases ok). Optional.",
+    "offBalance": "add_predefined_item (ChartOfAccounts): off-balance account. Optional.",
+    "order": "add_predefined_item: display order; set_command_placement: 0-based position in group.",
+    "accountName": "add/remove_predefined_account_subconto: the predefined account name",
+    "characteristicType": "add/remove_predefined_account_subconto: subconto predefined-item name.",
+    "turnover": "add_predefined_account_subconto: 'turnovers only' flag. Optional.",
+    "baseProjectName": "Source configuration project for adopt_* operations (the extension's parent base config).",
+    "targetFqn": "adopt_*: child to adopt (composed when omitted); set_role_right/restriction: object the right applies to.",
+    "rightName": "The access right on targetFqn - Read, Insert, Update, Delete, View, Edit and the rest; Russian names are accepted and normalised.",
+    "value": "set_role_right: grant (true) or revoke (false) the right on targetFqn. Default true.",
+    "cascadeDependencies": "set_role_right: also grant required rights.",
+    "condition": "set_restriction_template: RLS template; set_role_restriction: row-level condition; other role content is preserved.",
+    "objectFqn": "delete_metadata_object: object or child to remove; alias of targetFqn for adopt_*.",
+    "childKind": "Child kind for adopt_child: Form / Attribute / TabularSection / Template / Command / Dimension / Resource.",
+    "containerFqn": "remove_item, move_item: the form, alias of formFqn.",
+    "parentPath": "add_settings_group: the group to nest the new one inside, as dot-separated group names.",
+    "variantName": "set_settings_parameter: variant (default the first).",
+    "userSettingID": "set_settings_parameter: user-setting identifier.",
+    "reportAffectedSettings": "remove_data_set / remove_data_set_field / remove_schema_parameter / remove_calculated_field / remove_total_field: list settings still referencing the removed element (default true); false omits the list. Settings are left unchanged.",
+    "parentFqn": "add_metadata_attribute: the object the attribute is added to.",
+    "newName": "rename_metadata_object: the name to give the object.",
+    "disableIndices": "rename_metadata_object: change points to leave out (from the dry run).",
+    "maxResults": "rename_metadata_object: dry-run list cap (default 20; 0 = no cap).",
+    "scanLeftovers": "rename_metadata_object: list plain-text traces left after the rename (default true).",
+    "itemName": "Form item name for set_property / add_form_event_handler (the field / table / button to act on).",
+    "attributeName": "Form attribute: column owner for add_form_attribute_column, or set_property target.",
+    "parentAttributeName": "add_form_attribute_column: parent ValueTable attribute (attributeName alias).",
+    "tableName": "UI Table name for add_dynamic_list_table.",
+    "mainTable": "Dynamic-list main table FQN for add_dynamic_list_table.",
+    "commandName": "Form command: add_command_handler target, or an existing command add_button reuses.",
+    "title": "Title / caption for a new form element (field / group / button / table).",
+    "parentName": "Parent container for add_field/group/button/table/decoration (default: form root).",
+    "elementType": "Element subtype for add_field, add_group and add_decoration.",
+    "dataPath": "Data path binding for add_field / add_table.",
+    "beforeName": "Insert the new element before this sibling element (default: append).",
+    "standardCommand": "Bind an add_button to a platform stock command.",
+    "handlerName": "BSL handler procedure name for add_form_event_handler (default derived from the event / item).",
+    "writeStub": "add_form_event_handler / add_command_handler: append the procedure to the form module. Default true.",
+    "picture": "Picture reference for add_decoration elementType=Picture (StdPicture.X / CommonPicture.X).",
+    "hyperlink": "Render a Label decoration / Label field as a clickable hyperlink. Default false.",
+    "autoGenerateColumns": "add_table with dataPath: create a column per attribute.",
+    "overwriteModel": "repair_report_schema: replace a differing schema (a backup is written first).",
+    "dryRun": "Preview the operation inside a BM transaction and roll back. Default false.",
+    "confirm": "delete_metadata_object only: applies the deletion rather than returning a preview.",
+    "cascadeForms": "Removing an attribute, tabular section or column: also remove the form items bound to it.",
+    "batch": "Run several operations in one call, each in its own transaction; a bad name stops the batch before anything runs.",
+    "stopOnError": "batch only: stop at the first failing operation instead of running the rest.",
+    "runKey": "Handle to a run already going, from a previous answer that came back status=Pending.",
+    "timeoutSeconds": "How long to wait before answering status=Pending with a runKey instead of the result.",
+    "operations": "batch=true payload: a JSON array of operation objects, each {\"operation\":<name>, ...that op's own params}."
+  },
+  "changedKeys": [
+    "property",
+    "group",
+    "objectType",
+    "propertyValue",
+    "type",
+    "formFqn",
+    "field",
+    "purpose",
+    "commandParameterType",
+    "urlTemplate",
+    "namespace",
+    "cascadeDependencies",
+    "mainTable",
+    "dataPath",
+    "standardCommand",
+    "overwriteModel"
+  ],
+  "helpFacts": {
+    "objectType": [
+      "Catalog, Document"
+    ],
+    "formFqn": [
+      "Catalog.Users.Form.ItemForm",
+      "CommonForm.X.Form"
+    ],
+    "field": [
+      "Объект.Флаг"
+    ],
+    "commandParameterType": [
+      "CatalogRef.X"
+    ],
+    "urlTemplate": [
+      "'/clients/{id}'"
+    ],
+    "namespace": [
+      "'http://example.com/myservice'"
+    ],
+    "cascadeDependencies": [
+      "Update->Read",
+      "Posting->Read+Update",
+      "InteractiveInsert->Insert+View+Edit"
+    ],
+    "mainTable": [
+      "Catalog.Users"
+    ],
+    "dataPath": [
+      "Object.Name"
+    ],
+    "standardCommand": [
+      "PostAndClose / Write / Refresh"
+    ]
+  }
+}

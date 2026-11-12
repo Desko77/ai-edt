@@ -70,19 +70,8 @@ public class ExtensionWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Unified extension facade - author, deploy and inspect configuration " //$NON-NLS-1$
-            + "extensions. Authoring: create_extension_project (new extension from a base " //$NON-NLS-1$
-            + "configuration), borrow_object, borrow_objects (batch), borrow_child, " //$NON-NLS-1$
-            + "borrow_form_item, borrow_module, list_borrowed, update_borrowed (resync with the " //$NON-NLS-1$
-            + "base). Deployment (into a " //$NON-NLS-1$
-            + "project's infobase): install_extension, uninstall_extension, list_extension, " //$NON-NLS-1$
-            + "export_extension. Inspection: extension_lifecycle, extension_diff, " //$NON-NLS-1$
-            + "list_interceptors, check_release_fitness, check_platform_verdict. The deploy / " //$NON-NLS-1$
-            + "inspect operations route " //$NON-NLS-1$
-            + "to the matching " //$NON-NLS-1$
-            + "standalone tools, which remain available. dryRun is not supported for the " //$NON-NLS-1$
-            + "authoring operations; when the EDT adopt service is not reachable the " //$NON-NLS-1$
-            + "response carries `adoptServiceNotFound` with a GUI workaround hint."; //$NON-NLS-1$
+        return "Authors, deploys and inspects extensions. Authoring rejects dryRun. " //$NON-NLS-1$
+            + "Unreachable adopt service: adoptServiceNotFound, GUI workaround hint."; //$NON-NLS-1$
     }
 
     @Override
@@ -97,88 +86,73 @@ public class ExtensionWorkshopTool implements IMcpTool
                     + "list_interceptors / check_release_fitness / check_platform_verdict / help", //$NON-NLS-1$
                 true)
             .stringProperty("projectName", //$NON-NLS-1$
-                "Extension project name. For create_extension_project this is the NEW " //$NON-NLS-1$
-                    + "extension's name (must not already exist); for borrow_* it is the " //$NON-NLS-1$
-                    + "existing extension to borrow into.") //$NON-NLS-1$
+                "create_extension_project: new name, must not already exist. borrow_*: " //$NON-NLS-1$
+                    + "existing extension.") //$NON-NLS-1$
             .stringProperty("baseProjectName", //$NON-NLS-1$
-                "Base configuration project. Required for create_extension_project; for " //$NON-NLS-1$
-                    + "borrow_* and update_borrowed defaults to the extension's parent.") //$NON-NLS-1$
+                "Required for create_extension_project. borrow_* and update_borrowed default " //$NON-NLS-1$
+                    + "to the parent.") //$NON-NLS-1$
             .stringProperty("namePrefix", //$NON-NLS-1$
-                "create_extension_project: optional object name prefix for the new " //$NON-NLS-1$
-                    + "extension (applied to its Configuration). Omit to keep the EDT default.") //$NON-NLS-1$
+                "create_extension_project prefix. Omit: EDT default.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
-                "FQN to borrow; update_borrowed: the one object to review. " //$NON-NLS-1$
-                    + "Top-level: Catalog.Name. " //$NON-NLS-1$
-                    + "Child: Catalog.Name.Form.FormName, Document.Name.Attribute.AttrName, " //$NON-NLS-1$
-                    + "Document.Name.TabularSection.TsName, Catalog.Name.Template.TplName, " //$NON-NLS-1$
-                    + "Catalog.Name.Command.CmdName, InformationRegister.Name.Dimension.DimName, " //$NON-NLS-1$
-                    + "InformationRegister.Name.Resource.ResName. Russian child-kind aliases accepted.") //$NON-NLS-1$
+                "Borrow FQN; update_borrowed reviews one. Top-level Type.Name. Child: Form, " //$NON-NLS-1$
+                    + "Attribute, TabularSection, Template, Command, Dimension, Resource. " //$NON-NLS-1$
+                    + "Russian child-kind aliases accepted.") //$NON-NLS-1$
             .stringArrayProperty("objectFqns", //$NON-NLS-1$
-                "Array of FQNs for borrow_objects batch") //$NON-NLS-1$
+                "FQN array for borrow_objects.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
-                "borrow_objects: a large batch can exceed the soft timeout and return a " //$NON-NLS-1$
-                    + "Pending status with a runKey - re-call borrow_objects with the same " //$NON-NLS-1$
-                    + "objectFqns and this runKey to fetch the final per-FQN batchResults.") //$NON-NLS-1$
+                "borrow_objects: re-call with the same objectFqns after a Pending soft " //$NON-NLS-1$
+                    + "timeout for batchResults.") //$NON-NLS-1$
             .stringProperty("childKind", //$NON-NLS-1$
                 "borrow_child: Attribute / TabularSection / Form / Template") //$NON-NLS-1$
             .stringProperty("childName", //$NON-NLS-1$
-                "borrow_child: the child's name when objectFqn names the owner; read when name " //$NON-NLS-1$
-                    + "is not given.") //$NON-NLS-1$
+                "borrow_child name when objectFqn names the owner. Read when name is absent.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
-                "borrow_child: the child's name; childName is read when this is not given.") //$NON-NLS-1$
+                "borrow_child name. childName is read when this is absent.") //$NON-NLS-1$
             .stringProperty("itemName", //$NON-NLS-1$
-                "borrow_form_item: the item you mean to change. The item itself is not " //$NON-NLS-1$
-                    + "borrowed - the form is, and the item is then yours to change.") //$NON-NLS-1$
+                "borrow_form_item: the item to change. The item is not borrowed; the form is.") //$NON-NLS-1$
             .stringProperty("formName", //$NON-NLS-1$
-                "borrow_form_item: which form, when objectFqn names the owner rather than " //$NON-NLS-1$
-                    + "the form.") //$NON-NLS-1$
+                "borrow_form_item form when objectFqn names the owner.") //$NON-NLS-1$
             .booleanProperty("includeChildren", //$NON-NLS-1$
-                "borrow_object: also borrow that object's own children. Default false.") //$NON-NLS-1$
+                "borrow_object: also borrow own children. Default false.") //$NON-NLS-1$
             .booleanProperty("apply", //$NON-NLS-1$
-                "update_borrowed: write the alignments. Default false - review only.") //$NON-NLS-1$
+                "update_borrowed: write the alignments. Default false, review only.") //$NON-NLS-1$
             .stringProperty("moduleType", //$NON-NLS-1$
                 "borrow_module: ObjectModule / ManagerModule / RecordSetModule / " //$NON-NLS-1$
-                    + "CommandModule / ValueModule") //$NON-NLS-1$
+                    + "CommandModule / ValueModule.") //$NON-NLS-1$
             .stringProperty("extensionName", //$NON-NLS-1$
-                "Deployed extension name for install / uninstall / export_extension.") //$NON-NLS-1$
+                "Deployed name for install_extension, uninstall_extension and export_extension.") //$NON-NLS-1$
             .stringProperty("inputPath", //$NON-NLS-1$
-                "install_extension: source of the .cfe - a local file path, an http(s):// URL, " //$NON-NLS-1$
-                    + "or a github:/gh: release reference.") //$NON-NLS-1$
+                "install_extension: local path, http(s):// URL, or github:/gh: reference.") //$NON-NLS-1$
             .stringProperty("outputPath", //$NON-NLS-1$
-                "export_extension: path to write the extracted .cfe to.") //$NON-NLS-1$
+                "export_extension: write the extracted .cfe.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "install / uninstall / list / export_extension: target infobase application id " //$NON-NLS-1$
-                    + "(omit for the project default).") //$NON-NLS-1$
+                "install_extension / uninstall_extension / list_extension / export_extension. " //$NON-NLS-1$
+                    + "Omit: project default.") //$NON-NLS-1$
             .booleanProperty("updateDatabase", //$NON-NLS-1$
-                "install_extension: run the infobase configuration update after install. Default true.") //$NON-NLS-1$
+                "install_extension: update the infobase configuration after install. Default true.") //$NON-NLS-1$
             .stringProperty("targetFqn", //$NON-NLS-1$
-                "extension_lifecycle: the object/method the workflow acts on.") //$NON-NLS-1$
+                "extension_lifecycle: the object/method acted on.") //$NON-NLS-1$
             .stringProperty("eventName", //$NON-NLS-1$
-                "extension_lifecycle: the extension event to generate a handler for.") //$NON-NLS-1$
+                "extension_lifecycle: generate a handler for this event.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
-                "extension_lifecycle: execution mode - full / dryRun / probeOnly.") //$NON-NLS-1$
+                "extension_lifecycle: full / dryRun / probeOnly.") //$NON-NLS-1$
             .stringProperty("kind", //$NON-NLS-1$
                 "list_interceptors: filter by interceptor kind.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
-                "list_interceptors: maximum rows to return.") //$NON-NLS-1$
+                "list_interceptors: maximum rows.") //$NON-NLS-1$
             .stringProperty("configurationFile", //$NON-NLS-1$
-                "check_platform_verdict: the delivery as a .cf. It is loaded into a staging " //$NON-NLS-1$
-                    + "infobase created for this run; the working infobase is not opened, " //$NON-NLS-1$
-                    + "locked or altered.") //$NON-NLS-1$
+                "check_platform_verdict: .cf in a staging infobase. Working infobase is not " //$NON-NLS-1$
+                    + "opened, locked or altered.") //$NON-NLS-1$
             .stringProperty("extensionFile", //$NON-NLS-1$
-                "check_platform_verdict: the extension as a .cfe, put to the platform against " //$NON-NLS-1$
-                    + "the delivery above.") //$NON-NLS-1$
+                "check_platform_verdict: .cfe applied to that delivery.") //$NON-NLS-1$
             .stringProperty("loadAs", //$NON-NLS-1$
-                "check_platform_verdict: the name to load the extension under. Omit and the file " //$NON-NLS-1$
-                    + "name is used - which the answer reports back as loadedAs. The platform " //$NON-NLS-1$
-                    + "matches an extension to a configuration by content, so the name does not " //$NON-NLS-1$
-                    + "change the verdict.") //$NON-NLS-1$
+                "check_platform_verdict load name. Default: file name, reported as loadedAs. " //$NON-NLS-1$
+                    + "The name does not change the verdict.") //$NON-NLS-1$
             .stringProperty("platform", //$NON-NLS-1$
-                "check_platform_verdict: platform version to run (for example 8.3.27.1234). " //$NON-NLS-1$
-                    + "Omit for the newest installed. A delivery built for an older platform " //$NON-NLS-1$
-                    + "is refused by a newer one, so name the version it was built for.") //$NON-NLS-1$
+                "check_platform_verdict version. Default: newest installed. An older delivery " //$NON-NLS-1$
+                    + "is refused by a newer one.") //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
-                "Help topic when operation=help. Without topic - lists all operations.") //$NON-NLS-1$
+                "operation help topic. No topic: the operation list.") //$NON-NLS-1$
             .build();
     }
 
@@ -1490,7 +1464,14 @@ public class ExtensionWorkshopTool implements IMcpTool
                             + "   borrow_objects projectName=MyExt baseProjectName=BaseCfg " //$NON-NLS-1$
                             + "objectFqns=[\"Catalog.A\",\"Document.B.Form.C\"]\n" //$NON-NLS-1$
                             + "6. After successful borrow the extension can override " //$NON-NLS-1$
-                            + "attributes / forms via edit_metadata / edit_form.")
+                            + "attributes / forms via edit_metadata / edit_form.\n" //$NON-NLS-1$
+                            + "Child FQN examples: Catalog.Name.Form.FormName, " //$NON-NLS-1$
+                            + "Document.Name.Attribute.AttrName, Document.Name.TabularSection.TsName, " //$NON-NLS-1$
+                            + "Catalog.Name.Template.TplName, Catalog.Name.Command.CmdName, " //$NON-NLS-1$
+                            + "InformationRegister.Name.Dimension.DimName, " //$NON-NLS-1$
+                            + "InformationRegister.Name.Resource.ResName.\n" //$NON-NLS-1$
+                            + "The deploy / inspect operations route to the matching standalone " //$NON-NLS-1$
+                            + "tools, which remain available.")
                     .toJson();
             case "errortags": //$NON-NLS-1$
                 return ToolResult.success().put("topic", topic) //$NON-NLS-1$
@@ -1515,6 +1496,10 @@ public class ExtensionWorkshopTool implements IMcpTool
                 {
                     String text = FacadeParameterHelp.fromTheMap(operation, "ExtensionWorkshopTool", //$NON-NLS-1$
                         getInputSchema(), includeChildrenDetail(operation));
+                    if ("check_platform_verdict".equals(operation)) //$NON-NLS-1$
+                    {
+                        text = text + "\nFor example 8.3.27.1234.\n"; //$NON-NLS-1$
+                    }
                     if (!"borrow_object".equals(operation)) //$NON-NLS-1$
                     {
                         text = text + "\nincludeChildren applies only to borrow_object; this " //$NON-NLS-1$

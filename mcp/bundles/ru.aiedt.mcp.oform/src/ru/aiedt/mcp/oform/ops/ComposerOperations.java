@@ -38,7 +38,7 @@ public final class ComposerOperations
         out.add(OperationSpec.query("describe_owner", //$NON-NLS-1$
             "ownerFqn (Type.Object): the owner's attributes, tabular sections, standard attributes " //$NON-NLS-1$
                 + "and list columns, in words, with no uuid", //$NON-NLS-1$
-            List.of(ParamSpec.string("ownerFqn", "the owner, Type.Object (Catalog.Products, InformationRegister.Prices).")), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("ownerFqn", "the owner, Type.Object (Catalog.Products, InformationRegister.Prices).").withSchemaDescription("the owner, Type.Object.")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             ComposerOperations::describe));
         out.add(OperationSpec.creation("create_form", //$NON-NLS-1$
             "ownerFqn, name, purpose (ItemForm | ListForm | ChoiceForm | FolderForm | RecordForm | " //$NON-NLS-1$
@@ -47,8 +47,8 @@ public final class ComposerOperations
                 + "owner and the container Forms/<name>/Form.oform. The layout is the owner's header, its tabular " //$NON-NLS-1$
                 + "sections and its command panels; the file, the model entry and the baseline mark are three steps, " //$NON-NLS-1$
                 + "and a failure of the file or the model removes the file", //$NON-NLS-1$
-            List.of(ParamSpec.string("ownerFqn", "the owner of the new form, Type.Object (Catalog.Products, DataProcessor.Report1)."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the name of the new form."), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("ownerFqn", "the owner of the new form, Type.Object (Catalog.Products, DataProcessor.Report1).").withSchemaDescription("the owner of the new form, Type.Object."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("name", "the name of the new form.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("purpose", "ItemForm (default for an object) | ListForm (default for a register) | ChoiceForm | " //$NON-NLS-1$ //$NON-NLS-2$
                     + "FolderForm | RecordForm | RecordSetForm | None (no main attribute)."), //$NON-NLS-1$
                 ParamSpec.string("synonym", "the form's synonym (default: derived from the name)."), //$NON-NLS-1$ //$NON-NLS-2$

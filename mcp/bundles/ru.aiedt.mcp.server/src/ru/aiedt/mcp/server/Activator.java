@@ -61,6 +61,7 @@ import ru.aiedt.mcp.server.support.ComparisonSessions;
 import ru.aiedt.mcp.server.support.DebugLog;
 import ru.aiedt.mcp.server.support.IdleComparisonSweep;
 import ru.aiedt.mcp.server.support.OffScreenWidget;
+import ru.aiedt.mcp.server.support.PinnedResultCache;
 import ru.aiedt.mcp.server.support.DebugSessionBook;
 import ru.aiedt.mcp.server.toolkit.IToolRoad;
 import ru.aiedt.mcp.server.toolkit.ops.RestartEdtTool;
@@ -386,6 +387,8 @@ public class Activator
         // Before closing what is open, so a tick cannot land on a registry being emptied.
         IdleComparisonSweep.shutdown();
         closeOpenComparisons();
+        // Pinned result pages hold project content; nothing can serve them after the bundle stops.
+        PinnedResultCache.shared().clear();
 
         logInfo("AI-EDT plugin stopped"); //$NON-NLS-1$
         plugin = null;

@@ -119,23 +119,30 @@ public final class LayoutChangeOperation extends AbstractOperation
         return revert(monitor, true);
     }
 
-    /** Undo or redo under the file's registry lock. */
+    /**
+     * Undo or redo. A caller that already holds the session lock applies the record on that
+     * hold. Any other caller follows the file the session is bound to now, or refuses when the
+     * container was removed.
+     */
     private IStatus revert(IProgressMonitor monitor, boolean undoing)
     {
         if (monitor != null && monitor.isCanceled())
         {
             return Status.CANCEL_STATUS;
         }
-        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(session.file());
-        lock.lock();
+        OpenFormSessions.SessionLock looked = OpenFormSessions.lockOf(session.file());
         try
         {
-            return session.revertRecorded(this, undoing);
+            if (looked.heldByCurrentThread())
+            {
+                return session.revertRecorded(this, undoing);
+            }
         }
         finally
         {
-            lock.unlock();
+            OpenFormSessions.releasePin(looked);
         }
+        return session.revertGuarded(this, undoing);
     }
 
     /** A status the history does not treat as done, so a disposed record is not pushed back onto a stack. */

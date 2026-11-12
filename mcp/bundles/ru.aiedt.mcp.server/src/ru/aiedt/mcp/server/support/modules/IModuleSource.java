@@ -13,13 +13,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A BSL module that has a module address but no {@code Module.bsl} behind it, provided by an
- * {@link IModuleSourceProvider} of another bundle.
+ * A BSL module exposed at a module address by an {@link IModuleSourceProvider} of another bundle.
  *
- * <p>The module tools of this server - reading, outlining, reading a method, writing, listing,
- * searching - resolve an address to a file first and to a module source second, and treat the
- * two alike from then on: the text is a list of lines, a write is a list of lines. What differs
- * is said in the answer: {@link #source()} names where the text lives, {@link #containerPath()}
+ * <p>The module tools resolve an address through providers as well as physical files.
+ * The source and method readers prefer a provider, then unsaved editor text, then disk;
+ * writing and diff tools prefer a physical file when one exists. The source reader's provider
+ * note identifies a differing physical write target. The text is a list of lines, a write is a list of lines.
+ * {@link #source()} names where the text lives, {@link #containerPath()}
  * the file that holds it, {@link #validationNote()} why EDT's validation does not apply, and
  * {@link #afterWrite} what happens to the written text next.</p>
  */

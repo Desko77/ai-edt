@@ -86,13 +86,9 @@ public class InsightsFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Configuration insight and analysis - metrics, dependency graph, config " //$NON-NLS-1$
-            + "comparison, query anti-patterns, health snapshot, impact analysis, object " //$NON-NLS-1$
-            + "summary, database tables of an object, semantic metadata search. Pass " //$NON-NLS-1$
-            + "operation=<name>; the operation argument lists them, and operation=help " //$NON-NLS-1$
-            + "topic=<operation> answers one operation's parameters. Every operation reads " //$NON-NLS-1$
-            + "only, except compare_three_way with an intent other than REPORT, which writes " //$NON-NLS-1$
-            + "into the project and is refused under a preset without write rights."; //$NON-NLS-1$
+        return "Configuration insight and analysis. Every operation reads only, except " //$NON-NLS-1$
+            + "compare_three_way with an intent other than REPORT, which writes into the " //$NON-NLS-1$
+            + "project and is refused under a preset without write rights."; //$NON-NLS-1$
     }
 
     @Override

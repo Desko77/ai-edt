@@ -1,0 +1,203 @@
+{
+  "name": "launch_debugger",
+  "beforeUtf8Bytes": 7331,
+  "shape": {
+    "name": "launch_debugger",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "find": {
+          "type": "string"
+        },
+        "projectName": {
+          "type": "string"
+        },
+        "applicationId": {
+          "type": "string"
+        },
+        "launchConfigurationName": {
+          "type": "string"
+        },
+        "updateBeforeLaunch": {
+          "type": "boolean"
+        },
+        "debugServerPort": {
+          "type": "integer"
+        },
+        "enableExternalObjectDump": {
+          "type": "boolean"
+        },
+        "externalObjectName": {
+          "type": "string"
+        },
+        "externalObjectProject": {
+          "type": "string"
+        },
+        "startupOption": {
+          "type": "string"
+        },
+        "clientType": {
+          "type": "string"
+        },
+        "runMode": {
+          "type": "string"
+        },
+        "waitForEndpoint": {
+          "type": "string"
+        },
+        "endpointTimeoutSeconds": {
+          "type": "integer"
+        },
+        "runKey": {
+          "type": "string"
+        },
+        "all": {
+          "type": "boolean"
+        },
+        "modulePath": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "breakpoints": {
+          "type": "string"
+        },
+        "breakpointId": {
+          "type": "string"
+        },
+        "breakpointEnabled": {
+          "type": "boolean"
+        },
+        "replaceModuleSet": {
+          "type": "boolean"
+        },
+        "message": {
+          "type": "string"
+        },
+        "catchAll": {
+          "type": "boolean"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "frameRef": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "integer"
+        },
+        "frameIndex": {
+          "type": "integer"
+        },
+        "expandPath": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "type": "integer"
+        },
+        "moduleFilter": {
+          "type": "string"
+        },
+        "minFrequency": {
+          "type": "integer"
+        },
+        "module": {
+          "type": "string"
+        },
+        "lineNumber": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ]
+    },
+    "annotations": {
+      "openWorldHint": false
+    }
+  },
+  "root": "Launch and control EDT debug sessions. Pass action and its parameters; snake_case and camelCase actions are accepted. action=help topic=workflow describes the workflow; standalone tools remain callable as compatibility aliases.",
+  "descriptions": {
+    "action": "Action: launch / add_breakpoint / remove_breakpoint / list_breakpoints / set_exception_breakpoint / run_to_line / wait_for_break / get_state / get_variables / set_variable / step_over / step_into / step_out / step / resume / pause_thread / set_breakpoint_state / terminate / evaluate / start_profiling / get_profiling_results / debug_status / help (snake_case canonical; camelCase like addBreakpoint accepted).",
+    "topic": "With action=help: workflow describes the typical debug sequence; omitted topic lists actions.",
+    "find": "With help: search this help for a case-insensitive substring - all the words must appear inside one chunk, and with topic only that topic is searched.",
+    "projectName": "EDT project name (most actions).",
+    "applicationId": "Id from infobase_admin operation=get_applications.",
+    "launchConfigurationName": "launch: exact EDT runtime-client or Attach configuration name. Selects a client by name or an Attach configuration for server-side debugging (HTTP services/background/scheduled jobs).",
+    "updateBeforeLaunch": "launch: update database first (default true; ignored for Attach). With update_database disabled by preset: omitted launches without update and returns databaseUpdate=SKIPPED_BY_PRESET; explicit true refused.",
+    "debugServerPort": "launch: debug server port, 1..65535, when another 1C:EDT holds the default.",
+    "enableExternalObjectDump": "launch: enable dump generation in project settings. If off and service answers, or service unreachable: refused (Nothing was launched). true refused by write door of a preset that blocks writing.",
+    "externalObjectName": "launch: external processor/report project to open in a client launch configuration. Import an existing .epf/.erf first via external_object_workshop operation=import_external_object. Refused for Attach; nothing launched.",
+    "externalObjectProject": "launch: external-object project containing externalObjectName; client configurations only; Attach refused.",
+    "startupOption": "launch: /C only on this launch's copy; saved configuration is not changed. /Execute is set by the environment from externalObjectName, not this argument. Refused for Attach or an already running client.",
+    "clientType": "launch: thin/thick/web; omitted=launch configuration's type (new configuration: thin; ordinary mode: always thick). Applied to this launch's configuration copy; a new configuration is saved with the choice.",
+    "runMode": "launch: ordinary/managed; omitted=config default. For this EDT session, ordinary adds /RunModeOrdinaryApplication to infobase additional launch parameters, managed removes it. Disk list unchanged; response reports changes.",
+    "waitForEndpoint": "launch: URL must respond before ready (final status <500, at most five redirects). If it never responds, launch is NOT stopped; refusal reports this.",
+    "endpointTimeoutSeconds": "launch: waitForEndpoint wait (default 20, limit 50); refused without waitForEndpoint.",
+    "runKey": "launch: resume a launch that answered Pending, by the runKey it answered with.",
+    "all": "terminate: stop every active EDT launch (default false).",
+    "modulePath": "BSL module path for breakpoint actions.",
+    "line": "Line number for breakpoint actions.",
+    "breakpoints": "add_breakpoint batch: JSON array of {modulePath|module, line|lineNumber, optional condition, hitCount, hitCondition, logExpression}; items inherit omitted projectName.",
+    "breakpointId": "Breakpoint identifier for remove_breakpoint and set_breakpoint_state.",
+    "breakpointEnabled": "set_breakpoint_state: true enables the breakpoint, false disables without removal; refuses a call without it.",
+    "replaceModuleSet": "add_breakpoint batch: remove addressed modules' current breakpoints so batch becomes their entire set (default false).",
+    "message": "set_exception_breakpoint: break only for exceptions whose text matches this message; omitted=any error.",
+    "catchAll": "set_exception_breakpoint: break on any raised error; default true, false if message set. Explicit value overrides.",
+    "expression": "BSL expression for evaluate.",
+    "frameRef": "Stack frame reference for get_variables / evaluate.",
+    "threadId": "Thread ID from wait_for_break: alternative to frameRef for get_variables/set_variable; resume target for step/resume/run_to_line; pause_thread suspends only this thread.",
+    "frameIndex": "0-based stack-frame index, used with threadId for get_variables / set_variable (default 0).",
+    "expandPath": "get_variables: dot-separated path into a nested variable to expand (e.g. Struct.Field).",
+    "scope": "get_variables: locals (default)/module/all (locals, module variables, module properties); ignored with expandPath.",
+    "mode": "Bare step action: over, into or out. step_over, step_into and step_out set it.",
+    "timeoutSeconds": "wait_for_break/step: seconds, 1..50; larger values clamp to 50 and are reported. Aliases: timeoutMs, waitSeconds, timeout.",
+    "moduleFilter": "Module substring filter for get_profiling_results.",
+    "minFrequency": "Minimum hit count for get_profiling_results.",
+    "module": "BSL module path for run_to_line (module-relative or absolute).",
+    "lineNumber": "Target line for run_to_line (1-based).",
+    "path": "Variable name (dot-separated for nested) for set_variable.",
+    "value": "New value as a BSL expression for set_variable."
+  },
+  "changedKeys": [
+    "action",
+    "runMode",
+    "clientType",
+    "updateBeforeLaunch",
+    "externalObjectName",
+    "launchConfigurationName",
+    "enableExternalObjectDump",
+    "startupOption",
+    "threadId",
+    "waitForEndpoint",
+    "breakpoints",
+    "breakpointEnabled",
+    "catchAll",
+    "scope",
+    "timeoutSeconds",
+    "replaceModuleSet",
+    "message",
+    "externalObjectProject",
+    "endpointTimeoutSeconds",
+    "topic"
+  ]
+}

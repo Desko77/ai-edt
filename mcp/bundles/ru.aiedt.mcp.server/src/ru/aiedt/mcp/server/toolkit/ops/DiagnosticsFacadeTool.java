@@ -113,15 +113,12 @@ public class DiagnosticsFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Project validation and health - errors, problems, revalidation, cleaning, " //$NON-NLS-1$
-            + "export-readiness, check docs and the baseline of what already stood. Operations: " //$NON-NLS-1$
-            + "get_project_errors, get_problem_summary, revalidate_objects, clean_project, " //$NON-NLS-1$
-            + "validate_for_export, get_check_description, save_baseline, clear_baseline, help. " //$NON-NLS-1$
-            + "Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
-            + "camelCase like getProjectErrors is also accepted); remaining parameters follow " //$NON-NLS-1$
-            + "the per-operation contracts (call operation=help for the catalog). The standalone " //$NON-NLS-1$
-            + "tools (get_project_errors, get_problem_summary, revalidate_objects, clean_project, " //$NON-NLS-1$
-            + "validate_for_export, get_check_description) remain available for back-compat."; //$NON-NLS-1$
+        return "Project validation: errors, problems, revalidation, cleaning, export readiness, " //$NON-NLS-1$
+            + "check docs and baseline. Operations: get_project_errors, get_problem_summary, " //$NON-NLS-1$
+            + "revalidate_objects, clean_project, validate_for_export, get_check_description, " //$NON-NLS-1$
+            + "save_baseline, clear_baseline, help. Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
+            + "camelCase like getProjectErrors is also accepted); call operation=help for the catalog. " //$NON-NLS-1$
+            + "The standalone tools remain available for back-compat."; //$NON-NLS-1$
     }
 
     @Override
@@ -144,9 +141,8 @@ public class DiagnosticsFacadeTool implements IMcpTool
                     + "(omitted cleans every project), get_project_errors and get_problem_summary " //$NON-NLS-1$
                     + "(omitted scopes them to the whole workspace).") //$NON-NLS-1$
             .stringProperty("checkId", //$NON-NLS-1$
-                "get_check_description: the check id (required, e.g. 'ql-temp-table-index'). " //$NON-NLS-1$
-                    + "get_project_errors: keep only checks whose id contains this substring " //$NON-NLS-1$
-                    + "(optional).") //$NON-NLS-1$
+                "get_check_description: check id (required). get_project_errors: keep only checks " //$NON-NLS-1$
+                    + "whose id contains this substring (optional).") //$NON-NLS-1$
             .stringArrayProperty("objects", //$NON-NLS-1$
                 "revalidate_objects: FQNs to revalidate (empty/omitted = whole project). " //$NON-NLS-1$
                     + "get_project_errors: keep only these object FQNs.") //$NON-NLS-1$
@@ -157,12 +153,11 @@ public class DiagnosticsFacadeTool implements IMcpTool
             .stringProperty("scope", //$NON-NLS-1$
                 "get_project_errors marker scope: session (default) / object / project / all.") //$NON-NLS-1$
             .booleanProperty("compact", //$NON-NLS-1$
-                "get_project_errors: fold the result into grouped per-check / per-location " //$NON-NLS-1$
-                    + "counts instead of one row per marker.") //$NON-NLS-1$
+                "get_project_errors: grouped per-check / per-location counts instead of one row " //$NON-NLS-1$
+                    + "per marker.") //$NON-NLS-1$
             .booleanProperty("extraInfo", //$NON-NLS-1$
                 "get_project_errors: add an 'Extra' column with what the check attached to the " //$NON-NLS-1$
-                    + "marker beyond its position; reach for it when the message alone does not " //$NON-NLS-1$
-                    + "say what the check objected to.") //$NON-NLS-1$
+                    + "marker beyond its position.") //$NON-NLS-1$
             .booleanProperty("sinceBaseline", //$NON-NLS-1$
                 "get_project_errors: answer only findings absent from this project's recorded " //$NON-NLS-1$
                     + "baseline; adds resolvedSinceBaseline; needs projectName.") //$NON-NLS-1$
@@ -177,10 +172,10 @@ public class DiagnosticsFacadeTool implements IMcpTool
                     + "substring.") //$NON-NLS-1$
             .stringProperty("fileFilter", //$NON-NLS-1$
                 "get_project_errors: substring filter on the marker's object presentation, " //$NON-NLS-1$
-                    + "applied on top of scope (e.g. 'CommonModule.Common').") //$NON-NLS-1$
+                    + "applied on top of scope.") //$NON-NLS-1$
             .booleanProperty("waitForRefresh", //$NON-NLS-1$
                 "get_project_errors: poll EDT up to 3x300ms for freshly-computed markers " //$NON-NLS-1$
-                    + "(default true); disable when latency matters more than freshness.") //$NON-NLS-1$
+                    + "(default true).") //$NON-NLS-1$
             .stringArrayProperty("objectFqns", //$NON-NLS-1$
                 "revalidate_objects: FQNs to revalidate - alias of `objects`. Empty/omitted = " //$NON-NLS-1$
                     + "whole project.") //$NON-NLS-1$

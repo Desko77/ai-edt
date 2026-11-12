@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import org.eclipse.core.commands.ExecutionException;
 import org.eclipse.core.commands.operations.IOperationHistory;
@@ -87,6 +88,12 @@ import ru.aiedt.mcp.oform.ops.OperationsCatalog;
  * entries that record touched, including restoring the absence of a module. The history is
  * disposed when the last editor closes, when the layout is reread, and when a foreign module
  * write meets a record that touched the module.</p>
+ *
+ * <p>A workspace move of the container rebinds this same session to the new file before any
+ * notice runs. The identifier, the history, the texts and the editor count stay; the file,
+ * the module, the FQN and the delivery owner are recomputed. A removal that is not a move
+ * marks the session removed. Later edits, previews, saves and reversals then answer with
+ * {@link #REMOVED} and do not write.</p>
  */
 public final class FormEditingSession
 {
@@ -95,6 +102,12 @@ public final class FormEditingSession
 
     /** The line shown when a foreign module write drops a history that touched the module. */
     static final String HISTORY_CLEARED = "история отмены очищена: модуль изменен вне редактора"; //$NON-NLS-1$
+
+    /**
+     * The refusal when the container was removed and the session is not bound to a file.
+     * Reconciliation reports the same literal as its outcome and does not mark the session read-only.
+     */
+    public static final String REMOVED = "the form was removed; the session is not bound to a file"; //$NON-NLS-1$
 
     /** The standard attribute names a data path can name under the form's main attribute. */
     private static final List<String> STANDARD_ATTRIBUTE_NAMES = List.of("Код", "Наименование", "Родитель", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -112,13 +125,23 @@ public final class FormEditingSession
     /** The reconciliation an undo or redo in progress reached; {@code null} when the baseline held. */
     private Reconciliation reconciledDuringStep;
 
-    private final IFile file;
+    /** The container. A retarget writes it after the module, the FQN and the owner kind. */
+    private volatile IFile file;
 
-    private final OrdinaryFormModule module;
+    /** The module at {@link #file}. A retarget writes it before {@link #file}. */
+    private volatile OrdinaryFormModule module;
 
-    private final String fqn;
+    /** The form's FQN. A retarget writes it before {@link #file}. */
+    private volatile String fqn;
 
-    private final String ownerKind;
+    /** The owner's kind: the first segment of a four-part FQN, otherwise {@code null}. */
+    private volatile String ownerKind;
+
+    /** Whether the container left the workspace and was not moved. */
+    private volatile boolean removed;
+
+    /** A test point between choosing the save's file and taking its workspace rule. */
+    private static volatile SaveBarrier saveBarrier;
 
     /** The file's bytes as the session last saw them written. */
     private byte[] baseBytes;
@@ -148,14 +171,7 @@ public final class FormEditingSession
         this.id = UUID.randomUUID().toString();
         this.undoContext = new ObjectUndoContext(this);
         OperationHistoryFactory.getOperationHistory().setLimit(undoContext, HISTORY_LIMIT);
-        this.file = file;
-        IProject project = file.getProject();
-        String relative = file.getProjectRelativePath().toString().replace('\\', '/');
-        OrdinaryFormModule located = OrdinaryFormModule.locate(project, OrdinaryFormModule.moduleAddressOf(relative));
-        this.module = located;
-        this.fqn = located == null ? fqnOf(file) : located.fqn();
-        String[] parts = fqn == null ? new String[0] : fqn.split("\\."); //$NON-NLS-1$
-        this.ownerKind = parts.length == 4 ? parts[0] : null;
+        bindAddress(file);
         try
         {
             this.baseBytes = readBytes();
@@ -237,6 +253,9 @@ public final class FormEditingSession
      * landed with no event processed yet - is not edited over: the session reconciles itself and
      * answers with what that found.
      *
+     * A container that was removed answers with {@link #REMOVED}. A container that moved is edited
+     * on the file the session is bound to now.
+     *
      * @param operation the operation's name, one of the writing layout operations
      * @param params the operation's arguments, as the tool takes them
      * @return what the edit did
@@ -248,53 +267,50 @@ public final class FormEditingSession
         {
             return Edit.refused(operation + " is not a layout operation of ordinary_forms."); //$NON-NLS-1$
         }
-        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
-        lock.lock();
+        return underBinding(() -> Edit.refused(REMOVED), () -> editLocked(spec, params));
+    }
+
+    /** The edit, with the registry lock of the session's current file already held. */
+    private Edit editLocked(OperationSpec spec, Map<String, String> params)
+    {
+        if (readOnly)
+        {
+            return Edit.refused(problem);
+        }
+        if (!baselineHolds())
+        {
+            Reconciliation reconciliation = reconcileLocked();
+            String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
+            return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
+                reconciliation.outcome);
+        }
+        Applied applied;
         try
         {
-            if (readOnly)
-            {
-                return Edit.refused(problem);
-            }
-            if (!baselineHolds())
-            {
-                Reconciliation reconciliation = reconcileLocked();
-                String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
-                return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
-                    reconciliation.outcome);
-            }
-            Applied applied;
-            try
-            {
-                applied = LayoutOperations.applyTo(spec, target(), params);
-            }
-            catch (IOException e)
-            {
-                return Edit.refused(e.getMessage());
-            }
-            catch (RuntimeException e)
-            {
-                return Edit.refused(e.getMessage());
-            }
-            if (applied.refusedVersion != null || !applied.done)
-            {
-                return new Edit(false, applied.message, applied.refusedVersion, null, null);
-            }
-            String beforeForm = currentFormText();
-            String beforeModule = currentModuleText();
-            Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
-            formText = applied.layoutText;
-            if (applied.moduleText != null)
-            {
-                holdModule(applied.moduleText);
-            }
-            record(beforeForm, beforeModule);
-            return new Edit(true, applied.message, null, applied.elementId, null);
+            applied = LayoutOperations.applyTo(spec, target(), params);
         }
-        finally
+        catch (IOException e)
         {
-            lock.unlock();
+            return Edit.refused(e.getMessage());
         }
+        catch (RuntimeException e)
+        {
+            return Edit.refused(e.getMessage());
+        }
+        if (applied.refusedVersion != null || !applied.done)
+        {
+            return new Edit(false, applied.message, applied.refusedVersion, null, null);
+        }
+        String beforeForm = currentFormText();
+        String beforeModule = currentModuleText();
+        Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
+        formText = applied.layoutText;
+        if (applied.moduleText != null)
+        {
+            holdModule(applied.moduleText);
+        }
+        record(beforeForm, beforeModule);
+        return new Edit(true, applied.message, null, applied.elementId, null);
     }
 
     /**
@@ -327,6 +343,9 @@ public final class FormEditingSession
      * produced; the session's texts move only after every step has landed. A refusal or a throw
      * of any step leaves the session exactly as it was, and no record is kept.
      *
+     * A container that was removed answers with {@link #REMOVED}. A container that moved is changed
+     * on the file the session is bound to now.
+     *
      * @param steps the operations, in order; each is one {@link OperationsCatalog} layout operation
      * @return what the last step did, when every step was fixed
      */
@@ -336,72 +355,69 @@ public final class FormEditingSession
         {
             return Edit.refused("a gesture names no operation."); //$NON-NLS-1$
         }
-        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
-        lock.lock();
-        try
+        return underBinding(() -> Edit.refused(REMOVED), () -> gestureLocked(steps));
+    }
+
+    /** The gesture, with the registry lock of the session's current file already held. */
+    private Edit gestureLocked(List<Step> steps)
+    {
+        if (readOnly)
         {
-            if (readOnly)
-            {
-                return Edit.refused(problem);
-            }
-            if (!baselineHolds())
-            {
-                Reconciliation reconciliation = reconcileLocked();
-                String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
-                return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
-                    reconciliation.outcome);
-            }
-            String beforeForm = currentFormText();
-            String beforeModule = currentModuleText();
-            Applied last = null;
-            String formKept = beforeForm;
-            String moduleKept = beforeModule;
-            boolean moduleWritten = false;
-            for (Step step : steps)
-            {
-                OperationSpec spec = OperationsCatalog.find(step.operation);
-                if (spec == null || spec.kind != OperationSpec.Kind.LAYOUT)
-                {
-                    return Edit.refused(step.operation + " is not a layout operation of ordinary_forms."); //$NON-NLS-1$
-                }
-                Applied applied;
-                try
-                {
-                    applied = LayoutOperations.applyTo(spec, targetOver(formKept, moduleKept), step.params);
-                }
-                catch (IOException | RuntimeException e)
-                {
-                    return Edit.refused(e.getMessage());
-                }
-                if (applied.refusedVersion != null || !applied.done)
-                {
-                    return new Edit(false, applied.message, applied.refusedVersion, null, null);
-                }
-                last = applied;
-                formKept = applied.layoutText;
-                if (applied.moduleText != null)
-                {
-                    moduleKept = applied.moduleText;
-                    moduleWritten = true;
-                }
-            }
-            if (last == null)
-            {
-                return Edit.refused("a gesture names no operation."); //$NON-NLS-1$
-            }
-            Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
-            formText = last.layoutText;
-            if (moduleWritten)
-            {
-                holdModule(moduleKept);
-            }
-            record(beforeForm, beforeModule);
-            return new Edit(true, last.message, null, last.elementId, null);
+            return Edit.refused(problem);
         }
-        finally
+        if (!baselineHolds())
         {
-            lock.unlock();
+            Reconciliation reconciliation = reconcileLocked();
+            String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
+            return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
+                reconciliation.outcome);
         }
+        String beforeForm = currentFormText();
+        String beforeModule = currentModuleText();
+        Applied last = null;
+        String formKept = beforeForm;
+        String moduleKept = beforeModule;
+        boolean moduleWritten = false;
+        for (Step step : steps)
+        {
+            OperationSpec spec = OperationsCatalog.find(step.operation);
+            if (spec == null || spec.kind != OperationSpec.Kind.LAYOUT)
+            {
+                return Edit.refused(step.operation + " is not a layout operation of ordinary_forms."); //$NON-NLS-1$
+            }
+            Applied applied;
+            try
+            {
+                applied = LayoutOperations.applyTo(spec, targetOver(formKept, moduleKept), step.params);
+            }
+            catch (IOException | RuntimeException e)
+            {
+                return Edit.refused(e.getMessage());
+            }
+            if (applied.refusedVersion != null || !applied.done)
+            {
+                return new Edit(false, applied.message, applied.refusedVersion, null, null);
+            }
+            last = applied;
+            formKept = applied.layoutText;
+            if (applied.moduleText != null)
+            {
+                moduleKept = applied.moduleText;
+                moduleWritten = true;
+            }
+        }
+        if (last == null)
+        {
+            return Edit.refused("a gesture names no operation."); //$NON-NLS-1$
+        }
+        Pacing.pauseAt(Pacing.BEFORE_EDIT_FIXATION);
+        formText = last.layoutText;
+        if (moduleWritten)
+        {
+            holdModule(moduleKept);
+        }
+        record(beforeForm, beforeModule);
+        return new Edit(true, last.message, null, last.elementId, null);
     }
 
     /** @return this session's undo context */
@@ -457,57 +473,60 @@ public final class FormEditingSession
         return records;
     }
 
-    /** Undo or redo under the registry lock, through the operation history. */
+    /**
+     * Undo or redo under the registry lock, through the operation history. A removed container
+     * answers with {@link #REMOVED} before the history is asked, so an empty history is not the
+     * answer a removal gets.
+     */
     private Reversal step(boolean undoing)
     {
-        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
-        lock.lock();
+        return underBinding(() -> new Reversal(false, REMOVED, null), () -> stepLocked(undoing));
+    }
+
+    /** The undo or redo, with the registry lock of the session's current file already held. */
+    private Reversal stepLocked(boolean undoing)
+    {
+        if (readOnly)
+        {
+            return new Reversal(false, problem, null);
+        }
+        IOperationHistory history = history();
+        boolean available = undoing ? history.canUndo(undoContext) : history.canRedo(undoContext);
+        if (!available)
+        {
+            return new Reversal(false, null, null);
+        }
+        reconciledDuringStep = null;
+        IStatus status;
         try
         {
-            if (readOnly)
-            {
-                return new Reversal(false, problem, null);
-            }
-            IOperationHistory history = history();
-            boolean available = undoing ? history.canUndo(undoContext) : history.canRedo(undoContext);
-            if (!available)
-            {
-                return new Reversal(false, null, null);
-            }
-            reconciledDuringStep = null;
-            IStatus status;
-            try
-            {
-                status = undoing ? history.undo(undoContext, new NullProgressMonitor(), null)
-                    : history.redo(undoContext, new NullProgressMonitor(), null);
-            }
-            catch (ExecutionException e)
-            {
-                return new Reversal(false, e.getMessage(), null);
-            }
-            Reconciliation seen = reconciledDuringStep;
-            String outcome = seen == null ? null : seen.outcome;
-            if (status.isOK())
-            {
-                return new Reversal(true, seen == null ? null : seen.message, outcome);
-            }
-            String message = status.getMessage();
-            if ((message == null || message.isEmpty()) && seen != null)
-            {
-                message = seen.message != null ? seen.message : seen.outcome;
-            }
-            return new Reversal(false, message, outcome);
+            status = undoing ? history.undo(undoContext, new NullProgressMonitor(), null)
+                : history.redo(undoContext, new NullProgressMonitor(), null);
         }
-        finally
+        catch (ExecutionException e)
         {
-            lock.unlock();
+            return new Reversal(false, e.getMessage(), null);
         }
+        Reconciliation seen = reconciledDuringStep;
+        String outcome = seen == null ? null : seen.outcome;
+        if (status.isOK())
+        {
+            return new Reversal(true, seen == null ? null : seen.message, outcome);
+        }
+        String message = status.getMessage();
+        if ((message == null || message.isEmpty()) && seen != null)
+        {
+            message = seen.message != null ? seen.message : seen.outcome;
+        }
+        return new Reversal(false, message, outcome);
     }
 
     /**
      * What a preview of an operation would do, without fixing anything: the operation runs over
      * a fresh copy of the current tree and the elements it would take away and those it would
      * change are named - the cascade of a removal, the panels a cascade clears.
+     *
+     * A container that was removed answers with {@link #REMOVED}. Nothing of the session is fixed.
      *
      * @param operation the operation's name
      * @param params the operation's arguments
@@ -520,43 +539,40 @@ public final class FormEditingSession
         {
             return Preview.refused(operation + " is not a layout operation of ordinary_forms.", null); //$NON-NLS-1$
         }
-        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
-        lock.lock();
+        return underBinding(() -> Preview.refused(REMOVED, null), () -> previewLocked(spec, params));
+    }
+
+    /** The preview, with the registry lock of the session's current file already held. */
+    private Preview previewLocked(OperationSpec spec, Map<String, String> params)
+    {
+        if (readOnly)
+        {
+            return Preview.refused(problem, null);
+        }
+        if (!baselineHolds())
+        {
+            return Preview.refused("the form changed outside the editor; reconcile it first.", null); //$NON-NLS-1$
+        }
+        FormLayout before = currentLayout();
+        Applied applied;
         try
         {
-            if (readOnly)
-            {
-                return Preview.refused(problem, null);
-            }
-            if (!baselineHolds())
-            {
-                return Preview.refused("the form changed outside the editor; reconcile it first.", null); //$NON-NLS-1$
-            }
-            FormLayout before = currentLayout();
-            Applied applied;
-            try
-            {
-                applied = LayoutOperations.applyTo(spec, target(), params);
-            }
-            catch (IOException e)
-            {
-                return Preview.refused(e.getMessage(), null);
-            }
-            catch (RuntimeException e)
-            {
-                return Preview.refused(e.getMessage(), null);
-            }
-            if (applied.refusedVersion != null || !applied.done)
-            {
-                return Preview.refused(applied.message, applied.refusedVersion);
-            }
-            FormLayout after = LayoutReader.read(BraceTree.parse(applied.layoutText), ownerKind);
-            return changedAgainst(before, after, applied.message);
+            applied = LayoutOperations.applyTo(spec, target(), params);
         }
-        finally
+        catch (IOException e)
         {
-            lock.unlock();
+            return Preview.refused(e.getMessage(), null);
         }
+        catch (RuntimeException e)
+        {
+            return Preview.refused(e.getMessage(), null);
+        }
+        if (applied.refusedVersion != null || !applied.done)
+        {
+            return Preview.refused(applied.message, applied.refusedVersion);
+        }
+        FormLayout after = LayoutReader.read(BraceTree.parse(applied.layoutText), ownerKind);
+        return changedAgainst(before, after, applied.message);
     }
 
     /** Names the elements one tree holds that the other does not, and those both hold altered. */
@@ -625,54 +641,109 @@ public final class FormEditingSession
      * lock, so no reader can observe the file between the write and the baseline. Nothing is
      * written and no owner is marked when the session is clean, and the write goes through
      * {@link OrdinaryFormModule#writeEntriesReturning} under the workspace's rule on the file,
-     * the rule every other write path takes as well.
+     * the rule every other write path takes as well. The rule is chosen before the registry lock.
+     * When the container moves after that choice, the save takes the rule of the file the session
+     * is bound to now and writes only that file. A removal answers with {@link #REMOVED} and
+     * writes nothing. The owner's mark runs after the registry lock is given back, on the module
+     * the successful write used.
      *
      * @return what the save did
      */
     public Save save()
     {
-        if (readOnly)
+        while (true)
         {
-            return new Save(false, null, problem);
-        }
-        if (module == null)
-        {
-            return new Save(false, null, "the container does not lie at a form module's address."); //$NON-NLS-1$
-        }
-        IWorkspace workspace = ResourcesPlugin.getWorkspace();
-        IResourceRuleFactory rules = workspace.getRuleFactory();
-        Save[] out = new Save[1];
-        IWorkspaceRunnable work = monitor -> {
-            OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
-            lock.lock();
+            if (removed)
+            {
+                return new Save(false, null, REMOVED);
+            }
+            if (readOnly)
+            {
+                return new Save(false, null, problem);
+            }
+            OrdinaryFormModule located = module;
+            if (located == null)
+            {
+                return new Save(false, null, "the container does not lie at a form module's address."); //$NON-NLS-1$
+            }
+            IFile target = file;
+            IWorkspace workspace = ResourcesPlugin.getWorkspace();
+            IResourceRuleFactory rules = workspace.getRuleFactory();
+            Save[] out = new Save[1];
+            OrdinaryFormModule[] writing = new OrdinaryFormModule[1];
+            boolean[] follow = new boolean[1];
+            IWorkspaceRunnable work = monitor -> {
+                OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(target);
+                lock.lock();
+                try
+                {
+                    if (removed)
+                    {
+                        out[0] = new Save(false, null, REMOVED);
+                        return;
+                    }
+                    if (file != target || module != located)
+                    {
+                        follow[0] = true;
+                        return;
+                    }
+                    writing[0] = module;
+                    out[0] = saveLocked();
+                }
+                catch (IOException e)
+                {
+                    out[0] = new Save(false, null, e.getMessage());
+                }
+                finally
+                {
+                    lock.unlock();
+                }
+            };
+            SaveBarrier barrier = saveBarrier;
+            if (barrier != null)
+            {
+                barrier.beforeRun(target);
+            }
             try
             {
-                out[0] = saveLocked();
+                workspace.run(work, rules.modifyRule(target), IResource.NONE, new NullProgressMonitor());
             }
-            catch (IOException e)
+            catch (CoreException e)
             {
-                out[0] = new Save(false, null, e.getMessage());
+                if (removed)
+                {
+                    return new Save(false, null, REMOVED);
+                }
+                if (file != target)
+                {
+                    continue;
+                }
+                return new Save(false, null, e.getMessage());
             }
-            finally
+            if (follow[0])
             {
-                lock.unlock();
+                continue;
             }
-        };
-        try
-        {
-            workspace.run(work, rules.modifyRule(file), IResource.NONE, new NullProgressMonitor());
+            Save done = out[0];
+            if (done == null)
+            {
+                if (removed)
+                {
+                    return new Save(false, null, REMOVED);
+                }
+                if (file != target)
+                {
+                    continue;
+                }
+                throw new IllegalStateException("the save did not finish"); //$NON-NLS-1$
+            }
+            if (done.written)
+            {
+                String delivery = writing[0].afterWrite(true);
+                return new Save(true, delivery, done.reconciliation);
+            }
+            return done;
         }
-        catch (CoreException e)
-        {
-            return new Save(false, null, e.getMessage());
-        }
-        Save save = out[0];
-        if (save.written)
-        {
-            String delivery = module.afterWrite(true);
-            return new Save(true, delivery, save.reconciliation);
-        }
-        return save;
     }
 
     private Save saveLocked() throws IOException
@@ -728,20 +799,14 @@ public final class FormEditingSession
      * <tr><td>no container, or a version outside the measured set</td><td>read-only; saving is off until a readable container is back</td></tr>
      * </table>
      *
+     * A removed container answers with {@link #REMOVED} and is not marked read-only. A moved
+     * container is read at the file the session is bound to now.
+     *
      * @return what the reconciliation found and did
      */
     public Reconciliation reconcile()
     {
-        OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(file);
-        lock.lock();
-        try
-        {
-            return reconcileLocked();
-        }
-        finally
-        {
-            lock.unlock();
-        }
+        return underBinding(() -> new Reconciliation(REMOVED, REMOVED), this::reconcileLocked);
     }
 
     private Reconciliation reconcileLocked()
@@ -993,6 +1058,142 @@ public final class FormEditingSession
             beforeModule, afterModule, moduleTouched);
         operation.addContext(undoContext);
         history().add(operation);
+    }
+
+    /**
+     * Runs {@code work} while this thread holds the registry lock of the file the session is
+     * bound to. A move that changed the file before the lock was taken is retried on the new
+     * file and does not run {@code work} on the empty lock. A removal answers with
+     * {@code whenRemoved}. A session the registry no longer lists, and that was not removed,
+     * still runs {@code work}: that is a released session.
+     *
+     * <p>When the bound file is already gone and POST_CHANGE has not recorded its destination,
+     * refuse this operation immediately. The callback can still retarget the session later;
+     * no text or history is discarded and the UI thread never waits for that callback.</p>
+     *
+     * @param <T> the answer
+     * @param whenRemoved the answer when the container was removed
+     * @param work the operation; it runs with the lock held
+     * @return the answer
+     */
+    private <T> T underBinding(Supplier<T> whenRemoved, Supplier<T> work)
+    {
+        while (true)
+        {
+            if (removed)
+            {
+                return whenRemoved.get();
+            }
+            IFile claimed = file;
+            OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(claimed);
+            lock.lock();
+            boolean missing = false;
+            boolean retry = false;
+            try
+            {
+                if (removed)
+                {
+                    return whenRemoved.get();
+                }
+                if (file != claimed)
+                {
+                    retry = true;
+                }
+                else if (!claimed.exists() && OpenFormSessions.binds(this))
+                {
+                    missing = true;
+                }
+                else
+                {
+                    return work.get();
+                }
+            }
+            finally
+            {
+                lock.unlock();
+            }
+            if (missing)
+            {
+                // POST_CHANGE may need this very UI thread. Never wait for it here.
+                return whenRemoved.get();
+            }
+            else if (!retry)
+            {
+                return whenRemoved.get();
+            }
+        }
+    }
+
+    /**
+     * Points this session at the container the registry has already moved it onto. Called with
+     * both file locks and the registry's class lock held. The session object, its history and
+     * its texts stay.
+     *
+     * @param to the container at the new path
+     */
+    void retarget(IFile to)
+    {
+        bindAddress(to);
+    }
+
+    /**
+     * Records that the container left the workspace without a move. The texts, the history and
+     * the editor count stay. Later operations refuse with {@link #REMOVED}.
+     */
+    void markRemoved()
+    {
+        removed = true;
+    }
+
+    /** @return whether {@link #markRemoved} has run */
+    boolean isRemoved()
+    {
+        return removed;
+    }
+
+    /**
+     * Points the session at {@code to}. The module, the FQN and the owner kind are written
+     * before the file, so a reader that sees the new file also sees the new module.
+     *
+     * @param to the container
+     */
+    private void bindAddress(IFile to)
+    {
+        IProject project = to.getProject();
+        String relative = to.getProjectRelativePath().toString().replace('\\', '/');
+        OrdinaryFormModule located = OrdinaryFormModule.locate(project, OrdinaryFormModule.moduleAddressOf(relative));
+        this.module = located;
+        this.fqn = located == null ? fqnOf(to) : located.fqn();
+        String[] parts = fqn == null ? new String[0] : fqn.split("\\."); //$NON-NLS-1$
+        this.ownerKind = parts.length == 4 ? parts[0] : null;
+        this.file = to;
+    }
+
+    /**
+     * Undo or redo for a history call that does not already hold the registry lock. Follows a
+     * move onto the current file and refuses a removal. A caller that already holds the lock
+     * uses {@link #revertRecorded} instead, so this wait never runs under that lock.
+     *
+     * @param operation the record
+     * @param undoing {@code true} for undo
+     * @return the history status
+     */
+    IStatus revertGuarded(LayoutChangeOperation operation, boolean undoing)
+    {
+        return underBinding(() -> LayoutChangeOperation.notDone(IStatus.ERROR, REMOVED),
+            () -> revertRecorded(operation, undoing));
+    }
+
+    /**
+     * Installs the point a test uses to move the container after a save has chosen its file and
+     * before that save takes the workspace rule. {@code null} clears it. The first call of a
+     * barrier may wait; a later call, including the retry onto the new file, must return.
+     *
+     * @param barrier the barrier, or {@code null}
+     */
+    static void setSaveBarrier(SaveBarrier barrier)
+    {
+        saveBarrier = barrier;
     }
 
     /**
@@ -1389,7 +1590,11 @@ public final class FormEditingSession
         /** The delivery note of the owner's mark, or {@code null} when nothing was written. */
         public final String delivery;
 
-        /** The outcome the reconciliation reached - one of {@link Reconciliation} constants - when the file had changed; {@code null} otherwise. */
+        /**
+         * The outcome the reconciliation reached - one of {@link Reconciliation} constants - when
+         * the file had changed; {@link FormEditingSession#REMOVED} when the container was removed;
+         * the refusal otherwise; {@code null} when a clean session wrote nothing.
+         */
         public final String reconciliation;
 
         Save(boolean written, String delivery, String reconciliation)
@@ -1421,7 +1626,7 @@ public final class FormEditingSession
         /** The file holds nothing a session can edit: no container, or a version outside the set. */
         public static final String READ_ONLY = "readOnly"; //$NON-NLS-1$
 
-        /** The outcome; one of the constants above. */
+        /** The outcome; one of the constants above, or {@link FormEditingSession#REMOVED}. */
         public final String outcome;
 
         /** The line the editor shows; {@code null} when there is nothing to show. */
@@ -1488,5 +1693,12 @@ public final class FormEditingSession
             this.operation = operation;
             this.params = params;
         }
+    }
+
+    /** A test point before a save takes its workspace rule. Production leaves it unset. */
+    interface SaveBarrier
+    {
+        /** @param target the file the save is about to schedule */
+        void beforeRun(IFile target);
     }
 }

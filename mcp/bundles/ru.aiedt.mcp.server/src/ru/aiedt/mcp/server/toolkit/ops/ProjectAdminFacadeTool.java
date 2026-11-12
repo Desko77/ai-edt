@@ -122,17 +122,12 @@ public class ProjectAdminFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Project and configuration administration - list, inspect, create, delete, " //$NON-NLS-1$
-            + "resync, restart, subsystem listing. Operations: list_projects, " //$NON-NLS-1$
-            + "list_configurations, get_configuration_properties, create_project, " //$NON-NLS-1$
-            + "delete_project, resync_to_disk, restart_edt, answer_dialog, self_upkeep, list_subsystems, " //$NON-NLS-1$
-            + "help. Pass " //$NON-NLS-1$
-            + "operation=<name> (snake_case canonical; camelCase like listProjects is also " //$NON-NLS-1$
-            + "accepted); remaining parameters follow the per-operation contracts (call " //$NON-NLS-1$
-            + "operation=help for the catalog). create_project / delete_project / " //$NON-NLS-1$
-            + "resync_to_disk mutate and restart_edt restarts the host EDT instance - the " //$NON-NLS-1$
-            + "facade only routes, it adds no dryRun. The standalone tools remain available " //$NON-NLS-1$
-            + "for back-compat."; //$NON-NLS-1$
+        return "Project and configuration administration: list, inspect, create, delete, " //$NON-NLS-1$
+            + "resync, restart, answer dialogs, list subsystems, self-upkeep. create_project, " //$NON-NLS-1$
+            + "delete_project and resync_to_disk mutate; restart_edt restarts the host EDT. " //$NON-NLS-1$
+            + "Pass operation=<name> (snake_case; camelCase accepted; operation=help for the " //$NON-NLS-1$
+            + "catalog). The facade routes only - no dryRun. The standalone tools remain for " //$NON-NLS-1$
+            + "back-compat."; //$NON-NLS-1$
     }
 
     @Override
@@ -142,55 +137,45 @@ public class ProjectAdminFacadeTool implements IMcpTool
             .stringProperty("operation", //$NON-NLS-1$
                 "list_projects / list_configurations / get_configuration_properties / " //$NON-NLS-1$
                     + "create_project / delete_project / resync_to_disk / restart_edt / answer_dialog / " //$NON-NLS-1$
-                    + "self_upkeep / list_subsystems / help (snake_case canonical; " //$NON-NLS-1$
-                    + "camelCase like " //$NON-NLS-1$
-                    + "listProjects is also accepted). Pass operation=help without other " //$NON-NLS-1$
-                    + "params for the operation catalog.", true) //$NON-NLS-1$
+                    + "self_upkeep / list_subsystems / help; snake_case canonical, camelCase " //$NON-NLS-1$
+                    + "accepted. operation=help for the catalog.", true) //$NON-NLS-1$
             .stringProperty("button", //$NON-NLS-1$
-                "answer_dialog: the button to press, as the dialog spells it (matched " //$NON-NLS-1$
-                    + "ignoring case and the underlined mnemonic).") //$NON-NLS-1$
+                "answer_dialog: button to press, as the dialog spells it; case and the " //$NON-NLS-1$
+                    + "underlined mnemonic ignored.") //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
-                "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
-                    + "one-line summaries.") //$NON-NLS-1$
+                "Help topic; without it, one-line summaries.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
-                "EDT project name. Required for create_project (the new project's name), " //$NON-NLS-1$
-                    + "delete_project, resync_to_disk and list_subsystems; optional filter " //$NON-NLS-1$
-                    + "for get_configuration_properties and list_configurations.") //$NON-NLS-1$
+                "EDT project name. Required: create_project (the new project's name), " //$NON-NLS-1$
+                    + "delete_project, resync_to_disk, list_subsystems. Optional filter: " //$NON-NLS-1$
+                    + "get_configuration_properties, list_configurations.") //$NON-NLS-1$
             .stringProperty("version", //$NON-NLS-1$
-                "create_project: platform runtime version 'major.minor.micro', e.g. " //$NON-NLS-1$
-                    + "'8.3.21'. Optional - defaults to the latest version this EDT " //$NON-NLS-1$
-                    + "installation supports.") //$NON-NLS-1$
+                "create_project: platform runtime version 'major.minor.micro'. Optional - " //$NON-NLS-1$
+                    + "defaults to the latest this EDT supports.") //$NON-NLS-1$
             .booleanProperty("deleteContent", //$NON-NLS-1$
-                "delete_project: also delete the project's files from disk (default false " //$NON-NLS-1$
-                    + "= keep files, remove only from the workspace).") //$NON-NLS-1$
+                "delete_project: delete the project's files from disk; default false keeps " //$NON-NLS-1$
+                    + "files and removes only the workspace entry.") //$NON-NLS-1$
             .stringArrayProperty("objects", //$NON-NLS-1$
-                "resync_to_disk: top-object FQNs to force-export to disk (required for that " //$NON-NLS-1$
-                    + "operation, e.g. ['Catalog.Products', 'Document.SalesOrder']).") //$NON-NLS-1$
+                "resync_to_disk: top-object FQNs to force-export to disk (required).") //$NON-NLS-1$
             .stringProperty("action", //$NON-NLS-1$
-                "restart_edt: restart (default, relaunches the workspace) or shutdown " //$NON-NLS-1$
-                    + "(closes EDT and leaves it down).") //$NON-NLS-1$
+                "restart_edt: restart (default, relaunching the workspace) or shutdown " //$NON-NLS-1$
+                    + "(leaves EDT down).") //$NON-NLS-1$
             .integerProperty("delayMs", //$NON-NLS-1$
-                "restart_edt: delay before the action so the response is delivered first " //$NON-NLS-1$
-                    + "(default 1000, max 60000).") //$NON-NLS-1$
+                "restart_edt: response-delivery delay; default 1000, max 60000 ms.") //$NON-NLS-1$
             .stringProperty("type", //$NON-NLS-1$
                 "list_configurations filter: attach / client / all (default).") //$NON-NLS-1$
             .stringProperty("nameFilter", //$NON-NLS-1$
-                "list_subsystems: partial name match filter (case-insensitive).") //$NON-NLS-1$
+                "list_subsystems: partial name filter, case-insensitive.") //$NON-NLS-1$
             .booleanProperty("includeContent", //$NON-NLS-1$
-                "list_subsystems: list each subsystem's content object FQNs (default " //$NON-NLS-1$
-                    + "false).") //$NON-NLS-1$
+                "list_subsystems: include content object FQNs; default false.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
-                "list_subsystems: maximum subsystems rendered across the whole tree " //$NON-NLS-1$
-                    + "(default 500).") //$NON-NLS-1$
+                "list_subsystems: cap on subsystems across the whole tree; default 500.") //$NON-NLS-1$
             .booleanProperty("refresh", //$NON-NLS-1$
-                "resync_to_disk: refresh the workspace after the BM export so Eclipse sees the " //$NON-NLS-1$
-                    + "written files (default true).") //$NON-NLS-1$
+                "resync_to_disk: refresh the workspace after the BM export; default true.") //$NON-NLS-1$
             .integerProperty("waitTimeoutMs", //$NON-NLS-1$
-                "resync_to_disk: max wait for the BM export to settle, in ms (default 10000).") //$NON-NLS-1$
+                "resync_to_disk: max wait for the BM export to settle, ms; default 10000.") //$NON-NLS-1$
             .stringProperty("language", //$NON-NLS-1$
-                "list_subsystems: language code for synonyms (e.g. 'en', 'ru'). Defaults to " //$NON-NLS-1$
-                    + "the first available language.") //$NON-NLS-1$
+                "list_subsystems: synonym language; default first available.") //$NON-NLS-1$
             .build();
     }
 

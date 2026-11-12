@@ -108,62 +108,32 @@ public class VanessaTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Scenario UI testing via Vanessa Automation: plays Gherkin feature files against a " //$NON-NLS-1$
-            + "running infobase and reports which scenario step failed and why (+ failure " //$NON-NLS-1$
-            + "screenshots). Complements yaxunit_tests (code from the inside) by driving the UI " //$NON-NLS-1$
-            + "from the outside. Pass featurePath (a .feature file or a directory of them) and " //$NON-NLS-1$
-            + "projectName - the infobase the project is bound to is the one played against, " //$NON-NLS-1$
-            + "or connectionString to name another. Or compose the action right here: listKind " //$NON-NLS-1$
-            + "with listName opens the list, column with columnValue goes to the row, buttonTitle " //$NON-NLS-1$
-            + "or buttonName presses the form's button, and the window it opens is waited for " //$NON-NLS-1$
-            + "(windowWaitSeconds). The frame is the top window of the test client, saved by " //$NON-NLS-1$
-            + "the VanessaExt add-in, so it shows that window whatever covers it. " //$NON-NLS-1$
-            + "On a list action and on formToOpen, testManager and testClient are turned on when " //$NON-NLS-1$
-            + "left out, and false is refused: the start step then activates the client that " //$NON-NLS-1$
-            + "opens the infobase of the run. " //$NON-NLS-1$
-            + "Requires vanessa-automation.epf and the 1C thick client (1cv8.exe) configured in EDT " //$NON-NLS-1$
-            + "preferences (download from github.com/Pr-Mex/vanessa-automation). Waits for the run " //$NON-NLS-1$
-            + "and answers when it ends; async=true answers with a runKey instead, which comes " //$NON-NLS-1$
-            + "back for the result and also cancels the run. Raise timeoutSeconds for long suites. " //$NON-NLS-1$
-            + "A timeout held by a 1C window returns that window as blockingWindows, with its " //$NON-NLS-1$
-            + "title, texts, buttons and imageFile, and does not ask to raise timeoutSeconds."; //$NON-NLS-1$
+        return "Run Gherkin UI scenarios through Vanessa Automation; yaxunit_tests tests code. " //$NON-NLS-1$
+            + "Choose exactly one: featurePath, scenarioText, formToOpen, or compose a list action " //$NON-NLS-1$
+            + "without any of those three. For a list action, listKind and listName open the list, " //$NON-NLS-1$
+            + "column and columnValue select a row, buttonTitle or buttonName presses a button, " //$NON-NLS-1$
+            + "and windowWaitSeconds controls the wait for the opened window. List actions and " //$NON-NLS-1$
+            + "formToOpen default testManager and testClient to true and refuse false. Reports " //$NON-NLS-1$
+            + "failed steps and screenshots. Requires vanessa-automation.epf and the 1C thick " //$NON-NLS-1$
+            + "client configured in EDT preferences. A timeout blocked by a 1C window returns " //$NON-NLS-1$
+            + "blockingWindows with its title, texts, buttons and imageFile and does not ask to raise timeoutSeconds."; //$NON-NLS-1$
     }
 
+    /**
+     * Declares scenario inputs, continuation options and launch controls.
+     *
+     * @return JSON Schema of the tool arguments
+     */
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("featurePath", //$NON-NLS-1$
-                "Path to a .feature file or a directory of feature files. Required to start a run " //$NON-NLS-1$
-                    + "unless scenarioText is given; a call that carries a runKey takes neither. A " //$NON-NLS-1$
-                    + "relative path is resolved against the project when projectName is given.") //$NON-NLS-1$
-            .stringProperty("scenarioText", //$NON-NLS-1$
-                "The scenario itself in place of a file: Gherkin text written to the run's own " //$NON-NLS-1$
-                    + "temporary directory and played from there. For a caller that reaches this " //$NON-NLS-1$
-                    + "server over MCP and has no way to put a file on the machine - a form in a " //$NON-NLS-1$
-                    + "running 1C is photographed by a scenario that opens it and captures. The " //$NON-NLS-1$
-                    + "step wording is Vanessa's own and differs between its versions, so it is " //$NON-NLS-1$
-                    + "yours to give, the same way the vanessaParams names are. Given together " //$NON-NLS-1$
-                    + "with featurePath, both are refused.") //$NON-NLS-1$
-            .stringProperty("formToOpen", //$NON-NLS-1$
-                "The form to open and photograph, in the words the opening step expects - a " //$NON-NLS-1$
-                    + "common form's name, a catalog's FQN, whatever the step takes. The scenario " //$NON-NLS-1$
-                    + "is composed from it, so neither featurePath nor scenarioText is passed " //$NON-NLS-1$
-                    + "with it. The frame is the top window of the test client, drawn into the " //$NON-NLS-1$
-                    + "file by the add-in, whatever covers that window.") //$NON-NLS-1$
-            .stringProperty("openStep", //$NON-NLS-1$
-                "The step that opens the form, with {form} where the name goes. Defaults to " //$NON-NLS-1$
-                    + "opening a common form. A list form, an object form and an extension's " //$NON-NLS-1$
-                    + "form are opened by different words, and the words belong to Vanessa and " //$NON-NLS-1$
-                    + "differ between its versions, so pass the one your library uses.") //$NON-NLS-1$
-            .stringProperty("startStep", //$NON-NLS-1$
-                "The step that gets a client to work in. Defaults to launching TestClient or " //$NON-NLS-1$
-                    + "attaching to one already running.") //$NON-NLS-1$
-            .stringProperty("listKind", //$NON-NLS-1$
-                "Metadata kind of the list the scenario opens, one of: catalog, document, " //$NON-NLS-1$
-                    + "documentJournal, chartOfCharacteristicTypes, chartOfAccounts, " //$NON-NLS-1$
-                    + "chartOfCalculationTypes, informationRegister, accumulationRegister, " //$NON-NLS-1$
-                    + "accountingRegister, calculationRegister.") //$NON-NLS-1$
+            .stringProperty("featurePath", "File calls: .feature file/directory; alternatives: scenarioText, formToOpen, composed list action. With runKey: no featurePath/scenarioText. projectName resolves relative paths against its project.") //$NON-NLS-1$
+            .stringProperty("scenarioText", "Gherkin text stored in a temporary run directory; steps depend on Vanessa version. Refused with featurePath.") //$NON-NLS-1$
+            .stringProperty("formToOpen", "Form name in opening-step syntax; composes a scenario, not combined with featurePath/scenarioText. Add-in captures the test client's top window even when covered.") //$NON-NLS-1$
+            .stringProperty("openStep", "Opening step: {form} is the name; default opens a common form. List/object/extension forms require version-specific Vanessa wording.") //$NON-NLS-1$
+            .stringProperty("startStep", "Step acquiring a client; default launches TestClient or attaches to a running one.") //$NON-NLS-1$
+            .stringProperty("listKind", "List metadata kind: catalog/document/documentJournal/chartOfCharacteristicTypes/chartOfAccounts/chartOfCalculationTypes/informationRegister/accumulationRegister/accountingRegister/calculationRegister.") //$NON-NLS-1$
             .stringProperty("listName", //$NON-NLS-1$
                 "Name of the metadata object whose list form the scenario opens.") //$NON-NLS-1$
             .stringProperty("tableName", //$NON-NLS-1$
@@ -172,72 +142,30 @@ public class VanessaTool implements IMcpTool
                 "Caption of the column the row to act on is found by.") //$NON-NLS-1$
             .stringProperty("columnValue", //$NON-NLS-1$
                 "Value of that column; an empty string is a value and is looked for as empty.") //$NON-NLS-1$
-            .stringProperty("whenSeveral", //$NON-NLS-1$
-                "When several rows carry the value: unique (default) demands exactly one before " //$NON-NLS-1$
-                    + "moving, first moves to the first of them.") //$NON-NLS-1$
-            .stringProperty("buttonTitle", //$NON-NLS-1$
-                "Title of the form's button to press - exactly one of buttonTitle and buttonName.") //$NON-NLS-1$
-            .stringProperty("buttonName", //$NON-NLS-1$
-                "Name of the form's button to press - exactly one of buttonTitle and buttonName.") //$NON-NLS-1$
-            .stringProperty("windowTitle", //$NON-NLS-1$
-                "Title of the window the button is expected to open; without it the run waits " //$NON-NLS-1$
-                    + "for a window whose title differs from the one before the click.") //$NON-NLS-1$
+            .stringProperty("whenSeveral", "Matching rows: unique (default) requires exactly one before moving; first moves to the first match.") //$NON-NLS-1$
+            .stringProperty("buttonTitle", "Button title to press; exactly one of buttonTitle/buttonName.") //$NON-NLS-1$
+            .stringProperty("buttonName", "Button name to press; exactly one of buttonTitle/buttonName.") //$NON-NLS-1$
+            .stringProperty("windowTitle", "Expected window title after pressing the button; omitted: wait for a title different from the pre-click title.") //$NON-NLS-1$
             .integerProperty("windowWaitSeconds", //$NON-NLS-1$
                 "Seconds the step that waits for the window waits (default 10).") //$NON-NLS-1$
-            .stringProperty("connectionString", //$NON-NLS-1$
-                "1C infobase connection string, e.g. 'File=\"C:\\\\ib\";' or " //$NON-NLS-1$
-                    + "'Srvr=\"host\";Ref=\"base\";'. Omitted, the infobase the named project is " //$NON-NLS-1$
-                    + "bound to is used - EDT knows it already. A server infobase has to be named " //$NON-NLS-1$
-                    + "here. A Pwd is refused: it would reach the " //$NON-NLS-1$
-                    + "client as a command-line argument, readable by every process on the machine. " //$NON-NLS-1$
-                    + "Use an infobase that needs no password, or one that accepts the operating " //$NON-NLS-1$
-                    + "system's authentication. A call that carries a runKey does not take " //$NON-NLS-1$
-                    + "it.") //$NON-NLS-1$
-            .booleanProperty("async", //$NON-NLS-1$
-                "Hand back a runKey instead of waiting out the run. Come back with that runKey " //$NON-NLS-1$
-                    + "for the result, or with runKey and cancel=true to stop the client.") //$NON-NLS-1$
+            .stringProperty("connectionString", "1C infobase connection string, e.g. 'File=\"C:\\\\ib\";' or 'Srvr=\"host\";Ref=\"base\";'. Omitted: named project's bound infobase, already known to EDT. Server infobase: explicit string required. Pwd refused (client command-line exposure to every process); use password-free or OS authentication. Not accepted with runKey.") //$NON-NLS-1$
+            .booleanProperty("async", "Return runKey without waiting for the run; poll with it for results, or pass runKey and cancel=true to stop the client.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "The key from a Pending reply: comes back for that run rather than starting one.") //$NON-NLS-1$
-            .booleanProperty("cancel", //$NON-NLS-1$
-                "With runKey: stops the client and its worker processes. What the scenarios " //$NON-NLS-1$
-                    + "already wrote to the infobase stays written.") //$NON-NLS-1$
+            .booleanProperty("cancel", "With runKey: stops client and worker processes; prior scenario writes to the infobase remain.") //$NON-NLS-1$
             .integerProperty("waitSeconds", //$NON-NLS-1$
                 "With runKey: how long to wait this time before answering Pending again.") //$NON-NLS-1$
-            .objectProperty("vanessaParams", //$NON-NLS-1$
-                "Optional JSON object of Vanessa parameters to add to VAParams.json, for filtering " //$NON-NLS-1$
-                    + "by tag or by scenario name among other things. The names are Vanessa's own " //$NON-NLS-1$
-                    + "and differ between its versions, so they are yours to give; it ignores one " //$NON-NLS-1$
-                    + "it does not know. The few this tool reads its result back from are " //$NON-NLS-1$
-                    + "refused.") //$NON-NLS-1$
-            .stringProperty("projectName", //$NON-NLS-1$
-                "Optional EDT project name - used to resolve a relative featurePath and as the " //$NON-NLS-1$
-                    + "working directory.") //$NON-NLS-1$
+            .objectProperty("vanessaParams", "VAParams.json additions as JSON (e.g. tag/scenario filters). Names are Vanessa-version-specific; unknown names ignored. Parameters used by this tool to read results are refused.") //$NON-NLS-1$
+            .stringProperty("projectName", "Optional EDT project: resolves relative featurePath; its directory is the working directory.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
                 "Max seconds to wait for the run (default 300, max 3600).") //$NON-NLS-1$
-            .stringProperty("infobaseUser", //$NON-NLS-1$
-                "Name of the 1C user the run signs in as. A base with users defined meets a " //$NON-NLS-1$
-                    + "client that names none with a login window, and the run then waits out " //$NON-NLS-1$
-                    + "its whole deadline. A password cannot be passed here.") //$NON-NLS-1$
-            .booleanProperty("testManager", //$NON-NLS-1$
-                "Start the client as a test manager (default false). The UI-testing types a " //$NON-NLS-1$
-                    + "form-driving scenario needs exist only in a client started this way; " //$NON-NLS-1$
-                    + "without it such a step answers Тип не определен. " //$NON-NLS-1$
-                    + "On a list action and on formToOpen, left out means on, and false is " //$NON-NLS-1$
-                    + "refused.") //$NON-NLS-1$
-            .booleanProperty("testClient", //$NON-NLS-1$
-                "Name a test client in VAParams for the start step to launch (default false). " //$NON-NLS-1$
-                    + "The step that starts TestClient has no client to start without it and " //$NON-NLS-1$
-                    + "answers with an empty client type and PID 0. " //$NON-NLS-1$
-                    + "On a list action and on formToOpen, left out means on, and false is " //$NON-NLS-1$
-                    + "refused.") //$NON-NLS-1$
-            .integerProperty("testClientPort", //$NON-NLS-1$
-                "Port the test client listens on (default 48010). Name another when a second " //$NON-NLS-1$
-                    + "run or another EDT already holds it.") //$NON-NLS-1$
+            .stringProperty("infobaseUser", "1C login name for the run. For a base with users, omission opens a login window and the run waits its entire deadline. No password accepted here.") //$NON-NLS-1$
+            .booleanProperty("testManager", "Start as test manager (default false): required for UI-testing types in form-driving scenarios; otherwise a step returns Тип не определен. List action/formToOpen: omitted=true, false refused.") //$NON-NLS-1$
+            .booleanProperty("testClient", "Include a test client in VAParams for the start step to launch (default false). Without it the TestClient start step has no client; its result has an empty client type and PID 0. List action/formToOpen: omitted=true, false refused.") //$NON-NLS-1$
+            .integerProperty("testClientPort", "Test client listening port (default 48010); change if another run or EDT holds it.") //$NON-NLS-1$
             .booleanProperty("screenshots", //$NON-NLS-1$
                 "Capture a screenshot on step failure (default true).") //$NON-NLS-1$
-            .booleanProperty("keepOpen", //$NON-NLS-1$
-                "Leave the 1C client open after the run to watch it (default false). Note: a kept-open " //$NON-NLS-1$
-                    + "client will time out here since it never exits.") //$NON-NLS-1$
+            .booleanProperty("keepOpen", "Keep 1C client open for observation (default false); run times out here because the client never exits.") //$NON-NLS-1$
  //$NON-NLS-1$
             .build();
     }

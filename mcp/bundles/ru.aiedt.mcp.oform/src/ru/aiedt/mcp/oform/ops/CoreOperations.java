@@ -106,7 +106,7 @@ public final class CoreOperations
             "event + procedure (default <element><event>) of elementName, or of the form without " //$NON-NLS-1$
                 + "elementName; stub=true adds an empty procedure with the measured parameters to the module", //$NON-NLS-1$
             List.of(ParamSpec.string("elementName", "the element whose event to bind; absent for the form."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("event", "the event (ПриИзменении, Нажатие, ПриОткрытии, ...; help lists them)."), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("event", "the event (ПриИзменении, Нажатие, ПриОткрытии, ...; help lists them).").withSchemaDescription("the event (help lists them)."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("procedure", "the procedure to bind (default <element><event>, or the event for the form)."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.bool("stub", "add an empty procedure with the measured parameters to the module when it declares none (default true).")), //$NON-NLS-1$ //$NON-NLS-2$
             CoreOperations::bindHandler));
@@ -121,8 +121,8 @@ public final class CoreOperations
             List.of(                ParamSpec.string("type", () -> String.join(" | ", ElementKinds.WRITABLE.stream().sorted().toList()) //$NON-NLS-1$ //$NON-NLS-2$
                     + "; a Table shows the rows data names, and so does a ListField; a TableField, a FieldHtml, " //$NON-NLS-1$
                     + "a TextDocumentField and a Chart take no data."), //$NON-NLS-1$
-                ParamSpec.string("name", "the name of the new element."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("parent", "the Panel to put the element in; absent for the form."), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("name", "the name of the new element.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("parent", "the Panel to put the element in; absent for the form.").withSchemaDescription("the Panel; absent for the form."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("page", "the page of the panel or form; absent for the first."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.integer("left", "the left edge."), ParamSpec.integer("top", "the top edge."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                 ParamSpec.integer("right", "the right edge."), ParamSpec.integer("bottom", "the bottom edge."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
@@ -131,10 +131,10 @@ public final class CoreOperations
                 ParamSpec.string("tooltip", "the tooltip."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.string("data", "the data path in words, <form attribute>[.<member>...] (СправочникОбъект.Артикул). " //$NON-NLS-1$ //$NON-NLS-2$
                     + "A TableField, a FieldHtml, a TextDocumentField and a Chart show what their own record or the " //$NON-NLS-1$
-                    + "code sets, so this argument is refused for them; a ListField names the value-list attribute it shows.")), //$NON-NLS-1$
+                    + "code sets, so this argument is refused for them; a ListField names the value-list attribute it shows.").withSchemaDescription("the data path in words, <form attribute>[.<member>...]. A TableField, a FieldHtml, a TextDocumentField and a Chart show what their own record or the code sets, so this argument is refused for them; a ListField names the value-list attribute it shows.")), //$NON-NLS-1$ //$NON-NLS-2$
             CoreOperations::addElement));
         out.add(OperationSpec.layout("add_page", "name and title of a page of the form or of parent (a Panel)", //$NON-NLS-1$ //$NON-NLS-2$
-            List.of(ParamSpec.string("name", "the name of the new page."), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("name", "the name of the new page.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("title", "the page's title."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.string("parent", "the Panel; absent for the form.")), //$NON-NLS-1$ //$NON-NLS-2$
             context -> {
@@ -147,7 +147,7 @@ public final class CoreOperations
             }));
         out.add(OperationSpec.layout("remove_page", //$NON-NLS-1$
             "name of a page of the form or of parent (a Panel); a page with elements on it or the last page is refused", //$NON-NLS-1$
-            List.of(ParamSpec.string("name", "the name of the page to remove."), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("name", "the name of the page to remove.").withSchemaDescription("the name of the item to remove."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("parent", "the Panel; absent for the form.")), //$NON-NLS-1$ //$NON-NLS-2$
             context -> {
                 String name = context.string("name"); //$NON-NLS-1$
@@ -213,8 +213,10 @@ public final class CoreOperations
                 }
                 return removed;
             }));
-        out.add(OperationSpec.projectlessQuery("help", "this catalogue", List.of(), //$NON-NLS-1$ //$NON-NLS-2$
-            (project, params) -> help()));
+        out.add(OperationSpec.projectlessQuery("help", "this catalogue", //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("topic", //$NON-NLS-1$
+                "Operation name for its full contract; omit or leave blank for the general catalogue.")), //$NON-NLS-1$
+            (project, params) -> help(params)));
         return out;
     }
 
@@ -504,6 +506,39 @@ public final class CoreOperations
         return OperationResult.of(outcome);
     }
 
+    /** The write conditions shared by general help and every writing topic. */
+    private static final String WRITE_HELP = "Every writing operation takes dryRun; a write rewrites only the records the operation names, " //$NON-NLS-1$
+        + "and marks the form's owner in the sync baselines so update_database carries the form."; //$NON-NLS-1$
+
+    /**
+     * Return general or operation-specific help without invoking the described operation.
+     *
+     * @param params the help arguments; topic is optional
+     * @return the general catalog, the selected contract, or an unknown-topic refusal as JSON
+     */
+    private static String help(Map<String, String> params)
+    {
+        String topic = params.get("topic"); //$NON-NLS-1$
+        if (topic == null || topic.isBlank())
+        {
+            return help();
+        }
+        OperationSpec spec = OperationsCatalog.find(topic);
+        if (spec == null)
+        {
+            return ToolResult.error("Unknown help topic: " + topic.trim() + ". Known: " //$NON-NLS-1$ //$NON-NLS-2$
+                + String.join(", ", OperationsCatalog.knownNames())).toJson(); //$NON-NLS-1$
+        }
+        ToolResult answer = ToolResult.success()
+            .put("tool", "ordinary_forms") //$NON-NLS-1$ //$NON-NLS-2$
+            .put("operationHelp", OperationsCatalog.describe(spec)); //$NON-NLS-1$
+        if (spec.writes)
+        {
+            answer.put("writes", WRITE_HELP); //$NON-NLS-1$
+        }
+        return answer.toJson();
+    }
+
     /**
      * The help: the operations of every catalog, the events, and what an ordinary form is.
      */
@@ -514,8 +549,7 @@ public final class CoreOperations
             .put("operations", OperationsCatalog.helpLines()) //$NON-NLS-1$
             .put("properties", PropertyHandlers.descriptions()) //$NON-NLS-1$
             .put("events", eventsCatalogue()) //$NON-NLS-1$
-            .put("writes", "Every writing operation takes dryRun; a write rewrites only the records the operation names, " //$NON-NLS-1$ //$NON-NLS-2$
-                + "and marks the form's owner in the sync baselines so update_database carries the form.") //$NON-NLS-1$
+            .put("writes", WRITE_HELP) //$NON-NLS-1$
             .put("whatAnOrdinaryFormIs", "A form of the thick client's ordinary application mode. EDT keeps it " //$NON-NLS-1$ //$NON-NLS-2$
                 + "as Form.oform - a platform container with two text entries, 'form' (the layout in the " //$NON-NLS-1$
                 + "platform's brace format) and 'module' (BSL) - and does not open it in any editor.") //$NON-NLS-1$

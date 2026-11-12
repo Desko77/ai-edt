@@ -212,31 +212,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Infobase and launch administration - list applications, create / register / delete an " //$NON-NLS-1$
-            + "infobase, set credentials, create a launch configuration, start a 1C client from " //$NON-NLS-1$
-            + "one, update the database, dump or load the whole infobase as a .dt file, control " //$NON-NLS-1$
-            + "EDT<->infobase sync. Operations: " //$NON-NLS-1$
-            + "get_applications, list_registered_infobases, read_event_log, create_infobase, " //$NON-NLS-1$
-            + "register_infobase, delete_infobase, " //$NON-NLS-1$
-            + "set_infobase_credentials, " //$NON-NLS-1$
-            + "create_launch_config, start_client, branch_infobase, update_database, " //$NON-NLS-1$
-            + "inspect_database_sync, export_database_snapshot, restore_database_snapshot, sync_control, " //$NON-NLS-1$
-            + "help. Pass operation=<name>; remaining parameters follow the per-operation " //$NON-NLS-1$
-            + "contracts (call operation=help for the catalog). create_infobase / " //$NON-NLS-1$
-            + "register_infobase / delete_infobase / set_infobase_credentials / update_database / " //$NON-NLS-1$
-            + "export_database_snapshot / restore_database_snapshot mutate, and a load replaces " //$NON-NLS-1$
-            + "everything the infobase holds, marks the stored copy, and names it when the mark " //$NON-NLS-1$
-            + "could not be written; inspect_database_sync reads and changes nothing. " //$NON-NLS-1$
-            + "A real run of update_database / export_database_snapshot / " //$NON-NLS-1$
-            + "restore_database_snapshot / sync_control may reply with a Pending status and " //$NON-NLS-1$
-            + "a runKey to resume. update_database takes dryRun to answer what an update would " //$NON-NLS-1$
-            + "face and start nothing, answered in place with no runKey, and protectData (default on) " //$NON-NLS-1$
-            + "to stop before the update when it would delete data, answering dataLossTables " //$NON-NLS-1$
-            + "(acceptDataLoss=true carries the deletion through). " //$NON-NLS-1$
-            + "sync_control has its own " //$NON-NLS-1$
-            + "inner operation (status / diagnose / suppress / ...): pass it as syncOperation, " //$NON-NLS-1$
-            + "not operation - operation here always selects the infobase_admin routing target. " //$NON-NLS-1$
-            + "The standalone tools remain available for back-compat."; //$NON-NLS-1$
+        return "Infobase and launch administration - list, create, register and delete infobases, set credentials, create a launch configuration, start a 1C client, update the database, dump or load the whole infobase as a .dt, and control EDT<->infobase sync. operation=help lists the operations and topics. create_infobase / register_infobase / delete_infobase / set_infobase_credentials / update_database / export_database_snapshot / restore_database_snapshot mutate; a load replaces everything the infobase holds, writes its backup first, marks the stored copy and names it when the mark could not be written; inspect_database_sync reads only. Runs of update_database / export_database_snapshot / restore_database_snapshot / sync_control may answer Pending with a runKey. update_database dryRun answers in place with no runKey; protectData (default on) stops before deleting data and answers dataLossTables (acceptDataLoss=true carries it through). sync_control's own action travels as syncOperation."; //$NON-NLS-1$
     }
 
     /**
@@ -306,6 +282,42 @@ public class InfobaseAdminFacadeTool implements IMcpTool
         rules.put("confirm", "Must be true for reseed_baseline, mark_synchronized, " //$NON-NLS-1$
             + "recover_stuck_merge and rebuild_dump_info. These are DANGEROUS - only on " //$NON-NLS-1$
             + "explicit user request and only when certain of the state."); //$NON-NLS-1$
+        rules.put("launchConfigurationName", "Preferred over projectName + applicationId; " //$NON-NLS-1$
+            + "list_configurations shows the names."); //$NON-NLS-1$
+        rules.put("backupTo", "Omitted, the backup goes beside the .dt being loaded, named " //$NON-NLS-1$
+            + "after it and stamped with the time."); //$NON-NLS-1$
+        rules.put("clientType", "Applied to this launch's own configuration copy; a " //$NON-NLS-1$
+            + "configuration created here is saved with it."); //$NON-NLS-1$
+        rules.put("runMode", "The additional launch parameters list on disk is not written; " //$NON-NLS-1$
+            + "the answer says what changed."); //$NON-NLS-1$
+        rules.put("autoFreeClients", "The stopped sessions cannot keep the infobase locked."); //$NON-NLS-1$
+        rules.put("timeoutSeconds", "The same budget bounds " //$NON-NLS-1$
+            + "BuildTaskHelper.waitForBuildAndDerivedData; the build-job wait is unbounded " //$NON-NLS-1$
+            + "and running out ends quietly. The platform pull is not cancelled."); //$NON-NLS-1$
+        rules.put("runKey", "sync_control syncOperation=retrieve_database_changes: how long " //$NON-NLS-1$
+            + "this call waits is timeoutSeconds."); //$NON-NLS-1$
+        rules.put("statusOnly", "projectName filters by project; a snapshot run is polled " //$NON-NLS-1$
+            + "with its own runKey."); //$NON-NLS-1$
+        rules.put("refreshWorkspace", "The answer carries " //$NON-NLS-1$
+            + "workspaceRefresh.changedResources."); //$NON-NLS-1$
+        rules.put("replaceLocal", "True takes the infobase's version of those objects."); //$NON-NLS-1$
+        rules.put("markSynchronized", "The reason is on the answer when baselineMarked is " //$NON-NLS-1$
+            + "false."); //$NON-NLS-1$
+        rules.put("infobaseUuid", "Take the value from syncOperation=status or " //$NON-NLS-1$
+            + "diagnose_stuck_locks."); //$NON-NLS-1$
+        rules.put("startupOption", "An external-object binding and /Execute are set by the " //$NON-NLS-1$
+            + "environment from that configuration, not by this argument."); //$NON-NLS-1$
+        rules.put("allowSecondSession", "The running one is reported instead of a second " //$NON-NLS-1$
+            + "start."); //$NON-NLS-1$
+        rules.put("ignoreDumpInfoFormat", "The answer names both formats; when it does not " //$NON-NLS-1$
+            + "stop you it expects a FULL load."); //$NON-NLS-1$
+        rules.put("platform", "Blank means the latest available platform."); //$NON-NLS-1$
+        rules.put("templateCf", "Loaded into the new infobase on create."); //$NON-NLS-1$
+        rules.put("deleteContent", "False removes only the reference from EDT's list."); //$NON-NLS-1$
+        rules.put("infobaseName", "get_applications and list_registered_infobases show the " //$NON-NLS-1$
+            + "names."); //$NON-NLS-1$
+        rules.put("fullUpdate", "Falls back to an incremental update otherwise."); //$NON-NLS-1$
+        rules.put("autoRestructure", "Applied only when the platform requires restructuring."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -313,19 +325,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("operation", //$NON-NLS-1$
-                "get_applications / list_registered_infobases / read_event_log / create_infobase / " //$NON-NLS-1$
-                    + "register_infobase / delete_infobase / " //$NON-NLS-1$
-                    + "set_infobase_credentials / create_launch_config / start_client / " //$NON-NLS-1$
-                    + "branch_infobase / update_database / inspect_database_sync / " //$NON-NLS-1$
-                    + "export_database_snapshot / restore_database_snapshot / sync_control / " //$NON-NLS-1$
-                    + "help (snake_case " //$NON-NLS-1$
-                    + "canonical; camelCase like getApplications is also accepted). " //$NON-NLS-1$
-                    + "operation=help lists them; topic=<operation> answers what that one " //$NON-NLS-1$
-                    + "takes.", true) //$NON-NLS-1$
-            .stringProperty("topic", //$NON-NLS-1$
-                "Help topic when operation=help. Without topic - lists all operations with " //$NON-NLS-1$
-                    + "one-line summaries.") //$NON-NLS-1$
+            .stringProperty("operation", "get_applications / list_registered_infobases / read_event_log / create_infobase / register_infobase / delete_infobase / set_infobase_credentials / create_launch_config / start_client / branch_infobase / update_database / inspect_database_sync / export_database_snapshot / restore_database_snapshot / sync_control / help (snake_case canonical; camelCase like getApplications accepted). help lists them; topic=<operation> answers its parameters.", true) //$NON-NLS-1$
+            .stringProperty("topic", "Help topic for operation=help (without topic: the catalog).") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("action", //$NON-NLS-1$
                 "branch_infobase: current (default) / list / bind / unbind.") //$NON-NLS-1$
@@ -334,10 +335,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .booleanProperty("ignoreBranchBinding", //$NON-NLS-1$
                 "update_database: update even when the branch is bound to another " //$NON-NLS-1$
                     + "application.") //$NON-NLS-1$
-            .booleanProperty("ignoreDumpInfoFormat", //$NON-NLS-1$
-                "update_database: update even when the stored ConfigDumpInfo.xml carries a " //$NON-NLS-1$
-                    + "format other than the one this infobase's Designer wrote - the answer names " //$NON-NLS-1$
-                    + "both formats when it stops you, and expects a FULL load when it does not.") //$NON-NLS-1$
+            .booleanProperty("ignoreDumpInfoFormat", "update_database: apply the ConfigDumpInfo format change; the answer names both formats when it refuses; when it proceeds it expects a FULL load.") //$NON-NLS-1$
             .stringProperty("branch", //$NON-NLS-1$
                 "branch_infobase: the branch to bind or unbind. Defaults to the branch the " //$NON-NLS-1$
                     + "project is on.") //$NON-NLS-1$
@@ -345,44 +343,19 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
                 "Application (infobase) id from get_applications.") //$NON-NLS-1$
-            .stringArrayProperty("excludeEvents", //$NON-NLS-1$
-                "read_event_log: events to leave out, by whole name or, ending in *, by the start " //$NON-NLS-1$
-                    + "of it - _$Transaction$_* drops the transaction events. Case is ignored; " //$NON-NLS-1$
-                    + "applied before limit.") //$NON-NLS-1$
-            .stringProperty("name", //$NON-NLS-1$
-                "Infobase name: required for create_infobase, delete_infobase and " //$NON-NLS-1$
-                    + "register_infobase of a server infobase. sync_control " //$NON-NLS-1$
-                    + "release_support_snapshot: the snapshot's file name from " //$NON-NLS-1$
-                    + "list_support_snapshots.") //$NON-NLS-1$
-            .stringProperty("path", //$NON-NLS-1$
-                "create_infobase: absolute path to the infobase directory (required for that " //$NON-NLS-1$
-                    + "operation) - an empty/new directory for the .1CD. register_infobase: an " //$NON-NLS-1$
-                    + "existing file infobase directory. export_database_snapshot / " //$NON-NLS-1$
-                    + "restore_database_snapshot: the .dt file to write or to load (required for " //$NON-NLS-1$
-                    + "both); an existing file at that path is refused, not replaced.") //$NON-NLS-1$
-            .stringProperty("backupTo", //$NON-NLS-1$
-                "restore_database_snapshot: where the backup of the infobase's current contents " //$NON-NLS-1$
-                    + "goes before the load starts. Omitted - beside the .dt being loaded, named " //$NON-NLS-1$
-                    + "after it and stamped with the time. The load does not start until the backup " //$NON-NLS-1$
-                    + "is written; an existing file at the backup path is refused.") //$NON-NLS-1$
+            .stringArrayProperty("excludeEvents", "read_event_log: omit events by whole name or prefix (ending *, e.g. _$Transaction$_*), case-insensitive, before limit.") //$NON-NLS-1$
+            .stringProperty("name", "create_infobase / delete_infobase / server register_infobase: infobase name; sync_control release_support_snapshot: snapshot file name from list_support_snapshots.") //$NON-NLS-1$
+            .stringProperty("path", "create_infobase: new/empty infobase directory. register_infobase: existing directory. snapshots: required .dt path; export_database_snapshot: an existing one is refused; restore_database_snapshot requires an existing input.") //$NON-NLS-1$
+            .stringProperty("backupTo", "restore_database_snapshot: backup path written before the load; an existing file is refused; omitted: beside the .dt.") //$NON-NLS-1$
             .stringProperty("connectionString", //$NON-NLS-1$
                 "register_infobase: a server infobase address, Srvr=<server>;Ref=<infobase>.") //$NON-NLS-1$
             .booleanProperty("makeDefault", //$NON-NLS-1$
                 "register_infobase: make the application the project's default (omitted: only " //$NON-NLS-1$
                     + "when it has none).") //$NON-NLS-1$
-            .stringProperty("platform", //$NON-NLS-1$
-                "create_infobase: 1C:Enterprise platform version (optional, blank = latest " //$NON-NLS-1$
-                    + "available).") //$NON-NLS-1$
-            .stringProperty("templateCf", //$NON-NLS-1$
-                "create_infobase: optional path to a .cf / .cfe to load into the new infobase " //$NON-NLS-1$
-                    + "on create.") //$NON-NLS-1$
-            .booleanProperty("deleteContent", //$NON-NLS-1$
-                "delete_infobase: also delete the .1CD directory on disk (DESTRUCTIVE, " //$NON-NLS-1$
-                    + "irreversible; default false = only remove the reference from EDT's " //$NON-NLS-1$
-                    + "list).") //$NON-NLS-1$
-            .stringProperty("infobaseName", //$NON-NLS-1$
-                "create_launch_config: name of an existing infobase in EDT's list to " //$NON-NLS-1$
-                    + "associate (required for that operation).") //$NON-NLS-1$
+            .stringProperty("platform", "create_infobase: platform version (blank = latest).") //$NON-NLS-1$
+            .stringProperty("templateCf", "create_infobase: optional .cf/.cfe to load on create.") //$NON-NLS-1$
+            .booleanProperty("deleteContent", "delete_infobase: also delete the .1CD directory on disk (DESTRUCTIVE, default false).") //$NON-NLS-1$
+            .stringProperty("infobaseName", "create_launch_config: existing infobase to associate (required).") //$NON-NLS-1$
             .stringProperty("accessMode", //$NON-NLS-1$
                 "set_infobase_credentials / register_infobase: INFOBASE (user + password) or " //$NON-NLS-1$
                     + "OS (pass-through, no user/password).") //$NON-NLS-1$
@@ -392,115 +365,38 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("password", //$NON-NLS-1$
                 "set_infobase_credentials / register_infobase: infobase password (for INFOBASE " //$NON-NLS-1$
                     + "access). Stored encrypted; never logged or returned.") //$NON-NLS-1$
-            .stringProperty("launchConfigurationName", //$NON-NLS-1$
-                "update_database / start_client: exact name of an existing EDT runtime-client " //$NON-NLS-1$
-                    + "launch configuration (preferred over projectName + applicationId - see " //$NON-NLS-1$
-                    + "list_configurations).") //$NON-NLS-1$
-            .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "start_client: update before starting (default false). Explicit true is refused " //$NON-NLS-1$
-                    + "when a preset disabled update_database. A running client with no " //$NON-NLS-1$
-                    + "startupOption, waitForEndpoint, clientType or runMode answers " //$NON-NLS-1$
-                    + "alreadyRunning (started=false) before that gate.") //$NON-NLS-1$
-            .booleanProperty("allowSecondSession", //$NON-NLS-1$
-                "start_client: start even when this configuration already has a client running " //$NON-NLS-1$
-                    + "(default false - the running one is reported instead).") //$NON-NLS-1$
-            .stringProperty("startupOption", //$NON-NLS-1$
-                "start_client: /C only, on this launch's copy; the saved configuration is not " //$NON-NLS-1$
-                    + "changed. An external-object binding and /Execute are set by the environment " //$NON-NLS-1$
-                    + "from that configuration, not by this argument. Refused while its client is " //$NON-NLS-1$
-                    + "already running.") //$NON-NLS-1$
-            .stringProperty("clientType", //$NON-NLS-1$
-                "start_client: the client to start - thin, thick or web. Omitted: the launch " //$NON-NLS-1$
-                    + "configuration's own, thin for one created here, and thick whenever the run " //$NON-NLS-1$
-                    + "mode is ordinary. Applied to this launch's own configuration copy; a " //$NON-NLS-1$
-                    + "configuration created here is saved with it.") //$NON-NLS-1$
-            .stringProperty("runMode", //$NON-NLS-1$
-                "start_client: ordinary or managed; omitted, the configuration's default run " //$NON-NLS-1$
-                    + "mode. Ordinary puts /RunModeOrdinaryApplication among the infobase's " //$NON-NLS-1$
-                    + "additional launch parameters for this EDT session, managed takes it out; " //$NON-NLS-1$
-                    + "the list on disk is not written. The answer says what changed.") //$NON-NLS-1$
-            .stringProperty("waitForEndpoint", //$NON-NLS-1$
-                "start_client: wait for this URL to answer before reporting started - ready is " //$NON-NLS-1$
-                    + "any final status below 500, at most five redirects. A client whose " //$NON-NLS-1$
-                    + "endpoint never answers is NOT stopped; the refusal says so.") //$NON-NLS-1$
-            .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
-                "start_client: how long to wait for waitForEndpoint, default 20, limit 50. " //$NON-NLS-1$
-                    + "Refused without waitForEndpoint.") //$NON-NLS-1$
-            .booleanProperty("fullUpdate", //$NON-NLS-1$
-                "update_database: true triggers a full reload; false runs an incremental " //$NON-NLS-1$
-                    + "update instead (default false).") //$NON-NLS-1$
-            .booleanProperty("verifyInfobaseContent", //$NON-NLS-1$
-                "update_database: before an incremental update, read the infobase's own ConfigDumpInfo and refuse when it does not match the stored copy (default false).") //$NON-NLS-1$
-            .booleanProperty("autoRestructure", //$NON-NLS-1$
-                "update_database: apply infobase restructuring automatically when required " //$NON-NLS-1$
-                    + "(default true).")
-            .booleanProperty("protectData", //$NON-NLS-1$
-                "update_database: before starting, compare the infobase's synchronization " //$NON-NLS-1$
-                    + "baseline with the model; a data-carrying entity the base holds and the " //$NON-NLS-1$
-                    + "model does not stops the call with status=confirmationRequired and the " //$NON-NLS-1$
-                    + "addresses in dataLossTables (default true).")
-            .booleanProperty("acceptDataLoss", //$NON-NLS-1$
-                "update_database: carry through the deletion protectData found, so the update " //$NON-NLS-1$
-                    + "runs and the table is dropped (default false - the call is refused " //$NON-NLS-1$
-                    + "instead).") //$NON-NLS-1$
-            .booleanProperty("autoFreeClients", //$NON-NLS-1$
-                "update_database: before updating, stop this project's own matching " //$NON-NLS-1$
-                    + "runtime-client sessions so they cannot keep the infobase locked " //$NON-NLS-1$
-                    + "(default false).") //$NON-NLS-1$
-            .stringProperty("timeoutSeconds", //$NON-NLS-1$
-                "update_database: soft wait in seconds (5-120, default 30) before Pending and a " //$NON-NLS-1$
-                    + "runKey. export_database_snapshot / restore_database_snapshot: the same wait " //$NON-NLS-1$
-                    + "(alias waitSeconds); a large dump or load outlives it and is collected with " //$NON-NLS-1$
-                    + "the runKey. sync_control rebuild_dump_info: each Designer run (60-3600, " //$NON-NLS-1$
-                    + "default 600). retrieve_database_changes: wait before Pending (30-3600, " //$NON-NLS-1$
-                    + "default 300). That budget also bounds " //$NON-NLS-1$
-                    + "BuildTaskHelper.waitForBuildAndDerivedData; the build-job wait is unbounded " //$NON-NLS-1$
-                    + "and running out ends quietly. The platform pull is not cancelled.") //$NON-NLS-1$
-            .stringProperty("runKey", //$NON-NLS-1$
-                "update_database / export_database_snapshot / restore_database_snapshot: " //$NON-NLS-1$
-                    + "resumes a Pending run issued earlier with this runKey; other params are " //$NON-NLS-1$
-                    + "ignored once runKey is supplied. sync_control " //$NON-NLS-1$
-                    + "syncOperation=retrieve_database_changes: resumes that Pending pull; how long " //$NON-NLS-1$
-                    + "this call waits is timeoutSeconds.") //$NON-NLS-1$
-            .booleanProperty("cancel", //$NON-NLS-1$
-                "update_database / export_database_snapshot / restore_database_snapshot: " //$NON-NLS-1$
-                    + "combined with runKey, detach and stop tracking that run (best-effort " //$NON-NLS-1$
-                    + "only; a load that has begun is not undone). sync_control " //$NON-NLS-1$
-                    + "syncOperation=retrieve_database_changes: with runKey, stop tracking that pull. " //$NON-NLS-1$
-                    + "The platform call, once started, is still running and the answer says so.") //$NON-NLS-1$
-            .booleanProperty("statusOnly", //$NON-NLS-1$
-                "update_database: read what updates are being tracked and start nothing - " //$NON-NLS-1$
-                    + "runKeys, state, elapsed time. projectName filters by project; any other " //$NON-NLS-1$
-                    + "run-shaping parameter beside runKey or cancel is refused. A snapshot run " //$NON-NLS-1$
-                    + "is not in this list; poll it with its own runKey.") //$NON-NLS-1$
-            .booleanProperty("refreshWorkspace", //$NON-NLS-1$
-                "update_database: refresh the project (and an extension's parent) from disk " //$NON-NLS-1$
-                    + "before the update state is read (default true); the answer carries " //$NON-NLS-1$
-                    + "workspaceRefresh.changedResources.") //$NON-NLS-1$
+            .stringProperty("launchConfigurationName", "update_database / start_client: existing launch configuration name (preferred over projectName + applicationId).") //$NON-NLS-1$
+            .booleanProperty("updateBeforeLaunch", "start_client: update first (default false). Explicit true is refused when update_database is preset-disabled; a running client with no startupOption, waitForEndpoint, clientType or runMode answers alreadyRunning (started=false) before that gate.") //$NON-NLS-1$
+            .booleanProperty("allowSecondSession", "start_client: start even when a client is already running (default false; the running one is reported).") //$NON-NLS-1$
+            .stringProperty("startupOption", "start_client: /C only; applies to this launch's copy - the saved configuration is not changed. /Execute and the external-object binding come from that configuration. Refused while its client runs.") //$NON-NLS-1$
+            .stringProperty("clientType", "start_client: thin / thick / web; default the configuration's, thin for one created here, thick for ordinary run mode.") //$NON-NLS-1$
+            .stringProperty("runMode", "start_client: ordinary / managed; default the configuration's. Ordinary adds /RunModeOrdinaryApplication for this session only; managed removes it.") //$NON-NLS-1$
+            .stringProperty("waitForEndpoint", "start_client: wait for this URL to answer (<500, at most five redirects); a client that never answers is not stopped.") //$NON-NLS-1$
+            .integerProperty("endpointTimeoutSeconds", "start_client: wait in seconds for waitForEndpoint (default 20, max 50); refused without waitForEndpoint.") //$NON-NLS-1$
+            .booleanProperty("fullUpdate", "update_database: full reload instead of incremental (default false).") //$NON-NLS-1$
+            .booleanProperty("verifyInfobaseContent", "update_database: refuse an incremental update whose infobase ConfigDumpInfo differs (default false).") //$NON-NLS-1$
+            .booleanProperty("autoRestructure", "update_database: apply restructuring automatically (default true).")
+            .booleanProperty("protectData", "update_database: compare baseline and model before starting; a data-loss difference stops the call with confirmationRequired and dataLossTables (default true).")
+            .booleanProperty("acceptDataLoss", "update_database: carry through the deletion protectData found (default false: refused).") //$NON-NLS-1$
+            .booleanProperty("autoFreeClients", "update_database: stop this project's matching clients first (default false).") //$NON-NLS-1$
+            .stringProperty("timeoutSeconds", "update_database: wait before Pending (5-120, default 30). Snapshots: the same wait (alias waitSeconds). rebuild_dump_info: per Designer run (60-3600, default 600). retrieve_database_changes: 30-3600, default 300; also the BuildTaskHelper.waitForBuildAndDerivedData budget; the build-job wait is unbounded.") //$NON-NLS-1$
+            .stringProperty("runKey", "update_database / snapshots: resume a Pending run; other params are ignored with runKey. retrieve_database_changes: resumes that pull.") //$NON-NLS-1$
+            .booleanProperty("cancel", "update_database / snapshots / sync_control retrieve_database_changes with runKey: detach and stop tracking (best-effort). A load already begun is not undone and the platform call keeps running.") //$NON-NLS-1$
+            .booleanProperty("statusOnly", "update_database: list tracked updates and start nothing; any other run-shaping parameter beside runKey or cancel is refused. Snapshot runs are polled by their own runKey.") //$NON-NLS-1$
+            .booleanProperty("refreshWorkspace", "update_database: refresh the project (and an extension's parent) from disk first (default true).") //$NON-NLS-1$
             .stringProperty("syncOperation", //$NON-NLS-1$
                 "sync_control's OWN action - status / diagnose / diagnose_delta / suppress " //$NON-NLS-1$
                     + "/ reseed_baseline / mark_synchronized / diagnose_stuck_locks / " //$NON-NLS-1$
                     + "recover_stuck_merge / list_support_snapshots / release_support_snapshot / " //$NON-NLS-1$
                     + "rebuild_dump_info / retrieve_database_changes " //$NON-NLS-1$
                     + "(required when operation=sync_control).") //$NON-NLS-1$
-            .booleanProperty("replaceLocal", //$NON-NLS-1$
-                "sync_control syncOperation=retrieve_database_changes: false (default) refuses " //$NON-NLS-1$
-                    + "the pull when the project has changes of its own; true takes the infobase's " //$NON-NLS-1$
-                    + "version of those objects.") //$NON-NLS-1$
-            .booleanProperty("markSynchronized", //$NON-NLS-1$
-                "sync_control syncOperation=retrieve_database_changes: true rewrites the baseline " //$NON-NLS-1$
-                    + "after a successful pull. A failed rewrite is baselineMarked=false with the " //$NON-NLS-1$
-                    + "reason on the answer. Default false.") //$NON-NLS-1$
+            .booleanProperty("replaceLocal", "retrieve_database_changes: true takes the infobase version when the project has changes (default false: refused).") //$NON-NLS-1$
+            .booleanProperty("markSynchronized", "retrieve_database_changes: rewrite the baseline after a pull (default false); a failed rewrite is baselineMarked=false.") //$NON-NLS-1$
             .booleanProperty("enabled", //$NON-NLS-1$
                 "sync_control syncOperation=suppress: true = suppress synchronization for " //$NON-NLS-1$
                     + "the project (skip it on update), false = re-enable.") //$NON-NLS-1$
-            .stringProperty("infobaseUuid", //$NON-NLS-1$
-                "sync_control syncOperation=reseed_baseline / mark_synchronized / " //$NON-NLS-1$
-                    + "recover_stuck_merge: the target infobase (an infobaseUuid from " //$NON-NLS-1$
-                    + "syncOperation=status / diagnose_stuck_locks).") //$NON-NLS-1$
-            .booleanProperty("confirm", //$NON-NLS-1$
-                "sync_control: reseed_baseline, mark_synchronized, recover_stuck_merge, " //$NON-NLS-1$
-                    + "rebuild_dump_info - must be true.") //$NON-NLS-1$
+            .stringProperty("infobaseUuid", "reseed_baseline / mark_synchronized / recover_stuck_merge: target infobaseUuid.") //$NON-NLS-1$
+            .booleanProperty("confirm", "sync_control: reseed_baseline, mark_synchronized, recover_stuck_merge - and rebuild_dump_info - must be true.") //$NON-NLS-1$
             .build();
     }
 
@@ -767,6 +663,8 @@ public class InfobaseAdminFacadeTool implements IMcpTool
                 + "/ user / severity.\n"); //$NON-NLS-1$
             sb.append("- **help** - this catalog. Pass topic=workflow for the operation picker " //$NON-NLS-1$
                 + "guide.\n"); //$NON-NLS-1$
+            sb.append("The standalone tools behind these operations remain callable for " //$NON-NLS-1$
+                + "back-compat.\n"); //$NON-NLS-1$
             return sb.toString();
         }
         if ("workflow".equals(topic)) //$NON-NLS-1$

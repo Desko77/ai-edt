@@ -15,7 +15,7 @@ the message before deciding.
 | `requiresCascadeForms` with `affectedForms` | Removing the field would change forms. | Review the listed forms, confirm the destructive step, repeat with `cascadeForms=true`. |
 | Names ending in `ApiNotFound`, or `dcsFactoryMethodNotFound` | The installed EDT runtime does not expose the API this operation needs. | Not an implementation defect and not fixable by retrying. Tell the user and offer the equivalent action in the EDT interface. |
 | `kindMismatch` on an export | The output path does not match the object kind. | Match `.epf` and `.erf` to the object. |
-| A tool is disabled or not found | The active preset hides it, or the build does not have it. | Do not work around it. Say which preset change or which build would provide it. |
+| A tool is disabled or not found | A disabled name is refused; a name absent from `tools/list` may instead be a hidden, callable compatibility alias. | Read `aiedt://guidance` and the refusal. Do not bypass a disabled route; do not infer that a hidden name is disabled. |
 | An infobase operation refused, and the answer names who holds the base | The runtime clients this EDT launched, and the other AI-EDT servers on this machine with the project open. | Close what it names. An empty list means none that this server can see - a client started from a shortcut, or a Designer opened by hand, is invisible to it and is never "nobody". |
 | A removal answered that it removed nothing, naming another operation | The name is not a form item. It is a form, a metadata object or a template, and each has its own operation. | Call the operation the refusal names. Repeating `remove_item` cannot succeed. |
 | A data-path refusal on an extension form, naming the element, the path and a reason | Both halves came out against the path: EDT does not export it with the extension form, and the form does not resolve it. Nothing was written. | Read the reason. An unborrowed attribute: the borrow of the form attribute ran inside the refused write and was rolled back with it - fix the cause the reason names and repeat the call; `extension_workshop operation=borrow_object` borrows a metadata object and does not redo that borrow. A path the form does not resolve: bind to an attribute the extension can carry, or drop the path. Repeating the same call cannot succeed. |
@@ -33,6 +33,24 @@ One editing cycle is one object or one module until it validates. After two fail
 same error with the same approach, change the approach. If no other approach is visible, stop and
 ask. Stopping applies to that approach, not to the task: finish the independent parts and say what
 is left.
+
+## Module text, ranges and write targets
+
+`read_module_source` accepts `projectName`, `modulePath`, `startLine` and `endLine`.
+The bounds are inclusive and 1-based; one answer carries at most 5000 lines. Each range call selects
+and reads the source again, so do not assume ranges taken across edits describe one revision.
+`read_method_source` accepts `projectName`, `modulePath`, `methodName` and `includeDoc` (default false).
+These readers do not declare `resultId`, `offset`, `pageSize` or a pinned-result continuation.
+Do not invent those arguments or confuse line-range reading with a `Pending` / `runKey` operation.
+
+Both readers choose a matching module provider first, then an unsaved physical-editor buffer,
+then the file. Provider priority also applies when a physical file and unsaved editor exist at the
+same address. `Unsaved` marks a physical-editor answer. Provider answers name `source` and
+`container`; read the source note before writing. `write_module_source` and `diff_module` use the
+physical file when present, otherwise the provider. With both present, the reader names the
+physical write and comparison target. A write to a physical file with unsaved editor changes is
+refused; save or revert the editor first. Ordinary-form module addresses are `src/`-relative paths,
+not module FQNs or paths prefixed with the project name; a leading `src/` is accepted and stripped.
 
 ## Large configurations
 

@@ -129,6 +129,14 @@ A `401` from `/mcp` while `/health` answers is not the server being down: the to
 
 Reading and analysis without the server are fine. Writing into an EDT project without it is not.
 
+## Built-in route guidance
+
+`initialize` and `server/discover` carry `instructions` pointing to `aiedt://guidance`.
+Read it with MCP `resources/read` and `uri=aiedt://guidance` before choosing a launch, import,
+export or ordinary-form route. It names entry points, argument conditions and current preset gates.
+Availability is evaluated at read time, not promised for the next call. `hidden, callable` is not
+`off`; a refusal on one argument is not evidence that the whole tool or EDT is unavailable.
+
 ## Entry points
 
 A facade replaces a family of related tools: one name, with the action chosen by an `operation`
@@ -216,7 +224,9 @@ EDT runtime supports.
   `standard` lists at most 30 methods per module by default (`maxMethods`).
 - `get_module_structure`, then `read_method_source` for the one method you need. This works on
   modules of tens of thousands of lines and gives exact method boundaries cheaply. Do not fall
-  back to reading whole files because a module is large.
+  back to reading whole files because a module is large. `read_module_source` takes inclusive,
+  1-based `startLine` / `endLine` ranges and returns at most 5000 lines per call; the next range
+  reads the source again. See `references/expected-behavior.md` for source priority and write targets.
 - Cache large maps (module lists, FQN catalogues, the structure of a big module) once into an
   ignored file in the project instead of asking again.
 - Push heavy sweeps into a sub-agent so the raw output does not settle in the main context.
