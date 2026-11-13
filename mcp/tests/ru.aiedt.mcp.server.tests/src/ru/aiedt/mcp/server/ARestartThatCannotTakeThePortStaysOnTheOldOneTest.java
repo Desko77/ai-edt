@@ -339,13 +339,6 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
         }
     }
 
-    /**
-     * Takes the loopback address of a port, which is the address the endpoint binds first.
-     *
-     * @param port the port to hold
-     * @return the holder, to be closed by the caller
-     * @throws IOException when the port cannot be taken
-     */
     /** Reserves the complete fixture span before any endpoint is started. */
     private static ServerSocket[] reserveFourPorts() throws IOException
     {

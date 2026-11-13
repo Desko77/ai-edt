@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import re
+import runpy
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -144,6 +145,34 @@ HANDOFF = re.compile(
     r"switch\s*\((operation|action|op|mode)\)|\.handler\.apply\(|UiSync\.call\(|syncExec\(")
 
 
+# Reuse the Java literal/comment-aware brace walker used by the argument census.
+_balanced_span = runpy.run_path(str(pathlib.Path(__file__).with_name(
+    "check-operation-params.py")))["balanced_span"]
+EXECUTE_DECL = re.compile(
+    r"(?:^|[;{}\n])\s*(?:(?:public|protected|private|static|final|synchronized)\s+)*"
+    r"[\w.<>?,\[\] ]+\s+execute\s*\([^;{}()]*\)\s*"
+    r"(?:throws [\w.,\s]+)?\s*\{", re.M)
+
+
+def execution_entry(source: str) -> str:
+    """Keep execute's body at its original offsets; snippets without it stay readable.
+
+    A field initializer may declare an anonymous callback whose body is only invoked later.
+    Its textual position says nothing about when a facade request performs that work. Inspect
+    the request entry instead, without dropping any pre-step actually called inside execute.
+    """
+    code = without_comments(source)
+    declaration = EXECUTE_DECL.search(code)
+    if declaration is None:
+        return code
+    start = declaration.end() - 1
+    end = _balanced_span(code, start, "{", "}")
+    if end < 0:
+        # Do not silently truncate malformed input into a passing check.
+        return code
+    return " " * start + code[start:end]
+
+
 def gate_comes_first(source: str) -> str | None:
     """Returns why a facade's gate is too late, or None when it is early enough.
 
@@ -152,6 +181,7 @@ def gate_comes_first(source: str) -> str | None:
     gate sat after it: a call the preset had switched off still wrote to the infobase and only then
     got its error.
     """
+    source = execution_entry(source)
     gate = min((source.find(g) for g in GATES if source.find(g) != -1), default=-1)
     if gate == -1:
         return None

@@ -3493,22 +3493,6 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * Launches the thick client, draining its merged stdout/stderr as cp1251 on a daemon thread.
-     * On timeout, reads the 1C windows of the process and its descendants, then destroys the
-     * process tree (child 1C workers first). Registers the client under
-     * the run's key while it lives, so a cancel from another call can reach it.
-     *
-     * @param command the client and its arguments.
-     * @param workingDir where to run.
-     * @param timeoutSec how long to wait for the client.
-     * @param runKey the key this run is cancelled by; null when nobody can cancel it.
-     * @param launched raised once a process exists, so a caller can tell a client that may be
-     *            reading its scenario from a launch that never happened.
-     * @return how the client ended and what it printed
-     * @throws Exception when the client cannot be launched or the wait is interrupted
-     */
-
-    /**
      * The result file of a run: the one this asked for, or the xml Vanessa wrote beside it.
      * <p>
      * Vanessa names the files it writes itself, so the run directory is searched when the

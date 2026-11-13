@@ -386,10 +386,6 @@ public final class FormExtensionDataPathGuard
     }
 
     /**
-     * @param pathText a dotted data path
-     * @return the first segment, or an empty string when there is none
-     */
-    /**
      * Proves only explicit local attributes/columns, never metadata dependencies or inferred tails.
      * SettingsComposer.Settings is not inferred from its root type: absent a complete local model,
      * that path requires affirmative runtime resolution and persistence checks.

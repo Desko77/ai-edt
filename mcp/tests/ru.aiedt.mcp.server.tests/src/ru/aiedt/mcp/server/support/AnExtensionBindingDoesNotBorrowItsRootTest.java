@@ -46,7 +46,8 @@ public class AnExtensionBindingDoesNotBorrowItsRootTest
     }
 
     /** Both assignment funnels must check safety before replacing an existing path. */
-    @Test public void refusedSetterPreservesThePreviousDataPath() throws Exception
+    @Test
+    public void refusedSetterPreservesThePreviousDataPath() throws Exception
     {
         assertRefusedSetterPreservesPath(false, false);
         assertRefusedSetterPreservesPath(true, false);
