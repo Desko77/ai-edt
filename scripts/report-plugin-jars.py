@@ -461,6 +461,74 @@ def normalised(path):
     return os.path.normcase(os.path.normpath(str(path)))
 
 
+def config_properties(config_area):
+    """Read Java properties strictly; ambiguous declarations cannot select an agent."""
+    ini = Path(config_area) / "config.ini"
+    if not ini.exists():
+        return {}
+    text = ini.read_text(encoding="utf-8", errors="strict")
+
+    def decode(value):
+        def escape(match):
+            token = match.group(1)
+            if token.startswith("u"):
+                if not re.fullmatch(r"u[0-9a-fA-F]{4}", token):
+                    raise ValueError("malformed Unicode property escape")
+                return chr(int(token[1:], 16))
+            return {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}.get(token, token)
+        if len(value) - len(value.rstrip("\\")) & 1:
+            raise ValueError("unfinished property escape")
+        return re.sub(r"\\(u.{0,4}|.)", escape, value)
+
+    properties = {}
+    pending = ""
+    for raw in text.splitlines():
+        line = pending + raw.lstrip(" \t\f")
+        if (len(line) - len(line.rstrip("\\"))) % 2:
+            pending = line[:-1]
+            continue
+        pending = ""
+        if not line or line.startswith(("#", "!")):
+            continue
+        match = re.match(r"((?:\\.|[^\s=:])+)(?:\s*[=:]\s*|\s+)?(.*)$", line)
+        if not match:
+            raise ValueError("malformed config.ini property")
+        key, value = decode(match[1]), decode(match[2])
+        if key in properties:
+            raise ValueError("duplicate config.ini property: " + key)
+        properties[key] = value
+    if pending:
+        raise ValueError("unfinished property continuation")
+    return properties
+
+
+def declared_agent(config_area, value):
+    """Resolve only the declared local agent, never search for another one."""
+    if not value or "\x00" in value or re.search(r"%(?![0-9a-fA-F]{2})", value):
+        raise ValueError("malformed p2 data area")
+    if value.startswith("@config.dir/"):
+        value = value[len("@config.dir/"):]
+    elif value == "@config.dir":
+        return Path(config_area)
+    elif value.startswith("@"):
+        raise ValueError("unsupported p2 data area variable")
+    parsed = urlparse(value)
+    if parsed.scheme:
+        if (parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment
+                or not parsed.path.startswith("/")):
+            raise ValueError("unsupported p2 data area URL")
+        path = Path(url2pathname(parsed.path))
+        if not path.is_absolute():
+            raise ValueError("p2 file URL is not absolute")
+    else:
+        if parsed.query or parsed.fragment:
+            raise ValueError("unsupported p2 data area location")
+        path = Path(value)
+        if not path.is_absolute():
+            path = Path(config_area) / path
+    return Path(os.path.abspath(path))
+
+
 def read_config_ini_profile_id(config_area):
     """The profile id the area's config.ini names with eclipse.p2.profile, or None.
 
@@ -504,7 +572,7 @@ def read_snapshot_bytes(path, cap):
 
 
 def parse_profile_snapshot(data):
-    """(root attributes, root properties, legacy units) of one snapshot's XML.
+    """(root attributes, root properties, targeted units) of one snapshot's XML.
 
     Streamed and cleared element by element: a profile of a real EDT installation carries a
     few thousand unit elements with nested provision data, and holding the whole tree is
@@ -533,7 +601,7 @@ def parse_profile_snapshot(data):
                 properties[element.get("name")] = element.get("value")
             elif element.tag == "unit":
                 unit_id = element.get("id")
-                if unit_id in LEGACY_OFORM_IUS:
+                if unit_id in LEGACY_OFORM_IUS + (DEFAULT_BUNDLE, OFORM_BUNDLE, "ru.aiedt.mcp.editor"):
                     units.append({"id": unit_id, "version": element.get("version")})
         element.clear()
     if not root_attributes:
@@ -573,7 +641,14 @@ def p2_profile_status(config_area):
     say, and the known payload carries the unit ids of the closed delivery's feature with
     their versions, the snapshot's timestamp and the folders the profile names.
     """
-    registry = Path(config_area).parent.joinpath(*P2_REGISTRY_PARTS)
+    try:
+        ini = config_properties(config_area)
+        explicit_agent = "eclipse.p2.data.area" in ini
+        agent = (declared_agent(config_area, ini["eclipse.p2.data.area"])
+                 if explicit_agent else Path(config_area).parent / "p2")
+    except (OSError, UnicodeError, ValueError) as error:
+        return {"status": "unknown", "reason": "config.ini cannot select a p2 agent: %s" % error}
+    registry = agent.joinpath(*P2_REGISTRY_PARTS[1:])
     if not registry.is_dir():
         return {"status": "unknown", "reason": "the area holds no p2 profile registry"}
     try:
@@ -581,7 +656,9 @@ def p2_profile_status(config_area):
                         if entry.is_dir() and entry.name.endswith(".profile")]
     except OSError as error:
         return {"status": "unknown", "reason": "the p2 registry cannot be listed (%s)" % error}
-    named = read_config_ini_profile_id(config_area)
+    named = ini.get("eclipse.p2.profile")
+    if named is not None and (not named or named in (".", "..") or "/" in named or "\\" in named):
+        return {"status": "unknown", "reason": "config.ini names an invalid profile id"}
     if named:
         if not any(entry.name == named + ".profile" for entry in profile_dirs):
             return {"status": "unknown",
@@ -613,19 +690,38 @@ def p2_profile_status(config_area):
                 "reason": "the latest snapshot is of the %s profile, not the selected %s"
                           % (root_attributes.get("id"), selected)}
     bound = properties.get(CONFIGURATION_FOLDER_PROPERTY)
-    if not bound:
+    if CONFIGURATION_FOLDER_PROPERTY in properties and not bound:
+        return {"status": "unknown", "reason": "the profile has an empty configurationFolder binding"}
+    shared_binding = CONFIGURATION_FOLDER_PROPERTY not in properties and explicit_agent and bool(named)
+    if not bound and not shared_binding:
         return {"status": "unknown",
                 "reason": "the profile does not name the configuration area it belongs to"}
-    if normalised(bound) != normalised(config_area):
+    if bound and normalised(bound) != normalised(config_area):
         return {"status": "unknown",
                 "reason": "the profile is bound to %s, not this configuration area" % bound}
+    install = properties.get(INSTALL_FOLDER_PROPERTY)
+    if explicit_agent and (not install or normalised(install) != normalised(Path(config_area).parent)):
+        return {"status": "unknown", "reason": "the profile installFolder does not match this installation"}
+    info = Path(config_area) / "org.eclipse.equinox.simpleconfigurator" / "bundles.info"
+    if info.exists() or shared_binding:
+        try:
+            text = info.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeError) as error:
+            return {"status": "unknown", "reason": "bundles.info cannot prove profile membership: %s" % error}
+        if shared_binding and not parse_bundles_info(text, DEFAULT_BUNDLE):
+            return {"status": "unknown", "reason": "bundles.info holds no server membership to prove the shared binding"}
+        for bundle in (DEFAULT_BUNDLE, OFORM_BUNDLE, "ru.aiedt.mcp.editor"):
+            recorded = {version for version, _ in parse_bundles_info(text, bundle)}
+            installed = {unit["version"] for unit in units if unit["id"] == bundle}
+            if recorded != installed:
+                return {"status": "unknown", "reason": "p2 profile membership differs from bundles.info for " + bundle}
     return {
         "status": "known",
         "profileId": selected,
         "snapshot": stamp,
         "installFolder": properties.get(INSTALL_FOLDER_PROPERTY),
         "cache": properties.get(CACHE_PROPERTY),
-        "legacyUnits": units,
+        "legacyUnits": [unit for unit in units if unit["id"] in LEGACY_OFORM_IUS],
     }
 
 
