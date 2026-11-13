@@ -72,128 +72,57 @@ public class LaunchDebuggerTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Unified debugger control. Pass action=<name> plus action-specific " //$NON-NLS-1$
-            + "parameters (snake_case canonical; camelCase like addBreakpoint is also " //$NON-NLS-1$
-            + "accepted). Actions: launch (start an application in debug), " //$NON-NLS-1$
-            + "add_breakpoint / remove_breakpoint / list_breakpoints, " //$NON-NLS-1$
-            + "set_exception_breakpoint (suspend on a raised error), run_to_line " //$NON-NLS-1$
-            + "(resume to a line, one-shot), wait_for_break (block until a breakpoint " //$NON-NLS-1$
-            + "hits), get_state / debug_status, get_variables, set_variable, " //$NON-NLS-1$
-            + "step_over / step_into / step_out / step, resume, pause_thread (suspend a " //$NON-NLS-1$
-            + "running session), set_breakpoint_state (enable or disable a breakpoint " //$NON-NLS-1$
-            + "without removing it), terminate (stop a " //$NON-NLS-1$
-            + "running launch by applicationId / all=true / lone active), evaluate " //$NON-NLS-1$
-            + "(run a BSL expression in the current stack frame), start_profiling / " //$NON-NLS-1$
-            + "get_profiling_results, help. The standalone tools (set_breakpoint, " //$NON-NLS-1$
-            + "remove_breakpoint, list_breakpoints, set_exception_breakpoint, run_to_line, " //$NON-NLS-1$
-            + "wait_for_break, get_variables, set_variable, step, resume, pause_thread, " //$NON-NLS-1$
-            + "set_breakpoint_state, terminate_launch, " //$NON-NLS-1$
-            + "evaluate_expression, debug_launch, debug_status, start_profiling, " //$NON-NLS-1$
-            + "get_profiling_results) are back-compat aliases of the matching actions; prefer " //$NON-NLS-1$
-            + "this facade for new prompts."; //$NON-NLS-1$
+        return "Launch and control EDT debug sessions. Pass action and its parameters; " //$NON-NLS-1$
+            + "snake_case and camelCase actions are accepted. action=help topic=workflow " //$NON-NLS-1$
+            + "describes the workflow; standalone tools remain callable as compatibility aliases."; //$NON-NLS-1$
     }
 
+    /** Describes all supported arguments without dispatching an operation. */
     @Override
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("action", //$NON-NLS-1$
-                "Action: launch / add_breakpoint / remove_breakpoint / list_breakpoints / " //$NON-NLS-1$
-                + "set_exception_breakpoint / run_to_line / wait_for_break / get_state / " //$NON-NLS-1$
-                + "get_variables / set_variable / step_over / step_into / step_out / step / " //$NON-NLS-1$
-                + "resume / pause_thread / set_breakpoint_state / terminate / evaluate / " //$NON-NLS-1$
-                + "start_profiling / get_profiling_results / " //$NON-NLS-1$
-                + "debug_status / help (snake_case canonical; camelCase like addBreakpoint " //$NON-NLS-1$
-                + "is also accepted).", true) //$NON-NLS-1$
-            .stringProperty("topic", //$NON-NLS-1$
-                "Help topic when action=help: workflow (the typical debug sequence). " //$NON-NLS-1$
-                + "Without topic - lists actions.") //$NON-NLS-1$
+            .stringProperty("action", "Action: launch / add_breakpoint / remove_breakpoint / list_breakpoints / set_exception_breakpoint / run_to_line / wait_for_break / get_state / get_variables / set_variable / step_over / step_into / step_out / step / resume / pause_thread / set_breakpoint_state / terminate / evaluate / start_profiling / get_profiling_results / debug_status / help (snake_case canonical; camelCase like addBreakpoint accepted).", true) //$NON-NLS-1$
+            .stringProperty("topic", "With action=help: workflow describes the typical debug sequence; omitted topic lists actions.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", "EDT project name (most actions).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Id from infobase_admin operation=get_applications.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("launchConfigurationName", //$NON-NLS-1$
-                "launch: exact name of an EDT debug launch configuration (runtime client or Attach). " //$NON-NLS-1$
-                    + "Use for Attach configurations (server-side debug: HTTP services, background jobs, " //$NON-NLS-1$
-                    + "scheduled jobs) or to select a specific client configuration by name.") //$NON-NLS-1$
-            .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "launch: update the database before launching (default true; ignored for Attach). " //$NON-NLS-1$
-                    + "Under a preset that disabled update_database an omitted argument launches " //$NON-NLS-1$
-                    + "without updating (the answer carries databaseUpdate=SKIPPED_BY_PRESET); an " //$NON-NLS-1$
-                    + "explicit true is refused.") //$NON-NLS-1$
+            .stringProperty("launchConfigurationName", "launch: exact EDT runtime-client or Attach configuration name. Selects a client by name or an Attach configuration for server-side debugging (HTTP services/background/scheduled jobs).") //$NON-NLS-1$
+            .booleanProperty("updateBeforeLaunch", "launch: update database first (default true; ignored for Attach). With update_database disabled by preset: omitted launches without update and returns databaseUpdate=SKIPPED_BY_PRESET; explicit true refused.") //$NON-NLS-1$
             .integerProperty("debugServerPort", //$NON-NLS-1$
                 "launch: debug server port, 1..65535, when another 1C:EDT holds the default.") //$NON-NLS-1$
-            .booleanProperty("enableExternalObjectDump", //$NON-NLS-1$
-                "launch: turn dump generation on in the project settings. Off refuses when the " //$NON-NLS-1$
-                    + "dump service answers; an unreachable service also refuses (Nothing was " //$NON-NLS-1$
-                    + "launched). true is refused by the write door of a preset that blocks " //$NON-NLS-1$
-                    + "writing.", false) //$NON-NLS-1$
-            .stringProperty("externalObjectName", //$NON-NLS-1$
-                "launch: open this processor or report in a client launch configuration. It is an " //$NON-NLS-1$
-                    + "external-object project; a ready .epf/.erf is imported first via " //$NON-NLS-1$
-                    + "external_object_workshop operation=import_external_object. Attach refuses " //$NON-NLS-1$
-                    + "it and launches nothing.") //$NON-NLS-1$
-            .stringProperty("externalObjectProject", //$NON-NLS-1$
-                "launch: the external-object project holding externalObjectName. Client " //$NON-NLS-1$
-                    + "configurations only; Attach refuses it.") //$NON-NLS-1$
-            .stringProperty("startupOption", //$NON-NLS-1$
-                "launch: /C only, on this launch's copy; the saved configuration is not changed. " //$NON-NLS-1$
-                    + "/Execute is set by the environment from externalObjectName, not by this " //$NON-NLS-1$
-                    + "argument. Refused for Attach and for a client already running.") //$NON-NLS-1$
-            .stringProperty("clientType", //$NON-NLS-1$
-                "launch: the client to start - thin, thick or web. Omitted: the launch " //$NON-NLS-1$
-                    + "configuration's own, thin for one created here, and thick whenever the run " //$NON-NLS-1$
-                    + "mode is ordinary. Applied to this launch's own configuration copy; a " //$NON-NLS-1$
-                    + "configuration created here is saved with it.") //$NON-NLS-1$
-            .stringProperty("runMode", //$NON-NLS-1$
-                "launch: ordinary or managed; omitted, the configuration's default run mode. " //$NON-NLS-1$
-                    + "Ordinary puts /RunModeOrdinaryApplication among the infobase's additional " //$NON-NLS-1$
-                    + "launch parameters for this EDT session, managed takes it out; the list on " //$NON-NLS-1$
-                    + "disk is not written. The answer says what changed.") //$NON-NLS-1$
-            .stringProperty("waitForEndpoint", //$NON-NLS-1$
-                "launch: wait for this URL to answer before reporting ready - ready is any final " //$NON-NLS-1$
-                    + "status below 500, at most five redirects. A launch whose endpoint never " //$NON-NLS-1$
-                    + "answers is NOT stopped; the refusal says so.") //$NON-NLS-1$
-            .integerProperty("endpointTimeoutSeconds", //$NON-NLS-1$
-                "launch: how long to wait for waitForEndpoint, default 20, limit 50. Refused " //$NON-NLS-1$
-                    + "without waitForEndpoint.") //$NON-NLS-1$
+            .booleanProperty("enableExternalObjectDump", "launch: enable dump generation in project settings. If off and service answers, or service unreachable: refused (Nothing was launched). true refused by write door of a preset that blocks writing.", false) //$NON-NLS-1$
+            .stringProperty("externalObjectName", "launch: external processor/report project to open in a client launch configuration. Import an existing .epf/.erf first via external_object_workshop operation=import_external_object. Refused for Attach; nothing launched.") //$NON-NLS-1$
+            .stringProperty("externalObjectProject", "launch: external-object project containing externalObjectName; client configurations only; Attach refused.") //$NON-NLS-1$
+            .stringProperty("startupOption", "launch: /C only on this launch's copy; saved configuration is not changed. /Execute is set by the environment from externalObjectName, not this argument. Refused for Attach or an already running client.") //$NON-NLS-1$
+            .stringProperty("clientType", "launch: thin/thick/web; omitted=launch configuration's type (new configuration: thin; ordinary mode: always thick). Applied to this launch's configuration copy; a new configuration is saved with the choice.") //$NON-NLS-1$
+            .stringProperty("runMode", "launch: ordinary/managed; omitted=config default. For this EDT session, ordinary adds /RunModeOrdinaryApplication to infobase additional launch parameters, managed removes it. Disk list unchanged; response reports changes.") //$NON-NLS-1$
+            .stringProperty("waitForEndpoint", "launch: URL must respond before ready (final status <500, at most five redirects). If it never responds, launch is NOT stopped; refusal reports this.") //$NON-NLS-1$
+            .integerProperty("endpointTimeoutSeconds", "launch: waitForEndpoint wait (default 20, limit 50); refused without waitForEndpoint.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
                 "launch: resume a launch that answered Pending, by the runKey it answered with.") //$NON-NLS-1$
             .booleanProperty("all", //$NON-NLS-1$
                 "terminate: stop every active EDT launch (default false).") //$NON-NLS-1$
             .stringProperty("modulePath", "BSL module path for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("line", "Line number for breakpoint actions.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("breakpoints", //$NON-NLS-1$
-                "add_breakpoint batch: JSON array of {modulePath|module, line|lineNumber, " //$NON-NLS-1$
-                    + "optional condition, hitCount, hitCondition, logExpression}. projectName is " //$NON-NLS-1$
-                    + "inherited by items that omit it.") //$NON-NLS-1$
+            .stringProperty("breakpoints", "add_breakpoint batch: JSON array of {modulePath|module, line|lineNumber, optional condition, hitCount, hitCondition, logExpression}; items inherit omitted projectName.") //$NON-NLS-1$
             .stringProperty("breakpointId", "Breakpoint identifier for remove_breakpoint and " //$NON-NLS-1$
                 + "set_breakpoint_state.") //$NON-NLS-1$
-            .booleanProperty("breakpointEnabled", //$NON-NLS-1$
-                "set_breakpoint_state: true enables the breakpoint, false switches it off " //$NON-NLS-1$
-                    + "without removing it; that action refuses a call without it.") //$NON-NLS-1$
-            .booleanProperty("replaceModuleSet", //$NON-NLS-1$
-                "add_breakpoint batch: drop the breakpoints the addressed modules already carry, " //$NON-NLS-1$
-                    + "so the batch is their whole set (default false).") //$NON-NLS-1$
-            .stringProperty("message", "set_exception_breakpoint: only break for exceptions whose text " //$NON-NLS-1$
-                + "matches this message. Omit to break on any error.") //$NON-NLS-1$
-            .booleanProperty("catchAll", "set_exception_breakpoint: break on any raised error. " //$NON-NLS-1$
-                + "Default true; default false when message is set. Pass explicitly to override.") //$NON-NLS-1$
+            .booleanProperty("breakpointEnabled", "set_breakpoint_state: true enables the breakpoint, false disables without removal; refuses a call without it.") //$NON-NLS-1$
+            .booleanProperty("replaceModuleSet", "add_breakpoint batch: remove addressed modules' current breakpoints so batch becomes their entire set (default false).") //$NON-NLS-1$
+            .stringProperty("message", "set_exception_breakpoint: break only for exceptions whose text matches this message; omitted=any error.") //$NON-NLS-1$
+            .booleanProperty("catchAll", "set_exception_breakpoint: break on any raised error; default true, false if message set. Explicit value overrides.") //$NON-NLS-1$
             .stringProperty("expression", "BSL expression for evaluate.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("frameRef", "Stack frame reference for get_variables / evaluate.") //$NON-NLS-1$ //$NON-NLS-2$
-            .integerProperty("threadId", "Thread id from wait_for_break - alternative to frameRef for " //$NON-NLS-1$
-                + "get_variables / set_variable, and the resume target for step / resume / run_to_line. " //$NON-NLS-1$
-                + "For pause_thread it names the one thread to suspend.") //$NON-NLS-1$
+            .integerProperty("threadId", "Thread ID from wait_for_break: alternative to frameRef for get_variables/set_variable; resume target for step/resume/run_to_line; pause_thread suspends only this thread.") //$NON-NLS-1$
             .integerProperty("frameIndex", "0-based stack-frame index, used with threadId for " //$NON-NLS-1$
                 + "get_variables / set_variable (default 0).") //$NON-NLS-1$
             .stringProperty("expandPath", "get_variables: dot-separated path into a nested variable to " //$NON-NLS-1$
                 + "expand (e.g. Struct.Field).") //$NON-NLS-1$
-            .stringProperty("scope", "get_variables: locals (default), module, or all (locals, " //$NON-NLS-1$
-                + "module variables and module properties). Ignored when expandPath is set.") //$NON-NLS-1$
+            .stringProperty("scope", "get_variables: locals (default)/module/all (locals, module variables, module properties); ignored with expandPath.") //$NON-NLS-1$
             .stringProperty("mode", //$NON-NLS-1$
                 "Bare step action: over, into or out. step_over, step_into and step_out set it.") //$NON-NLS-1$
-            .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "wait_for_break / step timeout in seconds, 1..50; a longer ask is cut to 50 " //$NON-NLS-1$
-                    + "and said so. Aliases: timeoutMs, waitSeconds, timeout.") //$NON-NLS-1$
+            .integerProperty("timeoutSeconds", "wait_for_break/step: seconds, 1..50; larger values clamp to 50 and are reported. Aliases: timeoutMs, waitSeconds, timeout.") //$NON-NLS-1$
             .stringProperty("moduleFilter", "Module substring filter for get_profiling_results.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("minFrequency", "Minimum hit count for get_profiling_results.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("module", "BSL module path for run_to_line (module-relative or absolute).") //$NON-NLS-1$ //$NON-NLS-2$
@@ -536,6 +465,11 @@ public class LaunchDebuggerTool implements IMcpTool
             sb.append("7. `launch_debugger action=step_over` / `step_into` / `resume`.\n"); //$NON-NLS-1$
             sb.append("8. `launch_debugger action=remove_breakpoint breakpointId=...` " //$NON-NLS-1$
                 + "when done.\n"); //$NON-NLS-1$
+            sb.append("\nStandalone compatibility tools: set_breakpoint, remove_breakpoint, " //$NON-NLS-1$
+                + "list_breakpoints, set_exception_breakpoint, run_to_line, wait_for_break, " //$NON-NLS-1$
+                + "get_variables, set_variable, step, resume, pause_thread, set_breakpoint_state, " //$NON-NLS-1$
+                + "terminate_launch, evaluate_expression, debug_launch, debug_status, " //$NON-NLS-1$
+                + "start_profiling, get_profiling_results.\n"); //$NON-NLS-1$
             sb.append("\nOpening an external object: externalObjectName names the processor or " //$NON-NLS-1$
                 + "report, externalObjectProject the external-object project that holds it, and " //$NON-NLS-1$
                 + "the launch configuration has to be a client configuration. An Attach " //$NON-NLS-1$

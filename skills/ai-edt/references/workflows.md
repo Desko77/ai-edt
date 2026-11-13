@@ -1,6 +1,9 @@
 # Call orders for common tasks
 
 Recipes, not rules. Each one assumes EDT is running and `get_edt_version` answered.
+For launch, import, export and ordinary-form tasks, first read MCP resource `aiedt://guidance`
+through `resources/read`. Its availability reflects the current preset; the operation's help and
+its actual response decide whether the chosen arguments are accepted.
 
 ## Understand an unfamiliar feature
 

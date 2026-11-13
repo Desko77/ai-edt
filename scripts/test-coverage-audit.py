@@ -63,7 +63,7 @@ EXEMPT_BY_BUNDLE = {bundles.SERVER: {"Activator", "McpAutoStart"}}
 # A class is out of reach of a plain JUnit run when it is built on widgets, on the workbench, or on
 # an extension point that only the platform instantiates.
 UI_IMPORTS = re.compile(
-    r"^import\s+(org\.eclipse\.swt\.|org\.eclipse\.jface\.|org\.eclipse\.ui\.|"
+    r"^import\s+(org\.eclipse\.swt\.|org\.eclipse\.jface\.|org\.eclipse\.ui\.|org\.eclipse\.draw2d\.|"
     r"org\.eclipse\.core\.commands\.|org\.eclipse\.ltk\.|com\._1c\.g5\.v8\.dt\.ui)",
     re.M,
 )

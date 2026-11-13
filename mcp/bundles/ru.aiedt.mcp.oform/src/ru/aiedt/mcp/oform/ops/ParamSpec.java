@@ -25,11 +25,34 @@ public final class ParamSpec
 
     private final Supplier<String> description;
 
+    private final String schemaDescription;
+
+    /**
+     * Declare an argument whose schema uses its full lazy description by default.
+     *
+     * @param name the argument name
+     * @param type the JSON value type
+     * @param description the full lazy description
+     */
     private ParamSpec(String name, Type type, Supplier<String> description)
+    {
+        this(name, type, description, null);
+    }
+
+    /**
+     * Keep complete help separate from an optional explicit schema summary.
+     *
+     * @param name the argument name
+     * @param type the JSON value type
+     * @param description the unchanged full lazy description
+     * @param schemaDescription the schema summary, or null to use the full description
+     */
+    private ParamSpec(String name, Type type, Supplier<String> description, String schemaDescription)
     {
         this.name = name;
         this.type = type;
         this.description = description;
+        this.schemaDescription = schemaDescription;
     }
 
     /**
@@ -42,6 +65,38 @@ public final class ParamSpec
         return description.get();
     }
 
+    /**
+     * Read the explicit schema summary or evaluate the original full supplier when none is set.
+     *
+     * @return the visible schema description without an operation prefix
+     */
+    public String schemaDescription()
+    {
+        return schemaDescription == null ? description() : schemaDescription;
+    }
+
+    /**
+     * Return an argument with a separate schema summary; leave its full help supplier unchanged.
+     *
+     * @param summary the nonblank schema description without an operation prefix
+     * @return a new argument retaining the same name, type and full lazy description
+     */
+    public ParamSpec withSchemaDescription(String summary)
+    {
+        if (summary == null || summary.isBlank())
+        {
+            throw new IllegalArgumentException("Schema description must not be blank"); //$NON-NLS-1$
+        }
+        return new ParamSpec(name, type, description, summary);
+    }
+
+    /**
+     * Declare a string argument with a constant full description.
+     *
+     * @param name the argument name
+     * @param description the complete meaning
+     * @return the declared argument
+     */
     public static ParamSpec string(String name, String description)
     {
         return new ParamSpec(name, Type.STRING, () -> description);

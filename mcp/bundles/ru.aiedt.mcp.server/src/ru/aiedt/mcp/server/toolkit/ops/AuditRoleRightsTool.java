@@ -67,6 +67,23 @@ public class AuditRoleRightsTool implements IMcpTool
             + "XML imports - and removes them only when asked with apply=true."; //$NON-NLS-1$
     }
 
+    /**
+     * The canonical write door behind {@code mode=orphans apply=true}.
+     * <p>
+     * The reporting modes read only, so a write-blocking preset keeps this tool on for them; the
+     * removal branch asks {@code ToolGate.gateIfPresetDisabled} about {@code write_module_source}
+     * before it writes. Naming the same door here tells the catalogue the class of the tool: a
+     * writer while that door is enabled, a reader once a preset disables it.
+     * </p>
+     *
+     * @return the one capability name gating this tool's write
+     */
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of("write_module_source"); //$NON-NLS-1$
+    }
+
     /** {@inheritDoc} */
     @Override
     public String getInputSchema()

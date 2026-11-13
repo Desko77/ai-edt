@@ -393,6 +393,19 @@ public final class MonopolyLock implements AutoCloseable
         }
     }
 
+    /** Whether this exact operating-system lease is still held; uncertainty stays held. */
+    public boolean isStillHeld()
+    {
+        try
+        {
+            return holding != null && holding.lock.isValid();
+        }
+        catch (RuntimeException unavailable)
+        {
+            return true;
+        }
+    }
+
     /**
      * The outcome of one attempt: either the claim, or who has it.
      * <p>

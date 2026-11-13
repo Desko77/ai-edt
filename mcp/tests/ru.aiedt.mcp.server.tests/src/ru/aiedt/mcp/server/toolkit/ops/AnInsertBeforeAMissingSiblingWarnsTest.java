@@ -18,16 +18,7 @@ import com._1c.g5.v8.dt.form.model.FormFactory;
 
 import ru.aiedt.mcp.server.support.BmFormHelper;
 
-/**
- * An element asked to stand before a sibling lands in the container either way, and the answer
- * says which of the two happened.
- * <p>
- * A {@code beforeName} that matches no element used to place the item at the end with a plain
- * success answer, so a name taken from an outdated structure read back as the position being
- * taken. The answer now carries a warning in its front matter - the write stands, the caller is
- * told where the item actually went.
- * </p>
- */
+/** New-item placement refuses a missing sibling without attaching the item. */
 public class AnInsertBeforeAMissingSiblingWarnsTest
 {
     /**
@@ -54,46 +45,25 @@ public class AnInsertBeforeAMissingSiblingWarnsTest
     }
 
     /**
-     * A group named to stand before a sibling that is not there is added at the end, and its
-     * answer warns about the sibling alongside the group's own childless warning.
+     * A group before a missing sibling refuses without changing the form.
      *
      * @throws Exception when the model refuses the group
      */
     @Test
-    public void aGroupBeforeAMissingSiblingWarnsAndLandsAtTheEnd() throws Exception
+    public void aGroupBeforeAMissingSiblingRefusesWithoutMutation() throws Exception
     {
-        Form form = formWithSibling("Первый"); //$NON-NLS-1$
-
-        String answer = new EditFormTool().executeAddGroup(helper(), form,
-            "ГруппаИтогов", null, null, null, "НетТакогоСоседа"); //$NON-NLS-1$ //$NON-NLS-2$
-
-        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
-        assertTrue(answer, answer.contains("warning:")); //$NON-NLS-1$
-        assertTrue(answer, answer.contains("НетТакогоСоседа")); //$NON-NLS-1$
-        assertEquals("Первый", ((FormField)form.getItems().get(0)).getName()); //$NON-NLS-1$
-        assertEquals("the group went to the end, not before a sibling that is not there", //$NON-NLS-1$
-            "FormGroup", form.getItems().get(1).eClass().getName()); //$NON-NLS-1$
+        Form form = formWithSibling("First"); try { new EditFormTool().executeAddGroup(helper(), form, "Group", null, null, null, "Missing"); org.junit.Assert.fail("missing sibling must refuse"); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("FORM_PLACEMENT_INVALID_SIBLING")); } assertEquals(1, form.getItems().size());
     }
 
     /**
-     * A button named to stand before a sibling that is not there is added at the end, and its
-     * answer carries the warning.
+     * A button before a missing sibling refuses without changing the form.
      *
      * @throws Exception when the model refuses the button
      */
     @Test
-    public void aButtonBeforeAMissingSiblingWarnsAndLandsAtTheEnd() throws Exception
+    public void aButtonBeforeAMissingSiblingRefusesWithoutMutation() throws Exception
     {
-        Form form = formWithSibling("Первый"); //$NON-NLS-1$
-
-        String answer = new EditFormTool().executeAddButton(helper(), form, null,
-            "КнопкаОк", null, null, "НетТакогоСоседа", null, null, null); //$NON-NLS-1$ //$NON-NLS-2$
-
-        assertTrue(answer, answer.contains("status: success")); //$NON-NLS-1$
-        assertTrue(answer, answer.contains("warning:")); //$NON-NLS-1$
-        assertTrue(answer, answer.contains("НетТакогоСоседа")); //$NON-NLS-1$
-        assertEquals("Первый", ((FormField)form.getItems().get(0)).getName()); //$NON-NLS-1$
-        assertEquals("Button", form.getItems().get(1).eClass().getName()); //$NON-NLS-1$
+        Form form = formWithSibling("First"); try { new EditFormTool().executeAddButton(helper(), form, null, "Button", null, null, "Missing", null, null, null); org.junit.Assert.fail("missing sibling must refuse"); } catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("FORM_PLACEMENT_INVALID_SIBLING")); } assertEquals(1, form.getItems().size());
     }
 
     /**

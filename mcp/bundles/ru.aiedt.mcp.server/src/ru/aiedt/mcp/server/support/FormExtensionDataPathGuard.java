@@ -26,49 +26,9 @@ import com._1c.g5.v8.dt.core.platform.IV8ProjectManager;
 import ru.aiedt.mcp.server.Activator;
 
 /**
- * Keeps a data path assigned to an element of an extension form reachable from
- * the database: the base-form attribute the path starts at is borrowed into the
- * extension in the same write, and a path the form does not resolve is refused
- * before a single change is saved.
- *
- * <p>The whole decision lives behind {@link Port}, which stands for the three
- * EDT services that own the questions -
- * {@code com.e1c.g5.v8.dt.form.extension.IFormExtensionManagementService} (is an
- * object adopted, adopt it),
- * {@code com._1c.g5.v8.dt.form.service.extension.IFormExtensionService} (does
- * this path survive export of an extension form) and
- * {@code com._1c.g5.v8.dt.form.service.datasourceinfo.IDataSourceInfoAssociationService}
- * (does the form resolve the path at all). The runtime implementation reaches
- * all three reflectively, so the bundle needs no compile dependency on them; a
- * test installs its own port and sees the entire decision.
- *
- * <p>Why the form's own resolution of the path, and not the export answer
- * alone, decides the refusal. EDT's export decision reads the path's referred
- * objects first: {@code IFormExtensionService.shouldSkipForExport} calls a
- * private {@code shouldSkipDataPathForExport(form, path, true)}, which asks
- * {@code getAttributeRef(path)} - and that method returns an empty reference as
- * soon as one referred object is null or the list itself is empty, on which the
- * decision answers "drop". The referred objects are derived data: a transient
- * list filled by the form's path index after the edit, which a path built here
- * out of segments never carries. The export answer is therefore "drop" for
- * every path the guard assembles, whatever the path names - it cannot tell a
- * path to a live attribute from a path to nothing. What does separate them is
- * the form's own resolution of the path ({@code findPropertyInfo} walks every
- * segment, ignoring case and the {@code [...]} index of a collection), and that
- * is the question the refusal hangs on. A path that resolves but that the
- * extension still cannot reference - a segment of another engine, a tail
- * past the borrowed attribute - is accepted: the referred-object list that
- * would decide it is the same derived data the guard cannot see, and no EDT
- * check reports it either - {@code form-data-path} fires only on a segment
- * nothing resolves. Such a path is written and can be dropped on export
- * without a marker to warn about it.
- *
- * <p>A form of a configuration project is left alone: the services are not
- * asked at all. An extension form is recognised by its project -
- * {@code IV8ProjectManager} answers whether it is an {@code IExtensionProject} -
- * and only when the project cannot be told (the form is not in a model, or the
- * service is not there) by its non-null base form: a configuration form can
- * answer a non-null base form too.
+ * Preflights extension data paths without adopting a root or metadata dependencies.
+ * Own locally typed paths can be checked before derived indexes exist. Other paths
+ * require affirmative ownership, resolution and persistence checks; unknown is not success.
  */
 public final class FormExtensionDataPathGuard
 {
@@ -189,6 +149,18 @@ public final class FormExtensionDataPathGuard
             return refusal;
         }
 
+        /** Stable classification of this refusal, independent of human-readable text. */
+        public String getErrorCode()
+        {
+            if (refusal == null) { return null; }
+            for (String code : new String[] { "EXTENSION_BINDING_UNSUPPORTED",
+                "EXTENSION_BINDING_UNVERIFIED", "EXTENSION_BINDING_UNRESOLVED" })
+            {
+                if (refusal.contains(code + ":")) { return code; }
+            }
+            return null;
+        }
+
         /** @return true when the path was accepted and nothing has to be undone */
         public boolean isAccepted()
         {
@@ -270,25 +242,7 @@ public final class FormExtensionDataPathGuard
         installedProjectKind = kind;
     }
 
-    /**
-     * Decides whether the assignment of a data path may stand.
-     *
-     * <p>On an extension form it borrows the base-form attribute the path
-     * starts at, asks whether EDT writes the path with the form, and refuses the
-     * write when the form does not resolve the path either. A question that
-     * cannot be asked refuses nothing and is named in the outcome, so a caller
-     * reads what was checked instead of reading a check that never ran. On a
-     * configuration form it answers immediately, without asking the port
-     * anything.
-     *
-     * @param form the form the element belongs to, or null when unknown
-     * @param dataPath the assigned {@code AbstractDataPath}, or null when the
-     *            path was cleared
-     * @param pathText the dotted path as the caller wrote it
-     * @param itemName the element the path was assigned to, for the refusal text
-     * @return what was borrowed, what could not be asked, and whether the write
-     *         may stand
-     */
+    /** Checks the binding before its setter runs; never mutates or adopts model objects. */
     public static Outcome assign(Object form, Object dataPath, String pathText, String itemName)
     {
         Outcome outcome = new Outcome();
@@ -301,106 +255,49 @@ public final class FormExtensionDataPathGuard
             return outcome;
         }
         Port port = port();
+        String root = firstSegment(pathText);
+        Object attribute = findAttribute(form, root);
         if (port == null)
         {
             outcome.notAskedChecks.add(CHECK_BELONGING);
-            outcome.notAskedChecks.add(CHECK_EXPORT);
-            outcome.notAskedChecks.add(CHECK_RESOLUTION);
+            outcome.refusal = refusal(itemName, pathText,
+                "EXTENSION_BINDING_UNVERIFIED: ownership service unavailable");
             return outcome;
         }
-
-        String root = firstSegment(pathText);
-        Object attribute = findAttribute(form, root);
-        // Whether the path starts at an object that is the extension's own - as
-        // opposed to a base-form attribute this write borrowed. Only the first
-        // kind is left out of the resolution question below: an operation that
-        // creates an attribute and binds a path to it in the same transaction
-        // (a dynamic list table, a settings composer) is asking about an object
-        // the model has not indexed yet, and a "no" there would undo a write that
-        // is right.
-        boolean ownAttribute = false;
-        if (attribute != null)
+        Answer belongs = attribute == null ? Answer.NOT_ASKED : port.isExtensionBelongingObject(attribute);
+        if (belongs != Answer.TRUE)
         {
-            Answer belongs = port.isExtensionBelongingObject(attribute);
             if (belongs == Answer.NOT_ASKED)
             {
-                // Whether the path survives export depends on this answer, so
-                // asking further would compare answers about paths that may belong
-                // to the base form. The write goes through as if the guard were
-                // not there, and the answer says the check was not performed.
                 outcome.notAskedChecks.add(CHECK_BELONGING);
-                return outcome;
             }
-            if (belongs == Answer.TRUE)
-            {
-                ownAttribute = true;
-            }
-            else
-            {
-                try
-                {
-                    port.adoptObject(attribute);
-                }
-                catch (Exception e)
-                {
-                    outcome.refusal = refusal(itemName, pathText,
-                        "заимствовать реквизит " + nameOf(attribute, root) + " не удалось: " //$NON-NLS-1$ //$NON-NLS-2$
-                            + reasonOf(e));
-                    return outcome;
-                }
-                outcome.adoptedAttributes.add(nameOf(attribute, root));
-                Answer took = port.isExtensionBelongingObject(attribute);
-                if (took == Answer.NOT_ASKED)
-                {
-                    // The borrow call returned but this answer did not: the model
-                    // was changed and the write must not be undone on a question
-                    // that failed, so the path is left alone and the check named.
-                    outcome.notAskedChecks.add(CHECK_BELONGING);
-                    return outcome;
-                }
-                if (took == Answer.FALSE)
-                {
-                    // The call returned but the attribute still does not belong
-                    // to the extension: the path would be dropped on export.
-                    outcome.refusal = refusal(itemName, pathText,
-                        "реквизит " + nameOf(attribute, root) + " не заимствован расширением"); //$NON-NLS-1$ //$NON-NLS-2$
-                    return outcome;
-                }
-            }
-        }
-
-        Answer skip = port.exportSkip(form, dataPath);
-        if (skip == Answer.NOT_ASKED)
-        {
-            outcome.notAskedChecks.add(CHECK_EXPORT);
+            outcome.refusal = refusal(itemName, pathText, belongs == Answer.FALSE
+                ? "EXTENSION_BINDING_UNSUPPORTED: inherited root requires explicit adoption; automatic adoption is disabled"
+                : "EXTENSION_BINDING_UNVERIFIED: root ownership could not be established");
             return outcome;
         }
-        if (skip == Answer.FALSE)
+        if (locallyTypedPath(attribute, pathText))
         {
-            // EDT writes the path with the form: there is nothing to refuse.
-            return outcome;
-        }
-        if (ownAttribute)
-        {
-            // The path starts at an object that already belongs to the extension -
-            // for the operations that create their own attribute it is this very
-            // write's object, and the form's resolution answer about it inside the
-            // same transaction says nothing about the file.
             return outcome;
         }
         Answer resolved = port.pathResolved(form, dataPath);
+        if (resolved == Answer.FALSE)
+        {
+            outcome.refusal = refusal(itemName, pathText,
+                "EXTENSION_BINDING_UNRESOLVED: the form does not resolve the path");
+            return outcome;
+        }
         if (resolved == Answer.NOT_ASKED)
         {
             outcome.notAskedChecks.add(CHECK_RESOLUTION);
-            return outcome;
-        }
-        if (resolved == Answer.FALSE)
-        {
-            // The export answer alone cannot condemn a path (see the class
-            // comment): the path the form cannot resolve leads nowhere, and that
-            // is what is refused - nothing reaches Form.form.
             outcome.refusal = refusal(itemName, pathText,
-                "EDT его не выгружает, и форма его не разрешает"); //$NON-NLS-1$
+                "EXTENSION_BINDING_UNVERIFIED: path resolution service unavailable");
+        }
+        if (outcome.refusal == null && port.exportSkip(form, dataPath) != Answer.FALSE)
+        {
+            outcome.notAskedChecks.add(CHECK_EXPORT);
+            outcome.refusal = refusal(itemName, pathText,
+                "EXTENSION_BINDING_UNVERIFIED: extension persistence is not established by derived resolution alone");
         }
         return outcome;
     }
@@ -463,8 +360,8 @@ public final class FormExtensionDataPathGuard
     private static String refusal(String itemName, String pathText, String reason)
     {
         return (itemName != null && !itemName.isEmpty() ? itemName : "?")
-            + ": путь данных " + pathText //$NON-NLS-1$
-            + " не будет выгружен с формой расширения (" + reason + "); ничего не записано"; //$NON-NLS-1$ //$NON-NLS-2$
+            + ": data path " + pathText //$NON-NLS-1$
+            + " cannot be safely bound to the extension form (" + reason + "); binding was not applied"; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
     /**
@@ -489,9 +386,55 @@ public final class FormExtensionDataPathGuard
     }
 
     /**
-     * @param pathText a dotted data path
-     * @return the first segment, or an empty string when there is none
+     * Proves only explicit local attributes/columns, never metadata dependencies or inferred tails.
+     * SettingsComposer.Settings is not inferred from its root type: absent a complete local model,
+     * that path requires affirmative runtime resolution and persistence checks.
      */
+    private static boolean locallyTypedPath(Object attribute, String pathText)
+    {
+        try
+        {
+            Object current = attribute;
+            String[] segments = pathText.split("\\.");
+            for (int i = 1; i < segments.length; i++)
+            {
+                Object columns = current.getClass().getMethod("getColumns").invoke(current);
+                Object found = null;
+                for (Object column : (Iterable<?>) columns)
+                {
+                    if (segments[i].equalsIgnoreCase(nameOf(column, "")))
+                    {
+                        if (found != null) { return false; }
+                        found = column;
+                    }
+                }
+                if (found == null) { return false; }
+                current = found;
+            }
+            Object description = current.getClass().getMethod("getValueType").invoke(current);
+            Object types = description == null ? null : description.getClass().getMethod("getTypes").invoke(description);
+            if (!(types instanceof java.util.Collection) || ((java.util.Collection<?>) types).isEmpty())
+            {
+                return false;
+            }
+            for (Object type : (Iterable<?>) types)
+            {
+                // Only self-contained platform types are a local persistence proof.
+                String name = nameOf(type, "");
+                if (!java.util.Set.of("String", "Number", "Boolean", "Date", "UUID", "ValueTable",
+                    "ValueTree", "DynamicList", "DataCompositionSettingsComposer").contains(name))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        catch (Exception e)
+        {
+            return false;
+        }
+    }
+
     private static String firstSegment(String pathText)
     {
         int dot = pathText.indexOf('.');

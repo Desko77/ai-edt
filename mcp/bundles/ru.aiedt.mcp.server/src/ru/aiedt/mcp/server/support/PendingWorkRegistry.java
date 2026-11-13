@@ -199,6 +199,13 @@ public final class PendingWorkRegistry
     public static final PendingWorkRegistry DEBUG_LAUNCH = new PendingWorkRegistry(
         "debug_launch", "debug-launch-async", 4); //$NON-NLS-1$ //$NON-NLS-2$
 
+    /**
+     * Extension project creation is a mutation with its own tracked launch boundary.
+     * Active work remains owned until it finishes; cancellation never deletes a project.
+     */
+    public static final PendingWorkRegistry EXTENSION_CREATE = new PendingWorkRegistry(
+        "create_extension_project", "extension-create-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
+
     /** Async backend for a YAXUnit launch held inside an EDT modal dialog. */
     public static final PendingWorkRegistry YAXUNIT_LAUNCH = new PendingWorkRegistry(
         "yaxunit_tests", "yaxunit-launch-async", 2); //$NON-NLS-1$ //$NON-NLS-2$
@@ -223,6 +230,7 @@ public final class PendingWorkRegistry
      */
     static
     {
+        EXTENSION_CREATE.stopsWith(EXTENSION_CREATE::stopAtTheLaunchBoundary);
         GENERIC.stopsWith(GENERIC::stopThroughTheFlag);
         REFERENCES.stopsWith(REFERENCES::stopThroughTheFlag);
         UPDATE.stopsWith(UPDATE::stopAtTheLaunchBoundary);
@@ -271,6 +279,45 @@ public final class PendingWorkRegistry
      * </p>
      */
     private volatile Function<String, StopOutcome> stopper;
+
+    private volatile OwnedPoll ownedPoll;
+
+    /** Proof supplied by a process owner after preparation leaves this registry. */
+    @FunctionalInterface
+    public interface OwnedPoll
+    {
+        boolean matches(String runKey, String starter, Map<String, String> arguments);
+    }
+
+    /** Registers a pure, fail-closed ownership check; null removes it. */
+    public void ownedPollsWith(OwnedPoll owner)
+    {
+        ownedPoll = owner;
+    }
+
+    /** Returns the current declaration so isolated tests can restore it. */
+    public OwnedPoll ownedPoll()
+    {
+        return ownedPoll;
+    }
+
+    /** An expired preparation entry alone never proves a live process poll. */
+    public boolean isOwnedLivePoll(String runKey, String starter, Map<String, String> arguments)
+    {
+        OwnedPoll owner = ownedPoll;
+        if (owner == null || runKey == null || starter == null)
+        {
+            return false;
+        }
+        try
+        {
+            return owner.matches(runKey, starter, arguments);
+        }
+        catch (RuntimeException unavailable)
+        {
+            return false;
+        }
+    }
 
     /** How long a never-completed entry is kept. */
     private final long abandonedTtlMs;
@@ -650,7 +697,7 @@ public final class PendingWorkRegistry
     {
         return Collections.unmodifiableList(
             Arrays.asList(UPDATE, EXPORT, EXPORT_INFOBASE, SNAPSHOT, REFERENCES, IMPORT_BINARY,
-                VANESSA, NAPARNIK, GENERIC, RETRIEVE, DEBUG_LAUNCH, YAXUNIT_LAUNCH));
+                VANESSA, NAPARNIK, GENERIC, RETRIEVE, DEBUG_LAUNCH, YAXUNIT_LAUNCH, EXTENSION_CREATE));
     }
 
     /**

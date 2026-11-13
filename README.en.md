@@ -26,6 +26,12 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
+### Preparing 1.0
+
+AI-EDT supports an agent-assisted development cycle: inspect the model, make a bounded change, verify the result and receive an actionable refusal when the operation cannot be established as safe. The 1.0 preparation addresses reports from real runs: extension-field placement, template persistence, infobase selection and UI-test launch options. Capabilities and contract changes are described in the [changelog](CHANGELOG.md#100---unreleased).
+
+This is not a promise of full autonomy: agents still need result verification and explicit authorization for data operations. The ordinary-form viewer remains read-only in this release.
+
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
 >
@@ -101,7 +107,11 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **Existing object presentations are updated per language.** `edit_metadata operation=set_object_property` writes object, list and register-record presentations: plain text in `propertyValue` updates the configuration's default language, while a JSON language map replaces all translations. `dryRun=true` returns the resulting map without writing it.
 
-**An open editor outranks the file.** `read_module_source` returns what the editor holds when it holds unsaved changes, and says so in the answer - otherwise the assistant reasons about a version the developer has moved past. `write_module_source` refuses in that case and names the file: writing over an open editor destroys either your unsaved work or its own, depending on who saves last, and does it silently. The text is read through the platform's file buffer manager, so neither a window nor the display thread is needed.
+**View ordinary forms in EDT.** `Form.oform` opens as a schematic with an element tree, root and nested page selection, zoom and a read-only property table. Selecting an element shows its properties and reveals its containing pages. This is a schematic using the system font, not a 1C client screenshot; use `ordinary_forms` to change the form. [Details](docs/ordinary-forms.md#read-only-viewer-in-edt).
+
+**Read a large module by line ranges.** `read_module_source` takes `projectName`, `modulePath`, `startLine` and `endLine` (inclusive, 1-based), returning at most 5000 lines per call. `read_method_source` takes `projectName`, `modulePath`, `methodName` and optional `includeDoc`. For exploration, obtain `get_module_structure` first, then read the method you need.
+
+**Module text source priority.** `read_module_source` and `read_method_source` select a matching `IModuleSourceProvider`, then an editor buffer with unsaved changes, then the physical file. A provider has priority even when the file exists and its editor has unsaved changes. An answer from an editor buffer carries an `Unsaved` note. `write_module_source` and `diff_module` use the physical file when it exists, otherwise the provider; the reader note for an address with both a provider and a file names the physical write and comparison target. Writing a file with unsaved editor changes is refused: save or revert them first. The physical editor buffer is read through the platform's file buffer manager without accessing a window or the display thread.
 
 **A query is checked before anyone runs it.** `validate_query` parses the text in the context of the project and returns syntax and semantic errors with line numbers, with a separate mode for DCS queries. Alongside them comes a list of hints for the usual slips: SQL keywords instead of the 1C query language, `УБЫВАНИЕ` where `УБЫВ` belongs. The assistant does not have to start the configuration to find out that a query will not compile.
 
@@ -486,7 +496,9 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 
 Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
 
-A facade's help is `operation=help`, one operation or argument with `topic`; `find=<words>` searches the help and names the topic to open for the whole section.
+A facade's help is `operation=help`, one operation or argument with `topic`; `find=<words>` searches the help and names the topic to open for the whole section. The catalogue carries short descriptions; operation help expands the full conditions and arguments, with a `parameters` topic also available on constructors. For `launch_debugger`, use `action=help`.
+
+`initialize` and `server/discover` return `instructions` pointing to the MCP resource `aiedt://guidance`. Reading it through `resources/read` with `uri=aiedt://guidance` returns routes for client launch, external-object debugging, import, query validation, export and ordinary forms. Availability is computed from the current registry and preset at read time: `hidden, callable` means a hidden but callable name, while `off` means a disabled route. The call itself makes the final decision.
 
 ![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
 

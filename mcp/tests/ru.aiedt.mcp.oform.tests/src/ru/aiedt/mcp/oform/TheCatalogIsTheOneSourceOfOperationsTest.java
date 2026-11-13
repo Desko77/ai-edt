@@ -62,7 +62,7 @@ public class TheCatalogIsTheOneSourceOfOperationsTest
             "edge:string", "offset:integer", "event:string", "procedure:string", "stub:boolean", "type:string", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
             "parent:string", "page:string", "caption:string", "tooltip:string", "data:string", "cascade:boolean", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
             "editable:boolean", "control:string", "actionSource:string", "autoFill:boolean", "panel:string", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-            "action:string", "picture:integer", "before:string", "table:string" }; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+            "action:string", "picture:integer", "before:string", "table:string", "topic:string" }; //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
         for (String pair : names)
         {
             String[] parts = pair.split(":"); //$NON-NLS-1$

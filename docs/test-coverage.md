@@ -6,19 +6,19 @@ other than the server are named with the bundle in front (`oform:ops`).
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 152 | a test class named after it |
-| exercised | 328 | reached by some other test |
+| direct | 163 | a test class named after it |
+| exercised | 330 | reached by some other test |
 | tool-sweep | 26 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 35 | needs a display or an extension point |
-| workspace-bound | 18 | drives a live EDT project or debug session |
+| ui-bound | 37 | needs a display or an extension point |
+| workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **559** | across 911 test classes |
+| **total** | **575** | across 967 test classes |
 
 ## untested (0)
 
 _none_
 
-## workspace-bound (18)
+## workspace-bound (19)
 
 **labels**
 - MarkerHelpers
@@ -51,13 +51,16 @@ _none_
 **toolkit/ops**
 - CommandInterfaceOps
 - FormEventOps
+- ModuleTextSelection
 
-## ui-bound (35)
+## ui-bound (37)
 
 **(root)**
 - McpAutoStart
 
 **editor:(root)**
+- FormFigures
+- FormResourceWatcher
 - OrdinaryFormEditor
 - OrdinaryFormEditorAssociation
 - OrdinaryFormEditorPage
@@ -141,7 +144,7 @@ _none_
 - SelfStatusTool
 - UninstallExtensionTool
 
-## exercised (328)
+## exercised (330)
 
 **(root)**
 - Activator
@@ -304,6 +307,7 @@ _none_
 - BreakpointAccess
 - BslCallGraphHelper
 - ChildBorrow
+- ClientApplicationSelection
 - ClientLaunchMode
 - ConfigurationListProperties
 - ContainerScope
@@ -322,6 +326,7 @@ _none_
 - EndpointWaiter
 - ErrorTags
 - ExportedFiles
+- ExtensionCreationLifecycle
 - FacadeParameterHelp
 - FileMarkers
 - FormEventContainers
@@ -519,7 +524,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (152)
+## direct (163)
 
 **(root)**
 - BrowserOrigin
@@ -540,6 +545,9 @@ _none_
 
 **oform:session**
 - FormSummary
+- FormViewState
+- LayoutChangeOperation
+- SessionResourceListener
 
 **session**
 - SessionChangeTracker
@@ -618,12 +626,18 @@ _none_
 - OperationParameters
 - OriginCheck
 - PendingExecutor
+- PinnedResult
+- PinnedResultCache
 - PlatformTypeNames
 - PreviousRevision
 - QueryAntiPatternRules
 - QueryResultSchema
 - ReflectionAccess
 - ResponseCap
+- ResultArgumentProfile
+- ResultRefusal
+- ResultUnit
+- ResultWindow
 - ScopeClosure
 - SensitivePatternLibrary
 - SensitiveTextMasker
@@ -632,6 +646,7 @@ _none_
 - SupportSnapshot
 - SystemEnumValues
 - TaskDirectory
+- TemplateMutationLock
 - TextSuggest
 - TimeoutArgs
 - ToolCallScope
@@ -673,6 +688,7 @@ _none_
 - MarkerCorrectionTool
 - ModuleSourceWriter
 - ObjectCopier
+- OwnedVanessaRun
 - QueryValidator
 - RegisteredInfobasesReader
 - SelfUpkeepTool
@@ -718,14 +734,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 2 |
-| 3-4 | 16 |
-| 5-8 | 44 |
-| 9-16 | 60 |
-| 17+ | 30 |
+| 3-4 | 18 |
+| 5-8 | 47 |
+| 9-16 | 64 |
+| 17+ | 32 |
 
-6608 test methods across 911 test classes; 152 classes have a test of their own, median 10 methods each.
+6972 test methods across 967 test classes; 163 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 152 of 559 classes have one: 26 are covered by the registry-wide contract sweep and 18 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 163 of 575 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

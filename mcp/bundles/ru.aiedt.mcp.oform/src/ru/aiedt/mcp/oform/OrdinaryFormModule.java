@@ -474,10 +474,39 @@ public final class OrdinaryFormModule
     public WriteOutcome writeEntriesReturning(OrdinaryFormFile observed, String formText, String moduleText,
         String initiator, boolean ruleHeld) throws IOException
     {
+        return writeEntriesReturning(observed, formText, moduleText, initiator, ruleHeld, false);
+    }
+
+    /**
+     * Writes the requested container entries, optionally removing the module. The guard
+     * serializes the comparison and write and refuses a replacement held dirty by another
+     * session. This method does not mark the owner for delivery; the caller must call
+     * {@link #afterWrite(boolean)} separately with the outcome's written flag.
+     *
+     * @param observed the snapshot against which replaced entries are compared, or {@code null}
+     *        to omit that comparison
+     * @param formText the layout text, or {@code null} to keep the layout
+     * @param moduleText the module text, or {@code null} to keep it unless removal is requested
+     * @param initiator the writing session's id, or {@code null} for an agent write
+     * @param ruleHeld whether the caller already holds the workspace rule on the container
+     * @param removeModule whether to remove the module entry; requires {@code moduleText} to be
+     *        {@code null}; removing an absent entry leaves it unchanged
+     * @return the write outcome, including current bytes and modification stamp even if unchanged
+     * @throws IllegalArgumentException if removal and a non-null module text are both requested
+     * @throws IOException if reading or writing fails, a replaced entry changed since observation,
+     *         or the guard refuses the write because an editor holds unsaved changes
+     */
+    public WriteOutcome writeEntriesReturning(OrdinaryFormFile observed, String formText, String moduleText,
+        String initiator, boolean ruleHeld, boolean removeModule) throws IOException
+    {
+        if (removeModule && moduleText != null)
+        {
+            throw new IllegalArgumentException("Cannot write and remove the module together"); //$NON-NLS-1$
+        }
         try
         {
             ContainerWriteGuard.GuardedWrite<WriteOutcome> work = () -> writeEntriesGuarded(observed, formText,
-                moduleText, initiator);
+                moduleText, initiator, removeModule);
             return ruleHeld ? ContainerWriteGuard.writeUnderHeldRule(container, work)
                 : ContainerWriteGuard.write(container, work);
         }
@@ -489,7 +518,7 @@ public final class OrdinaryFormModule
 
     /** The read, the comparison and the write of the two entries, under the guard's locks. */
     private WriteOutcome writeEntriesGuarded(OrdinaryFormFile observed, String formText, String moduleText,
-        String initiator) throws IOException, CoreException
+        String initiator, boolean removeModule) throws IOException, CoreException
     {
         OrdinaryFormFile file = read();
         boolean changed = false;
@@ -503,21 +532,28 @@ public final class OrdinaryFormModule
             file.setFormText(formText);
             changed = true;
         }
-        if (moduleText != null && !moduleText.equals(file.moduleText()))
+        if ((moduleText != null || removeModule) && !Objects.equals(moduleText, file.moduleText()))
         {
             if (observed != null && !Objects.equals(observed.observedModuleText(), file.moduleText()))
             {
                 throw new IOException("the container changed after it was read: the module entry is not " //$NON-NLS-1$
                     + "the one this write was computed from. Read the module again and repeat the write."); //$NON-NLS-1$
             }
-            file.setModuleText(moduleText);
+            if (removeModule)
+            {
+                file.removeModule();
+            }
+            else
+            {
+                file.setModuleText(moduleText);
+            }
             changed = true;
         }
         if (!changed)
         {
             return new WriteOutcome(false, file.toBytes(), container.getModificationStamp());
         }
-        ContainerWriteGuard.refuseUnlessAllowed(container, initiator, formText != null, moduleText != null);
+        ContainerWriteGuard.refuseUnlessAllowed(container, initiator, formText != null, moduleText != null || removeModule);
         byte[] bytes = file.toBytes();
         if (!container.exists())
         {

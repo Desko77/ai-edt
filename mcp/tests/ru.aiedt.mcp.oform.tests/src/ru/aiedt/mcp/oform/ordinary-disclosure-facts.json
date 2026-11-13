@@ -1,0 +1,164 @@
+{
+  "criticalSchemaFacts": [
+    {
+      "parameter": "module",
+      "fragment": "refused when the project holds no container"
+    },
+    {
+      "parameter": "picture",
+      "fragment": "0 to 3"
+    },
+    {
+      "parameter": "stub",
+      "fragment": "default true"
+    },
+    {
+      "parameter": "stub",
+      "fragment": "default false"
+    },
+    {
+      "parameter": "width",
+      "fragment": "from 500 to 1000"
+    },
+    {
+      "parameter": "width",
+      "fragment": "820 with two columns"
+    },
+    {
+      "parameter": "height",
+      "fragment": "from 350 to 700"
+    },
+    {
+      "parameter": "height",
+      "fragment": "at least 350"
+    },
+    {
+      "parameter": "limit",
+      "fragment": "default 20"
+    },
+    {
+      "parameter": "dryRun",
+      "fragment": "write nothing"
+    },
+    {
+      "parameter": "data",
+      "fragment": "this argument is refused for them"
+    },
+    {
+      "parameter": "parent",
+      "fragment": "absent for the form."
+    },
+    {
+      "parameter": "before",
+      "fragment": "a button of the same block"
+    }
+  ],
+  "movedFacts": [
+    {
+      "operation": "describe_owner",
+      "parameter": "ownerFqn",
+      "fragment": "the owner, Type.Object (Catalog.Products, InformationRegister.Prices)."
+    },
+    {
+      "operation": "create_form",
+      "parameter": "ownerFqn",
+      "fragment": "the owner of the new form, Type.Object (Catalog.Products, DataProcessor.Report1)."
+    },
+    {
+      "operation": "create_form",
+      "parameter": "name",
+      "fragment": "the name of the new form."
+    },
+    {
+      "operation": "add_element",
+      "parameter": "name",
+      "fragment": "the name of the new element."
+    },
+    {
+      "operation": "add_page",
+      "parameter": "name",
+      "fragment": "the name of the new page."
+    },
+    {
+      "operation": "add_command_panel",
+      "parameter": "name",
+      "fragment": "the name of the new panel."
+    },
+    {
+      "operation": "add_column",
+      "parameter": "name",
+      "fragment": "the name of the new column."
+    },
+    {
+      "operation": "add_button",
+      "parameter": "name",
+      "fragment": "the button's name."
+    },
+    {
+      "operation": "add_submenu",
+      "parameter": "name",
+      "fragment": "the submenu's name."
+    },
+    {
+      "operation": "add_separator",
+      "parameter": "name",
+      "fragment": "the separator's name."
+    },
+    {
+      "operation": "remove_page",
+      "parameter": "name",
+      "fragment": "the name of the page to remove."
+    },
+    {
+      "operation": "remove_column",
+      "parameter": "name",
+      "fragment": "the name of the column to remove."
+    },
+    {
+      "operation": "remove_button",
+      "parameter": "name",
+      "fragment": "the button to remove."
+    },
+    {
+      "operation": "bind_handler",
+      "parameter": "event",
+      "fragment": "the event (ПриИзменении, Нажатие, ПриОткрытии, ...; help lists them)."
+    },
+    {
+      "operation": "add_element",
+      "parameter": "parent",
+      "fragment": "the Panel to put the element in; absent for the form."
+    },
+    {
+      "operation": "add_command_panel",
+      "parameter": "parent",
+      "fragment": "the Panel to put the panel in; absent for the form."
+    },
+    {
+      "operation": "add_button",
+      "parameter": "parent",
+      "fragment": "the submenu to put the button in; absent for the panel itself."
+    },
+    {
+      "operation": "add_submenu",
+      "parameter": "parent",
+      "fragment": "the submenu to put it in; absent for the panel itself."
+    },
+    {
+      "operation": "add_separator",
+      "parameter": "parent",
+      "fragment": "the submenu to put it in; absent for the panel itself."
+    },
+    {
+      "operation": "add_element",
+      "parameter": "data",
+      "fragment": "the data path in words, <form attribute>[.<member>...] (СправочникОбъект.Артикул)."
+    },
+    {
+      "operation": "add_column",
+      "parameter": "data",
+      "fragment": "the member or standard attribute of the row (Код, Наименование, Номенклатура, НомерСтроки), or the column of the value table."
+    }
+  ],
+  "frozenBeforeProduction": true
+}

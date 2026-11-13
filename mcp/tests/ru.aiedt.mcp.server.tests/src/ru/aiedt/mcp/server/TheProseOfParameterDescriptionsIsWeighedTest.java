@@ -269,7 +269,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // compare_configurations: mode says that the answer's failed and failedCount name what the
         // comparison could not read, and projectName that mode=files takes the path of the first
         // export; the intent sentence names the merge restore point.
-        PROSE.put("insights", Integer.valueOf(6079));
+        // Lowered from 6079 to 5823 by the prose cut: schema sentences that repeated the help
+        // rules left the record. Measured 01.11: 5823.
+        // Raised from 5823 to 5837: moduleFqn names each operation's own scope values again -
+        // dependency_graph takes scope=module only, detect_query_anti_patterns also method,
+        // which dependency_graph refuses. Measured 01.11: 5837.
+        PROSE.put("insights", Integer.valueOf(5837));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
@@ -303,7 +308,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // export_database_configuration and export_database_extension: the new overwrite and
         // allowOutOfSync arguments, one sentence each, and the sentences extensionName,
         // applicationId and outputPath gained naming the two operations (measured 28.09: 4734).
-        PROSE.put("config_io", Integer.valueOf(4734));
+        // Lowered from 4734 to 4155 by the prose cut: schema sentences that repeated the delegate
+        // schemas the per-operation help renders left the record. Measured 01.11: 4155.
+        // Raised from 4155 to 4179: export_object's outputPath names the auto-detected kind
+        // branch again - the extension decides, or the kind is auto-detected. Measured 01.11:
+        // 4179.
+        PROSE.put("config_io", Integer.valueOf(4179));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
@@ -724,5 +734,6 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * 106746.
      * </p>
      */
-    private static final int DOCUMENT_PROSE = 106746;
+    // Measured: the current parameter descriptions occupy 105939 UTF-8 bytes.
+    private static final int DOCUMENT_PROSE = 105939;
 }
