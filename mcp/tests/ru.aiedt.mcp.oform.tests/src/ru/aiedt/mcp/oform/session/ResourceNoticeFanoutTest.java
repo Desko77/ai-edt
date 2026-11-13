@@ -35,6 +35,19 @@ public class ResourceNoticeFanoutTest
         } finally { OpenFormSessions.release(session); probe.dispose(); }
     }
 
+    private static void writeExternalModule(SessionProbe probe, String module) throws Exception
+    {
+        // Refresh detects disk changes through metadata. Rewriting identical bytes can have the
+        // same size and timestamp, so it need not produce a workspace content delta.
+        byte[] before = probe.bytes();
+        ru.aiedt.mcp.oform.V8Container container = ru.aiedt.mcp.oform.V8Container.read(before);
+        container.find("module").setData(module.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        byte[] changed = container.write();
+        assertNotEquals("the external edit must change the container size, not only its timestamp",
+            before.length, changed.length);
+        probe.anotherWriterWrites(changed);
+    }
+
     @Test public void twoEditorsReceiveContentNoticesAndDisposedEditorDoesNot() throws Exception
     {
         SessionProbe probe = SessionProbe.with("AiEdtNoticeFanout", SessionProbe.fixture("fixtures/item-form-v27.form"), "\r\n");
@@ -43,11 +56,11 @@ public class ResourceNoticeFanoutTest
         OpenFormSessions.Notice a = receiver(first); OpenFormSessions.Notice b = receiver(second);
         try {
             OpenFormSessions.addNotice(a); OpenFormSessions.addNotice(b);
-            probe.anotherWriterWrites(probe.bytes());
+            writeExternalModule(probe, "// first external edit\r\n".repeat(128));
             assertTrue(first.get() > 0); assertEquals(first.get(), second.get());
             OpenFormSessions.removeNotice(a);
             int stopped = first.get();
-            probe.anotherWriterWrites(probe.bytes());
+            writeExternalModule(probe, "// second external edit with a different length\r\n".repeat(256));
             assertEquals(stopped, first.get()); assertTrue(second.get() > stopped);
         } finally {
             OpenFormSessions.removeNotice(a); OpenFormSessions.removeNotice(b);
