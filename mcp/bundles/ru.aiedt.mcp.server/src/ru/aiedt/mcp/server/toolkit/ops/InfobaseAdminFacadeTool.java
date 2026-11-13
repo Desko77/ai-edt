@@ -342,7 +342,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "Application (infobase) id from get_applications.") //$NON-NLS-1$
+                "Application (infobase) id from get_applications. start_client: an explicit id must belong to the named project; invalid ids never fall back. If omitted, use its registered default, otherwise its sole application; stale defaults and ambiguity refuse.") //$NON-NLS-1$
             .stringArrayProperty("excludeEvents", "read_event_log: omit events by whole name or prefix (ending *, e.g. _$Transaction$_*), case-insensitive, before limit.") //$NON-NLS-1$
             .stringProperty("name", "create_infobase / delete_infobase / server register_infobase: infobase name; sync_control release_support_snapshot: snapshot file name from list_support_snapshots.") //$NON-NLS-1$
             .stringProperty("path", "create_infobase: new/empty infobase directory. register_infobase: existing directory. snapshots: required .dt path; export_database_snapshot: an existing one is refused; restore_database_snapshot requires an existing input.") //$NON-NLS-1$
@@ -365,7 +365,7 @@ public class InfobaseAdminFacadeTool implements IMcpTool
             .stringProperty("password", //$NON-NLS-1$
                 "set_infobase_credentials / register_infobase: infobase password (for INFOBASE " //$NON-NLS-1$
                     + "access). Stored encrypted; never logged or returned.") //$NON-NLS-1$
-            .stringProperty("launchConfigurationName", "update_database / start_client: existing launch configuration name (preferred over projectName + applicationId).") //$NON-NLS-1$
+            .stringProperty("launchConfigurationName", "update_database / start_client: existing launch configuration name (preferred over projectName + applicationId). start_client: an explicit name never falls back; supplied projectName/applicationId must match its binding.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", "start_client: update first (default false). Explicit true is refused when update_database is preset-disabled; a running client with no startupOption, waitForEndpoint, clientType or runMode answers alreadyRunning (started=false) before that gate.") //$NON-NLS-1$
             .booleanProperty("allowSecondSession", "start_client: start even when a client is already running (default false; the running one is reported).") //$NON-NLS-1$
             .stringProperty("startupOption", "start_client: /C only; applies to this launch's copy - the saved configuration is not changed. /Execute and the external-object binding come from that configuration. Refused while its client runs.") //$NON-NLS-1$

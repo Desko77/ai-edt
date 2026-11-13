@@ -6,8 +6,10 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
@@ -24,6 +26,7 @@ import com.e1c.g5.dt.applications.IApplicationManager;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.ApplicationUpdater;
 import ru.aiedt.mcp.server.support.ClientLaunchMode;
+import ru.aiedt.mcp.server.support.ClientApplicationSelection;
 import ru.aiedt.mcp.server.support.LaunchConfigAccess;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
@@ -76,7 +79,9 @@ public class ClientSessionStarter
             + "command line. Dump readiness is not checked here. An external object under debug " //$NON-NLS-1$
             + "is launch_debugger action=launch with externalObjectName. Identify the " //$NON-NLS-1$
             + "configuration by launchConfigurationName (from list_configurations), or by " //$NON-NLS-1$
-            + "projectName plus applicationId; a missing pair is created and saved. clientType " //$NON-NLS-1$
+            + "projectName with optional applicationId; omitted id uses that project's registered default, "
+            + "otherwise its sole application. Invalid ids and stale defaults refuse. A missing "
+            + "configuration for the selected pair is created and saved. clientType " //$NON-NLS-1$
             + "and runMode override the configuration. updateBeforeLaunch defaults to false. A " //$NON-NLS-1$
             + "client already running with no startupOption, waitForEndpoint, clientType or " //$NON-NLS-1$
             + "runMode answers alreadyRunning (started=false); those overrides are refused, and " //$NON-NLS-1$
@@ -91,9 +96,11 @@ public class ClientSessionStarter
             .stringProperty("launchConfigurationName", //$NON-NLS-1$
                 "Launch configuration to start, by name. Take it from list_configurations.") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
-                "Project to resolve the configuration from, when no name is given.") //$NON-NLS-1$
+                "Named project to resolve the configuration from. With no applicationId, use its "
+                    + "registered default, otherwise its sole application. No other project is searched.") //$NON-NLS-1$
             .stringProperty("applicationId", //$NON-NLS-1$
-                "Application to resolve the configuration from, together with projectName.") //$NON-NLS-1$
+                "Explicit application in projectName; invalid ids refuse without fallback. Omitted: "
+                    + "the project's registered default, otherwise its sole application; stale defaults refuse.") //$NON-NLS-1$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
                 "Update before starting (default false). Explicit true is refused when a preset " //$NON-NLS-1$
                     + "disabled update_database. A running client with no startupOption, " //$NON-NLS-1$
@@ -152,9 +159,22 @@ public class ClientSessionStarter
         return DebugSessionStarter.launchUpdate(arguments, false).update ? "update_database" : null; //$NON-NLS-1$
     }
 
+    /** Client-local seam: tests supply a manager without publishing Eclipse services. */
+    protected ILaunchManager launchManager()
+    {
+        return LaunchConfigAccess.getLaunchManager();
+    }
+
+    private static ToolResult notStarted(String message)
+    {
+        return ToolResult.error(message).put("started", false).put("mutationStarted", false)
+            .put("configurationCreated", false);
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
+        boolean configurationCreated = false;
         try
         {
             String configName = JsonUtils.extractStringArgument(params, "launchConfigurationName"); //$NON-NLS-1$
@@ -178,20 +198,20 @@ public class ClientSessionStarter
             Integer endpointTimeout = JsonUtils.extractIntegerArgument(params, "endpointTimeoutSeconds"); //$NON-NLS-1$
             if (endpointTimeout != null && (endpointTimeout.intValue() <= 0 || endpointTimeout.intValue() > 50))
             {
-                return ToolResult.error("endpointTimeoutSeconds must be in (0, 50]. Nothing was started.") //$NON-NLS-1$
+                return notStarted("endpointTimeoutSeconds must be in (0, 50]. Nothing was started.") //$NON-NLS-1$
                     .put("endpointTimeoutSeconds", endpointTimeout) //$NON-NLS-1$
                     .toJson();
             }
             if (endpointTimeout != null && waitForEndpoint == null)
             {
-                return ToolResult.error("endpointTimeoutSeconds without waitForEndpoint names a " //$NON-NLS-1$
+                return notStarted("endpointTimeoutSeconds without waitForEndpoint names a " //$NON-NLS-1$
                     + "wait that never happens. Nothing was started.").toJson(); //$NON-NLS-1$
             }
 
-            ILaunchManager launchManager = LaunchConfigAccess.getLaunchManager();
+            ILaunchManager launchManager = launchManager();
             if (launchManager == null)
             {
-                return ToolResult.error("Error: the launch manager is not published as a service") //$NON-NLS-1$
+                return notStarted("Error: the launch manager is not published as a service") //$NON-NLS-1$
                     .toJson();
             }
 
@@ -203,14 +223,56 @@ public class ClientSessionStarter
             LAUNCH_LOCK.lock();
             try
             {
+                // Resolve the application before consulting saved configurations: a stale saved
+                // binding must not make an invalid explicit id (or default) launchable.
+                if ((configName == null || configName.isEmpty())
+                    && projectName != null && !projectName.isEmpty())
+                {
+                    IProject namedProject = ProjectResolver.resolve(projectName);
+                    if (namedProject == null)
+                    {
+                        return ProjectResolver.notFound(projectName).put("started", false)
+                            .put("mutationStarted", false).put("configurationCreated", false).toJson();
+                    }
+                    IApplicationManager applications = Activator.getDefault().getApplicationManager();
+                    if (applications == null)
+                    {
+                        return notStarted("The application manager is unavailable. Nothing was created or started.").toJson();
+                    }
+                    List<IApplication> registered = applications.getApplications(namedProject);
+                    String defaultId = applicationId != null && !applicationId.isEmpty() ? null
+                        : applications.getDefaultApplication(namedProject).map(IApplication::getId).orElse(null);
+                    try
+                    {
+                        applicationId = ClientApplicationSelection.select(applicationId, defaultId,
+                            registered.stream().map(IApplication::getId).collect(Collectors.toList()));
+                    }
+                    catch (IllegalArgumentException refusal)
+                    {
+                        return notStarted(refusal.getMessage()).toJson();
+                    }
+                }
                 ILaunchConfiguration config =
                     LaunchConfigAccess.resolveLaunchConfig(launchManager, configName, projectName,
                         applicationId);
+                if (config != null && configName != null && !configName.isEmpty())
+                {
+                    String boundProject = LaunchConfigAccess.readAttribute(config,
+                        LaunchConfigAccess.ATTR_PROJECT_NAME, "");
+                    String boundId = LaunchConfigAccess.readAttribute(config,
+                        LaunchConfigAccess.ATTR_APPLICATION_ID, "");
+                    if (projectName != null && !projectName.equals(boundProject)
+                        || applicationId != null && !applicationId.equals(boundId))
+                    {
+                        return notStarted("Explicit launch configuration binding does not match "
+                            + "projectName/applicationId. Nothing was created or started.").toJson();
+                    }
+                }
                 boolean pairNamed = (configName == null || configName.isEmpty()) && projectName != null
                     && !projectName.isEmpty() && applicationId != null && !applicationId.isEmpty();
                 if (config == null && !pairNamed)
                 {
-                    return ToolResult.error("No launch configuration matched. Give " //$NON-NLS-1$
+                    return notStarted("No launch configuration matched. Give " //$NON-NLS-1$
                         + "launchConfigurationName, or projectName together with applicationId. " //$NON-NLS-1$
                         + "list_configurations shows what exists.").toJson(); //$NON-NLS-1$
                 }
@@ -219,7 +281,7 @@ public class ClientSessionStarter
                 // else is running. Launching it here would produce a session with no process behind it.
                 if (config != null && LaunchConfigAccess.isAttachConfig(config))
                 {
-                    return ToolResult.error("'" + config.getName() //$NON-NLS-1$
+                    return notStarted("'" + config.getName() //$NON-NLS-1$
                         + "' attaches to a running debug server rather than starting a client. " //$NON-NLS-1$
                         + "Use launch_debugger action=launch for it.").toJson(); //$NON-NLS-1$
                 }
@@ -239,7 +301,7 @@ public class ClientSessionStarter
                     config == null ? null : LaunchConfigAccess.getClientTypeIdFor(config));
                 if (mode.refusal != null)
                 {
-                    return ToolResult.error(mode.refusal)
+                    return notStarted(mode.refusal)
                         .put("configuration", config == null ? null : config.getName()) //$NON-NLS-1$
                         .put("nothingWasStarted", Boolean.TRUE) //$NON-NLS-1$
                         .toJson();
@@ -250,12 +312,13 @@ public class ClientSessionStarter
                 {
                     if (project == null)
                     {
-                        return ProjectResolver.notFound(projectName).toJson();
+                        return ProjectResolver.notFound(projectName).put("started", false)
+                            .put("mutationStarted", false).put("configurationCreated", false).toJson();
                     }
                     IApplication application = findApplication(project, applicationId);
                     if (application == null)
                     {
-                        return ToolResult.error("No application found for: " + applicationId //$NON-NLS-1$
+                        return notStarted("No application found for: " + applicationId //$NON-NLS-1$
                             + ". Call get_applications to see the valid application IDs. Nothing " //$NON-NLS-1$
                             + "was created or started.").toJson(); //$NON-NLS-1$
                     }
@@ -263,12 +326,12 @@ public class ClientSessionStarter
                         launchManager.getLaunchConfigurationType(LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID);
                     if (configType == null)
                     {
-                        return ToolResult.error("No such launch configuration type: " //$NON-NLS-1$
+                        return notStarted("No such launch configuration type: " //$NON-NLS-1$
                             + LaunchConfigAccess.LAUNCH_CONFIG_TYPE_ID).toJson();
                     }
                     config = LaunchConfigAccess.createRuntimeClientConfig(launchManager, configType,
                         project.getName(), applicationId, application.getName(), mode.clientTypeId);
-                    created = true;
+                    created = true; configurationCreated = true;
                     Activator.logInfo("Created a runtime-client launch configuration '" + config.getName() //$NON-NLS-1$
                         + "' for project '" + project.getName() + "', application '" + applicationId //$NON-NLS-1$ //$NON-NLS-2$
                         + "'."); //$NON-NLS-1$
@@ -284,7 +347,8 @@ public class ClientSessionStarter
         catch (Exception e)
         {
             Activator.logError("Could not start the 1C client", e); //$NON-NLS-1$
-            return ToolResult.error("Error: " + e.getMessage()).toJson(); //$NON-NLS-1$
+            return ToolResult.error("Error: " + e.getMessage()).put("started", false)
+                .put("mutationStarted", configurationCreated).put("configurationCreated", configurationCreated).toJson(); //$NON-NLS-1$
         }
     }
 
@@ -299,12 +363,13 @@ public class ClientSessionStarter
      * @param allowSecond whether a second session is permitted
      * @return the JSON reply
      */
-    private static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
+    static String decideAndLaunch(ILaunchManager launchManager, ILaunchConfiguration config,
         String projectName, DebugSessionStarter.LaunchUpdate updateFirst, boolean allowSecond,
         String startupOption,
         String waitForEndpoint, Integer endpointTimeout, ClientLaunchMode mode, boolean choiceGiven,
         boolean created, IProject project)
     {
+        boolean launchAttempted = false;
         try
         {
             String resolvedAppId = LaunchConfigAccess.getApplicationIdFor(config);
@@ -324,10 +389,15 @@ public class ClientSessionStarter
                         .put("configuration", config.getName()) //$NON-NLS-1$
                         .put("applicationId", resolvedAppId) //$NON-NLS-1$
                         .put("alreadyRunning", true) //$NON-NLS-1$
+                        .put("started", false)
+                        .put("mutationStarted", created)
+                        .put("configurationCreated", created)
                         .toJson();
                 }
                 return ToolResult.success()
                     .put("started", false) //$NON-NLS-1$
+                    .put("mutationStarted", created)
+                    .put("configurationCreated", created)
                     .put("configuration", config.getName()) //$NON-NLS-1$
                     .put("applicationId", resolvedAppId) //$NON-NLS-1$
                     .put("alreadyRunning", true) //$NON-NLS-1$
@@ -349,6 +419,9 @@ public class ClientSessionStarter
                 return ToolResult.error(updateFirst.refusal)
                     .put("configuration", config.getName()) //$NON-NLS-1$
                     .put("applicationId", resolvedAppId) //$NON-NLS-1$
+                    .put("started", false)
+                    .put("mutationStarted", created)
+                    .put("configurationCreated", created)
                     .put("nothingWasLaunchedOrUpdated", Boolean.TRUE) //$NON-NLS-1$
                     .toJson();
             }
@@ -387,7 +460,8 @@ public class ClientSessionStarter
                     }
                     why.append(" Nothing was started. Retry with updateBeforeLaunch=false to start " //$NON-NLS-1$
                         + "against the infobase as it stands."); //$NON-NLS-1$
-                    return ToolResult.error(why.toString()).toJson();
+                    return ToolResult.error(why.toString()).put("started", false)
+                        .put("mutationStarted", true).put("configurationCreated", created).toJson();
                 }
             }
 
@@ -397,10 +471,13 @@ public class ClientSessionStarter
 
             // A configuration created here already carries the client; an existing one keeps its
             // own on disk and starts this launch with the decided one.
+            launchAttempted = true;
             String failure = launch(config, startupOption, created ? null : mode.clientTypeId);
             if (failure != null)
             {
-                return ToolResult.error("Could not start the client: " + failure).toJson(); //$NON-NLS-1$
+                return ToolResult.error("Could not start the client: " + failure)
+                    .put("launchAttempted", true).put("mutationOutcome", "unknown")
+                    .put("configurationCreated", created).toJson(); //$NON-NLS-1$
             }
 
             ToolResult success = result.put("started", true) //$NON-NLS-1$
@@ -422,7 +499,9 @@ public class ClientSessionStarter
         catch (Exception e)
         {
             Activator.logError("Could not start the 1C client", e); //$NON-NLS-1$
-            return ToolResult.error("Error: " + e.getMessage()).toJson(); //$NON-NLS-1$
+            return ToolResult.error("Error: " + e.getMessage())
+                .put("launchAttempted", launchAttempted).put("mutationOutcome", "unknown")
+                .put("configurationCreated", created).toJson(); //$NON-NLS-1$
         }
     }
 

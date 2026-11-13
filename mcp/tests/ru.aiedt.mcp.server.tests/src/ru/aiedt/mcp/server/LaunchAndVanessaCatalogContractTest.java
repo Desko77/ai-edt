@@ -95,14 +95,14 @@ public class LaunchAndVanessaCatalogContractTest
         {
             JsonObject before = properties(baseline("vanessa"));
             JsonObject after = properties(record(tools(server), "vanessa"));
-            assertEquals(29, before.size());
+            assertEquals(30, before.size());
             assertEquals(before.keySet(), after.keySet());
             java.util.Set<String> changedDescriptions = java.util.Set.of(
                 "connectionString", "testManager", "testClient", "featurePath",
                 "listKind", "infobaseUser", "vanessaParams", "formToOpen",
                 "openStep", "async", "windowTitle", "scenarioText",
                 "keepOpen", "whenSeveral", "cancel", "testClientPort",
-                "startStep", "projectName", "buttonTitle", "buttonName");
+                "startStep", "projectName", "buttonTitle", "buttonName", "timeoutSeconds");
             for (String property : before.keySet())
             {
                 if (changedDescriptions.contains(property))

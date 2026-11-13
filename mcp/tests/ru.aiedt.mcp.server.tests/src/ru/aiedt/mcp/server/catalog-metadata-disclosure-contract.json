@@ -609,7 +609,7 @@
     "parentName": "Parent container for add_field/group/button/table/decoration (default: form root).",
     "elementType": "Element subtype for add_field, add_group and add_decoration.",
     "dataPath": "Data path binding for add_field / add_table.",
-    "beforeName": "Insert the new element before this sibling element (default: append).",
+    "beforeName": "For new elements, name one direct sibling in parentName (default container: form root); missing or ambiguous siblings refuse in preview and write. Omit to append.",
     "standardCommand": "Bind an add_button to a platform stock command.",
     "handlerName": "BSL handler procedure name for add_form_event_handler (default derived from the event / item).",
     "writeStub": "add_form_event_handler / add_command_handler: append the procedure to the form module. Default true.",

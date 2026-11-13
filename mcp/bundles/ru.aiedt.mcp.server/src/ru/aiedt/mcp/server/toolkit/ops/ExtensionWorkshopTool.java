@@ -61,6 +61,43 @@ public class ExtensionWorkshopTool implements IMcpTool
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
+    private static final ru.aiedt.mcp.server.support.ExtensionCreationLifecycle CREATION =
+        new ru.aiedt.mcp.server.support.ExtensionCreationLifecycle(
+            new ru.aiedt.mcp.server.support.ExtensionCreationLifecycle.Port()
+            {
+                public String preflight(ru.aiedt.mcp.server.support.ExtensionCreationLifecycle.Scope scope)
+                {
+                    if (org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot()
+                        .getProject(scope.projectName()).exists()) return "Project already exists; nothing created";
+                    IProject base = ProjectResolver.resolve(scope.baseProjectName());
+                    return base == null ? "Base project not found" : null;
+                }
+                public Map<String, Object> create(
+                    ru.aiedt.mcp.server.support.ExtensionCreationLifecycle.Scope scope,
+                    ru.aiedt.mcp.server.support.ToolCallScope.Cancellation cancellation)
+                {
+                    org.eclipse.core.runtime.NullProgressMonitor monitor = new org.eclipse.core.runtime.NullProgressMonitor()
+                    {
+                        @Override public boolean isCanceled() { return cancellation.isCancelled() || super.isCanceled(); }
+                    };
+                    BmExtensionProjectHelper.CreateResult result = BmExtensionProjectHelper.createExtensionProject(
+                        scope.projectName(), ProjectResolver.resolve(scope.baseProjectName()), scope.namePrefix(), monitor);
+                    if (!result.ok) throw new IllegalStateException(result.error != null ? result.error : "Creation failed");
+                    return Map.of("namePrefixApplied", result.namePrefixApplied);
+                }
+                public Map<String, Object> observe(ru.aiedt.mcp.server.support.ExtensionCreationLifecycle.Scope scope)
+                {
+                    IProject project = org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot().getProject(scope.projectName());
+                    ru.aiedt.mcp.server.support.ProjectStateGuard.ProjectStateResult state =
+                        ru.aiedt.mcp.server.support.ProjectStateGuard.checkProjectState(project);
+                    boolean available = project.exists() && project.isOpen()
+                        && ru.aiedt.mcp.server.Activator.getDefault().getConfigurationProvider() != null
+                        && ru.aiedt.mcp.server.Activator.getDefault().getConfigurationProvider().getConfiguration(project) != null;
+                    return Map.of("projectExists", project.exists(), "projectState", state.getStateValue(),
+                        "projectStateMessage", state.getMessage(), "configurationAvailable", available);
+                }
+            }, PendingWorkRegistry.EXTENSION_CREATE, 2);
+
     @Override
     public String getName()
     {
@@ -86,13 +123,12 @@ public class ExtensionWorkshopTool implements IMcpTool
                     + "list_interceptors / check_release_fitness / check_platform_verdict / help", //$NON-NLS-1$
                 true)
             .stringProperty("projectName", //$NON-NLS-1$
-                "create_extension_project: new name, must not already exist. borrow_*: " //$NON-NLS-1$
+                "Name must not already exist; borrow_*: " //$NON-NLS-1$
                     + "existing extension.") //$NON-NLS-1$
             .stringProperty("baseProjectName", //$NON-NLS-1$
-                "Required for create_extension_project. borrow_* and update_borrowed default " //$NON-NLS-1$
-                    + "to the parent.") //$NON-NLS-1$
+                "Required for create_extension_project; borrow_*/update_borrowed: parent.") //$NON-NLS-1$
             .stringProperty("namePrefix", //$NON-NLS-1$
-                "create_extension_project prefix. Omit: EDT default.") //$NON-NLS-1$
+                "Prefix; omit: EDT default.") //$NON-NLS-1$
             .stringProperty("objectFqn", //$NON-NLS-1$
                 "Borrow FQN; update_borrowed reviews one. Top-level Type.Name. Child: Form, " //$NON-NLS-1$
                     + "Attribute, TabularSection, Template, Command, Dimension, Resource. " //$NON-NLS-1$
@@ -100,12 +136,12 @@ public class ExtensionWorkshopTool implements IMcpTool
             .stringArrayProperty("objectFqns", //$NON-NLS-1$
                 "FQN array for borrow_objects.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
-                "borrow_objects: re-call with the same objectFqns after a Pending soft " //$NON-NLS-1$
-                    + "timeout for batchResults.") //$NON-NLS-1$
+                "borrow_objects: Pending soft timeout; repeat objectFqns for batchResults. Creation: poll runKey; supplied scope must match.")
+            .booleanProperty("cancel", "Creation runKey: cooperative cancel; no project deletion.")
             .stringProperty("childKind", //$NON-NLS-1$
                 "borrow_child: Attribute / TabularSection / Form / Template") //$NON-NLS-1$
             .stringProperty("childName", //$NON-NLS-1$
-                "borrow_child name when objectFqn names the owner. Read when name is absent.") //$NON-NLS-1$
+                "borrow_child: when objectFqn names the owner; fallback for name.") //$NON-NLS-1$
             .stringProperty("name", //$NON-NLS-1$
                 "borrow_child name. childName is read when this is absent.") //$NON-NLS-1$
             .stringProperty("itemName", //$NON-NLS-1$
@@ -154,6 +190,13 @@ public class ExtensionWorkshopTool implements IMcpTool
             .stringProperty("topic", //$NON-NLS-1$
                 "operation help topic. No topic: the operation list.") //$NON-NLS-1$
             .build();
+    }
+
+    @Override
+    public String resumes(String domain, String operation)
+    {
+        return "create_extension_project".equals(domain) && "create_extension_project".equals(operation)
+            ? NAME : null;
     }
 
     @Override
@@ -1247,73 +1290,7 @@ public class ExtensionWorkshopTool implements IMcpTool
 
     private String doCreateExtensionProject(Map<String, String> params)
     {
-        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
-        String baseProjectName = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
-        String namePrefix = JsonUtils.extractStringArgument(params, "namePrefix"); //$NON-NLS-1$
-        if (projectName == null || projectName.isEmpty())
-        {
-            return ToolResult.error(TextSuggest.missingParam("projectName", //$NON-NLS-1$
-                "create_extension_project projectName=MyExt baseProjectName=BaseCfg")).toJson(); //$NON-NLS-1$
-        }
-        if (baseProjectName == null || baseProjectName.isEmpty())
-        {
-            return ToolResult.error(TextSuggest.missingParam("baseProjectName", //$NON-NLS-1$
-                "create_extension_project projectName=MyExt baseProjectName=BaseCfg")).toJson(); //$NON-NLS-1$
-        }
-        IProject baseProject = ProjectResolver.resolve(baseProjectName);
-        if (baseProject == null)
-        {
-            return ProjectResolver.notFound(baseProjectName).toJson();
-        }
-        BmExtensionProjectHelper.CreateResult r =
-            BmExtensionProjectHelper.createExtensionProject(projectName, baseProject, namePrefix);
-        if (r.ok)
-        {
-            ToolResult res = ToolResult.success()
-                .put("operation", "create_extension_project") //$NON-NLS-1$ //$NON-NLS-2$
-                .put("projectName", r.createdProjectName) //$NON-NLS-1$
-                .put("baseProject", baseProjectName); //$NON-NLS-1$
-            if (r.alreadyExists)
-            {
-                res.put(ErrorTags.ALREADY_EXISTS.wire(), true);
-                res.put("message", r.hint != null ? r.hint : "already exists"); //$NON-NLS-1$ //$NON-NLS-2$
-            }
-            else
-            {
-                res.put("message", "Extension project created"); //$NON-NLS-1$ //$NON-NLS-2$
-                boolean prefixRequested = namePrefix != null && !namePrefix.trim().isEmpty();
-                if (prefixRequested)
-                {
-                    res.put("namePrefixApplied", r.namePrefixApplied); //$NON-NLS-1$
-                    if (!r.namePrefixApplied)
-                    {
-                        res.put("namePrefixHint", //$NON-NLS-1$
-                            "namePrefix not applied yet (new project still indexing). Set it via " //$NON-NLS-1$
-                                + "edit_metadata operation=set_object_property projectName=" //$NON-NLS-1$
-                                + r.createdProjectName
-                                + " objectName=Configuration property=namePrefix value=" //$NON-NLS-1$
-                                + namePrefix.trim());
-                    }
-                }
-                res.put("nextSteps", //$NON-NLS-1$
-                    "Run get_project_errors on '" + r.createdProjectName //$NON-NLS-1$
-                        + "' to confirm a clean build, then borrow base objects via " //$NON-NLS-1$
-                        + "borrow_object before overriding them."); //$NON-NLS-1$
-            }
-            return res.toJson();
-        }
-        ToolResult err = ToolResult.error("create_extension_project failed: " //$NON-NLS-1$
-            + (r.error != null ? r.error : "unknown error")) //$NON-NLS-1$
-            .put("operation", "create_extension_project"); //$NON-NLS-1$ //$NON-NLS-2$
-        if (r.serviceNotFound)
-        {
-            err.put("serviceNotFound", true); //$NON-NLS-1$
-        }
-        if (r.hint != null)
-        {
-            err.put("hint", r.hint); //$NON-NLS-1$
-        }
-        return err.toJson();
+        return new com.google.gson.Gson().toJson(CREATION.execute(params, PendingExecutor.DEFAULT_SOFT_TIMEOUT_MS));
     }
 
     private String formatResult(BmExtensionHelper.BorrowResult r, String op, String objectFqn)

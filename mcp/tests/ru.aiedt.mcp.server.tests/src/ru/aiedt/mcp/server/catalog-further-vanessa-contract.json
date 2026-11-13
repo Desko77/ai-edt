@@ -81,6 +81,9 @@
         "testManager": {
           "type": "boolean"
         },
+        "vanessaExt": {
+          "type": "boolean"
+        },
         "testClient": {
           "type": "boolean"
         },
@@ -100,7 +103,7 @@
       "openWorldHint": false
     }
   },
-  "root": "Run Gherkin UI scenarios through Vanessa Automation; yaxunit_tests tests code. Choose exactly one: featurePath, scenarioText, formToOpen, or compose a list action without any of those three. For a list action, listKind and listName open the list, column and columnValue select a row, buttonTitle or buttonName presses a button, and windowWaitSeconds controls the wait for the opened window. List actions and formToOpen default testManager and testClient to true and refuse false. Reports failed steps and screenshots. Requires vanessa-automation.epf and the 1C thick client configured in EDT preferences. A timeout blocked by a 1C window returns blockingWindows with its title, texts, buttons and imageFile and does not ask to raise timeoutSeconds.",
+  "root": "Run Gherkin UI scenarios through Vanessa Automation; yaxunit_tests tests code. Choose exactly one: featurePath, scenarioText, formToOpen, or compose a list action without any of those three. For a list action, listKind and listName open the list, column and columnValue select a row, buttonTitle or buttonName presses a button, and windowWaitSeconds controls the wait for the opened window. List actions and formToOpen default testManager and testClient to true and refuse false. Reports failed steps and screenshots. Requires vanessa-automation.epf and the 1C thick client configured in EDT preferences. Owned modal observations return blockingWindows with title, texts, buttons and imageFile; nonmodal startup remains unknown. A soft deadline does not ask to raise timeoutSeconds or kill the client.",
   "descriptions": {
     "featurePath": "File calls: .feature file/directory; alternatives: scenarioText, formToOpen, composed list action. With runKey: no featurePath/scenarioText. projectName resolves relative paths against its project.",
     "scenarioText": "Gherkin text stored in a temporary run directory; steps depend on Vanessa version. Refused with featurePath.",
@@ -124,13 +127,14 @@
     "waitSeconds": "With runKey: how long to wait this time before answering Pending again.",
     "vanessaParams": "VAParams.json additions as JSON (e.g. tag/scenario filters). Names are Vanessa-version-specific; unknown names ignored. Parameters used by this tool to read results are refused.",
     "projectName": "Optional EDT project: resolves relative featurePath; its directory is the working directory.",
-    "timeoutSeconds": "Max seconds to wait for the run (default 300, max 3600).",
+    "timeoutSeconds": "Soft observation deadline in seconds (default 300, max 3600); Pending retains the owned client until exit or explicit cancel.",
     "infobaseUser": "1C login name for the run. For a base with users, omission opens a login window and the run waits its entire deadline. No password accepted here.",
-    "testManager": "Start as test manager (default false): required for UI-testing types in form-driving scenarios; otherwise a step returns Тип не определен. List action/formToOpen: omitted=true, false refused.",
+    "testManager": "Start as test manager (default true; explicit false is honored for file/text scenarios): required for UI-testing types in form-driving scenarios; otherwise a step returns Тип не определен. List action/formToOpen: omitted=true, false refused.",
     "testClient": "Include a test client in VAParams for the start step to launch (default false). Without it the TestClient start step has no client; its result has an empty client type and PID 0. List action/formToOpen: omitted=true, false refused.",
     "testClientPort": "Test client listening port (default 48010); change if another run or EDT holds it.",
     "screenshots": "Capture a screenshot on step failure (default true).",
-    "keepOpen": "Keep 1C client open for observation (default false); run times out here because the client never exits."
+    "keepOpen": "Keep 1C client open for observation (default false); run times out here because the client never exits.",
+    "vanessaExt": "Enable VanessaExt for any input mode. Omitted: enabled for composed form/list actions, unchanged for file/text. Composed actions refuse false; enabling does not prove the add-in is installed."
   },
   "changedKeys": [
     "connectionString",

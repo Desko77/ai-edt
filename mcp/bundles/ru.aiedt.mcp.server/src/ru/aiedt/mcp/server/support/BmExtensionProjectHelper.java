@@ -82,6 +82,12 @@ public final class BmExtensionProjectHelper
     public static CreateResult createExtensionProject(String newName, IProject baseProject,
         String namePrefix)
     {
+        return createExtensionProject(newName, baseProject, namePrefix, new NullProgressMonitor());
+    }
+
+    public static CreateResult createExtensionProject(String newName, IProject baseProject,
+        String namePrefix, IProgressMonitor monitor)
+    {
         CreateResult r = new CreateResult();
         if (newName == null || newName.trim().isEmpty())
         {
@@ -99,7 +105,8 @@ public final class BmExtensionProjectHelper
         if (target.exists())
         {
             r.alreadyExists = true;
-            r.ok = true;
+            r.ok = false;
+            r.error = "Project already exists; nothing created";
             r.createdProjectName = newName;
             r.hint = "A project named '" + newName //$NON-NLS-1$
                 + "' already exists - nothing created. NOTE: its type was not verified; " //$NON-NLS-1$
@@ -166,7 +173,11 @@ public final class BmExtensionProjectHelper
         // closest precedent, import_configuration_from_xml, does the same).
         try
         {
-            IProgressMonitor monitor = new NullProgressMonitor();
+            if (monitor.isCanceled())
+            {
+                r.error = "Creation cancelled before mutation";
+                return r;
+            }
             Configuration extConfig = adoptConfiguration(adopter, baseConfig, version, monitor);
             if (extConfig == null)
             {
@@ -182,6 +193,11 @@ public final class BmExtensionProjectHelper
             {
                 extConfig.setNamePrefix(namePrefix.trim());
                 r.namePrefixApplied = true;
+            }
+            if (monitor.isCanceled())
+            {
+                r.error = "Creation cancelled before project creation";
+                return r;
             }
             IProject created = mgr.create(newName, version, extConfig, baseProject, monitor);
             if (created == null)

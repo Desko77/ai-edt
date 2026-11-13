@@ -6,13 +6,13 @@ other than the server are named with the bundle in front (`oform:ops`).
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 161 | a test class named after it |
-| exercised | 328 | reached by some other test |
+| direct | 163 | a test class named after it |
+| exercised | 330 | reached by some other test |
 | tool-sweep | 26 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 37 | needs a display or an extension point |
 | workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **571** | across 946 test classes |
+| **total** | **575** | across 967 test classes |
 
 ## untested (0)
 
@@ -144,7 +144,7 @@ _none_
 - SelfStatusTool
 - UninstallExtensionTool
 
-## exercised (328)
+## exercised (330)
 
 **(root)**
 - Activator
@@ -307,6 +307,7 @@ _none_
 - BreakpointAccess
 - BslCallGraphHelper
 - ChildBorrow
+- ClientApplicationSelection
 - ClientLaunchMode
 - ConfigurationListProperties
 - ContainerScope
@@ -325,6 +326,7 @@ _none_
 - EndpointWaiter
 - ErrorTags
 - ExportedFiles
+- ExtensionCreationLifecycle
 - FacadeParameterHelp
 - FileMarkers
 - FormEventContainers
@@ -522,7 +524,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (161)
+## direct (163)
 
 **(root)**
 - BrowserOrigin
@@ -644,6 +646,7 @@ _none_
 - SupportSnapshot
 - SystemEnumValues
 - TaskDirectory
+- TemplateMutationLock
 - TextSuggest
 - TimeoutArgs
 - ToolCallScope
@@ -685,6 +688,7 @@ _none_
 - MarkerCorrectionTool
 - ModuleSourceWriter
 - ObjectCopier
+- OwnedVanessaRun
 - QueryValidator
 - RegisteredInfobasesReader
 - SelfUpkeepTool
@@ -730,14 +734,14 @@ closes.
 |---:|---:|
 | 1 | 0 |
 | 2 | 2 |
-| 3-4 | 17 |
+| 3-4 | 18 |
 | 5-8 | 47 |
-| 9-16 | 63 |
+| 9-16 | 64 |
 | 17+ | 32 |
 
-6867 test methods across 946 test classes; 161 classes have a test of their own, median 10 methods each.
+6972 test methods across 967 test classes; 163 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 161 of 571 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 163 of 575 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

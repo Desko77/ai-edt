@@ -42,7 +42,6 @@ import ru.aiedt.mcp.server.support.JUnitReportFormatter;
 import ru.aiedt.mcp.server.support.JUnitRunOutcome;
 import ru.aiedt.mcp.server.support.JUnitXmlReader;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
-import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.RunReceipts;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import com.google.gson.JsonObject;
@@ -115,8 +114,8 @@ public class VanessaTool implements IMcpTool
             + "and windowWaitSeconds controls the wait for the opened window. List actions and " //$NON-NLS-1$
             + "formToOpen default testManager and testClient to true and refuse false. Reports " //$NON-NLS-1$
             + "failed steps and screenshots. Requires vanessa-automation.epf and the 1C thick " //$NON-NLS-1$
-            + "client configured in EDT preferences. A timeout blocked by a 1C window returns " //$NON-NLS-1$
-            + "blockingWindows with its title, texts, buttons and imageFile and does not ask to raise timeoutSeconds."; //$NON-NLS-1$
+            + "client configured in EDT preferences. Owned modal observations return " //$NON-NLS-1$
+            + "blockingWindows with title, texts, buttons and imageFile; nonmodal startup remains unknown. A soft deadline does not ask to raise timeoutSeconds or kill the client."; //$NON-NLS-1$
     }
 
     /**
@@ -158,9 +157,10 @@ public class VanessaTool implements IMcpTool
             .objectProperty("vanessaParams", "VAParams.json additions as JSON (e.g. tag/scenario filters). Names are Vanessa-version-specific; unknown names ignored. Parameters used by this tool to read results are refused.") //$NON-NLS-1$
             .stringProperty("projectName", "Optional EDT project: resolves relative featurePath; its directory is the working directory.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "Max seconds to wait for the run (default 300, max 3600).") //$NON-NLS-1$
+                "Soft observation deadline in seconds (default 300, max 3600); Pending retains the owned client until exit or explicit cancel.") //$NON-NLS-1$
             .stringProperty("infobaseUser", "1C login name for the run. For a base with users, omission opens a login window and the run waits its entire deadline. No password accepted here.") //$NON-NLS-1$
-            .booleanProperty("testManager", "Start as test manager (default false): required for UI-testing types in form-driving scenarios; otherwise a step returns Тип не определен. List action/formToOpen: omitted=true, false refused.") //$NON-NLS-1$
+            .booleanProperty("testManager", "Start as test manager (default true; explicit false is honored for file/text scenarios): required for UI-testing types in form-driving scenarios; otherwise a step returns Тип не определен. List action/formToOpen: omitted=true, false refused.") //$NON-NLS-1$
+            .booleanProperty("vanessaExt", "Enable VanessaExt for any input mode. Omitted: enabled for composed form/list actions, unchanged for file/text. Composed actions refuse false; enabling does not prove the add-in is installed.")
             .booleanProperty("testClient", "Include a test client in VAParams for the start step to launch (default false). Without it the TestClient start step has no client; its result has an empty client type and PID 0. List action/formToOpen: omitted=true, false refused.") //$NON-NLS-1$
             .integerProperty("testClientPort", "Test client listening port (default 48010); change if another run or EDT holds it.") //$NON-NLS-1$
             .booleanProperty("screenshots", //$NON-NLS-1$
@@ -179,6 +179,11 @@ public class VanessaTool implements IMcpTool
     @Override
     public String execute(Map<String, String> params)
     {
+        if (params != null && params.containsKey("vanessaExt")
+            && JsonUtils.extractBooleanArgumentNullable(params, "vanessaExt") == null)
+        {
+            return ToolResult.error("vanessaExt must be a boolean (true or false).").toJson();
+        }
         if (params != null && params.containsKey("stepDelaySeconds")) //$NON-NLS-1$
         {
             return ToolResult.error("stepDelaySeconds names no Vanessa parameter: the run would " //$NON-NLS-1$
@@ -189,6 +194,7 @@ public class VanessaTool implements IMcpTool
         if (runKey != null && !runKey.isEmpty())
         {
             // A key means the caller is coming back for a run, not starting one.
+            if (OWNED.containsKey(runKey) && preparationLeft(runKey)) return collectOwned(runKey, params);
             if (JsonUtils.extractBooleanArgument(params, "cancel", false)) //$NON-NLS-1$
             {
                 return cancelRun(runKey);
@@ -220,8 +226,134 @@ public class VanessaTool implements IMcpTool
      * @param params the call, read for how long to wait this time.
      * @return the result, or another Pending reply
      */
+    private static final java.util.concurrent.ConcurrentMap<String, AtomicBoolean> PREPARATION_EXIT =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentMap<String, OwnedVanessaRun> OWNED =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ScheduledThreadPoolExecutor OWNED_MONITOR =
+        new java.util.concurrent.ScheduledThreadPoolExecutor(1, r -> {
+            Thread t = new Thread(r, "vanessa-owned-observer"); t.setDaemon(true); return t;
+        });
+    private static java.util.concurrent.ScheduledFuture<?> monitorTask;
+
+    private static synchronized void monitorOwnedRuns()
+    {
+        if (monitorTask == null || monitorTask.isDone())
+        {
+            OWNED_MONITOR.setRemoveOnCancelPolicy(true);
+            monitorTask = OWNED_MONITOR.scheduleWithFixedDelay(() -> {
+                OWNED.forEach((key, run) -> {
+                    run.observe();
+                    Process process = RUNNING.get(key);
+                    if (run.result() == null && process != null && process.isAlive()) {
+                        run.windows = ClientDialogReader.ofProcess(process, ClientDialogReader.imagesFor(NAME));
+                        if (run.windows.windows().stream().anyMatch(ClientDialogReader.Window::modal))
+                            run.setPhase("modalBlocked");
+                        else run.setPhase("unknown");
+                    }
+                    if (run.completedAt > 0 && !run.cleanupRequired() && System.currentTimeMillis() - run.completedAt > 300_000L)
+                        if (OWNED.remove(key, run)) PREPARATION_EXIT.remove(key);
+                });
+                synchronized (VanessaTool.class) {
+                    if (OWNED.isEmpty() && monitorTask != null) {
+                        monitorTask.cancel(false);
+                        monitorTask = null;
+                    }
+                }
+            }, 1, 1, TimeUnit.SECONDS);
+        }
+    }
+
+    @FunctionalInterface
+    interface LaunchPort { Process start() throws Exception; }
+
+    static Process launchOwned(String key, LaunchPort launch) throws Exception
+    {
+        synchronized (LAUNCHING)
+        {
+            if (CANCELLED.containsKey(key)) return null;
+            Process process = launch.start();
+            if (CANCELLED.containsKey(key) && process != null) {
+                process.descendants().forEach(ProcessHandle::destroyForcibly);
+                process.destroyForcibly();
+            }
+            return process;
+        }
+    }
+
+    static Process cancellationTarget(String key, java.util.concurrent.atomic.AtomicReference<Process> reference)
+    {
+        Process process = reference.get();
+        if (process != null) return process;
+        synchronized (LAUNCHING)
+        {
+            CANCELLED.put(key, System.currentTimeMillis());
+            return reference.get();
+        }
+    }
+
+    private static boolean preparationLeft(String key)
+    {
+        AtomicBoolean exited = PREPARATION_EXIT.get(key);
+        return exited != null && exited.get();
+    }
+
+    public static int shutdownOwnedRuns()
+    {
+        synchronized (VanessaTool.class) {
+            if (monitorTask != null) monitorTask.cancel(false);
+        }
+        OWNED_MONITOR.shutdown();
+        try { OWNED_MONITOR.awaitTermination(2, TimeUnit.SECONDS); }
+        catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        return (int) OWNED.values().stream().filter(r -> r.result() == null).count();
+    }
+
+    public static boolean isOwnedLivePoll(String key, String starter, Map<String, String> args)
+    {
+        OwnedVanessaRun run = key == null ? null : OWNED.get(key);
+        return NAME.equals(starter) && run != null && args != null
+            && key.equals(args.get("runKey"))
+            && (!args.containsKey("projectName") || java.util.Objects.equals(run.projectName, args.get("projectName")))
+            && args.keySet().stream().allMatch(k -> java.util.Set.of("runKey", "waitSeconds", "cancel", "projectName").contains(k));
+    }
+
+    private static String collectOwned(String key, Map<String, String> args)
+    {
+        OwnedVanessaRun run = OWNED.get(key);
+        if (run == null) return ToolResult.error("Owned run is no longer retained (collected or expired).").toJson();
+        if (!isOwnedLivePoll(key, NAME, args))
+            return ToolResult.error("An owned run poll accepts only runKey, waitSeconds and cancel.").toJson();
+        if (JsonUtils.extractBooleanArgument(args, "cancel", false)) run.cancel();
+        else if (OWNED_MONITOR.isShutdown()) run.observe();
+        long waitMs = Math.max(0, Math.min(MAX_POLL_WAIT_SEC,
+            JsonUtils.extractIntArgument(args, "waitSeconds", 20))) * 1000L;
+        String result = run.await(waitMs);
+        if (result != null && run.cleanupRequired())
+            return ToolResult.error("The client exited, but an owned resource remains unresolved.")
+                .put("runKey", key).put("cleanupRequired", true).put("retryable", false)
+                .put("heldResource", "owned infobase lease").toJson();
+        if (result != null && OWNED.remove(key, run)) {
+            PREPARATION_EXIT.remove(key);
+            return result;
+        }
+        return ToolResult.success().put("operation", NAME).put("status", "Pending")
+            .put("runKey", key).put("elapsedMs", System.currentTimeMillis() - run.startedAt)
+            .put("phase", run.phase()).put("phaseSource", "ownedProcessLifecycle")
+            .put("phaseObservedAt", run.phaseObservedAt).put("progressAvailable", false)
+            .put(ClientDialogReader.WINDOWS, run.windows.fields())
+            .put(ClientDialogReader.ERROR, run.windows.error())
+            .put("progressUnavailableReason", "No verified Vanessa live-step feed is available.")
+            .put("hint", "The owned client is retained. Poll this key or explicitly cancel it.").toJson();
+    }
+
     private String collect(String runKey, Map<String, String> params)
     {
+        if (OWNED.containsKey(runKey) && preparationLeft(runKey)) {
+            PendingWorkRegistry.PendingEntry preparing = PendingWorkRegistry.VANESSA.get(runKey);
+            if (preparing != null) PendingWorkRegistry.VANESSA.remove(runKey, preparing);
+            return collectOwned(runKey, params);
+        }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
         PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
@@ -234,16 +366,16 @@ public class VanessaTool implements IMcpTool
         }
         long wait = Math.max(1000L, Math.min(MAX_POLL_WAIT_SEC,
             JsonUtils.extractIntArgument(params, "waitSeconds", 20)) * 1000L); //$NON-NLS-1$
-        String done = entry.await(wait);
-        if (done != null)
+        String done = entry.isDone() && !preparationLeft(runKey) ? null : entry.await(wait);
+        if (done != null && preparationLeft(runKey))
         {
             registry.remove(runKey, entry);
+            if (OWNED.containsKey(runKey)) return collectOwned(runKey, params);
             return done;
         }
         return ToolResult.success()
             .put("operation", NAME) //$NON-NLS-1$
             .put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
-            .put(ru.aiedt.mcp.server.support.PendingEnvelope.MARK, true)
             .put("runKey", runKey) //$NON-NLS-1$
             .put("elapsedMs", entry.elapsedMs()) //$NON-NLS-1$
             .put("hint", "Still playing. Come back with the same runKey, or stop it with " //$NON-NLS-1$ //$NON-NLS-2$
@@ -449,7 +581,7 @@ public class VanessaTool implements IMcpTool
         // A list action and formToOpen both open a form. The step that starts TestClient has
         // nothing to start unless this run is a test manager and names the client, so an omitted
         // argument is turned on and an explicit false is refused before anything is launched.
-        // A file or a text the caller wrote keeps the old default: off unless they ask.
+        // Arbitrary scenarios default the manager on, but do not infer a second test client.
         boolean drivesForm = drivesAForm(listAction != null, hasForm);
         if (drivesForm)
         {
@@ -459,7 +591,7 @@ public class VanessaTool implements IMcpTool
                 return ToolResult.error(clientRefusal).toJson();
             }
         }
-        final boolean settledWantsManager = wantsTheClientTheFormNeeds(drivesForm, askedManager);
+        final boolean settledWantsManager = wantsTestManager(askedManager);
         final boolean settledWantsTestClient = wantsTheClientTheFormNeeds(drivesForm, askedClient);
         final int settledClientPort = namedPort != null ? namedPort.intValue() : TEST_CLIENT_PORT;
         String portRefusal = whyThePortCannotBeUsed(settledClientPort);
@@ -494,8 +626,14 @@ public class VanessaTool implements IMcpTool
         // The keys each composing branch sets for itself: the capture keys wherever the
         // composed scenario saves its frame, and the asynchronous-step ceiling on the branch
         // whose step carries a wait.
+        Boolean askedAddin = JsonUtils.extractBooleanArgumentNullable(params, "vanessaExt");
+        String addinProblem = addinRefusal(drivesForm, askedAddin);
+        if (addinProblem != null)
+        {
+            return ToolResult.error(addinProblem).toJson();
+        }
         final JsonObject settledOurs = listAction != null ? listAction.ourKeys()
-            : (hasForm ? screenshotKeys() : null);
+            : addinKeys(hasForm, askedAddin);
         final JsonObject settledSought = listAction != null ? listAction.sought() : null;
         // One key per run, not one per set of arguments. Coalescing belongs to reads whose
         // result can be handed to a second caller; a run drives a client against an infobase, so
@@ -506,17 +644,6 @@ public class VanessaTool implements IMcpTool
             java.util.UUID.randomUUID().toString());
         boolean async = JsonUtils.extractBooleanArgument(params, "async", false); //$NON-NLS-1$
         File runDirForJob = workingDir;
-        if (!async)
-        {
-            // No key: the caller is holding the connection and is never handed one, and an async
-            // run with these same arguments owns this key. Registering both under it would let a
-            // cancel meant for that run destroy this client instead.
-            return play(settledExe, settledEpf, settledConnection, settledFeature, composedScenario,
-                screenshots, keepOpen, settledTimeout, settledClientPort,
-                extraVaParams, settledOurs, settledSought, runDirForJob, null, settledInfobase,
-                settledAddress, settledWantsTestClient, settledWantsManager, receiptFilters,
-                projectName);
-        }
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         registry.pruneExpired();
         PendingWorkRegistry.PendingEntry entry;
@@ -525,7 +652,9 @@ public class VanessaTool implements IMcpTool
             // Read and submit as one decision. Apart, two callers arriving together both find the
             // domain idle, and the second is queued behind a run that may take an hour instead of
             // being refused.
-            java.util.List<String> going = registry.unfinishedKeys();
+            if (OWNED_MONITOR.isShutdown()) return ToolResult.error("Vanessa is shutting down; no client was started.").toJson();
+            java.util.List<String> going = new ArrayList<>(registry.unfinishedKeys());
+            going.addAll(OWNED.keySet());
             if (!going.isEmpty())
             {
                 return ToolResult.error(alreadyGoing(going)).toJson();
@@ -539,11 +668,16 @@ public class VanessaTool implements IMcpTool
             // The name a poll of this run arrives under, so a live key exempts only this tool's
             // own resumption path from the heavy gates.
             entry.startedBy = NAME;
+            AtomicBoolean exited = new AtomicBoolean();
+            PREPARATION_EXIT.put(jobKey, exited);
+            entry.attachWorkExit(() -> exited.set(true));
         }
-        String done = entry.await(ASYNC_FIRST_WAIT_MS);
-        if (done != null)
+        String done = entry.await(async ? ASYNC_FIRST_WAIT_MS : settledTimeout * 1000L);
+        if (done != null && preparationLeft(jobKey))
         {
             registry.remove(jobKey, entry);
+            if (OWNED.containsKey(jobKey)) return collectOwned(jobKey, java.util.Map.of("runKey", jobKey, "waitSeconds",
+                String.valueOf(async ? 0 : Math.max(0, settledTimeout - entry.elapsedMs() / 1000L))));
             return done;
         }
         return ToolResult.success()
@@ -592,108 +726,18 @@ public class VanessaTool implements IMcpTool
      *            named directly.
      * @return the answer
      */
-    private String play(File exeFile, File epfFile, String connectionString, File featurePath,
-        String composedScenario, boolean screenshots, boolean keepOpen,
-        int timeoutSec, int clientPort, JsonObject extraVaParams, JsonObject oursVaParams,
-        JsonObject sought, File workingDir, String jobKey,
-        String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
-        boolean asTestManager, Map<String, Object> receiptFilters, String receiptProject)
+    private String finishOwned(File epfFile, File junitFile, File shotsDir, File composedFile,
+        String jobKey, String infobaseName, boolean asTestManager, Map<String, Object> receiptFilters,
+        String receiptProject, JsonObject sought, ProcessResult pr) throws Exception
     {
-        String refused = refusedBeforeLaunch(jobKey);
-        if (refused != null)
-        {
-            return refused;
-        }
-        boolean mine;
-        try
-        {
-            mine = THE_CLIENT.tryAcquire(WAIT_FOR_THE_CLIENT_SEC, TimeUnit.SECONDS);
-        }
-        catch (InterruptedException interrupted)
-        {
-            Thread.currentThread().interrupt();
-            return ToolResult.error("Interrupted while waiting for the running scenario run to " //$NON-NLS-1$
-                + "finish.").toJson(); //$NON-NLS-1$
-        }
-        if (!mine)
-        {
-            return ToolResult.error(
-                alreadyGoing(PendingWorkRegistry.VANESSA.unfinishedKeys())).toJson();
-        }
-        Path outDir = null;
-        // Deleted when the run is over, whatever ended it. The directory itself is kept - the
-        // caller reads the report and the screenshots out of it - and a scenario typing a
-        // password would otherwise sit there beside them for as long as the directory does.
-        File composedFile = null;
-        String leftBehind = null;
-        // Once the client is launched it may be reading the scenario, and an interrupt throws
-        // out of the wait without stopping it. Raised by the launch itself, at the one point a
-        // process exists: a missing executable and a denied start both throw on the way there,
-        // and neither leaves anything holding the file.
-        AtomicBoolean clientLaunched = new AtomicBoolean(false);
-        try
-        {
-            outDir = Files.createTempDirectory("ai-edt-vanessa"); //$NON-NLS-1$
-            File shotsDir = new File(outDir.toFile(), "screenshots"); //$NON-NLS-1$
-            shotsDir.mkdirs();
-            File junitFile = new File(outDir.toFile(), "junit.xml"); //$NON-NLS-1$
-            File paramsFile = new File(outDir.toFile(), "VAParams.json"); //$NON-NLS-1$
-            File playing = scenarioFileFor(outDir.toFile(), featurePath);
-            if (playing != featurePath)
-            {
-                // Recorded before the write, not after: a write that throws halfway leaves a
-                // partial scenario, and nothing would be tracking it to remove.
-                composedFile = playing;
-                writeUtf8Bom(playing, withTheFramePath(composedScenario, shotsDir));
-            }
-            if (composedScenario != null && receiptFilters.isEmpty())
-            {
-                // The text stays out of the receipt - a scenario may type a password. Where it
-                // was played from and how long it was is what identifies the run.
-                receiptFilters.put("featurePath", playing.getAbsolutePath()); //$NON-NLS-1$
-                receiptFilters.put("scenarioTextLength", //$NON-NLS-1$
-                    Integer.valueOf(composedScenario.length()));
-            }
-
-            String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
-                keepOpen, connectionString, clientPort, timeoutSec, withTestClient,
-                extraVaParams, oursVaParams);
-            writeUtf8Bom(paramsFile, vaParamsJson);
-
-            File runDir = workingDir != null ? workingDir : outDir.toFile();
-            List<String> command =
-                buildCommand(exeFile, connectionString, epfFile, paramsFile, asTestManager);
-            // The connectionString may carry Pwd="..." - never log it in the clear.
-            Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
-                + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
-
-            ProcessResult pr;
-            String heldBack = null;
-            // A file infobase admits one owner. While EDT holds it, the client starts and never
-            // connects: the process lives out its whole deadline without one event reaching the
-            // infobase log, and the answer reads as a run that timed out rather than one that
-            // never began. The claim keeps the other thick-client operations out of an infobase
-            // that is standing released.
-            String subject = infobaseAddress == null || infobaseAddress.infobase() == null
-                ? null : InfobaseIdentity.of(infobaseAddress.infobase());
-            try (MonopolyLock.Claim claim = subject == null ? null
-                : MonopolyLock.claim(subject, "vanessa")) //$NON-NLS-1$
-            {
-                if (claim != null && !claim.granted())
-                {
-                    return ToolResult.error(claim.refusal())
-                        .put("failureKind", ErrorTags.BUSY.wire()).toJson(); //$NON-NLS-1$
-                }
-                try (InfobaseAddress.Hold hold = InfobaseAddress.release(infobaseAddress))
-                {
-                    heldBack = hold.why();
-                    pr = runVanessa(command, runDir, timeoutSec, jobKey, clientLaunched);
-                }
-            }
+        int timeoutSec = 0;
+        boolean keepOpen = false;
+        String heldBack = null;
+        String leftBehind;
             // Removed here rather than in the finally: every answer below is built before a
             // finally runs, and the paths that need this most are the ones that go wrong.
             leftBehind = removeComposed(composedFile);
-            composedFile = null;
+
             if (pr.cancelledBeforeLaunch)
             {
                 return ToolResult.success()
@@ -770,6 +814,11 @@ public class VanessaTool implements IMcpTool
                 .put("screenshotsNotAttributed", attributed.unattributed()) //$NON-NLS-1$
                 .put("markdown", JUnitReportFormatter.format(results) //$NON-NLS-1$
                     + attributed.toMarkdown(pathByName));
+            for (JUnitRunOutcome.TestCase failure : broken)
+            {
+                String hint = uiTypeHint(asTestManager, failure.message);
+                if (hint != null) { ok.put("launchHint", hint); break; }
+            }
             // The path the answer names is the one this run was read from, chosen by which of the
             // two the run actually produced.
             ok = withProducedPaths(ok, resultDir, junitFile, vanessaReported);
@@ -811,6 +860,178 @@ public class VanessaTool implements IMcpTool
                 }
             }
             return ok.toJson();
+    }
+
+    private String play(File exeFile, File epfFile, String connectionString, File featurePath,
+        String composedScenario, boolean screenshots, boolean keepOpen,
+        int timeoutSec, int clientPort, JsonObject extraVaParams, JsonObject oursVaParams,
+        JsonObject sought, File workingDir, String jobKey,
+        String infobaseName, InfobaseAddress.Address infobaseAddress, boolean withTestClient,
+        boolean asTestManager, Map<String, Object> receiptFilters, String receiptProject)
+    {
+        String refused = refusedBeforeLaunch(jobKey);
+        if (refused != null)
+        {
+            return refused;
+        }
+        boolean mine;
+        try
+        {
+            mine = THE_CLIENT.tryAcquire(WAIT_FOR_THE_CLIENT_SEC, TimeUnit.SECONDS);
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            return ToolResult.error("Interrupted while waiting for the running scenario run to " //$NON-NLS-1$
+                + "finish.").toJson(); //$NON-NLS-1$
+        }
+        if (!mine)
+        {
+            return ToolResult.error(
+                alreadyGoing(PendingWorkRegistry.VANESSA.unfinishedKeys())).toJson();
+        }
+        Path outDir = null;
+        // Deleted when the run is over, whatever ended it. The directory itself is kept - the
+        // caller reads the report and the screenshots out of it - and a scenario typing a
+        // password would otherwise sit there beside them for as long as the directory does.
+        File composedFile = null;
+        String leftBehind = null;
+        // Once the client is launched it may be reading the scenario, and an interrupt throws
+        // out of the wait without stopping it. Raised by the launch itself, at the one point a
+        // process exists: a missing executable and a denied start both throw on the way there,
+        // and neither leaves anything holding the file.
+        AtomicBoolean clientLaunched = new AtomicBoolean(false);
+        boolean handedOff = false;
+        MonopolyLock.Claim claim = null;
+        InfobaseAddress.Hold hold = null;
+        try
+        {
+            outDir = Files.createTempDirectory("ai-edt-vanessa"); //$NON-NLS-1$
+            File shotsDir = new File(outDir.toFile(), "screenshots"); //$NON-NLS-1$
+            shotsDir.mkdirs();
+            File junitFile = new File(outDir.toFile(), "junit.xml"); //$NON-NLS-1$
+            File paramsFile = new File(outDir.toFile(), "VAParams.json"); //$NON-NLS-1$
+            File playing = scenarioFileFor(outDir.toFile(), featurePath);
+            if (playing != featurePath)
+            {
+                // Recorded before the write, not after: a write that throws halfway leaves a
+                // partial scenario, and nothing would be tracking it to remove.
+                composedFile = playing;
+                writeUtf8Bom(playing, withTheFramePath(composedScenario, shotsDir));
+            }
+            if (composedScenario != null && receiptFilters.isEmpty())
+            {
+                // The text stays out of the receipt - a scenario may type a password. Where it
+                // was played from and how long it was is what identifies the run.
+                receiptFilters.put("featurePath", playing.getAbsolutePath()); //$NON-NLS-1$
+                receiptFilters.put("scenarioTextLength", //$NON-NLS-1$
+                    Integer.valueOf(composedScenario.length()));
+            }
+
+            String vaParamsJson = buildVaParams(playing, junitFile, shotsDir, screenshots,
+                keepOpen, connectionString, clientPort, timeoutSec, withTestClient,
+                extraVaParams, oursVaParams);
+            writeUtf8Bom(paramsFile, vaParamsJson);
+
+            File runDir = workingDir != null ? workingDir : outDir.toFile();
+            List<String> command =
+                buildCommand(exeFile, connectionString, epfFile, paramsFile, asTestManager);
+            // The connectionString may carry Pwd="..." - never log it in the clear.
+            Activator.logInfo("vanessa: launching " + redactSecrets(String.join(" ", command)) //$NON-NLS-1$ //$NON-NLS-2$
+                + "\nVAParams.json keys: " + keysOf(vaParamsJson)); //$NON-NLS-1$
+
+            ProcessResult pr;
+            String heldBack = null;
+            // A file infobase admits one owner. While EDT holds it, the client starts and never
+            // connects: the process lives out its whole deadline without one event reaching the
+            // infobase log, and the answer reads as a run that timed out rather than one that
+            // never began. The claim keeps the other thick-client operations out of an infobase
+            // that is standing released.
+            String subject = infobaseAddress == null || infobaseAddress.infobase() == null
+                ? null : InfobaseIdentity.of(infobaseAddress.infobase());
+            claim = subject == null ? null : MonopolyLock.claim(subject, "vanessa");
+            if (claim != null && !claim.granted()) return ToolResult.error(claim.refusal()).toJson();
+            hold = InfobaseAddress.release(infobaseAddress);
+            heldBack = hold.why();
+            final File ownedScenario = composedFile;
+            final MonopolyLock.Claim ownedClaim = claim;
+            final InfobaseAddress.Hold ownedHold = hold;
+            final java.util.Map<Long, ProcessHandle> descendants = new java.util.concurrent.ConcurrentHashMap<>();
+            final java.util.concurrent.atomic.AtomicReference<Process> processRef = new java.util.concurrent.atomic.AtomicReference<>();
+            final String key = jobKey;
+            final AtomicBoolean holdUnresolved = new AtomicBoolean();
+            final AtomicBoolean permitReleased = new AtomicBoolean();
+            OwnedVanessaRun owned = new OwnedVanessaRun(() -> {
+                Process ownedProcess = processRef.get();
+                if (ownedProcess == null) return true;
+                if (ownedProcess.isAlive()) ownedProcess.descendants().forEach(h -> descendants.put(h.pid(), h));
+                return ownedProcess.isAlive() || descendants.values().stream().anyMatch(ProcessHandle::isAlive);
+            }, () -> {
+                Process ownedProcess = cancellationTarget(key, processRef);
+                if (ownedProcess == null) return false;
+                if (ownedProcess.isAlive()) ownedProcess.descendants().forEach(h -> descendants.put(h.pid(), h));
+                descendants.values().forEach(ProcessHandle::destroyForcibly);
+                ownedProcess.destroyForcibly();
+                return !ownedProcess.isAlive() && descendants.values().stream().noneMatch(ProcessHandle::isAlive);
+            }, () -> {
+                ProcessResult ended = new ProcessResult();
+                ended.exitCode = processRef.get().exitValue();
+                try {
+                    return finishOwned(epfFile, junitFile, shotsDir, ownedScenario, key, infobaseName,
+                        asTestManager, receiptFilters, receiptProject, sought, ended);
+                } catch (Exception failed) {
+                    return ToolResult.error("Vanessa result could not be read.").toJson();
+                }
+            }, () -> {
+                boolean cleanupFailed = false;
+                try { ownedHold.close(); } catch (RuntimeException failed) {
+                    cleanupFailed = true; holdUnresolved.set(true);
+                }
+                try { if (ownedClaim != null) ownedClaim.close(); }
+                catch (RuntimeException failed) { cleanupFailed = true; }
+                if (ownedScenario != null && removeComposed(ownedScenario) != null) cleanupFailed = true;
+                try { Files.deleteIfExists(paramsFile.toPath()); }
+                catch (java.io.IOException failed) { cleanupFailed = true; }
+                RUNNING.remove(key, processRef.get());
+                CANCELLED.remove(key);
+                if (!holdUnresolved.get() && (ownedClaim == null || !ownedClaim.held.isStillHeld())
+                    && permitReleased.compareAndSet(false, true)) THE_CLIENT.release();
+                if (cleanupFailed) throw new IllegalStateException("Owned client exited; cleanup needs operator attention.");
+            });
+            owned.ownershipHeld = () -> {
+                boolean held = holdUnresolved.get() || (ownedClaim != null && ownedClaim.held.isStillHeld());
+                if (!held && permitReleased.compareAndSet(false, true)) THE_CLIENT.release();
+                return held;
+            };
+            owned.projectName = receiptProject;
+            synchronized (LAUNCHING)
+            {
+                if (CANCELLED.containsKey(jobKey)) return refusedBeforeLaunch(jobKey);
+                OWNED.put(jobKey, owned);
+                try {
+                    ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+                    builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+                    builder.directory(runDir);
+                    Process process = launchOwned(jobKey, builder::start);
+                    if (process == null) {
+                        OWNED.remove(jobKey, owned);
+                        return refusedBeforeLaunch(jobKey);
+                    }
+                    processRef.set(process);
+                    RUNNING.put(jobKey, process);
+                    clientLaunched.set(true);
+                    handedOff = true;
+                } catch (Exception failed) {
+                    OWNED.remove(jobKey, owned);
+                    throw failed;
+                }
+            }
+            composedFile = null;
+            try { monitorOwnedRuns(); }
+            catch (RuntimeException unavailable) {
+                Activator.logWarning("Vanessa observer unavailable; owned client remains tracked for polling.");
+            }
+            return "owned";
         }
         catch (Exception e)
         {
@@ -828,8 +1049,13 @@ public class VanessaTool implements IMcpTool
                 Activator.logWarning("vanessa: the composed scenario could not be removed: " //$NON-NLS-1$
                     + stillThere);
             }
-            THE_CLIENT.release();
-            if (jobKey != null)
+            if (!handedOff)
+            {
+                if (hold != null) hold.close();
+                if (claim != null) claim.close();
+                THE_CLIENT.release();
+            }
+            if (!handedOff && jobKey != null)
             {
                 // The run is over however it ended. A cancel arriving now has nothing to stop and
                 // must say so, rather than read a mark left behind by this one.
@@ -1205,7 +1431,8 @@ public class VanessaTool implements IMcpTool
      * Whether this call opens a form, so the step that starts TestClient has to have a client.
      * <p>
      * A list action and {@code formToOpen} both compose a scenario that begins with that step and
-     * then opens a form. A file or a text the caller wrote does not, and keeps the old default.
+     * then opens a form. File/text scenarios do not imply a test client; their test manager
+     * defaults on independently, while an explicit false remains supported.
      * </p>
      *
      * @param hasListAction whether the call carried the list arguments
@@ -1257,8 +1484,14 @@ public class VanessaTool implements IMcpTool
             + "turned on."; //$NON-NLS-1$
     }
 
+    /** The test manager is on unless the caller explicitly disables it. */
+    static boolean wantsTestManager(Boolean asked)
+    {
+        return !Boolean.FALSE.equals(asked);
+    }
+
     /**
-     * Whether the run starts as a test manager, or names a test client.
+     * Whether the run names a test client.
      * <p>
      * On a form-driving call an omitted argument is on. An explicit false stays false, so a
      * refusal that was skipped cannot be turned into a run that claims the opposite. On any other
@@ -1271,15 +1504,31 @@ public class VanessaTool implements IMcpTool
      */
     static boolean wantsTheClientTheFormNeeds(boolean drivesForm, Boolean asked)
     {
-        if (Boolean.TRUE.equals(asked))
-        {
-            return true;
-        }
-        if (Boolean.FALSE.equals(asked))
-        {
-            return false;
-        }
+        if (Boolean.TRUE.equals(asked)) return true;
+        if (Boolean.FALSE.equals(asked)) return false;
         return drivesForm;
+    }
+
+    static String addinRefusal(boolean composed, Boolean asked)
+    {
+        return composed && Boolean.FALSE.equals(asked)
+            ? "Composed form/list actions require vanessaExt=true; false was refused before launch." : null;
+    }
+
+    static JsonObject addinKeys(boolean composed, Boolean asked)
+    {
+        if (composed) return screenshotKeys();
+        if (asked == null) return null;
+        JsonObject keys = new JsonObject();
+        keys.addProperty("ИспользоватьКомпонентуVanessaExt", asked);
+        return keys;
+    }
+
+    static String uiTypeHint(boolean manager, String message)
+    {
+        return !manager && message != null && message.contains("Тип не определен")
+            && message.contains("Тестируемая")
+            ? "UI-testing types require testManager=true. This run explicitly disabled the test manager; enable it and retry only if the scenario is safe to repeat." : null;
     }
 
     /**
@@ -2970,6 +3219,7 @@ public class VanessaTool implements IMcpTool
     static
     {
         PendingWorkRegistry.VANESSA.stopsWith(VanessaTool::stopTheClient);
+        PendingWorkRegistry.VANESSA.ownedPollsWith(VanessaTool::isOwnedLivePoll);
     }
 
     /**
@@ -3016,6 +3266,8 @@ public class VanessaTool implements IMcpTool
      */
     static String cancelRun(String runKey)
     {
+        if (OWNED.containsKey(runKey)) return collectOwned(runKey,
+            java.util.Map.of("runKey", runKey, "cancel", "true"));
         PendingWorkRegistry registry = PendingWorkRegistry.VANESSA;
         PendingWorkRegistry.PendingEntry entry = registry.get(runKey);
         if (entry != null && entry.isDone())
@@ -3032,7 +3284,10 @@ public class VanessaTool implements IMcpTool
         }
         PendingWorkRegistry.StopOutcome stopping = stopTheClient(runKey);
         boolean stopped = stopping != PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
-        boolean tracked = registry.detach(runKey);
+        boolean tracked = entry != null;
+        // A cancellation mark prevents a queued preparation from spawning; a running body
+        // remains tracked until its actual work-exit callback settles.
+        if (entry != null && preparationLeft(runKey)) registry.remove(runKey, entry);
         if (!stopped && !tracked)
         {
             CANCELLED.remove(runKey);
@@ -3069,6 +3324,10 @@ public class VanessaTool implements IMcpTool
         {
             return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
         }
+        OwnedVanessaRun ownedRun = OWNED.get(runKey);
+        if (ownedRun != null)
+            return ownedRun.cancel() ? PendingWorkRegistry.StopOutcome.STOPPED
+                : PendingWorkRegistry.StopOutcome.STILL_RUNNING;
         Process running;
         synchronized (LAUNCHING)
         {
@@ -3248,108 +3507,6 @@ public class VanessaTool implements IMcpTool
      * @return how the client ended and what it printed
      * @throws Exception when the client cannot be launched or the wait is interrupted
      */
-    private static ProcessResult runVanessa(List<String> command, File workingDir, int timeoutSec,
-        String runKey, AtomicBoolean launched) throws Exception
-    {
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.redirectErrorStream(true);
-        if (workingDir != null && workingDir.isDirectory())
-        {
-            pb.directory(workingDir);
-        }
-        Process proc;
-        synchronized (LAUNCHING)
-        {
-            if (runKey != null && CANCELLED.containsKey(runKey))
-            {
-                // Cancelled before anything was spawned, and nothing will be.
-                ProcessResult stopped = new ProcessResult();
-                stopped.cancelledBeforeLaunch = true;
-                return stopped;
-            }
-            proc = pb.start();
-            launched.set(true);
-            if (runKey != null)
-            {
-                // Remembered only while it runs: this process is what stopClient goes looking for,
-                // whether the cancel came through this tool or through the registry. Registered
-                // under the same monitor the mark is written under, so a cancel arriving now
-                // waits and then finds it.
-                RUNNING.put(runKey, proc);
-            }
-        }
-        // The thick client reads no stdin; close it so nothing can block on it.
-        try (OutputStream in = proc.getOutputStream())
-        {
-            // just closing
-        }
-        catch (Exception ignored)
-        {
-            // stdin already closed
-        }
-
-        StringBuilder out = new StringBuilder();
-        Thread drain = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(
-                new InputStreamReader(proc.getInputStream(), CP1251)))
-            {
-                String line;
-                while ((line = r.readLine()) != null)
-                {
-                    synchronized (out)
-                    {
-                        if (out.length() < 100000)
-                        {
-                            out.append(line).append('\n');
-                        }
-                    }
-                }
-            }
-            catch (Exception ignored)
-            {
-                // process output closed
-            }
-        }, "vanessa-drain"); //$NON-NLS-1$
-        drain.setDaemon(true);
-        drain.start();
-
-        ProcessResult pr = new ProcessResult();
-        try
-        {
-            if (!proc.waitFor(timeoutSec, TimeUnit.SECONDS))
-            {
-                // Read while the client is still up. Destroying it first closes the dialog.
-                pr.dialogs = ClientDialogReader.ofProcess(proc, ClientDialogReader.imagesFor(NAME));
-                proc.descendants().forEach(ProcessHandle::destroyForcibly);
-                proc.destroyForcibly();
-                pr.timedOut = true;
-            }
-            else
-            {
-                pr.exitCode = proc.exitValue();
-            }
-            drain.join(2000);
-            synchronized (out)
-            {
-                pr.output = out.toString();
-            }
-            return pr;
-        }
-        finally
-        {
-            // Whatever ended this - a finish, a deadline, a cancel, an interrupt - the client is
-            // gone before the caller takes the infobase back. EDT reconnecting while a client
-            // still has the file open is the state the release exists to avoid.
-            stopAndAwait(proc);
-            // However this ended - finished, timed out, or cancelled from another call - the
-            // handle goes. Leaving it would let a later cancel destroy a process that is no longer
-            // this run, because the operating system gives the number back.
-            if (runKey != null)
-            {
-                RUNNING.remove(runKey, proc);
-            }
-        }
-    }
 
     /**
      * The result file of a run: the one this asked for, or the xml Vanessa wrote beside it.

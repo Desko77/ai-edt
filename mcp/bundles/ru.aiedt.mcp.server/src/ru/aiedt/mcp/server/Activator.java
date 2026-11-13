@@ -365,6 +365,19 @@ public class Activator
             }
         }
         roadCatalogueReady.countDown();
+        try
+        {
+            int unresolvedVanessaRuns = ru.aiedt.mcp.server.toolkit.ops.VanessaTool.shutdownOwnedRuns();
+            if (unresolvedVanessaRuns > 0)
+            {
+                logWarning("Vanessa shutdown left " + unresolvedVanessaRuns //$NON-NLS-1$
+                    + " owned run(s) unresolved; no client was forcibly stopped."); //$NON-NLS-1$
+            }
+        }
+        catch (RuntimeException cleanupFailed)
+        {
+            logError("Vanessa observation shutdown failed; continuing bundle teardown.", cleanupFailed); //$NON-NLS-1$
+        }
         if (mcpServer != null && mcpServer.isRunning())
         {
             mcpServer.stop();

@@ -26,6 +26,12 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
+### Preparing 1.0
+
+AI-EDT supports an agent-assisted development cycle: inspect the model, make a bounded change, verify the result and receive an actionable refusal when the operation cannot be established as safe. The 1.0 preparation addresses reports from real runs: extension-field placement, template persistence, infobase selection and UI-test launch options. Capabilities and contract changes are described in the [changelog](CHANGELOG.md#100---unreleased).
+
+This is not a promise of full autonomy: agents still need result verification and explicit authorization for data operations. The ordinary-form viewer remains read-only in this release.
+
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
 >

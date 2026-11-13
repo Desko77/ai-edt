@@ -635,7 +635,7 @@ public class EditMetadataTool implements IMcpTool
                 "Element subtype for add_field, add_group and add_decoration.") //$NON-NLS-1$
             .stringProperty("dataPath", "Data path binding for add_field / add_table.") //$NON-NLS-1$
             .stringProperty("beforeName", //$NON-NLS-1$
-                "Insert the new element before this sibling element (default: append).") //$NON-NLS-1$
+                "For new elements, name one direct sibling in parentName (default container: form root); missing or ambiguous siblings refuse in preview and write. Omit to append.") //$NON-NLS-1$
             .stringProperty("standardCommand", "Bind an add_button to a platform stock command.") //$NON-NLS-1$
             .stringProperty("handlerName", //$NON-NLS-1$
                 "BSL handler procedure name for add_form_event_handler (default derived " //$NON-NLS-1$
@@ -2432,6 +2432,11 @@ public class EditMetadataTool implements IMcpTool
             ToolResult error = ToolResult.error(op + " failed: " + stripErrorEnvelope(helperResult)) //$NON-NLS-1$
                 .put("operation", op) //$NON-NLS-1$
                 .put("formFqn", formFqn); //$NON-NLS-1$
+            String formErrorCode = FormItemsOps.formRefusalCode(helperResult);
+            if (formErrorCode != null)
+            {
+                error.put("errorCode", formErrorCode); //$NON-NLS-1$
+            }
             // A refusal by the support registry carries its tag as a line of the helper's text;
             // here is where that text becomes structured again, so the answer holds the same
             // supportLock field the object path holds.

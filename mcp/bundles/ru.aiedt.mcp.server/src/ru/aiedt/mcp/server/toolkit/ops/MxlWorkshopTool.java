@@ -16,6 +16,7 @@ import java.util.Map;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.emf.common.util.EList;
 
+import com._1c.g5.v8.bm.core.IBmObject;
 import com._1c.g5.v8.dt.metadata.mdclass.CommonTemplate;
 import com._1c.g5.v8.dt.metadata.mdclass.MdObject;
 import com._1c.g5.v8.dt.moxel.SpreadsheetDocument;
@@ -175,8 +176,148 @@ public class MxlWorkshopTool implements IMcpTool
         return ResponseType.JSON;
     }
 
+    private static final ru.aiedt.mcp.server.support.TemplateMutationLock TEMPLATE_LOCKS =
+        new ru.aiedt.mcp.server.support.TemplateMutationLock();
+
     @Override
     public String execute(Map<String, String> params)
+    {
+        String operation = JsonUtils.extractStringArgument(params, "operation");
+        if (operation == null || !OPS.containsKey(operation))
+        {
+            return executeLocked(params);
+        }
+        if (!READ_OPERATIONS.contains(operation)
+            && !JsonUtils.extractBooleanArgument(params, "dryRun", false))
+        {
+            String gate = ToolGate.gateWriteDoor(WRITE_DOOR);
+            if (gate != null) return ToolResult.error(gate).put("operation", operation).toJson();
+        }
+        if ("format_cells".equals(operation))
+        {
+            String invalid = opFormatCells(params, true);
+            if (invalid != null) return invalid;
+        }
+        String projectName = JsonUtils.extractStringArgument(params, "projectName");
+        String ownerFqn = JsonUtils.extractStringArgument(params, "ownerFqn");
+        String templateName = JsonUtils.extractStringArgument(params, "templateName");
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null || ownerFqn == null || templateName == null)
+        {
+            return executeLocked(params);
+        }
+        ProjectStateGuard.ProjectStateResult ready = ProjectStateGuard.checkProjectState(project);
+        if (readinessBlocks(operation, ready))
+            return readinessRefusal(operation, ready, ready.getMessage());
+        final String[] identity = { null };
+        final long[] expectedIds = { 0, 0 };
+        BmObjectHelper.Result resolved = executeTemplateRead(project, ownerFqn,
+            (tx, owner) -> {
+                expectedIds[0] = ((IBmObject) owner).bmGetId();
+                if (!"create_template".equals(operation))
+                    expectedIds[1] = ((IBmObject)
+                        resolveTemplate(owner, templateName)).bmGetId();
+                identity[0] = project.getFullPath().toPortableString() + ":" + expectedIds[0];
+                return null;
+            });
+        CommonTemplateAddress common = commonTemplateAddress(ownerFqn, templateName);
+        if (common != null)
+        {
+            // A common-template creation has no BM id yet. Its canonical metadata address is
+            // stable across creation and subsequent reads/writes, and shares their lease.
+            identity[0] = project.getFullPath().toPortableString() + ":CommonTemplate:"
+                + common.name.toLowerCase(java.util.Locale.ROOT);
+            if (!resolved.ok && "create_template".equals(operation)
+                && resolved.error != null && resolved.error.startsWith("Owner not found"))
+                resolved.ok = true;
+        }
+        if (!resolved.ok || identity[0] == null) return formatResult(resolved, operation);
+        try (ru.aiedt.mcp.server.support.TemplateMutationLock.Lease lease =
+            TEMPLATE_LOCKS.acquire(identity[0], 5000))
+        {
+            // All state that informs a mutation is read again under exclusion. No BM transaction
+            // is held while waiting. The lease outlives commit, persistence, refresh and export.
+            EXPECTED_IDENTITY.set(new ExpectedIdentity(expectedIds[0], expectedIds[1],
+                templateName, "create_template".equals(operation)));
+            try { return executeLocked(params); }
+            finally { EXPECTED_IDENTITY.remove(); }
+        }
+        catch (InterruptedException interrupted)
+        {
+            Thread.currentThread().interrupt();
+            return ToolResult.error("Template operation interrupted before start")
+                .put("status", "not_started").put("mutationStarted", false)
+                .put("retryable", false).toJson();
+        }
+        catch (java.util.concurrent.TimeoutException busy)
+        {
+            return ToolResult.error(busy.getMessage()).put("code", "templateBusy")
+                .put("status", "not_started").put("mutationStarted", false)
+                .put("retryable", true).put("retryAfterMs", 500).toJson();
+        }
+    }
+
+    private static final ThreadLocal<ExpectedIdentity> EXPECTED_IDENTITY = new ThreadLocal<>();
+
+    static final class ExpectedIdentity
+    {
+        final long ownerId;
+        final long templateId;
+        final String templateName;
+        final boolean creating;
+        volatile BmTemplateHelper.PersistOutcome persistence;
+        ExpectedIdentity(long ownerId, long templateId, String templateName, boolean creating)
+        {
+            this.ownerId = ownerId;
+            this.templateId = templateId;
+            this.templateName = templateName;
+            this.creating = creating;
+        }
+        void verify(MdObject owner)
+        {
+            if (creating && ownerId == 0)
+                throw new IllegalStateException("Template already exists: it was created while this call waited; nothing started");
+            if (((IBmObject) owner).bmGetId() != ownerId)
+                throw new IllegalStateException("Template owner changed before mutation; nothing started");
+            if (!creating && ((IBmObject)
+                resolveTemplate(owner, templateName)).bmGetId() != templateId)
+                throw new IllegalStateException("Template identity changed before mutation; nothing started");
+        }
+    }
+
+    private static BmObjectHelper.Result executeTemplateRead(IProject project, String ownerFqn,
+        BmObjectHelper.MdObjectAction action)
+    {
+        ExpectedIdentity expected = EXPECTED_IDENTITY.get();
+        return BmObjectHelper.executeReadOnObject(project, ownerFqn,
+            guardedAction(expected, action));
+    }
+
+    private static BmObjectHelper.Result executeTemplateWrite(IProject project, String ownerFqn,
+        boolean dryRun, BmObjectHelper.MdObjectAction action)
+    {
+        ExpectedIdentity expected = EXPECTED_IDENTITY.get();
+        return BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+            guardedAction(expected, action));
+    }
+
+    static BmObjectHelper.MdObjectAction guardedAction(ExpectedIdentity expected,
+        BmObjectHelper.MdObjectAction action)
+    {
+        return (tx, owner) -> {
+            if (expected != null) expected.verify(owner);
+            ExpectedIdentity previous = EXPECTED_IDENTITY.get();
+            if (expected != null) EXPECTED_IDENTITY.set(expected);
+            try { return action.execute(tx, owner); }
+            finally
+            {
+                if (previous == null) EXPECTED_IDENTITY.remove();
+                else EXPECTED_IDENTITY.set(previous);
+            }
+        };
+    }
+
+    private String executeLocked(Map<String, String> params)
     {
         String op = JsonUtils.extractStringArgument(params, "operation"); //$NON-NLS-1$
         if (op == null || op.isEmpty())
@@ -223,7 +364,7 @@ public class MxlWorkshopTool implements IMcpTool
                     String notReady = ProjectStateGuard.checkReadyOrError(project);
                     if (notReady != null)
                     {
-                        return ToolResult.error(notReady).put("operation", op).toJson(); //$NON-NLS-1$
+                        return readinessRefusal(op, state, notReady);
                     }
                 }
             }
@@ -311,6 +452,19 @@ public class MxlWorkshopTool implements IMcpTool
      * @param operation the operation name
      * @return <code>true</code> when a resolved project must be ready
      */
+    static String readinessRefusal(String operation, ProjectStateGuard.ProjectStateResult state,
+        String message)
+    {
+        boolean building = state != null
+            && state.getState() == ProjectStateGuard.ProjectState.BUILDING;
+        ToolResult result = ToolResult.error(message).put("operation", operation)
+            .put("code", building ? "projectBuilding" : "projectNotReady")
+            .put("status", "not_started").put("mutationStarted", false)
+            .put("retryable", building);
+        if (building) result.put("retryAfterMs", 500);
+        return result.toJson();
+    }
+
     static boolean gatesOnReadiness(String operation)
     {
         return operation != null && OPS.containsKey(operation);
@@ -423,7 +577,7 @@ public class MxlWorkshopTool implements IMcpTool
             return null;
         }
         final String[] mismatch = { null };
-        BmObjectHelper.Result inspected = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+        BmObjectHelper.Result inspected = executeTemplateRead(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -495,7 +649,7 @@ public class MxlWorkshopTool implements IMcpTool
                 canonicalType, dryRun);
         }
         final String[] modelOwnerRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 // The empty Template.mxlx is written after the commit, where the resolved owner is
                 // out of reach: its own name is taken here, so the file lands in the folder the
@@ -585,7 +739,7 @@ public class MxlWorkshopTool implements IMcpTool
                 .put("ownerFqn", ownerFqn) //$NON-NLS-1$
                 .toJson();
         }
-        BmObjectHelper.Result existing = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+        BmObjectHelper.Result existing = executeTemplateRead(project, ownerFqn,
             (tx, owner) -> {
                 throw BmObjectHelper.alreadyExists(templateName, ownerFqn, "template"); //$NON-NLS-1$
             });
@@ -744,7 +898,7 @@ public class MxlWorkshopTool implements IMcpTool
         final int colF = col;
         final String[] persistErrorRef = { null };
         final String[] contentErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 String contentError = BmTemplateHelper.setCellContent(doc, rowF, colF, text,
@@ -826,7 +980,7 @@ public class MxlWorkshopTool implements IMcpTool
         final int toRowF = toRow;
         final int toColF = toCol;
         final String[] persistErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.addNamedArea(doc, areaNameF, kindF, fromRowF, fromColF, toRowF,
@@ -880,7 +1034,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String areaNameF = areaName;
         final boolean[] removedRef = { false };
         final String[] persistErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 removedRef[0] = BmTemplateHelper.removeNamedArea(doc, areaNameF);
@@ -963,7 +1117,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         final String[] contentErrorRef = { null };
         final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.insertRows(doc, rowF, countF,
@@ -1047,7 +1201,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         final String[] contentErrorRef = { null };
         final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.deleteRows(doc, rowF, countF);
@@ -1132,7 +1286,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] persistErrorRef = { null };
         final String[] contentErrorRef = { null };
         final BmTemplateHelper.RowOutcome[] outcomeRef = new BmTemplateHelper.RowOutcome[] { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.RowOutcome outcome = BmTemplateHelper.copyRows(doc, fromRowF,
@@ -1227,7 +1381,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] contentErrorRef = { null };
         final BmTemplateHelper.ColumnOutcome[] outcomeRef =
             new BmTemplateHelper.ColumnOutcome[] { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.insertColumns(doc, colF,
@@ -1312,7 +1466,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] contentErrorRef = { null };
         final BmTemplateHelper.ColumnOutcome[] outcomeRef =
             new BmTemplateHelper.ColumnOutcome[] { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.deleteColumns(doc, colF,
@@ -1400,7 +1554,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String[] contentErrorRef = { null };
         final BmTemplateHelper.ColumnOutcome[] outcomeRef =
             new BmTemplateHelper.ColumnOutcome[] { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.ColumnOutcome outcome = BmTemplateHelper.copyColumns(doc, fromColF,
@@ -1537,7 +1691,7 @@ public class MxlWorkshopTool implements IMcpTool
         // The read entry asks no support question: a template of a closed object stays readable.
         // Its transaction still rolls back, because reading a template without a spreadsheet model
         // touches the model to build the answer.
-        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+        BmObjectHelper.Result r = executeTemplateRead(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -1593,7 +1747,7 @@ public class MxlWorkshopTool implements IMcpTool
         final int toRowF = toRow;
         final int toColF = toCol;
         final String[] persistErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 BmTemplateHelper.mergeCells(doc, fromRowF, fromColF, toRowF, toColF);
@@ -1652,6 +1806,11 @@ public class MxlWorkshopTool implements IMcpTool
      * @return the result
      */
     private String opFormatCells(Map<String, String> params)
+    {
+        return opFormatCells(params, false);
+    }
+
+    private String opFormatCells(Map<String, String> params, boolean validateOnly)
     {
         if (!BmTemplateHelper.cellOpsAvailable())
         {
@@ -1787,6 +1946,7 @@ public class MxlWorkshopTool implements IMcpTool
             return ToolResult.error("a cell range is required: row/col for one cell, or " //$NON-NLS-1$
                 + "fromRow/fromCol/toRow/toCol for a rectangle").toJson(); //$NON-NLS-1$
         }
+        if (validateOnly) return null;
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
@@ -1801,7 +1961,7 @@ public class MxlWorkshopTool implements IMcpTool
         final boolean printF = printProperties;
         final String[] persistErrorRef = { null };
         final String[] formatErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 String written = ""; //$NON-NLS-1$
@@ -2008,7 +2168,7 @@ public class MxlWorkshopTool implements IMcpTool
         }
         final DrawLayout layoutF = layout;
         final String[] persistErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 int cellCount = 0;
@@ -2123,7 +2283,7 @@ public class MxlWorkshopTool implements IMcpTool
         final String languageF = language;
         final int[] drawingIdRef = { -1 };
         final String[] persistErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
                 SpreadsheetDocument doc = writableDocument(owner, templateName);
                 int id = BmTemplateHelper.addDrawing(doc, canonicalTypeF, beginRowF, beginColF,
@@ -2182,10 +2342,11 @@ public class MxlWorkshopTool implements IMcpTool
         final int drawingIdF = drawingId;
         final boolean[] removedRef = { false };
         final String[] persistErrorRef = { null };
-        BmObjectHelper.Result r = BmObjectHelper.executeWriteOnObject(project, ownerFqn, dryRun,
+        BmObjectHelper.Result r = executeTemplateWrite(project, ownerFqn, dryRun,
             (tx, owner) -> {
-                // Resolved without the guard: a removal that matches nothing changes nothing and
-                // writes nothing, and the guard inside asks only the removal that will.
+                // Identity was verified by the callback wrapper. The picture-reference guard
+                // inside asks only a removal that will change the document; a missing drawing
+                // changes nothing and writes nothing.
                 DrawingRemoval removal = removeDrawingIn(owner, templateName, drawingIdF);
                 removedRef[0] = removal.removed;
                 if (removal.removed && !dryRun)
@@ -2244,7 +2405,7 @@ public class MxlWorkshopTool implements IMcpTool
         final Map<String, Object>[] dataRef = new Map[] { null };
         // Read-only: the read entry asks no support question, and its transaction rolls the
         // (get-or-create) model touch back, so nothing is persisted.
-        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+        BmObjectHelper.Result r = executeTemplateRead(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -2322,7 +2483,7 @@ public class MxlWorkshopTool implements IMcpTool
         @SuppressWarnings("unchecked")
         final Map<String, Object>[] widthRef = new Map[] { null };
         // Read-only: the read entry asks no support question and rolls the model touch back.
-        BmObjectHelper.Result r = BmObjectHelper.executeReadOnObject(project, ownerFqn,
+        BmObjectHelper.Result r = executeTemplateRead(project, ownerFqn,
             (tx, owner) -> {
                 MdObject template = resolveTemplate(owner, templateName);
                 SpreadsheetDocument doc = BmTemplateHelper.getOrCreateSpreadsheet(template);
@@ -2456,9 +2617,18 @@ public class MxlWorkshopTool implements IMcpTool
     static String persistTemplateWithModelNames(IProject project, String ownerFqn, MdObject owner,
         String templateName, SpreadsheetDocument doc)
     {
-        return BmTemplateHelper.persistTemplateMxlx(project,
+        BmTemplateHelper.PersistOutcome outcome = BmTemplateHelper.persistTemplateMxlxDetailed(project,
             BmTemplateHelper.modelOwnerFqn(ownerFqn, owner),
             modelTemplateName(owner, templateName), doc);
+        ExpectedIdentity context = EXPECTED_IDENTITY.get();
+        if (context != null) context.persistence = outcome;
+        String error = outcome.error;
+        if (error != null)
+        {
+            // Abort the model transaction rather than acknowledging an in-memory-only mutation.
+            abortOnRefusal(error);
+        }
+        return error;
     }
 
     /**
@@ -2636,8 +2806,40 @@ public class MxlWorkshopTool implements IMcpTool
             .toJson();
     }
 
+    static void requireExportAcknowledgement(BmObjectHelper.Result r)
+    {
+        if (r.ok && (r.tags.containsKey("forceExportWarning")
+            || Boolean.TRUE.equals(r.tags.get("diskFlushPending"))))
+        {
+            r.ok = false;
+            r.error = "Template mutation committed but export was not acknowledged; do not replay the mutation";
+            r.tags.put("status", "committed_unconfirmed");
+            r.tags.put("mutationStarted", true);
+            r.tags.put("retryable", false);
+        }
+    }
+
     private String formatResult(BmObjectHelper.Result r, String op)
     {
+        ExpectedIdentity context = EXPECTED_IDENTITY.get();
+        if (context != null && context.persistence != null)
+        {
+            BmTemplateHelper.PersistOutcome persisted = context.persistence;
+            if (persisted.refreshWarning != null)
+            {
+                r.tags.put("workspaceRefreshWarning", persisted.refreshWarning);
+                r.tags.put("retryable", false);
+                r.tags.put("mutationStarted", true);
+            }
+            if (!r.ok && persisted.fileWriteAttempted)
+            {
+                r.tags.put("status", "outcome_unknown");
+                r.tags.put("mutationStarted", true);
+                r.tags.put("retryable", false);
+                r.tags.put("recoveryHint", "Inspect model and Template.mxlx before recovery; do not replay the mutation");
+            }
+        }
+        requireExportAcknowledgement(r);
         if (r.ok)
         {
             ToolResult result = ToolResult.success()
