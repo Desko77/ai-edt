@@ -4,6 +4,14 @@ None of this is a defect list. These are responses the server returns deliberate
 of EDT at scale. Each one has a right reaction, and retrying blindly is never it. Read the tag and
 the message before deciding.
 
+## Form binding and template write refusals
+
+New form items require `beforeName` to identify one direct child of the requested container. `FORM_PLACEMENT_INVALID_SIBLING` and `FORM_PLACEMENT_AMBIGUOUS_SIBLING` are structural refusals: inspect the form and name the correct `parentName`; do not assume the field was appended elsewhere.
+
+Extension path assignment does not borrow dependencies implicitly. `EXTENSION_BINDING_UNSUPPORTED`, `EXTENSION_BINDING_UNVERIFIED` and `EXTENSION_BINDING_UNRESOLVED` distinguish unsupported borrowing, unavailable safety proof and an unresolved path. A locally typed own scalar or column may be accepted; a complex tail such as a composition-settings path still needs affirmative runtime proof. An `errorCode` alone does not prove that no earlier transaction step ran.
+
+For MXL and `diagnostics operation=revalidate_objects`, `not_started` with `mutationStarted=false` means the operation did not begin. Revalidation retries are offered only for the typed `BUILDING` state, with `retryAfterMs=500`; unavailable and unknown states are not made retryable by their message text. Only a transient `projectBuilding` or `templateBusy` refusal explicitly marked `retryable=true` invites a delayed retry. `committed_unconfirmed` and `outcome_unknown` must not be replayed: inspect the model and file and follow the recovery hint. A successful write with `workspaceRefreshWarning` means the bytes were written but workspace refresh was not acknowledged; do not repeat the mutation just to refresh the view.
+
 ## Signals in a response
 
 | Signal | What it means | What to do |
@@ -15,12 +23,12 @@ the message before deciding.
 | `requiresCascadeForms` with `affectedForms` | Removing the field would change forms. | Review the listed forms, confirm the destructive step, repeat with `cascadeForms=true`. |
 | Names ending in `ApiNotFound`, or `dcsFactoryMethodNotFound` | The installed EDT runtime does not expose the API this operation needs. | Not an implementation defect and not fixable by retrying. Tell the user and offer the equivalent action in the EDT interface. |
 | `kindMismatch` on an export | The output path does not match the object kind. | Match `.epf` and `.erf` to the object. |
-| A tool is disabled or not found | The active preset hides it, or the build does not have it. | Do not work around it. Say which preset change or which build would provide it. |
+| A tool is disabled or not found | A disabled name is refused; a name absent from `tools/list` may instead be a hidden, callable compatibility alias. | Read `aiedt://guidance` and the refusal. Do not bypass a disabled route; do not infer that a hidden name is disabled. |
 | An infobase operation refused, and the answer names who holds the base | The runtime clients this EDT launched, and the other AI-EDT servers on this machine with the project open. | Close what it names. An empty list means none that this server can see - a client started from a shortcut, or a Designer opened by hand, is invisible to it and is never "nobody". |
 | A removal answered that it removed nothing, naming another operation | The name is not a form item. It is a form, a metadata object or a template, and each has its own operation. | Call the operation the refusal names. Repeating `remove_item` cannot succeed. |
-| A data-path refusal on an extension form, naming the element, the path and a reason | Both halves came out against the path: EDT does not export it with the extension form, and the form does not resolve it. Nothing was written. | Read the reason. An unborrowed attribute: the borrow of the form attribute ran inside the refused write and was rolled back with it - fix the cause the reason names and repeat the call; `extension_workshop operation=borrow_object` borrows a metadata object and does not redo that borrow. A path the form does not resolve: bind to an attribute the extension can carry, or drop the path. Repeating the same call cannot succeed. |
-| A data path bound on an extension form answered success | The path was written. If the form resolves every segment but the extension cannot reference the whole path - a segment of another engine, a tail past the borrowed attribute - EDT can drop it on export, and no marker reports it: `form-data-path` fires only on a segment nothing resolves. | Prefer an attribute the extension owns for a path that must survive export; treat a binding to a longer path as unverified on the platform. |
-| `dataPathChecksNotPerformed` in the answer of a form write | The runtime could not be asked one of the data-path questions - the EDT service is absent or the call failed. The write stands with the question unanswered, and nothing is refused. | Treat the path as unverified, not as checked. Names are `attributeBelongsToExtension`, `exportOfExtensionForm`, `pathResolutionInForm`. The key is absent when every check ran. |
+| A typed data-path refusal on an extension form | The path is unsupported, unresolved or lacks necessary safety proof. No implicit adoption is attempted. | Read `errorCode` and the reason; fix the actual binding instead of retrying the same request or broadening dependency borrowing. Do not infer that no earlier transaction step ran. |
+| A data path bound on an extension form answered success | The required runtime checks passed or the complete own local typed path supplied positive proof. This is not a platform execution test. | Verify export and behavior in the intended development base; a successful binding is not a promise about arbitrary longer paths. |
+| Missing ownership, resolution or persistence checks on an extension path | Required proof is unavailable; the write is refused as `EXTENSION_BINDING_UNVERIFIED`, not accepted with skipped checks. | Resolve the unavailable service or use a positively verified own typed path. Do not expect the historical permissive `dataPathChecksNotPerformed` contract. |
 | A data composition write refused, naming what it could not set | The property or the target was not written. A write that does not land is refused rather than reported as done. | Fix the name or the path the refusal names. Do not treat the schema as changed. |
 
 Tools correct callers on their own: a wrong enumeration value comes back with the valid ones, a
@@ -33,6 +41,24 @@ One editing cycle is one object or one module until it validates. After two fail
 same error with the same approach, change the approach. If no other approach is visible, stop and
 ask. Stopping applies to that approach, not to the task: finish the independent parts and say what
 is left.
+
+## Module text, ranges and write targets
+
+`read_module_source` accepts `projectName`, `modulePath`, `startLine` and `endLine`.
+The bounds are inclusive and 1-based; one answer carries at most 5000 lines. Each range call selects
+and reads the source again, so do not assume ranges taken across edits describe one revision.
+`read_method_source` accepts `projectName`, `modulePath`, `methodName` and `includeDoc` (default false).
+These readers do not declare `resultId`, `offset`, `pageSize` or a pinned-result continuation.
+Do not invent those arguments or confuse line-range reading with a `Pending` / `runKey` operation.
+
+Both readers choose a matching module provider first, then an unsaved physical-editor buffer,
+then the file. Provider priority also applies when a physical file and unsaved editor exist at the
+same address. `Unsaved` marks a physical-editor answer. Provider answers name `source` and
+`container`; read the source note before writing. `write_module_source` and `diff_module` use the
+physical file when present, otherwise the provider. With both present, the reader names the
+physical write and comparison target. A write to a physical file with unsaved editor changes is
+refused; save or revert the editor first. Ordinary-form module addresses are `src/`-relative paths,
+not module FQNs or paths prefixed with the project name; a leading `src/` is accepted and stripped.
 
 ## Large configurations
 

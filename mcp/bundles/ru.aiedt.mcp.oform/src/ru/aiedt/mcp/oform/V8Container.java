@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /**
  * The container format the platform keeps binary metadata in - a {@code .cf}, an {@code .epf},
@@ -38,6 +39,9 @@ import java.util.Locale;
  */
 public final class V8Container
 {
+    /** The stamp {@link #stampedAt} binds to the thread, or none for now. */
+    private static final ThreadLocal<Long> FIXED_TIME = new ThreadLocal<>();
+
     /** The marker that ends a chain and pads the table of contents. */
     static final int END_MARKER = 0x7fffffff;
 
@@ -119,6 +123,8 @@ public final class V8Container
             return dirty;
         }
     }
+
+    private boolean entriesRemoved;
 
     private final List<Entry> entries;
 
@@ -233,10 +239,25 @@ public final class V8Container
         entries.add(entry);
     }
 
-    /** @return whether any entry was changed or added since the container was read */
+    /**
+     * Removes the first entry with the given name, if present; an absent name leaves the container unchanged.
+     *
+     * @param name the entry name to remove
+     */
+    public void remove(String name)
+    {
+        Entry entry = find(name);
+        if (entry != null)
+        {
+            entries.remove(entry);
+            entriesRemoved = true;
+        }
+    }
+
+    /** @return whether any entry was changed, added or removed since the container was read, or the container is new */
     public boolean isDirty()
     {
-        if (original == null)
+        if (original == null || entriesRemoved)
         {
             return true;
         }
@@ -353,8 +374,44 @@ public final class V8Container
      */
     static long nowAsPlatformTime()
     {
+        Long fixed = FIXED_TIME.get();
+        if (fixed != null)
+        {
+            return fixed.longValue();
+        }
         // 62135596800 seconds separate 0001-01-01 from the Unix epoch; 10 units per millisecond.
         long unixMillis = System.currentTimeMillis();
         return (unixMillis + 62135596800000L) * 10L;
+    }
+
+    /**
+     * Runs work with every entry it creates or changes on this thread stamped with one time
+     * instead of now, restoring the clock after. Two writes of one edit then produce one container
+     * byte for byte; an entry the work leaves keeps its own stamps either way.
+     *
+     * @param <T> the result's type
+     * @param platformTime the stamp, in 100-microsecond intervals since 0001-01-01
+     * @param work what runs with the stamp
+     * @return what the work returned
+     */
+    public static <T> T stampedAt(long platformTime, Supplier<T> work)
+    {
+        Long previous = FIXED_TIME.get();
+        FIXED_TIME.set(Long.valueOf(platformTime));
+        try
+        {
+            return work.get();
+        }
+        finally
+        {
+            if (previous == null)
+            {
+                FIXED_TIME.remove();
+            }
+            else
+            {
+                FIXED_TIME.set(previous);
+            }
+        }
     }
 }

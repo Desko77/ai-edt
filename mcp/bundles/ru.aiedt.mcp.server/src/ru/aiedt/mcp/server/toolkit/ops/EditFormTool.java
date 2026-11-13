@@ -1439,10 +1439,8 @@ public class EditFormTool implements IMcpTool
     // -----------------------------------------------------------------------
 
     /**
-     * Places a new item in its container and answers the warning a missed {@code beforeName} owes
-     * the caller. Without the name the item is appended; with a name that matches no element of
-     * the container it also lands at the end - silently, which is what the warning corrects: the
-     * caller asked for a position, and the answer has to say the position was not taken.
+     * Places a new item after the same structural preflight in preview and write.
+     * A supplied anchor must name exactly one direct sibling; no parent is inferred.
      *
      * @param helper the helper of the request, which does the placement
      * @param container the container the item goes into
@@ -1460,8 +1458,8 @@ public class EditFormTool implements IMcpTool
             helper.addToContainer(container, item);
             return null;
         }
-        return helper.addToContainerBefore(container, item, beforeName)
-            ? null : beforeNameMissedWarning(beforeName);
+        helper.addToContainerBeforeStrict(container, item, beforeName);
+        return null;
     }
 
     /**

@@ -150,16 +150,7 @@ public class DcsWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "DCS schema constructor for reports / data processors / register macros. " //$NON-NLS-1$
-            + "Pass operation=<name>; call operation=help for the catalog and " //$NON-NLS-1$
-            + "operation=help topic=parameters for the full rules of the parameters. " //$NON-NLS-1$
-            + "Auto-validates queryText and expressions before write. " //$NON-NLS-1$
-            + "A settings write that leaves a filter comparing against nothing, or a standard " //$NON-NLS-1$
-            + "period with no dates, answers with `settingsWarnings` - a warning, not a refusal. " //$NON-NLS-1$
-            + "Removing a dataset, a dataset field, a parameter, a calculated field or a total " //$NON-NLS-1$
-            + "field lists the settings that still reference it (`affectedSettings`) and does " //$NON-NLS-1$
-            + "not clear them. " //$NON-NLS-1$
-            + "DCS direct save to .dcs disk file is automatic for extension projects."; //$NON-NLS-1$
+        return "DCS schema constructor for reports / data processors / register macros. Pass operation=<name>; operation=help has the catalog, and topic=parameters the full parameter rules. queryText and expressions are validated before write. A settings write that leaves a filter comparing against nothing, or a standard period with no dates, answers settingsWarnings - a warning, not a refusal. Removing a dataset, field, parameter, calculated field or total lists the settings that still reference it (affectedSettings) and clears nothing. Extension projects save the .dcs file automatically."; //$NON-NLS-1$
     }
 
     /**
@@ -196,9 +187,12 @@ public class DcsWorkshopTool implements IMcpTool
             + "and is refused."); //$NON-NLS-1$
         rules.put("variantName", "Omitted means the default settings, which is the first variant. A " //$NON-NLS-1$
             + "dynamic list has no variants and refuses this argument."); //$NON-NLS-1$
-        rules.put("field", "Also the SELECT-list field for add_query_field / remove_query_field."); //$NON-NLS-1$
+        rules.put("field", "Also the SELECT-list field for add_query_field / remove_query_field. " //$NON-NLS-1$
+            + "Also the field of a conditional appearance's filter (add_appearance), and the " //$NON-NLS-1$
+            + "field-match branch of remove_settings_filter / remove_settings_order " //$NON-NLS-1$
+            + "(the alternative to index). A name matches ignoring case."); //$NON-NLS-1$
         rules.put("appearance", "Font='Arial,12,bold', colors='#RRGGBB'. Keys: " //$NON-NLS-1$
-            + "TextColor/BackColor/BorderColor/Font/Format (or Russian equivalents)."); //$NON-NLS-1$
+            + "TextColor, BackColor, BorderColor, Font, Format or their Russian equivalents."); //$NON-NLS-1$
         rules.put("overwriteModel", "The model's schema is written to a backup beside the file first. " //$NON-NLS-1$
             + "Default false: a differing schema is reported and left alone."); //$NON-NLS-1$
         rules.put("dataObjectName", "Distinct from objectName, which names the owner whose schema is being " //$NON-NLS-1$
@@ -213,6 +207,21 @@ public class DcsWorkshopTool implements IMcpTool
             + "settings variant that still references what was removed (selection, order, filter, " //$NON-NLS-1$
             + "structure, conditional appearance, data parameters) and leaves those settings " //$NON-NLS-1$
             + "unchanged. false omits affectedSettings and affectedCount."); //$NON-NLS-1$
+        rules.put("queryText", "add_dataset: multi-statement / UNION is OK. " //$NON-NLS-1$
+            + "set_dataset_query replaces the whole query of an existing Query dataset and is " //$NON-NLS-1$
+            + "validated like add_dataset."); //$NON-NLS-1$
+        rules.put("dataPath", "Default is the expression as given, not the aggregate wrapped " //$NON-NLS-1$
+            + "around it."); //$NON-NLS-1$
+        rules.put("userSettingID", "So BSL can set the parameter before the report form " //$NON-NLS-1$
+            + "opens."); //$NON-NLS-1$
+        rules.put("condition", "e.g. 'T.Sum > &MinSum'. add splices it into WHERE/ГДЕ; remove " //$NON-NLS-1$
+            + "drops it and the connector beside it."); //$NON-NLS-1$
+        rules.put("title", "Also what a nested schema is called on screen."); //$NON-NLS-1$
+        rules.put("itemPath", "Each step names a collection with the item in brackets, by " //$NON-NLS-1$
+            + "number (Structure[0]) or by name (Filter[Сумма], DataParameters[Период]). A " //$NON-NLS-1$
+            + "name matches the item's name, dataPath, field, parameter or filter left value, " //$NON-NLS-1$
+            + "ignoring case; several items of one name are refused with their indices."); //$NON-NLS-1$
+        rules.put("dataSet", "Distinct from dataSetName, which names an existing dataset."); //$NON-NLS-1$
         return Collections.unmodifiableMap(rules);
     }
 
@@ -227,96 +236,55 @@ public class DcsWorkshopTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", "Operation name. Use 'help' for catalog.", true) //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("projectName", "Name of the EDT project to work in") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("objectName", //$NON-NLS-1$
-                "Owner FQN (Report.X / DataProcessor.X) or full schema FQN") //$NON-NLS-1$
-            .stringProperty("formFqn", //$NON-NLS-1$
-                "Form holding a dynamic list, e.g. Catalog.X.Form.ListForm.") //$NON-NLS-1$
-            .stringProperty("attributeName", //$NON-NLS-1$
-                "Dynamic-list attribute on formFqn whose settings the operation applies to") //$NON-NLS-1$
-            .stringProperty("templateName", //$NON-NLS-1$
-                "DCS template name. Default ОсновнаяСхемаКомпоновкиДанных, or " //$NON-NLS-1$
-                    + "MainDataCompositionSchema on an English configuration.") //$NON-NLS-1$
-            .stringProperty("name", "Name of the new element (parameter / field / etc.)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("dataSetName", "Target dataset for field/calc operations") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("queryText", "BSL query text for add_dataset (Query type) and set_dataset_query " //$NON-NLS-1$ //$NON-NLS-2$
-                + "(replaces the whole query of an existing Query dataset; multi-statement / UNION OK)") //$NON-NLS-1$
-            .stringProperty("dataSetType", "Query / Object / Union (default: Query)") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("expression", "DCS expression for calculated field / total") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("dataPath", //$NON-NLS-1$
-                "add_total: the path to the data the total runs over. Default the expression as " //$NON-NLS-1$
-                    + "given, not the aggregate wrapped around it.") //$NON-NLS-1$
-            .stringProperty("aggregateFunction", //$NON-NLS-1$
-                "Aggregate for add_total: Sum / Count / Min / Max / Avg") //$NON-NLS-1$
-            .stringProperty("type", "Parameter type (Date, Number, String, etc.)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("projectName", "EDT project name.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("objectName", "Owner FQN (Report.X / DataProcessor.X) or full schema FQN.") //$NON-NLS-1$
+            .stringProperty("formFqn", "Form holding a dynamic list (Catalog.X.Form.ListForm).") //$NON-NLS-1$
+            .stringProperty("attributeName", "Dynamic-list attribute on formFqn.") //$NON-NLS-1$
+            .stringProperty("templateName", "DCS template name (default ОсновнаяСхемаКомпоновкиДанных / MainDataCompositionSchema).") //$NON-NLS-1$
+            .stringProperty("name", "Name of the new element (parameter / field / etc.).") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("dataSetName", "Target dataset for field / calc operations.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("queryText", "add_dataset / set_dataset_query: BSL query text; set replaces the whole dataset query.") //$NON-NLS-1$
+            .stringProperty("dataSetType", "Query / Object / Union (default Query).") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("expression", "DCS expression for a calculated field / total.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("dataPath", "add_total: data path (default the expression as given).") //$NON-NLS-1$
+            .stringProperty("aggregateFunction", "add_total: Sum / Count / Min / Max / Avg.") //$NON-NLS-1$
+            .stringProperty("type", "Parameter type (Date, Number, String, ...).") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("length", "String length, 0 = unlimited.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("precision", "Number: total digits.") //$NON-NLS-1$ //$NON-NLS-2$
             .integerProperty("fractionDigits", "Number: fraction digits.") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("nonNegative", "Number: no negatives.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("dateFractions", "Date / DateTime / Time.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("allowedLength", "String: Variable / Fixed.") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("direction", //$NON-NLS-1$
-                "Up / Down for move_parameter; Asc / Desc for add_order (alias of orderType, default Asc)") //$NON-NLS-1$
-            .integerProperty("newIndex", "Target index for move_parameter (0-based)") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("direction", "move_parameter: Up / Down; add_order: Asc / Desc (default Asc).") //$NON-NLS-1$
+            .integerProperty("newIndex", "move_parameter: target index (0-based).") //$NON-NLS-1$ //$NON-NLS-2$
             // 1.43.x DCS catch-up wave 2: new param keys
-            .stringProperty("sourceDataSet", "Source dataset name for dataset-link ops") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("destinationDataSet", //$NON-NLS-1$
-                "Destination dataset name for dataset-link ops") //$NON-NLS-1$
-            .stringProperty("sourceExpression", "Source expression for add_dataset_link") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("destinationExpression", //$NON-NLS-1$
-                "Destination expression for add_dataset_link") //$NON-NLS-1$
-            .stringProperty("property", "Property name for set_*_property ops") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("value", "Property/parameter value for set_* ops") //$NON-NLS-1$ //$NON-NLS-2$
-            .stringProperty("parentPath", //$NON-NLS-1$
-                "add_grouping: the group to nest the new one inside, as dot-separated " //$NON-NLS-1$
-                    + "group names ('Объект.Статья').") //$NON-NLS-1$
-            .stringProperty("variantName", //$NON-NLS-1$
-                "set_settings_parameter: the settings variant to work on. Omitted means " //$NON-NLS-1$
-                    + "the default settings, which is the first variant.") //$NON-NLS-1$
-            .stringProperty("userSettingID", //$NON-NLS-1$
-                "set_settings_parameter: the identifier under which the parameter appears in " //$NON-NLS-1$
-                    + "user settings, so BSL can set it before the report form opens.") //$NON-NLS-1$
-            .booleanProperty("use", //$NON-NLS-1$
-                "set_settings_parameter used flag. Schema parameter: true = Always, false = Auto.") //$NON-NLS-1$
+            .stringProperty("sourceDataSet", "Dataset-link ops: source dataset.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("destinationDataSet", "Dataset-link ops: destination dataset.") //$NON-NLS-1$
+            .stringProperty("sourceExpression", "add_dataset_link: source expression.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("destinationExpression", "add_dataset_link: destination expression.") //$NON-NLS-1$
+            .stringProperty("property", "set_*_property: property name.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("value", "set_*: property or parameter value.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("parentPath", "add_grouping: parent group path ('Объект.Статья').") //$NON-NLS-1$
+            .stringProperty("variantName", "set_settings_parameter: settings variant (default: the first).") //$NON-NLS-1$
+            .stringProperty("userSettingID", "set_settings_parameter: user-setting identifier for BSL.") //$NON-NLS-1$
+            .booleanProperty("use", "set_settings_parameter: true = Always, false = Auto.") //$NON-NLS-1$
             .booleanProperty("valueListAllowed", //$NON-NLS-1$
                 "Schema parameter accepts a value list.") //$NON-NLS-1$
             .booleanProperty("denyIncompleteValues", //$NON-NLS-1$
                 "Schema parameter refuses incomplete values.") //$NON-NLS-1$
-            .integerProperty("index", //$NON-NLS-1$
-                "0-based item index for remove/set settings-item ops") //$NON-NLS-1$
-            .stringProperty("viewMode", //$NON-NLS-1$
-                "Auto / Normal / QuickAccess / Inaccessible (set_settings_item_user_mode)") //$NON-NLS-1$
-            .stringProperty("container", //$NON-NLS-1$
-                "selection / filter / order (set_settings_item_user_mode)") //$NON-NLS-1$
-            .stringProperty("field", //$NON-NLS-1$
-                "Field path for grouping / order / selected-field / filter ops, the field of a " //$NON-NLS-1$
-                    + "conditional appearance's filter (add_appearance), and the field-match " //$NON-NLS-1$
-                    + "branch of remove_settings_filter / remove_settings_order (alternative to " //$NON-NLS-1$
-                    + "index).") //$NON-NLS-1$
-            .stringProperty("condition", //$NON-NLS-1$
-                "Query condition expression for add_query_condition / remove_query_condition " //$NON-NLS-1$
-                + "(e.g. 'T.Sum > &MinSum'). add splices it into WHERE/ГДЕ; remove drops it " //$NON-NLS-1$
-                + "and the connector beside it.") //$NON-NLS-1$
-            .stringProperty("appearance", //$NON-NLS-1$
-                "Appearance spec 'Name=Value;Name=Value' for add_appearance / " //$NON-NLS-1$
-                    + "set_data_set_field_appearance. Keys: TextColor, BackColor, " //$NON-NLS-1$
-                    + "BorderColor, Font, Format, or their Russian equivalents.") //$NON-NLS-1$
-            .stringProperty("title", //$NON-NLS-1$
-                "Presentation/title for selected-field / calculated-field / parameter, and what a " //$NON-NLS-1$
-                    + "nested schema is called on screen (optional).") //$NON-NLS-1$
-            .stringProperty("sourceName", //$NON-NLS-1$
-                "Source settings-variant name to copy from (clone_settings_variant).") //$NON-NLS-1$
-            .stringProperty("newName", //$NON-NLS-1$
-                "New settings-variant name for rename_settings_variant.") //$NON-NLS-1$
+            .integerProperty("index", "remove/set settings-item ops: 0-based index.") //$NON-NLS-1$
+            .stringProperty("viewMode", "set_settings_item_user_mode: Auto / Normal / QuickAccess / Inaccessible.") //$NON-NLS-1$
+            .stringProperty("container", "set_settings_item_user_mode: selection / filter / order.") //$NON-NLS-1$
+            .stringProperty("field", "Field path for grouping, order, selection, filter and appearance ops; remove_settings_filter/order match it instead of index.") //$NON-NLS-1$
+            .stringProperty("condition", "add_query_condition / remove_query_condition: query condition; add splices it into WHERE, remove drops it and its connector.") //$NON-NLS-1$
+            .stringProperty("appearance", "add_appearance / set_data_set_field_appearance: 'Name=Value;Name=Value' - TextColor, BackColor, BorderColor, Font, Format.") //$NON-NLS-1$
+            .stringProperty("title", "Presentations for selected/calculated fields, parameters and nested schemas.") //$NON-NLS-1$
+            .stringProperty("sourceName", "clone_settings_variant: source variant.") //$NON-NLS-1$
+            .stringProperty("newName", "rename_settings_variant: new name.") //$NON-NLS-1$
             .stringProperty("topic", "Help topic name (use with operation=help)") //$NON-NLS-1$ //$NON-NLS-2$
-            .booleanProperty("dryRun", "Preview changes inside BM transaction (default false)") //$NON-NLS-1$ //$NON-NLS-2$
-            .booleanProperty("reportAffectedSettings", //$NON-NLS-1$
-                "remove_dataset, remove_dataset_field, remove_parameter, remove_calculated_field, " //$NON-NLS-1$
-                    + "remove_total_field: list settings that still reference the removed element. " //$NON-NLS-1$
-                    + "Default true. The settings are left unchanged. false omits the list.") //$NON-NLS-1$
-            .booleanProperty("overwriteModel", //$NON-NLS-1$
-                "repair_schema: replace a schema the model holds when it differs from the " //$NON-NLS-1$
-                    + ".dcs. Default false.") //$NON-NLS-1$
+            .booleanProperty("dryRun", "Preview in a BM transaction (default false).") //$NON-NLS-1$ //$NON-NLS-2$
+            .booleanProperty("reportAffectedSettings", "remove_dataset / remove_dataset_field / remove_parameter / remove_calculated_field / remove_total_field: list settings still referencing the removed element (default true); false omits it.") //$NON-NLS-1$
+            .booleanProperty("overwriteModel", "repair_schema: replace a schema the model holds when it differs from the .dcs (default false).") //$NON-NLS-1$
             .booleanProperty("validate_query", "Validate queryText before write (default true)") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("validate_expression", //$NON-NLS-1$
                 "Validate expression before write (default true)") //$NON-NLS-1$
@@ -326,30 +294,22 @@ public class DcsWorkshopTool implements IMcpTool
                 "add_appearance: condition kind (default Equal).") //$NON-NLS-1$
             .stringProperty("conditionValue", //$NON-NLS-1$
                 "add_appearance: condition value.") //$NON-NLS-1$
-            .stringProperty("connectionString", //$NON-NLS-1$
-                "add_data_source: connection string (for non-Local data source types).") //$NON-NLS-1$
+            .stringProperty("connectionString", "add_data_source: connection string (non-Local types).") //$NON-NLS-1$
             .stringProperty("dataSourceType", //$NON-NLS-1$
                 "add_data_source: data source type (default Local).") //$NON-NLS-1$
-            .stringProperty("dataSet", //$NON-NLS-1$
-                "set_data_set_field_appearance: target dataset name (distinct from dataSetName).") //$NON-NLS-1$
+            .stringProperty("dataSet", "set_data_set_field_appearance: target dataset.") //$NON-NLS-1$
             .stringProperty("groupType", //$NON-NLS-1$
                 "add_filter_group: group type (default AndGroup).") //$NON-NLS-1$
             .stringProperty("groupingType", //$NON-NLS-1$
                 "add_grouping: grouping type (default Items).") //$NON-NLS-1$
-            .stringProperty("itemPath", //$NON-NLS-1$
-                "remove_settings_item: dot-separated path of the item to remove. Each step " //$NON-NLS-1$
-                    + "names a collection with the item in brackets, by number (Structure[0]) or " //$NON-NLS-1$
-                    + "by name ([Период], [Сумма]); a name matches the item's name, dataPath, " //$NON-NLS-1$
-                    + "field, parameter or filter left value, ignoring case.") //$NON-NLS-1$
+            .stringProperty("itemPath", "remove_settings_item: dot-separated item path; steps name a collection and an item by number (Structure[0]) or by name ([Период]).") //$NON-NLS-1$
             .stringProperty("orderType", //$NON-NLS-1$
                 "add_order: Asc / Desc (default Asc; alias of direction).") //$NON-NLS-1$
             .stringProperty("presentation", //$NON-NLS-1$
                 "add_variant: settings-variant presentation / title.") //$NON-NLS-1$
             .stringProperty("url", //$NON-NLS-1$
                 "add_nested_schema: where the nested schema reads its data from.") //$NON-NLS-1$
-            .stringProperty("dataObjectName", //$NON-NLS-1$
-                "add_dataset / add_union_item with dataSetType=Object: the object that dataset " //$NON-NLS-1$
-                    + "reads. Required there, refused on any other dataset type.") //$NON-NLS-1$
+            .stringProperty("dataObjectName", "add_dataset / add_union_item with dataSetType=Object: the object read; required there, refused otherwise.") //$NON-NLS-1$
             .stringProperty("groupName", //$NON-NLS-1$
                 "add_group_template / remove_group_template: the grouping being drawn.") //$NON-NLS-1$
             .stringProperty("groupName2", //$NON-NLS-1$
@@ -363,8 +323,7 @@ public class DcsWorkshopTool implements IMcpTool
             .stringProperty("templateType", //$NON-NLS-1$
                 "add_group_template: Header / Footer / HierarchicalHeader / HierarchicalFooter / " //$NON-NLS-1$
                     + "OverallHeader / OverallFooter.") //$NON-NLS-1$
-            .integerProperty("rowIndex", //$NON-NLS-1$
-                "add_template_cell: which row of the template body, 0-based. Default the last.") //$NON-NLS-1$
+            .integerProperty("rowIndex", "add_template_cell: 0-based body row (default last).") //$NON-NLS-1$
             .stringProperty("schemaTemplateName", //$NON-NLS-1$
                 "The template INSIDE the schema that an operation works on.") //$NON-NLS-1$
             .stringProperty("nestedSchemaName", //$NON-NLS-1$

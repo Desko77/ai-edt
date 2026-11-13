@@ -628,6 +628,122 @@ def write_p2_profile(area_root, units=(), profile_id="DefaultProfile", timestamp
     return target
 
 
+class ExplicitSharedAgentProfiles(unittest.TestCase):
+    def fixture(self, root, legacy=False, bound=False):
+        area = root / "edt" / "configuration"
+        agent = root / "shared agent"
+        area.mkdir(parents=True)
+        units = [(BUNDLE, "1.0.0"), ("ru.aiedt.mcp.oform", "1.0.0")]
+        if legacy:
+            units.append((LEGACY_GROUP_IU, "0.1.0"))
+        snapshot = write_p2_profile(agent, units=units, plain=True,
+                                    config_folder=area)
+        text = snapshot.read_text(encoding="utf-8")
+        if not bound:
+            text = text.replace("<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>" % area, "")
+        text = text.replace("C:/edt-install", str(area.parent))
+        snapshot.write_text(text, encoding="utf-8")
+        uri = (agent / "p2").as_uri().replace(":", "\\:")
+        (area / "config.ini").write_text(
+            "eclipse.p2.data.area=" + uri + "\neclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+        write_bundles_info(area, [uid + "," + version + ",plugins/x.jar,4,false"
+                                  for uid, version in units if uid != LEGACY_GROUP_IU])
+        return area, snapshot
+
+    def test_explicit_shared_agent_without_configuration_binding(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                area, _ = self.fixture(pathlib.Path(directory), legacy=legacy)
+                status = REPORT.p2_profile_status(area)
+                self.assertEqual("known", status["status"], status)
+                self.assertEqual(bool(status["legacyUnits"]), legacy)
+
+    def test_explicit_agent_with_configuration_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, _ = self.fixture(pathlib.Path(directory), bound=True)
+            self.assertEqual("known", REPORT.p2_profile_status(area)["status"])
+
+    def test_relative_and_config_dir_agent_locations(self):
+        for location in ("../../shared agent/p2", "@config.dir/../../shared agent/p2"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as directory:
+                area, _ = self.fixture(pathlib.Path(directory))
+                (area / "config.ini").write_text("eclipse.p2.data.area=" + location +
+                    "\neclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+                self.assertEqual("known", REPORT.p2_profile_status(area)["status"])
+
+    def test_binding_install_and_membership_contradictions_remain_unknown(self):
+        for change in ("configuration", "empty-configuration", "install", "old", "missing", "editor"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                area, snapshot = self.fixture(pathlib.Path(directory), bound=True)
+                text = snapshot.read_text(encoding="utf-8")
+                if change == "configuration":
+                    text = text.replace("value='%s'" % area, "value='wrong'")
+                elif change == "empty-configuration":
+                    text = text.replace("value='%s'" % area, "value=''")
+                elif change == "install":
+                    text = text.replace("value='%s'" % area.parent, "value='wrong'")
+                elif change == "old":
+                    text = text.replace("version='1.0.0'", "version='0.2.60'")
+                elif change == "missing":
+                    text = text.replace("<unit id='%s' version='1.0.0'/>" % BUNDLE, "")
+                else:
+                    write_bundles_info(area, ["ru.aiedt.mcp.editor,1.0.0,plugins/x.jar,4,false"])
+                snapshot.write_text(text, encoding="utf-8")
+                self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_shared_binding_requires_readable_membership_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, _ = self.fixture(pathlib.Path(directory))
+            info = area / "org.eclipse.equinox.simpleconfigurator" / "bundles.info"
+            with unittest.mock.patch.object(pathlib.Path, "read_text", side_effect=OSError("unreadable")):
+                self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+            info.rename(info.with_suffix(".saved"))
+            self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_each_targeted_bundle_requires_exact_version_sets_even_without_legacy(self):
+        for bundle in (BUNDLE, "ru.aiedt.mcp.oform", "ru.aiedt.mcp.editor"):
+            for versions in (("0.2.60",), (), ("1.0.0", "0.2.60")):
+                with self.subTest(bundle=bundle, versions=versions), tempfile.TemporaryDirectory() as directory:
+                    area, snapshot = self.fixture(pathlib.Path(directory))
+                    text = snapshot.read_text(encoding="utf-8")
+                    text = text.replace("<unit id='%s' version='1.0.0'/>" % bundle, "")
+                    text = text.replace("</units>", "".join(
+                        "<unit id='%s' version='%s'/>" % (bundle, version) for version in versions) + "</units>")
+                    snapshot.write_text(text, encoding="utf-8")
+                    lines = [uid + ",1.0.0,plugins/x.jar,4,false"
+                             for uid in (BUNDLE, "ru.aiedt.mcp.oform", "ru.aiedt.mcp.editor")]
+                    write_bundles_info(area, lines)
+                    self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_empty_targeted_membership_does_not_prove_shared_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, snapshot = self.fixture(pathlib.Path(directory))
+            text = snapshot.read_text(encoding="utf-8")
+            text = text.replace("<unit id='%s' version='1.0.0'/>" % BUNDLE, "")
+            text = text.replace("<unit id='ru.aiedt.mcp.oform' version='1.0.0'/>", "")
+            snapshot.write_text(text, encoding="utf-8")
+            write_bundles_info(area, [])
+            self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_java_property_unicode_and_continuation_select_the_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, _ = self.fixture(pathlib.Path(directory))
+            text = (area / "config.ini").read_text(encoding="utf-8")
+            text = text.replace("DefaultProfile", "Default\\u0050ro\\\n  file")
+            (area / "config.ini").write_text(text, encoding="utf-8")
+            self.assertEqual("known", REPORT.p2_profile_status(area)["status"])
+
+    def test_invalid_explicit_locations_and_properties_never_fall_back(self):
+        for value in ("https://example.invalid/p2", "file://remote/share/p2", "file:/bad%ZZ",
+                      "\\uZZZZ", "@unknown/p2", "file:/tmp/p2?query"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                area, _ = self.fixture(pathlib.Path(directory))
+                write_p2_profile(area.parent)
+                (area / "config.ini").write_text("eclipse.p2.data.area=" + value +
+                    "\neclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+                self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+
 class TheInstalledStateIsReadFromTheP2Profile(unittest.TestCase):
     """Installed membership is what the area's p2 profile resolved, not what a directory caches.
 
@@ -886,7 +1002,8 @@ class TheJsonReportCarriesTheProfileStates(unittest.TestCase):
             install = make_installation(root / "installs" / "edt")
             write_bundles_info(install / "configuration",
                                [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
-            write_p2_profile(install, units=[(LEGACY_GROUP_IU, "0.1.0.202609212242")])
+            write_p2_profile(install, units=[(LEGACY_GROUP_IU, "0.1.0.202609212242"),
+                                             (BUNDLE, "0.2.60")])
             payload = self.payload_for(root)
         self.assertEqual({"bundle", "roots", "installations", "unclaimed", "unreadable",
                           "consumers", "p2Profiles"}, set(payload))

@@ -379,6 +379,15 @@ public final class FormLayout
 
     public Map<String, String> title;
 
+    /**
+     * The form's width as the layout records it after the root panel, where
+     * {@link LayoutEditor#setSize(Integer, Integer)} writes it; {@code null} when the layout has none there.
+     */
+    public Integer width;
+
+    /** The form's height, beside {@link #width}; {@code null} when the layout has none there. */
+    public Integer height;
+
     /** The kind of the form's owner, or {@code null}. */
     public String ownerKind;
 
@@ -677,7 +686,7 @@ public final class FormLayout
      * @param localized language to text; may be {@code null} or empty
      * @return a string, a map, or {@code null}
      */
-    static Object text(Map<String, String> localized)
+    public static Object text(Map<String, String> localized)
     {
         if (localized == null || localized.isEmpty())
         {

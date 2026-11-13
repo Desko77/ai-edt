@@ -13,6 +13,16 @@ catalogue is available too, as one operation among others.
 The tool catalogue lives in `references/`. Read the file you need for the task at hand rather
 than all of them.
 
+## Reliability contracts in 1.0 preparation
+
+- Inspect the actual container before adding form items with `beforeName`; a missing or ambiguous direct sibling is refused, not appended elsewhere.
+- Field binding in an extension does not borrow dependencies implicitly. Read the typed `errorCode`; own typed scalars/columns and unverified complex paths are different cases.
+- `start_client` without an application id selects only the named project's registered default or sole application; never guess another project or silently replace an invalid explicit id.
+- Treat MXL `outcome_unknown` and `committed_unconfirmed` as inspect-before-recovery, not as permission to replay. A refresh warning after a successful write does not justify repeating the mutation.
+- For Vanessa file/text scenarios, `testManager` now defaults to true and `testClient` remains opt-in. Use `vanessaExt`, not reserved JSON keys, to control the add-in. The observation deadline returns `Pending` without stopping the owned client: poll its `runKey`; only explicit cancel requests termination. `progressAvailable=false` is not a current-step feed, and `cleanupRequired` is not permission to launch again.
+
+See `references/expected-behavior.md` and `references/facades.md` for the exact refusal and polling contracts.
+
 ## When to use it
 
 - Reading and editing BSL: modules, methods, references, call graphs, refactoring.
@@ -85,19 +95,14 @@ than all of them.
   replaces a composition the adopted object does not have; extending adds an entry marked
   `Extended` where an adopted object really keeps its types, and leaves the inherited ones alone.
 
-  A form element of an extension that takes a data path starting at a base-form attribute borrows
-  that attribute in the same write, and the response names it in `adoptedFormAttributes`. A path
-  EDT does not export with the extension form **and** the form does not resolve is refused before
-  anything is written - the refusal names the element, the path and the reason, and the form is left
-  as it was. A path the form resolves but that the extension cannot reference - a segment of
-  another engine, a tail past the borrowed attribute - is accepted, and EDT can drop it on export
-  with no marker to warn about it: `form-data-path` fires only on a segment nothing resolves. A
-  path an operation creates itself (the table of `add_dynamic_list_table`, the tables
-  of `setup_settings_composer_on_form`) is not asked about resolution: the object is the write's
-  own. When a check cannot be asked at all - the EDT service is absent or the call failed - nothing
-  is refused and the response names the check in `dataPathChecksNotPerformed`
-  (`attributeBelongsToExtension`, `exportOfExtensionForm`, `pathResolutionInForm`), because a
-  response that stays silent about it reads as a path that passed it.
+  Binding an extension form element never borrows a base-form attribute implicitly. An inherited
+  root is refused with `EXTENSION_BINDING_UNSUPPORTED`. An own locally typed scalar or column can
+  supply positive safety proof; an own root alone does not prove an arbitrary tail such as
+  `SettingsComposer.Settings`. An authoritative unresolved path is refused with
+  `EXTENSION_BINDING_UNRESOLVED`; missing ownership, resolution or persistence proof produces
+  `EXTENSION_BINDING_UNVERIFIED`. Read `errorCode` and the reason instead of expecting
+  `adoptedFormAttributes` or a success with skipped safety checks. Preview applies the same checks.
+  A refusal does not itself prove that no earlier step in the enclosing transaction ran.
 
 - **When a parameter's description reads like one line and you need the rules.**
   `edit_metadata operation=help topic=parameters` carries the full text of the parameters whose
@@ -128,6 +133,14 @@ case: the server answers, but one operation fails.
 A `401` from `/mcp` while `/health` answers is not the server being down: the token check is on (**Require bearer token** on the AI-EDT preference page of that EDT, Window > Preferences > AI-EDT; off as shipped) and the client sends no bearer token, or the wrong one. The token is in the **Bearer token** field of that page and goes into the client configuration as `Authorization: Bearer <token>`; a server open to every interface demands it whatever the flag says. Nothing else gets through, so there is nothing to work around. A `404` naming `/mcp` on another path (`/register`, `/.well-known/...`) is the client walking OAuth discovery after that `401` - the answer is the same token.
 
 Reading and analysis without the server are fine. Writing into an EDT project without it is not.
+
+## Built-in route guidance
+
+`initialize` and `server/discover` carry `instructions` pointing to `aiedt://guidance`.
+Read it with MCP `resources/read` and `uri=aiedt://guidance` before choosing a launch, import,
+export or ordinary-form route. It names entry points, argument conditions and current preset gates.
+Availability is evaluated at read time, not promised for the next call. `hidden, callable` is not
+`off`; a refusal on one argument is not evidence that the whole tool or EDT is unavailable.
 
 ## Entry points
 
@@ -216,7 +229,9 @@ EDT runtime supports.
   `standard` lists at most 30 methods per module by default (`maxMethods`).
 - `get_module_structure`, then `read_method_source` for the one method you need. This works on
   modules of tens of thousands of lines and gives exact method boundaries cheaply. Do not fall
-  back to reading whole files because a module is large.
+  back to reading whole files because a module is large. `read_module_source` takes inclusive,
+  1-based `startLine` / `endLine` ranges and returns at most 5000 lines per call; the next range
+  reads the source again. See `references/expected-behavior.md` for source priority and write targets.
 - Cache large maps (module lists, FQN catalogues, the structure of a big module) once into an
   ignored file in the project instead of asking again.
 - Push heavy sweeps into a sub-agent so the raw output does not settle in the main context.

@@ -613,7 +613,7 @@ public class BmFormHelper
                 FormExtensionDataPathGuard.findRefusal(e);
             if (refusal != null)
             {
-                return "Error: " + refusal.getOutcome().getRefusal(); //$NON-NLS-1$
+                return "Error: " + formatDataPathRefusal(refusal.getOutcome()); //$NON-NLS-1$
             }
             Activator.logError("BM form operation failed", e); //$NON-NLS-1$
             // 1.41: defensive unwrap so InvocationTargetException /
@@ -2946,9 +2946,8 @@ public class BmFormHelper
         }
 
         Class<?> dataItemClass = Class.forName("com._1c.g5.v8.dt.form.model.DataItem"); //$NON-NLS-1$
-        dataItemClass.getMethod("setDataPath", abstractDataPathClass).invoke(item, pathObj); //$NON-NLS-1$
-
         guardDataPath(pathObj, dataPath, nameOfItem(item));
+        dataItemClass.getMethod("setDataPath", abstractDataPathClass).invoke(item, pathObj); //$NON-NLS-1$
     }
 
     /**
@@ -2960,6 +2959,12 @@ public class BmFormHelper
      * @param elementName the name of the element the caller named, for the
      *            refusal text
      */
+    static String formatDataPathRefusal(FormExtensionDataPathGuard.Outcome outcome)
+    {
+        String code = outcome.getErrorCode();
+        return (code == null ? "" : code + ": ") + outcome.getRefusal();
+    }
+
     private void guardDataPath(Object pathObj, String dataPath, String elementName)
     {
         FormExtensionDataPathGuard.Outcome outcome = FormExtensionDataPathGuard.assign(
@@ -3184,10 +3189,9 @@ public class BmFormHelper
         {
             segments.getClass().getMethod("add", Object.class).invoke(segments, segment); //$NON-NLS-1$
         }
-        setter.invoke(item, pathObj);
-
         guardDataPath(pathObj, value,
             elementName != null && !elementName.isEmpty() ? elementName : nameOfItem(item));
+        setter.invoke(item, pathObj);
     }
 
     // -----------------------------------------------------------------------
@@ -3205,6 +3209,86 @@ public class BmFormHelper
     {
         Object items = containerIface.getMethod("getItems").invoke(container); //$NON-NLS-1$
         items.getClass().getMethod("add", Object.class).invoke(items, item); //$NON-NLS-1$
+    }
+
+    /** A structural preflight failure; no placement has occurred. */
+    public static final class PlacementRefusal extends IllegalArgumentException
+    {
+        private static final long serialVersionUID = 1L;
+        private final String errorCode;
+
+        PlacementRefusal(String errorCode, String message)
+        {
+            super(errorCode + ": " + message);
+            this.errorCode = errorCode;
+        }
+
+        public String getErrorCode() { return errorCode; }
+    }
+
+    /** Inserts a new item only when the requested anchor is a unique direct sibling. */
+    public void addToContainerBeforeStrict(Object container, Object item, String beforeName) throws Exception
+    {
+        Object items = containerIface.getMethod("getItems").invoke(container); //$NON-NLS-1$
+        int size = (Integer) items.getClass().getMethod("size").invoke(items); //$NON-NLS-1$
+        int index = -1;
+        for (int i = 0; i < size; i++)
+        {
+            Object existing = items.getClass().getMethod("get", Integer.TYPE).invoke(items, i); //$NON-NLS-1$
+            if (beforeName.equalsIgnoreCase(nameOfItem(existing)))
+            {
+                if (index >= 0)
+                {
+                    throw new PlacementRefusal("FORM_PLACEMENT_AMBIGUOUS_SIBLING", "beforeName '"
+                        + beforeName + "' has multiple direct matches in " + placementContainer(container)
+                        + "; nothing was written.");
+                }
+                index = i;
+            }
+        }
+        if (index < 0)
+        {
+            Object root = container;
+            if (root instanceof org.eclipse.emf.ecore.EObject)
+            {
+                while (((org.eclipse.emf.ecore.EObject) root).eContainer() != null
+                    && containerIface.isInstance(((org.eclipse.emf.ecore.EObject) root).eContainer()))
+                {
+                    root = ((org.eclipse.emf.ecore.EObject) root).eContainer();
+                }
+            }
+            Object found = uniquePlacementAnchor(root, beforeName);
+            String actual = found instanceof org.eclipse.emf.ecore.EObject
+                ? "; actual parent: " + placementContainer(((org.eclipse.emf.ecore.EObject) found).eContainer()) : "";
+            throw new PlacementRefusal("FORM_PLACEMENT_INVALID_SIBLING", "beforeName '" + beforeName
+                + "' is not a direct child of " + placementContainer(container) + actual
+                + "; pass the correct parentName. Nothing was written.");
+        }
+        items.getClass().getMethod("add", Integer.TYPE, Object.class).invoke(items, index, item); //$NON-NLS-1$
+    }
+
+    private Object uniquePlacementAnchor(Object root, String name)
+    {
+        if (!(root instanceof org.eclipse.emf.ecore.EObject)) { return null; }
+        Object found = null;
+        java.util.Iterator<org.eclipse.emf.ecore.EObject> all =
+            ((org.eclipse.emf.ecore.EObject) root).eAllContents();
+        while (all.hasNext())
+        {
+            Object candidate = all.next();
+            if (name.equalsIgnoreCase(nameOfItem(candidate)))
+            {
+                if (found != null) { return null; }
+                found = candidate;
+            }
+        }
+        return found;
+    }
+
+    private String placementContainer(Object container)
+    {
+        String name = nameOfItem(container);
+        return formIface.isInstance(container) ? "the form root" : "'" + name + "'";
     }
 
     /**

@@ -73,6 +73,17 @@ public class SupportRegistryTool
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
+    /**
+     * Names the existing gate for the writing branch.
+     *
+     * @return the canonical write door consulted by that branch
+     */
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of("write_module_source"); //$NON-NLS-1$
+    }
+
     @Override
     public String getName()
     {
@@ -82,18 +93,16 @@ public class SupportRegistryTool
     @Override
     public String getDescription()
     {
-        return "Reads the vendor support state of a configuration: which vendor configurations " //$NON-NLS-1$
-            + "it descends from, their releases, the object count per support mode, the " //$NON-NLS-1$
-            + "rules the environment applies on the next update, and the mode of any single " //$NON-NLS-1$
-            + "object together with the objects the environment requires to change with it. " //$NON-NLS-1$
-            + "Operations: " //$NON-NLS-1$
+        return "Reads the vendor configurations this configuration descends from and their releases, " //$NON-NLS-1$
+            + "object counts per mode, next-update rules, and an object's mode and objects required " //$NON-NLS-1$
+            + "to change with it. Operations: " //$NON-NLS-1$
             + "status, list_objects, object_mode, snapshot_modes, restore_modes, help. A mode " //$NON-NLS-1$
             + "records what was declared for an object, not whether the object was modified - " //$NON-NLS-1$
             + "use compare_three_way for that. snapshot_modes writes down which object held " //$NON-NLS-1$
-            + "which mode, which is what makes a merge reversible: an update takes the support " //$NON-NLS-1$
-            + "model from the delivery and no merge rule prevents it. restore_modes puts them " //$NON-NLS-1$
-            + "back, and is the only operation here that changes anything - it reports what it " //$NON-NLS-1$
-            + "would do unless apply=true."; //$NON-NLS-1$
+            + "which mode, making a merge reversible: the merge takes the support model from the " //$NON-NLS-1$
+            + "delivery and no merge rule prevents it. restore_modes puts them back; only it changes " //$NON-NLS-1$
+            + "the configuration, " //$NON-NLS-1$
+            + "and it reports what it would do unless apply=true."; //$NON-NLS-1$
     }
 
     @Override

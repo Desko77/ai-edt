@@ -13,8 +13,8 @@ import java.util.List;
 import org.eclipse.core.resources.IProject;
 
 /**
- * A source of BSL modules that have an address but no {@code Module.bsl} file - modules EDT
- * keeps somewhere it does not open, provided to this server by another bundle.
+ * A source of BSL modules exposed at module addresses by another bundle. A provided module
+ * may share its address with a physical file; each consuming tool defines source precedence.
  *
  * <p>A provider is published as an OSGi service of this interface. {@link ModuleSources} tracks
  * the services and asks each of them in turn: the module tools resolve an address through

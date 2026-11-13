@@ -6,6 +6,7 @@
 
 package ru.aiedt.mcp.server.toolkit.ops;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -18,9 +19,9 @@ import ru.aiedt.mcp.server.wire.ToolResult;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmExternalObjectProjectHelper;
 import ru.aiedt.mcp.server.support.ErrorTags;
+import ru.aiedt.mcp.server.support.GateCheck;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.TextSuggest;
-import ru.aiedt.mcp.server.support.ToolGate;
 
 /**
  * Creates External Data Processor (.epf) and External Report (.erf) DT projects so
@@ -54,14 +55,12 @@ public class ExternalObjectWorkshopTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Create External Data Processor / External Report DT projects (which edit_metadata " //$NON-NLS-1$
-            + "create_object cannot - they are standalone DT projects, not configuration objects). " //$NON-NLS-1$
-            + "operation=create (kind=ExternalDataProcessor|ExternalReport, name, parentProjectName?): " //$NON-NLS-1$
-            + "scaffolds the DT project and its root object via EDT's external-object project manager. " //$NON-NLS-1$
-            + "After create, fill the root object (FQN ExternalDataProcessor.<name> / ExternalReport.<name>) " //$NON-NLS-1$
-            + "with edit_metadata (add_object_attribute / add_tabular_section / add_template / create_form) " //$NON-NLS-1$
-            + "and edit_form, write its ObjectModule with write_module_source, then build the .epf/.erf with " //$NON-NLS-1$
-            + "export_object. No manual file editing needed."; //$NON-NLS-1$
+        return "Create an External Data Processor or External Report project (edit_metadata " //$NON-NLS-1$
+            + "create_object cannot: they are standalone projects). operation=create (kind, name, " //$NON-NLS-1$
+            + "optional parentProjectName) scaffolds the project and its root object. Fill it with " //$NON-NLS-1$
+            + "edit_metadata and write_module_source, then export_object builds the .epf/.erf. " //$NON-NLS-1$
+            + "import_external_object puts a ready .epf/.erf into an existing " //$NON-NLS-1$
+            + "V8ExternalObjectsNature container; open it with launch_debugger action=launch."; //$NON-NLS-1$
     }
 
     @Override
@@ -126,6 +125,25 @@ public class ExternalObjectWorkshopTool implements IMcpTool
         return "import_external_object".equals(operation) ? "import_external_object" : null; //$NON-NLS-1$ //$NON-NLS-2$
     }
 
+    /**
+     * The preset checks {@link #execute} applies to an operation, in the order it applies them.
+     * <p>
+     * Every operation but help creates a project or imports into one, and neither has a preview, so
+     * the facade asks the write door before the workspace is read or a Designer is started. A
+     * {@code null} operation is {@code create} by {@code execute}'s own default and is gated the
+     * same way. The method is public because the route guidance reads the same list the call runs,
+     * and it lives in another package.
+     * </p>
+     *
+     * @param operation the operation name; {@code null} is treated as the default {@code create}
+     * @return the checks, never {@code null}; empty for help only
+     */
+    public static List<GateCheck> gateChecksOf(String operation)
+    {
+        return "help".equals(operation) ? Collections.emptyList() //$NON-NLS-1$
+            : Collections.singletonList(GateCheck.writeDoor(WRITE_DOOR));
+    }
+
     @Override
     public String execute(Map<String, String> params)
     {
@@ -137,13 +155,11 @@ public class ExternalObjectWorkshopTool implements IMcpTool
         // Every operation but help creates a project or imports into one, and neither has a
         // preview: a preset that blocks writing is asked before the workspace is read or a
         // Designer is started.
-        if (!"help".equals(operation)) //$NON-NLS-1$
+        List<GateCheck> gateChecks = gateChecksOf(operation);
+        String gateRefusal = GateCheck.firstRefusal(gateChecks);
+        if (gateRefusal != null)
         {
-            String gate = ToolGate.gateWriteDoor(WRITE_DOOR);
-            if (gate != null)
-            {
-                return ToolResult.error(gate).put("operation", operation).toJson(); //$NON-NLS-1$
-            }
+            return ToolResult.error(gateRefusal).put("operation", operation).toJson(); //$NON-NLS-1$
         }
         switch (operation)
         {

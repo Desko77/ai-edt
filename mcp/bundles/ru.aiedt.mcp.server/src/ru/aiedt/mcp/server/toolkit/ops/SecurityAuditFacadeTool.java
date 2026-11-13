@@ -99,6 +99,17 @@ public class SecurityAuditFacadeTool implements IMcpTool
 
     private static final Map<String, String> OPS = buildOpsCatalog();
 
+    /**
+     * Names the existing gate for the writing branch.
+     *
+     * @return the canonical write door consulted by that branch
+     */
+    @Override
+    public List<String> getGatedWriteNames()
+    {
+        return List.of("write_module_source"); //$NON-NLS-1$
+    }
+
     @Override
     public String getName()
     {
@@ -108,16 +119,12 @@ public class SecurityAuditFacadeTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Security and access audit - role rights audit, RLS violation scan, " //$NON-NLS-1$
-            + "sensitive-data scan. Operations: audit_role_rights, find_rls_violations, " //$NON-NLS-1$
-            + "sensitive_data_scan, help. Pass operation=<name> (snake_case canonical; " //$NON-NLS-1$
-            + "camelCase like auditRoleRights is also accepted); remaining parameters " //$NON-NLS-1$
-            + "follow the per-operation contracts (call operation=help for the catalog, or " //$NON-NLS-1$
-            + "operation=help topic=<operation> for one operation's parameters). Every " //$NON-NLS-1$
-            + "operation reads only, except audit_role_rights with mode=orphans apply=true, " //$NON-NLS-1$
-            + "which removes rights from the role's file and is refused under a preset " //$NON-NLS-1$
-            + "without write rights. The standalone tools remain available " //$NON-NLS-1$
-            + "for back-compat."; //$NON-NLS-1$
+        return "Security and access audit. Operations: audit_role_rights, find_rls_violations, " //$NON-NLS-1$
+            + "sensitive_data_scan, help. Pass operation=<name> (snake_case canonical; camelCase like " //$NON-NLS-1$
+            + "auditRoleRights is also accepted). Every operation reads only, except audit_role_rights " //$NON-NLS-1$
+            + "with mode=orphans apply=true, which removes rights from the role's file and is refused " //$NON-NLS-1$
+            + "under a preset without write rights. Standalone tools remain for back-compat. " //$NON-NLS-1$
+            + "For operation parameters: operation=help topic=<operation>."; //$NON-NLS-1$
     }
 
     /** {@inheritDoc} */
@@ -148,24 +155,21 @@ public class SecurityAuditFacadeTool implements IMcpTool
             .stringProperty("mode", //$NON-NLS-1$
                 "audit_role_rights: rights / missing / conflicts / impact / orphans (default rights).") //$NON-NLS-1$
             .stringProperty("roleName", //$NON-NLS-1$
-                "audit_role_rights: role name, required for mode=rights / mode=missing / mode=orphans. " //$NON-NLS-1$
-                    + "find_rls_violations: optional, limit checks to RLS of this role " //$NON-NLS-1$
-                    + "(default: any RLS).") //$NON-NLS-1$
+                "audit_role_rights: required for mode=rights / mode=missing / mode=orphans. " //$NON-NLS-1$
+                    + "find_rls_violations: optional RLS of this role (default: any RLS).") //$NON-NLS-1$
             .stringProperty("roleNames", //$NON-NLS-1$
-                "audit_role_rights: comma-separated role names, for mode=conflicts / " //$NON-NLS-1$
-                    + "mode=impact.") //$NON-NLS-1$
+                "audit_role_rights: comma-separated names for mode=conflicts / mode=impact.") //$NON-NLS-1$
             .stringProperty("objectType", //$NON-NLS-1$
                 "audit_role_rights: " + AuditRoleRightsTool.OBJECT_TYPE_DESCRIPTION) //$NON-NLS-1$
             .booleanProperty("apply", //$NON-NLS-1$
                 "audit_role_rights " + AuditRoleRightsTool.ORPHANS_APPLY_DESCRIPTION) //$NON-NLS-1$
             .booleanProperty("includeRls", //$NON-NLS-1$
-                "audit_role_rights: include a hasRls flag in the output (default false).") //$NON-NLS-1$
+                "audit_role_rights: hasRls flag in the output (default false).") //$NON-NLS-1$
             .stringProperty("checks", //$NON-NLS-1$
-                "sensitive_data_scan: comma-separated check names (default all): " //$NON-NLS-1$
-                    + "ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, LOG_SENSITIVE.") //$NON-NLS-1$
+                "sensitive_data_scan (default all), comma-separated: ATTRIBUTE_NAME, HARDCODED_SECRET, COMMENT_LEAK, " //$NON-NLS-1$
+                    + "LOG_SENSITIVE.") //$NON-NLS-1$
             .stringProperty("customPatterns", //$NON-NLS-1$
-                "sensitive_data_scan: comma-separated additional regex patterns for the " //$NON-NLS-1$
-                    + "ATTRIBUTE_NAME check.") //$NON-NLS-1$
+                "sensitive_data_scan: comma-separated extra regex for the ATTRIBUTE_NAME check.") //$NON-NLS-1$
             .stringProperty("severity_filter", //$NON-NLS-1$
                 "find_rls_violations and sensitive_data_scan: info / warning / error / all " //$NON-NLS-1$
                     + "(default warning).") //$NON-NLS-1$

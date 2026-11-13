@@ -29,6 +29,7 @@ import ru.aiedt.mcp.oform.layout.FormLayout;
 import ru.aiedt.mcp.oform.layout.LayoutInspection;
 import ru.aiedt.mcp.oform.layout.LayoutNames;
 import ru.aiedt.mcp.oform.layout.LayoutReader;
+import ru.aiedt.mcp.oform.session.OpenFormSessions;
 import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.support.GitDiffUtils;
 import ru.aiedt.mcp.server.support.PreviousRevision;
@@ -233,6 +234,7 @@ public final class FormQueries
         String modulePath = JsonUtils.extractStringArgument(params, "modulePath"); //$NON-NLS-1$
         String fqn = formFqn == null ? null : formFqn.trim();
         Path file = null;
+        IFile workspaceFile = null;
         if ((fqn == null || fqn.isEmpty()) && modulePath != null && !modulePath.trim().isEmpty())
         {
             OrdinaryFormModule module = OrdinaryFormModule.locate(project, modulePath.trim());
@@ -243,7 +245,8 @@ public final class FormQueries
                     .toJson();
             }
             fqn = module.fqn();
-            file = module.container().getLocation() == null ? null : module.container().getLocation().toFile().toPath();
+            workspaceFile = module.container();
+            file = workspaceFile.getLocation() == null ? null : workspaceFile.getLocation().toFile().toPath();
         }
         if (fqn == null || fqn.isEmpty())
         {
@@ -278,6 +281,10 @@ public final class FormQueries
         FormLayout layout = LayoutReader.read(tree, ownerKind);
         LayoutNames names = ConfigurationNames.of(project, layout.producedTypeUuids());
         layout.resolve(names);
+        if (workspaceFile == null)
+        {
+            workspaceFile = workspaceFile(project, file);
+        }
         ToolResult answer = ToolResult.success()
             .put("operation", "layout") //$NON-NLS-1$ //$NON-NLS-2$
             .put("projectName", project.getName()) //$NON-NLS-1$
@@ -286,6 +293,10 @@ public final class FormQueries
         for (Map.Entry<String, Object> entry : layout.toMap().entrySet())
         {
             answer.put(entry.getKey(), entry.getValue());
+        }
+        if (unsavedInEditor(workspaceFile))
+        {
+            answer.put("unsavedInEditor", Boolean.TRUE); //$NON-NLS-1$
         }
         if (names == LayoutNames.NONE)
         {
@@ -311,6 +322,7 @@ public final class FormQueries
         String modulePath = JsonUtils.extractStringArgument(params, "modulePath"); //$NON-NLS-1$
         String fqn = formFqn == null ? null : formFqn.trim();
         Path file = null;
+        IFile workspaceFile = null;
         if ((fqn == null || fqn.isEmpty()) && modulePath != null && !modulePath.trim().isEmpty())
         {
             OrdinaryFormModule module = OrdinaryFormModule.locate(project, modulePath.trim());
@@ -321,7 +333,8 @@ public final class FormQueries
                     .toJson();
             }
             fqn = module.fqn();
-            file = module.container().getLocation() == null ? null : module.container().getLocation().toFile().toPath();
+            workspaceFile = module.container();
+            file = workspaceFile.getLocation() == null ? null : workspaceFile.getLocation().toFile().toPath();
         }
         if (fqn == null || fqn.isEmpty())
         {
@@ -356,6 +369,10 @@ public final class FormQueries
         FormLayout layout = LayoutReader.read(tree, ownerKind);
         LayoutNames names = ConfigurationNames.of(project, layout.producedTypeUuids());
         layout.resolve(names);
+        if (workspaceFile == null)
+        {
+            workspaceFile = workspaceFile(project, file);
+        }
         Map<String, Object> inspection = LayoutInspection.inspect(tree, layout, container.formText(),
             container.moduleText(), names);
         ToolResult answer = ToolResult.success()
@@ -367,7 +384,24 @@ public final class FormQueries
         {
             answer.put(entry.getKey(), entry.getValue());
         }
+        if (unsavedInEditor(workspaceFile))
+        {
+            answer.put("unsavedInEditor", Boolean.TRUE); //$NON-NLS-1$
+        }
         return answer.toJson();
+    }
+
+    /**
+     * Whether a live session of the form editor holds the container's entries changed, for the
+     * mark a reading answer carries: the answer speaks of the file, and the session holds text
+     * the file does not have yet.
+     *
+     * @param workspaceFile the container in the workspace, or {@code null} when it has none
+     * @return whether such a session exists
+     */
+    private static boolean unsavedInEditor(IFile workspaceFile)
+    {
+        return workspaceFile != null && OpenFormSessions.holdsChanges(workspaceFile);
     }
 
     /**

@@ -4,6 +4,18 @@
 the BSL module are stored in a `Form.oform` container inside the project. EDT builds neither a
 layout model nor a BSL model for these entries. The tool is part of the main AI-EDT feature and answers JSON.
 
+## Read-only viewer
+
+`Form.oform` opens in EDT as an element tree, a scrollable and zoomable schematic, and a read-only
+property table. Selecting an element reveals its containing pages. Page navigation is local to
+each viewer, and resource changes reconcile the displayed snapshot. This is a schematic using the
+system font, not a 1C client screenshot: snapshot styles, fonts and tab visibility are not exposed,
+and coordinates and DPI are not measured against 1C. Elements without a box remain in the tree.
+
+The viewer offers no property editing, drag/resize, save or undo/redo UI. Perform layout changes
+through `ordinary_forms` and module changes through `write_module_source`, then read them back.
+Opening and navigation do not modify the container.
+
 ## Address a form
 
 Operations on an existing form take `projectName` and either `formFqn` or `modulePath`:
@@ -26,8 +38,17 @@ entry of the container: `read_module_source`, `read_method_source`, `get_module_
 }
 ```
 
-`operation=help` returns the catalogue of operations, their arguments, the property registry and the
-event names of the current build.
+`operation=help` returns the general operation catalogue, properties, events and write conditions.
+`operation=help topic=<operation>` returns `operationHelp`: the canonical operation name, `kind`,
+`writes`, `needsProject`, `summary`, `commonArguments` and `arguments` with types and full descriptions.
+`needsProject` describes the selected operation; the help request itself needs no project and does
+not execute that operation. Writing topics also return the write conditions in the root `writes`
+field; the nested `operationHelp.writes` is a boolean. An omitted or blank `topic` returns the general
+catalogue. Topic names ignore case and surrounding spaces; an unknown topic returns an error.
+
+```json
+{"operation": "help", "topic": "add_button"}
+```
 
 ## Operations
 
@@ -53,7 +74,7 @@ event names of the current build.
 | `add_submenu`, `add_separator` | write | `panel` and `name` identify the submenu or separator, with `parent` and `before` as for a button. A submenu also takes `caption`, defaulting to `name`. |
 | `set_action_source` | write | `panel` and `table` select the command panel and its source table, with `autoFill`, or `table=none` to clear the source; `autoFill` defaults to true with a table and false with `none`, and an explicit argument overrides it. |
 | `bind_handler`, `unbind_handler` | write | `event` of `elementName` or of the form. `procedure` defaults to `<element><event>`, or to the event itself for the form; `stub` defaults to true, so a procedure the module does not declare is added with the measured parameters unless `stub=false` is passed, and an event whose parameter signature is not recorded gets no stub. |
-| `help` | query | The catalogue. |
+| `help` | query | General catalogue, or operation-specific argument documentation with `topic`. No project required. |
 
 A write marks the owner for the next infobase update.
 

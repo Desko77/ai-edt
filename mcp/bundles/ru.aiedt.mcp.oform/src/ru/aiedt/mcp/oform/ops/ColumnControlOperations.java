@@ -40,10 +40,10 @@ public final class ColumnControlOperations
                 + "editable, control (the cell's control); the kind of column follows what the rows are: a list of an " //$NON-NLS-1$
                 + "object, a tabular section, a value table or tree", //$NON-NLS-1$
             List.of(ParamSpec.string("elementName", "the Table."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the name of the new column."), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("name", "the name of the new column.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("caption", "the column's caption."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.string("data", "the member or standard attribute of the row (Код, Наименование, Номенклатура, НомерСтроки), " //$NON-NLS-1$ //$NON-NLS-2$
-                    + "or the column of the value table."), //$NON-NLS-1$
+                    + "or the column of the value table.").withSchemaDescription("the member or standard attribute of the row, or the column of the value table."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.string("type", "String | Number | Date | Boolean, the values' type when data names none."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.integer("width", "the column's width."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.bool("editable", "the cell gets an editor (default true); given together with control, the two must agree."), //$NON-NLS-1$ //$NON-NLS-2$
@@ -53,7 +53,7 @@ public final class ColumnControlOperations
             ColumnControlOperations::addColumn));
         out.add(OperationSpec.layout("remove_column", "elementName (a Table) and name", //$NON-NLS-1$ //$NON-NLS-2$
             List.of(ParamSpec.string("elementName", "the Table."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the name of the column to remove.")), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("name", "the name of the column to remove.").withSchemaDescription("the name of the item to remove.")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             context -> {
                 String element = context.string("elementName"); //$NON-NLS-1$
                 String name = context.string("name"); //$NON-NLS-1$

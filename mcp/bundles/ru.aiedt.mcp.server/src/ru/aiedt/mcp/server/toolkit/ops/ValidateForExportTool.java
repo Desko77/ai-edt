@@ -820,6 +820,7 @@ public class ValidateForExportTool implements IMcpTool
         }
 
         scanCompositeString(content, relPath, fqn, checkFilterLower, findings);
+        scanAdoptedChildren(content, relPath, fqn, checkFilterLower, findings);
 
         // Object-level <help> declares one help page per language; each <lang> must
         // have a sibling Help/<lang>.html file or EDT's configuration .cf export
@@ -850,6 +851,154 @@ public class ValidateForExportTool implements IMcpTool
                         + "</lang> from the object's <help> block."); //$NON-NLS-1$
                 }
             }
+        }
+    }
+
+    /**
+     * Reads direct metadata children, never inherited extension/form wrappers. StAX is used for
+     * this structural check because nested attributes can have the same tag as their ancestors.
+     * DTDs and entities are refused; no resolver is allowed to open a file or a network address.
+     * Findings are committed only after the whole XML document has been read successfully.
+     */
+    private void scanAdoptedChildren(String content, String relPath, String fqn,
+        String checkFilterLower, List<Map<String, Object>> findings)
+    {
+        if (content == null || fqn == null || fqn.indexOf('.') < 0)
+        {
+            return;
+        }
+        javax.xml.stream.XMLInputFactory factory = javax.xml.stream.XMLInputFactory.newFactory();
+        factory.setProperty(javax.xml.stream.XMLInputFactory.SUPPORT_DTD, false);
+        factory.setProperty(javax.xml.stream.XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+        factory.setXMLResolver((publicId, systemId, baseUri, namespace) -> {
+            throw new javax.xml.stream.XMLStreamException("External XML resources are not allowed"); //$NON-NLS-1$
+        });
+        List<Map<String, Object>> pending = new ArrayList<>();
+        Deque<MdoChildFrame> stack = new ArrayDeque<>();
+        javax.xml.stream.XMLStreamReader reader = null;
+        try
+        {
+            reader = factory.createXMLStreamReader(new java.io.StringReader(content));
+            while (reader.hasNext())
+            {
+                int event = reader.next();
+                if (event == javax.xml.stream.XMLStreamConstants.DTD
+                    || event == javax.xml.stream.XMLStreamConstants.ENTITY_REFERENCE)
+                {
+                    return;
+                }
+                if (event == javax.xml.stream.XMLStreamConstants.START_ELEMENT)
+                {
+                    String tag = reader.getLocalName();
+                    MdoChildFrame parent = stack.peek();
+                    String childFqn = null;
+                    if (parent == null)
+                    {
+                        if (!"http://g5.1c.ru/v8/dt/metadata/mdclass".equals(reader.getNamespaceURI()) //$NON-NLS-1$
+                            || !fqn.substring(0, fqn.indexOf('.')).equals(tag)
+                            || fqn.substring(fqn.indexOf('.') + 1).contains(".")) //$NON-NLS-1$
+                        {
+                            return;
+                        }
+                        childFqn = fqn;
+                    }
+                    // Only actual root children and columns of an actual tabular section count.
+                    else if (parent.fqn != null && !parent.fqn.endsWith(".") && (stack.size() == 1 //$NON-NLS-1$
+                        || "tabularSections".equals(parent.tag))) //$NON-NLS-1$
+                    {
+                        if ("attributes".equals(tag)) //$NON-NLS-1$
+                        {
+                            childFqn = parent.fqn + ".Attribute."; //$NON-NLS-1$
+                        }
+                        else if (stack.size() == 1 && "tabularSections".equals(tag)) //$NON-NLS-1$
+                        {
+                            childFqn = parent.fqn + ".TabularSection."; //$NON-NLS-1$
+                        }
+                    }
+                    String attributeName = reader.getAttributeValue(null, "name"); //$NON-NLS-1$
+                    if (childFqn != null && childFqn.endsWith(".") && attributeName != null) //$NON-NLS-1$
+                    {
+                        attributeName = attributeName.trim();
+                        childFqn = attributeName.isEmpty() || attributeName.contains(".") //$NON-NLS-1$
+                            ? null : childFqn + attributeName;
+                    }
+                    stack.push(new MdoChildFrame(tag, childFqn,
+                        "Adopted".equalsIgnoreCase(reader.getAttributeValue(null, "objectBelonging")), //$NON-NLS-1$ //$NON-NLS-2$
+                        reader.getAttributeValue(null, "extendedConfigurationObject"), //$NON-NLS-1$
+                        reader.getLocation().getLineNumber()));
+                }
+                else if (event == javax.xml.stream.XMLStreamConstants.CHARACTERS
+                    || event == javax.xml.stream.XMLStreamConstants.CDATA)
+                {
+                    if (!stack.isEmpty())
+                    {
+                        stack.peek().text.append(reader.getText());
+                    }
+                }
+                else if (event == javax.xml.stream.XMLStreamConstants.END_ELEMENT)
+                {
+                    MdoChildFrame frame = stack.pop();
+                    MdoChildFrame parent = stack.peek();
+                    if ("name".equals(frame.tag) && parent != null && parent.fqn != null //$NON-NLS-1$
+                        && parent.fqn.endsWith(".")) //$NON-NLS-1$
+                    {
+                        String name = frame.text.toString().trim();
+                        parent.fqn = name.isEmpty() || name.contains(".") ? null : parent.fqn + name; //$NON-NLS-1$
+                    }
+                    if ("objectBelonging".equals(frame.tag) && parent != null && parent.fqn != null) //$NON-NLS-1$
+                    {
+                        parent.adopted = "Adopted".equalsIgnoreCase(frame.text.toString().trim()); //$NON-NLS-1$
+                    }
+                    if (parent != null && frame.fqn != null && !frame.fqn.endsWith(".") //$NON-NLS-1$
+                        && frame.adopted && (frame.base == null || frame.base.trim().isEmpty()))
+                    {
+                        add(pending, checkFilterLower, relPath, frame.fqn,
+                            "mdo-adopted-child-without-base", "ERROR", frame.line, //$NON-NLS-1$ //$NON-NLS-2$
+                            "Adopted metadata child '" + frame.fqn //$NON-NLS-1$
+                            + "' has no extendedConfigurationObject base link; the platform may " //$NON-NLS-1$
+                            + "read it as an extension-owned child and refuse its types. " //$NON-NLS-1$
+                            + "Inspect the borrowing provenance before exporting; no repair was performed."); //$NON-NLS-1$
+                    }
+                }
+            }
+            findings.addAll(pending);
+        }
+        catch (javax.xml.stream.XMLStreamException e)
+        {
+            // Malformed XML is not evidence of a structurally identified metadata child.
+        }
+        finally
+        {
+            if (reader != null)
+            {
+                try
+                {
+                    reader.close();
+                }
+                catch (javax.xml.stream.XMLStreamException e)
+                {
+                    // String reader owns no external resources.
+                }
+            }
+        }
+    }
+
+    private static final class MdoChildFrame
+    {
+        final String tag;
+        String fqn;
+        boolean adopted;
+        final String base;
+        final int line;
+        final StringBuilder text = new StringBuilder();
+
+        MdoChildFrame(String tag, String fqn, boolean adopted, String base, int line)
+        {
+            this.tag = tag;
+            this.fqn = fqn;
+            this.adopted = adopted;
+            this.base = base;
+            this.line = line;
         }
     }
 

@@ -261,18 +261,27 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // door (measured 08.10: 1587).
         PROSE.put("tag_admin", Integer.valueOf(1587));
         // Grown to 3747: the intent sentence says a changing run records a restore point first.
-        PROSE.put("compare_three_way", Integer.valueOf(3747));
+        // Cut from 3747 by the tools/list prose pass: the rules behind the modes stay in
+        // help=parameters, and the merge conditions stay in the intent sentence. Measured 31.10: 3552.
+        PROSE.put("compare_three_way", Integer.valueOf(3552));
         // Raised from 5445 by 52: detect_query_anti_patterns names methodName, one sentence.
         // The combination rules (what walks, what is refused) moved to operation help.
         // compare_configurations: mode says that the answer's failed and failedCount name what the
         // comparison could not read, and projectName that mode=files takes the path of the first
         // export; the intent sentence names the merge restore point.
-        PROSE.put("insights", Integer.valueOf(6079));
+        // Lowered from 6079 to 5823 by the prose cut: schema sentences that repeated the help
+        // rules left the record. Measured 01.11: 5823.
+        // Raised from 5823 to 5837: moduleFqn names each operation's own scope values again -
+        // dependency_graph takes scope=module only, detect_query_anti_patterns also method,
+        // which dependency_graph refuses. Measured 01.11: 5837.
+        PROSE.put("insights", Integer.valueOf(5837));
         // Raised from 4249 to 4761 for the value type qualifiers of a schema parameter and for its
         // use, valueListAllowed and denyIncompleteValues: add_parameter and set_parameter write
         // them, and a client that builds its call from the schema has to see them there.
         PROSE.put("dcs_workshop", Integer.valueOf(4986));
-        PROSE.put("write_module_source", Integer.valueOf(4985));
+        // Cut from 4985 (measured 5108) by the same pass: the mode list, the source rules and the
+        // protection sentence lost their repetition, not their conditions. Measured 31.10: 4288.
+        PROSE.put("write_module_source", Integer.valueOf(4288));
         PROSE.put("code_search", Integer.valueOf(3357));
         // Raised by 463 for connectionString, makeDefault and name: registering an existing server
         // infobase is named by the string, and the flag says whether it becomes the default. And
@@ -299,7 +308,12 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
         // export_database_configuration and export_database_extension: the new overwrite and
         // allowOutOfSync arguments, one sentence each, and the sentences extensionName,
         // applicationId and outputPath gained naming the two operations (measured 28.09: 4734).
-        PROSE.put("config_io", Integer.valueOf(4734));
+        // Lowered from 4734 to 4155 by the prose cut: schema sentences that repeated the delegate
+        // schemas the per-operation help renders left the record. Measured 01.11: 4155.
+        // Raised from 4155 to 4179: export_object's outputPath names the auto-detected kind
+        // branch again - the extension decides, or the kind is auto-detected. Measured 01.11:
+        // 4179.
+        PROSE.put("config_io", Integer.valueOf(4179));
         // Raised from 3607 by 993 for the ten list-action arguments, one sentence each: listKind,
         // listName, tableName, column, columnValue, whenSeveral, buttonTitle, buttonName,
         // windowTitle and windowWaitSeconds. The combination rules live in the catalogue, not in
@@ -709,6 +723,17 @@ public class TheProseOfParameterDescriptionsIsWeighedTest
      * And from 107723 to 107805 for the empty edgeKinds sentence on the dependency_graph and
      * insights schemas. Measured 15.10: 107805.
      * </p>
+     * <p>
+     * And from 107805 to 107843 for the sentence on enableExternalObjectDump on launch_debugger:
+     * true writes the external-object project's dump setting, and a preset that blocks writing
+     * refuses it. Measured 25.10: 107843.
+     * </p>
+     * <p>
+     * Lowered from 107843 to 106746 by the tools/list prose pass on write_module_source and
+     * compare_three_way: their conditions stayed, the prose around them did not. Measured 31.10:
+     * 106746.
+     * </p>
      */
-    private static final int DOCUMENT_PROSE = 107805;
+    // Measured: the current parameter descriptions occupy 105939 UTF-8 bytes.
+    private static final int DOCUMENT_PROSE = 105939;
 }

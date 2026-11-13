@@ -64,6 +64,8 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
 
     private McpHttpEndpoint endpoint;
 
+    private ServerSocket[] reservedPorts;
+
     /**
      * Starts an endpoint on a free port, with the span at one and the instance registry in a
      * temporary directory of its own.
@@ -81,8 +83,11 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
         store.setValue(PrefKeys.PREF_PORT_SPAN, 1);
         McpAuth.useStore(new LiveServer.MemoryTokenStore("restart-" + McpAuth.generateToken())); //$NON-NLS-1$
         McpAuth.forgetPublished();
+        reservedPorts = reserveFourPorts();
+        int initialPort = reservedPorts[0].getLocalPort();
+        releaseReserved(0); // Only this socket is handed to the endpoint.
         endpoint = new McpHttpEndpoint();
-        endpoint.start(LiveServer.freePort());
+        endpoint.start(initialPort);
     }
 
     /**
@@ -93,7 +98,11 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
     @After
     public void letGoOfEverything() throws Exception
     {
-        endpoint.stop();
+        if (endpoint != null) endpoint.stop();
+        if (reservedPorts != null)
+        {
+            for (int i = 0; i < reservedPorts.length; i++) releaseReserved(i);
+        }
         McpToolCatalog.getInstance().clear();
         McpAuth.useStore(null);
         McpAuth.forgetPublished();
@@ -118,8 +127,8 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
     public void theServerComesBackOnThePortItWasServingOn() throws IOException
     {
         int wasOn = endpoint.getPort();
-        int taken = LiveServer.freePort();
-        try (ServerSocket holder = hold(taken))
+        int taken = reservedPorts[2].getLocalPort();
+        try (ServerSocket holder = reservedPorts[2])
         {
             endpoint.restart(taken);
 
@@ -139,11 +148,11 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
     public void theRefusalNamesBothPorts() throws IOException
     {
         int wasOn = endpoint.getPort();
-        int taken = LiveServer.freePort();
+        int taken = reservedPorts[2].getLocalPort();
         // The old port is let go of first: the fallback has to fail because something holds it, not
         // because this endpoint still does.
         endpoint.stop();
-        try (ServerSocket oldPort = hold(wasOn); ServerSocket newPort = hold(taken))
+        try (ServerSocket oldPort = hold(wasOn); ServerSocket newPort = reservedPorts[2])
         {
             try
             {
@@ -180,9 +189,10 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
         // Holding these two makes the first start fail over its whole span; the port between them
         // stays free for the walk the fallback must not make.
         endpoint.stop();
+        releaseReserved(1); // Deliberately free only the fallback's forbidden next port.
         try (ServerSocket oldPort = hold(wasOn);
-            ServerSocket firstAsked = hold(askedFor);
-            ServerSocket secondAsked = hold(askedFor + 1))
+            ServerSocket firstAsked = reservedPorts[2];
+            ServerSocket secondAsked = reservedPorts[3])
         {
             try
             {
@@ -228,7 +238,7 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
     public void aStopDuringTheFallbackWaitsForItAndClosesWhatItOpened() throws Exception
     {
         int wasOn = endpoint.getPort();
-        int taken = LiveServer.freePort();
+        int taken = reservedPorts[2].getLocalPort();
         CountDownLatch atTheFallback = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         endpoint.fallbackWindowForTest = () ->
@@ -236,7 +246,7 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
             atTheFallback.countDown();
             await(release);
         };
-        try (ServerSocket holder = hold(taken))
+        try (ServerSocket holder = reservedPorts[2])
         {
             Thread restarting = new Thread(() -> restartKeepingTheRefusalOut(taken), "a-restart"); //$NON-NLS-1$
             restarting.start();
@@ -329,13 +339,46 @@ public class ARestartThatCannotTakeThePortStaysOnTheOldOneTest
         }
     }
 
-    /**
-     * Takes the loopback address of a port, which is the address the endpoint binds first.
-     *
-     * @param port the port to hold
-     * @return the holder, to be closed by the caller
-     * @throws IOException when the port cannot be taken
-     */
+    /** Reserves the complete fixture span before any endpoint is started. */
+    private static ServerSocket[] reserveFourPorts() throws IOException
+    {
+        for (int attempt = 0; attempt < 100; attempt++)
+        {
+            ServerSocket[] candidate = new ServerSocket[4];
+            boolean complete = false;
+            try
+            {
+                candidate[0] = new ServerSocket(0, 1, InetAddress.getByName(LOOPBACK));
+                int first = candidate[0].getLocalPort();
+                if (first > 65532) continue;
+                for (int i = 1; i < candidate.length; i++)
+                    candidate[i] = new ServerSocket(first + i, 1, InetAddress.getByName(LOOPBACK));
+                complete = true;
+                return candidate;
+            }
+            catch (java.net.BindException occupied)
+            {
+                // Choose another fixture range; no restart operation has run yet.
+            }
+            finally
+            {
+                if (!complete)
+                    for (ServerSocket socket : candidate)
+                        if (socket != null) socket.close();
+            }
+        }
+        throw new IOException("Cannot reserve four contiguous loopback fixture ports");
+    }
+
+    private void releaseReserved(int index) throws IOException
+    {
+        if (reservedPorts[index] != null)
+        {
+            reservedPorts[index].close();
+            reservedPorts[index] = null;
+        }
+    }
+
     private static ServerSocket hold(int port) throws IOException
     {
         long deadline = System.currentTimeMillis() + 5000L;

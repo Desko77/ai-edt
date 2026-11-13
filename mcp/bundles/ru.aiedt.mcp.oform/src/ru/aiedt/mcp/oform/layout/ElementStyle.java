@@ -41,14 +41,13 @@ public final class ElementStyle
     private static final int VISIBLE = 5;
 
     /** The kinds whose style block was measured; every other kind is refused by name. */
-    private static final Set<String> STYLE_KINDS = Set.of("Label", "Button", "Group", "Image", "Separator", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
-        "SelectField", "Panel", "CommandPanel", "CheckBox", "Field", "RadioBtn", "Table"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
+    private static final Set<String> STYLE_KINDS = PropertyApplicability.styleKinds();
 
-    private static final Set<String> READ_ONLY_KINDS = Set.of("Field"); //$NON-NLS-1$
+    private static final Set<String> READ_ONLY_KINDS = PropertyApplicability.readOnlyKinds();
 
-    private static final Set<String> ALIGNMENT_KINDS = Set.of("Label", "Button", "Field"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+    private static final Set<String> ALIGNMENT_KINDS = PropertyApplicability.alignmentKinds();
 
-    private static final Set<String> FORMAT_KINDS = Set.of("Field"); //$NON-NLS-1$
+    private static final Set<String> FORMAT_KINDS = PropertyApplicability.formatKinds();
 
     /**
      * The style elements the corpus carries in a colour record: a negative index is all the
