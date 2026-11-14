@@ -35,10 +35,14 @@ the JSON carries every bundle's payload under ``bundles`` beside the shared-deli
 The JSON also carries ``p2Profiles``: for every configuration area it names, the installed state
 of the p2 profile that area provisions from - the profile the area's config.ini selects (or the
 one profile of the registry when it selects none), latest numeric snapshot, gzip or plain XML,
-bound to the area by its configurationFolder property. That state is what p2 itself resolved as
-installed, which no directory of cached jars proves either way, so it is what answers whether the
-closed ordinary-forms delivery's feature is still installed in an area. A registry, snapshot or
-binding the format cannot say answers ``unknown`` with the reason rather than an empty reading.
+bound to the area by its configurationFolder property. A configuration area in the user's home
+provisions an installation that sits elsewhere: its profile is a surrogate, so the installation
+the report attributed the area to is passed down and the profile's installFolder - and, for a
+surrogate, its cache.shared - is checked against that identity. That state is what p2 itself
+resolved as installed, which no directory of cached jars proves either way, so it is what answers
+whether the closed ordinary-forms delivery's feature is still installed in an area. A registry,
+snapshot or binding the format cannot say answers ``unknown`` with the reason rather than an
+empty reading.
 """
 import argparse
 import gzip
@@ -87,6 +91,11 @@ LEGACY_OFORM_IUS = ("ru.aiedt.mcp.oform.feature.feature.group",
 CONFIGURATION_FOLDER_PROPERTY = "org.eclipse.equinox.p2.configurationFolder"
 INSTALL_FOLDER_PROPERTY = "org.eclipse.equinox.p2.installFolder"
 CACHE_PROPERTY = "org.eclipse.equinox.p2.cache"
+# A user configuration area provisions an installation that sits elsewhere: p2 marks that
+# profile as a surrogate of the installation and proves the shared installation again in
+# cache.shared. Neither property alone says which installation the area belongs to.
+SURROGATE_PROPERTY = "org.eclipse.equinox.p2.surrogate"
+CACHE_SHARED_PROPERTY = "org.eclipse.equinox.p2.cache.shared"
 
 
 def version_key(version):
@@ -632,8 +641,17 @@ def latest_snapshot(profile_dir):
     return best[2], best[1], None
 
 
-def p2_profile_status(config_area):
+def p2_profile_status(config_area, install=None):
     """The installed legacy state of one configuration area's p2 profile, as data.
+
+    ``install`` is the installation folder a caller knows the area belongs to. A
+    configuration area in the user's home provisions an installation that sits elsewhere:
+    p2 marks that profile as a surrogate, names the installation in installFolder and proves
+    it again in cache.shared, so the area's parent cannot answer which installation it is.
+    The caller that found the launcher knows it, and passing that identity here is what lets
+    a real user layout answer. Without one the profile is read against its parent - the local
+    layout where the area sits inside the installation it belongs to - and a surrogate
+    profile, one claiming another installation, stays unknown rather than guessed.
 
     ``{"status": "known", ...}`` answers from the latest snapshot of the selected profile:
     the id the area's config.ini names, or the one profile the registry holds when the ini
@@ -692,16 +710,29 @@ def p2_profile_status(config_area):
     bound = properties.get(CONFIGURATION_FOLDER_PROPERTY)
     if CONFIGURATION_FOLDER_PROPERTY in properties and not bound:
         return {"status": "unknown", "reason": "the profile has an empty configurationFolder binding"}
-    shared_binding = CONFIGURATION_FOLDER_PROPERTY not in properties and explicit_agent and bool(named)
+    surrogate = (properties.get(SURROGATE_PROPERTY) or "").strip().lower() == "true"
+    shared_binding = (CONFIGURATION_FOLDER_PROPERTY not in properties and explicit_agent
+                      and bool(named) and not surrogate)
     if not bound and not shared_binding:
         return {"status": "unknown",
                 "reason": "the profile does not name the configuration area it belongs to"}
     if bound and normalised(bound) != normalised(config_area):
         return {"status": "unknown",
                 "reason": "the profile is bound to %s, not this configuration area" % bound}
-    install = properties.get(INSTALL_FOLDER_PROPERTY)
-    if explicit_agent and (not install or normalised(install) != normalised(Path(config_area).parent)):
-        return {"status": "unknown", "reason": "the profile installFolder does not match this installation"}
+    known_install = Path(install) if install is not None else Path(config_area).parent
+    if surrogate and install is None:
+        return {"status": "unknown",
+                "reason": "the report knows no installation for this surrogate profile"}
+    install_folder = properties.get(INSTALL_FOLDER_PROPERTY)
+    if (explicit_agent or surrogate) and (
+            not install_folder or normalised(install_folder) != normalised(known_install)):
+        return {"status": "unknown",
+                "reason": "the profile installFolder does not match this installation"}
+    if surrogate:
+        shared_cache = properties.get(CACHE_SHARED_PROPERTY)
+        if not shared_cache or normalised(shared_cache) != normalised(known_install):
+            return {"status": "unknown",
+                    "reason": "the surrogate profile cache.shared does not match this installation"}
     info = Path(config_area) / "org.eclipse.equinox.simpleconfigurator" / "bundles.info"
     if info.exists() or shared_binding:
         try:
@@ -725,16 +756,44 @@ def p2_profile_status(config_area):
     }
 
 
-def p2_profile_statuses(config_areas):
+def area_installations(found, consumer_list):
+    """The one installation each configuration area belongs to, where the report knows one.
+
+    A record belongs to an installation and a consumer names the area its launcher loads,
+    so both paths tie an area to an installation. Two installations loading one area leave
+    no single identity to verify a surrogate profile against, so that area is left out
+    rather than one of them picked: the reading then falls back to the old local assumption,
+    under which a profile claiming another installation stays unknown.
+    """
+    owners = {}
+
+    def note(area, install):
+        owners.setdefault(normalised(Path(area)), set()).add(normalised(Path(install)))
+
+    for entry in found:
+        for record in entry["records"]:
+            note(config_area_of(record["bundlesInfo"]), entry["install"])
+    for consumer in consumer_list:
+        note(consumer["loads"], consumer["install"])
+    return {area: next(iter(found_installs)) for area, found_installs in owners.items()
+            if len(found_installs) == 1}
+
+
+def p2_profile_statuses(config_areas, area_installations=None):
     """The p2 status of every configuration area, keyed by its area root as normalised.
 
     The key is the root the registry sits in - the parent of the configuration directory -
     spelled the way a caller normalises the area it loads, so both sides meet without one
-    re-deriving the other's paths.
+    re-deriving the other's paths. ``area_installations`` maps a normalised configuration
+    area to the installation the report attributed it to; an area missing from it is read
+    without a known installation, which is right for the local layout and leaves a surrogate
+    profile unknown.
     """
     statuses = {}
+    known = area_installations or {}
     for area in {normalised(area) for area in config_areas}:
-        statuses[normalised(Path(area).parent)] = p2_profile_status(area)
+        statuses[normalised(Path(area).parent)] = p2_profile_status(
+            area, known.get(normalised(area)))
     return statuses
 
 
@@ -745,7 +804,9 @@ def installation_report(roots, bundle):
     record nothing: two installations loading one area hold one profile, and a caller installing
     into it has to know about the other one. ``p2Profiles`` reads the installed state of the p2
     profile of every area those two name, so the caller that must not install beside the closed
-    delivery's feature asks the same report for it.
+    delivery's feature asks the same report for it. The installation each area was attributed to
+    is passed down with the area, because a user configuration area provisions an installation
+    that sits elsewhere and the profile can only be verified against that known identity.
     """
     found, unclaimed, unreadable = installations(roots, bundle)
     consumer_list = consumers(roots)
@@ -762,7 +823,7 @@ def installation_report(roots, bundle):
         "unclaimed": unclaimed,
         "unreadable": unreadable,
         "consumers": consumer_list,
-        "p2Profiles": p2_profile_statuses(areas),
+        "p2Profiles": p2_profile_statuses(areas, area_installations(found, consumer_list)),
     }
 
 
