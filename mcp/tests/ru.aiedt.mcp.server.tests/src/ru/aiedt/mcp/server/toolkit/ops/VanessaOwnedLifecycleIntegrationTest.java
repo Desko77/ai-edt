@@ -6,6 +6,8 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 import org.junit.Test;
+import ru.aiedt.mcp.server.support.FakeOwnedProcessContainment;
+import ru.aiedt.mcp.server.support.OwnedProcessContainment;
 import ru.aiedt.mcp.server.support.PendingWorkRegistry;
 
 /** Real coordinator/registry scheduling with synthetic state only: no native client or infobase. */
@@ -18,6 +20,113 @@ public class VanessaOwnedLifecycleIntegrationTest
     private static Method method(String name, Class<?>... types) throws Exception
     {
         Method m = VanessaTool.class.getDeclaredMethod(name, types); m.setAccessible(true); return m;
+    }
+
+    @Test public void cleanupPendingKeepsTheRunUnderItsKey() throws Exception
+    {
+        Map<String, OwnedVanessaRun> owned = field("OWNED");
+        Map<String, AtomicBoolean> exits = field("PREPARATION_EXIT");
+        String key = "synthetic-cleanup-" + UUID.randomUUID();
+        AtomicBoolean allowCleanup = new AtomicBoolean(false);
+        OwnedVanessaRun run = new OwnedVanessaRun(() -> false, () -> true,
+            () -> "{\"syntheticFinal\":true}", allowCleanup::get);
+        exits.put(key, new AtomicBoolean(true));
+        owned.put(key, run);
+        try
+        {
+            String pending = (String) method("collect", String.class, Map.class)
+                .invoke(new VanessaTool(), key, Map.of("runKey", key, "waitSeconds", "0"));
+            assertTrue(pending, pending.contains("cleanupRequired"));
+            assertTrue(pending, pending.contains("retryable"));
+            assertNull("an unconfirmed release must not publish", run.result());
+            assertTrue("the run stays owned under its key", owned.containsKey(key));
+
+            allowCleanup.set(true);
+            assertNotNull(run.await(3000));
+            String done = (String) method("collect", String.class, Map.class)
+                .invoke(new VanessaTool(), key, Map.of("runKey", key, "waitSeconds", "0"));
+            assertTrue(done, done.contains("syntheticFinal"));
+            assertFalse(owned.containsKey(key));
+        }
+        finally
+        {
+            owned.remove(key, run);
+            exits.remove(key);
+        }
+    }
+
+    @Test public void pendingAnswerReadsTheRecordedProofWithoutClaimingZero() throws Exception
+    {
+        Map<String, OwnedVanessaRun> owned = field("OWNED");
+        Map<String, AtomicBoolean> exits = field("PREPARATION_EXIT");
+        @SuppressWarnings("unchecked")
+        Map<String, OwnedProcessContainment> running = field("RUNNING");
+        String key = "synthetic-proof-live-" + UUID.randomUUID();
+        FakeOwnedProcessContainment containment = new FakeOwnedProcessContainment();
+        containment.proof = OwnedProcessContainment.Proof.NOT_PROVEN;
+        OwnedVanessaRun run = new OwnedVanessaRun(() -> true, () -> false,
+            () -> "{\"syntheticFinal\":true}", () -> {});
+        exits.put(key, new AtomicBoolean(true));
+        owned.put(key, run);
+        running.put(key, containment);
+        try
+        {
+            String pending = (String) method("collect", String.class, Map.class)
+                .invoke(new VanessaTool(), key, Map.of("runKey", key, "waitSeconds", "0"));
+            assertTrue(pending, pending.contains("\"containment\":\"windowsJobObject\"")); //$NON-NLS-1$
+            assertTrue(pending, pending.contains("\"containmentProof\":\"notYetProven\"")); //$NON-NLS-1$
+            assertFalse(pending, pending.contains("jobObjectActiveProcessesZero")); //$NON-NLS-1$
+        }
+        finally
+        {
+            owned.remove(key); running.remove(key); exits.remove(key);
+        }
+    }
+
+    @Test public void cleanupPendingAnswerUsesTheRecordedProof() throws Exception
+    {
+        Map<String, OwnedVanessaRun> owned = field("OWNED");
+        Map<String, AtomicBoolean> exits = field("PREPARATION_EXIT");
+        @SuppressWarnings("unchecked")
+        Map<String, OwnedProcessContainment> running = field("RUNNING");
+        String establishedKey = "synthetic-proof-zero-" + UUID.randomUUID();
+        FakeOwnedProcessContainment established = new FakeOwnedProcessContainment();
+        established.treeAlive.set(false);
+        established.proof = OwnedProcessContainment.Proof.JOB_OBJECT_ACTIVE_PROCESSES_ZERO;
+        OwnedVanessaRun zero = new OwnedVanessaRun(() -> false, () -> false,
+            () -> "{\"syntheticFinal\":true}", () -> false);
+        exits.put(establishedKey, new AtomicBoolean(true));
+        owned.put(establishedKey, zero);
+        running.put(establishedKey, established);
+
+        String unassignedKey = "synthetic-proof-root-" + UUID.randomUUID();
+        FakeOwnedProcessContainment unassigned = new FakeOwnedProcessContainment();
+        unassigned.established = false;
+        unassigned.treeAlive.set(false);
+        unassigned.proof = OwnedProcessContainment.Proof.ROOT_HANDLE_EXIT;
+        OwnedVanessaRun root = new OwnedVanessaRun(() -> false, () -> false,
+            () -> "{\"syntheticFinal\":true}", () -> false);
+        exits.put(unassignedKey, new AtomicBoolean(true));
+        owned.put(unassignedKey, root);
+        running.put(unassignedKey, unassigned);
+        try
+        {
+            String zeroAnswer = (String) method("collect", String.class, Map.class)
+                .invoke(new VanessaTool(), establishedKey, Map.of("runKey", establishedKey, "waitSeconds", "0"));
+            assertTrue(zeroAnswer, zeroAnswer.contains("\"containment\":\"windowsJobObject\"")); //$NON-NLS-1$
+            assertTrue(zeroAnswer, zeroAnswer.contains("\"containmentProof\":\"jobObjectActiveProcessesZero\"")); //$NON-NLS-1$
+
+            String rootAnswer = (String) method("collect", String.class, Map.class)
+                .invoke(new VanessaTool(), unassignedKey, Map.of("runKey", unassignedKey, "waitSeconds", "0"));
+            assertTrue(rootAnswer, rootAnswer.contains("\"containment\":\"unassignedSuspended\"")); //$NON-NLS-1$
+            assertTrue(rootAnswer, rootAnswer.contains("\"containmentProof\":\"rootHandleExit\"")); //$NON-NLS-1$
+            assertFalse(rootAnswer, rootAnswer.contains("jobObjectActiveProcessesZero")); //$NON-NLS-1$
+        }
+        finally
+        {
+            owned.remove(establishedKey); running.remove(establishedKey); exits.remove(establishedKey);
+            owned.remove(unassignedKey); running.remove(unassignedKey); exits.remove(unassignedKey);
+        }
     }
 
     @Test public void actualMonitorFinalizesWithoutPollingAndStopsWhenEmpty() throws Exception

@@ -20,6 +20,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.preference.IPreferenceStore;
@@ -28,10 +31,13 @@ import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.settings.PrefKeys;
 import ru.aiedt.mcp.server.support.AllureResultReader;
 import ru.aiedt.mcp.server.support.ClientDialogReader;
+import ru.aiedt.mcp.server.support.ContainmentUnavailableException;
 import ru.aiedt.mcp.server.support.ErrorTags;
 import ru.aiedt.mcp.server.support.InfobaseAddress;
 import ru.aiedt.mcp.server.support.InfobaseIdentity;
 import ru.aiedt.mcp.server.support.MonopolyLock;
+import ru.aiedt.mcp.server.support.OwnedProcessContainment;
+import ru.aiedt.mcp.server.support.OwnedProcessContainments;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -236,6 +242,12 @@ public class VanessaTool implements IMcpTool
         });
     private static java.util.concurrent.ScheduledFuture<?> monitorTask;
 
+    /**
+     * Set before the monitor and the live containments are closed. A launch that reaches the
+     * synchronized block after this must not start a client nobody will track.
+     */
+    private static final AtomicBoolean SHUTDOWN = new AtomicBoolean();
+
     private static synchronized void monitorOwnedRuns()
     {
         if (monitorTask == null || monitorTask.isDone())
@@ -244,12 +256,17 @@ public class VanessaTool implements IMcpTool
             monitorTask = OWNED_MONITOR.scheduleWithFixedDelay(() -> {
                 OWNED.forEach((key, run) -> {
                     run.observe();
-                    Process process = RUNNING.get(key);
-                    if (run.result() == null && process != null && process.isAlive()) {
-                        run.windows = ClientDialogReader.ofProcess(process, ClientDialogReader.imagesFor(NAME));
-                        if (run.windows.windows().stream().anyMatch(ClientDialogReader.Window::modal))
-                            run.setPhase("modalBlocked");
-                        else run.setPhase("unknown");
+                    OwnedProcessContainment process = RUNNING.get(key);
+                    if (run.result() == null && process != null && process.isTreeAlive()) {
+                        if (!process.established()) {
+                            run.setPhase("containmentFailed");
+                        }
+                        else {
+                            run.windows = ClientDialogReader.ofPid(process.pid(), ClientDialogReader.imagesFor(NAME));
+                            if (run.windows.windows().stream().anyMatch(ClientDialogReader.Window::modal))
+                                run.setPhase("modalBlocked");
+                            else run.setPhase("unknown");
+                        }
                     }
                     if (run.completedAt > 0 && !run.cleanupRequired() && System.currentTimeMillis() - run.completedAt > 300_000L)
                         if (OWNED.remove(key, run)) PREPARATION_EXIT.remove(key);
@@ -265,31 +282,168 @@ public class VanessaTool implements IMcpTool
     }
 
     @FunctionalInterface
-    interface LaunchPort { Process start() throws Exception; }
+    interface LaunchPort { OwnedProcessContainment start() throws Exception; }
 
-    static Process launchOwned(String key, LaunchPort launch) throws Exception
+    static OwnedProcessContainment launchOwned(String key, LaunchPort launch) throws Exception
     {
         synchronized (LAUNCHING)
         {
-            if (CANCELLED.containsKey(key)) return null;
-            Process process = launch.start();
+            if (SHUTDOWN.get() || CANCELLED.containsKey(key)) return null;
+            OwnedProcessContainment process = launch.start();
             if (CANCELLED.containsKey(key) && process != null) {
-                process.descendants().forEach(ProcessHandle::destroyForcibly);
-                process.destroyForcibly();
+                process.terminateAndAwait(STOP_WAIT_SEC * 1000L);
+                // A release that cannot be confirmed is retained and reaches the run cleanup;
+                // closing it here would publish a stop nobody observed.
+                process.tryClose();
             }
             return process;
         }
     }
 
-    static Process cancellationTarget(String key, java.util.concurrent.atomic.AtomicReference<Process> reference)
+    static OwnedProcessContainment cancellationTarget(String key,
+        AtomicReference<OwnedProcessContainment> reference)
     {
-        Process process = reference.get();
+        OwnedProcessContainment process = reference.get();
         if (process != null) return process;
         synchronized (LAUNCHING)
         {
             CANCELLED.put(key, System.currentTimeMillis());
             return reference.get();
         }
+    }
+
+    /**
+     * The production wiring of one owned run around its containment.
+     * <p>
+     * The liveness answer is the containment's, not a snapshot of {@code Process.descendants()}.
+     * The stop path terminates the whole job and closes it only when the containment reports no
+     * process; a stop that could not confirm that leaves the handle open and the run owned.
+     * </p>
+     *
+     * @param key the run's key
+     * @param reference the containment once the launch has published it
+     * @param finish builds the answer once the tree is gone
+     * @param release returns the infobase and the claim
+     * @return the run the monitor observes
+     */
+    static OwnedVanessaRun ownRun(String key, AtomicReference<OwnedProcessContainment> reference,
+        Supplier<String> finish, Runnable release)
+    {
+        return ownRun(key, reference, finish, () -> {
+            release.run();
+            return true;
+        });
+    }
+
+    /**
+     * The production wiring with a release that reports whether it completed.
+     *
+     * @param key the run's key
+     * @param reference the containment once the launch has published it
+     * @param finish builds the answer once the tree is gone
+     * @param cleanup returns the infobase and the claim; {@code false} keeps the run owned
+     * @return the run the monitor observes
+     */
+    static OwnedVanessaRun ownRun(String key, AtomicReference<OwnedProcessContainment> reference,
+        Supplier<String> finish, BooleanSupplier cleanup)
+    {
+        return new OwnedVanessaRun(() -> {
+            OwnedProcessContainment process = reference.get();
+            return process == null || process.isTreeAlive();
+        }, () -> {
+            OwnedProcessContainment process = cancellationTarget(key, reference);
+            if (process == null) return false;
+            boolean stopped = process.terminateAndAwait(STOP_WAIT_SEC * 1000L);
+            if (!stopped) return false;
+            return process.tryClose();
+        }, finish, cleanup);
+    }
+
+    /**
+     * The answer of a retained unassigned root, always naming the run key.
+     *
+     * @param key the run's normal key
+     * @param process the retained containment
+     * @return the answer
+     */
+    static String unassignedRootAnswer(String key, OwnedProcessContainment process)
+    {
+        return ToolResult.error("The client could not be assigned to the owned " //$NON-NLS-1$
+            + "containment. Its suspended root is retained; it never ran and no " //$NON-NLS-1$
+            + "result files exist.") //$NON-NLS-1$
+            .put("runKey", key) //$NON-NLS-1$
+            .put("pid", process.pid()) //$NON-NLS-1$
+            .put("cleanupRequired", true) //$NON-NLS-1$
+            .put("containment", containmentOf(process)) //$NON-NLS-1$
+            .put("containmentProof", containmentProofOf(process)) //$NON-NLS-1$
+            .toJson();
+    }
+
+    /**
+     * The containment that owned this run, as a read-only snapshot.
+     *
+     * @param process the containment, or {@code null} before one was published
+     * @return the answer member
+     */
+    static String containmentOf(OwnedProcessContainment process)
+    {
+        if (process == null)
+        {
+            return "notStarted"; //$NON-NLS-1$
+        }
+        return process.established() ? "windowsJobObject" : "unassignedSuspended"; //$NON-NLS-1$ //$NON-NLS-2$
+    }
+
+    /**
+     * The recorded terminal proof, as a read-only snapshot.
+     * <p>
+     * This never asks the containment whether the tree is alive and never queries the
+     * operating system: a close can terminate a tree without a zero observation, and a summary
+     * must not manufacture one. {@link OwnedProcessContainment.Proof#NOT_PROVEN} is answered as
+     * not yet proven even when the containment is already closed.
+     * </p>
+     *
+     * @param process the containment, or {@code null}
+     * @return the answer member
+     */
+    static String containmentProofOf(OwnedProcessContainment process)
+    {
+        if (process == null)
+        {
+            return "notYetProven"; //$NON-NLS-1$
+        }
+        switch (process.proof())
+        {
+            case JOB_OBJECT_ACTIVE_PROCESSES_ZERO:
+                return "jobObjectActiveProcessesZero"; //$NON-NLS-1$
+            case ROOT_HANDLE_EXIT:
+                return "rootHandleExit"; //$NON-NLS-1$
+            default:
+                return "notYetProven"; //$NON-NLS-1$
+        }
+    }
+
+    /**
+     * Releases the containment first and only then runs the rest of the cleanup.
+     * <p>
+     * The split is the guarantee: a {@code tryClose()} that returns {@code false} leaves every
+     * other resource untouched - the infobase hold, the claim, the composed scenario, the
+     * parameters file, the run map, the cancellation mark and the client permit. The caller
+     * retries; only a confirmed release runs {@code after}.
+     * </p>
+     *
+     * @param process the containment, or {@code null} when none was published
+     * @param after the remaining cleanup
+     * @return {@code true} when the containment was released and {@code after} ran
+     */
+    static boolean releaseContainmentFirst(OwnedProcessContainment process, Runnable after)
+    {
+        if (process != null && !process.tryClose())
+        {
+            return false;
+        }
+        after.run();
+        return true;
     }
 
     private static boolean preparationLeft(String key)
@@ -300,13 +454,40 @@ public class VanessaTool implements IMcpTool
 
     public static int shutdownOwnedRuns()
     {
+        SHUTDOWN.set(true);
         synchronized (VanessaTool.class) {
             if (monitorTask != null) monitorTask.cancel(false);
         }
         OWNED_MONITOR.shutdown();
         try { OWNED_MONITOR.awaitTermination(2, TimeUnit.SECONDS); }
         catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-        return (int) OWNED.values().stream().filter(r -> r.result() == null).count();
+        int unfinished;
+        synchronized (LAUNCHING)
+        {
+            for (OwnedVanessaRun run : OWNED.values())
+            {
+                try { run.observe(); }
+                catch (RuntimeException unavailable) { }
+            }
+            unfinished = (int) OWNED.values().stream().filter(r -> r.result() == null).count();
+            // KILL_ON_JOB_CLOSE makes this the stop that leaves no owned writer behind. A launch
+            // that has not reached LAUNCHING yet reads SHUTDOWN there and starts nothing.
+            java.util.Iterator<Map.Entry<String, OwnedProcessContainment>> live =
+                RUNNING.entrySet().iterator();
+            while (live.hasNext())
+            {
+                Map.Entry<String, OwnedProcessContainment> entry = live.next();
+                try
+                {
+                    if (entry.getValue().tryClose())
+                    {
+                        live.remove();
+                    }
+                }
+                catch (RuntimeException alreadyGone) { }
+            }
+        }
+        return unfinished;
     }
 
     public static boolean isOwnedLivePoll(String key, String starter, Map<String, String> args)
@@ -325,21 +506,48 @@ public class VanessaTool implements IMcpTool
         if (!isOwnedLivePoll(key, NAME, args))
             return ToolResult.error("An owned run poll accepts only runKey, waitSeconds and cancel.").toJson();
         if (JsonUtils.extractBooleanArgument(args, "cancel", false)) run.cancel();
-        else if (OWNED_MONITOR.isShutdown()) run.observe();
+        else if (SHUTDOWN.get() || OWNED_MONITOR.isShutdown()) run.observe();
         long waitMs = Math.max(0, Math.min(MAX_POLL_WAIT_SEC,
             JsonUtils.extractIntArgument(args, "waitSeconds", 20))) * 1000L;
         String result = run.await(waitMs);
+        if (result == null && run.cleanupPending())
+        {
+            OwnedProcessContainment live = RUNNING.get(key);
+            return ToolResult.success().put("operation", NAME).put("status", "Pending") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("runKey", key) //$NON-NLS-1$
+                .put("elapsedMs", System.currentTimeMillis() - run.startedAt) //$NON-NLS-1$
+                .put("phase", "cleanupRequired") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("cleanupRequired", true) //$NON-NLS-1$
+                .put("retryable", true) //$NON-NLS-1$
+                .put("heldResource", "owned client containment") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("containment", containmentOf(live)) //$NON-NLS-1$
+                .put("containmentProof", containmentProofOf(live)) //$NON-NLS-1$
+                .put("hint", "The client tree is stopped, but its containment release is not " //$NON-NLS-1$
+                    + "confirmed. The infobase and the claim stay held. Poll this key again or " //$NON-NLS-1$
+                    + "cancel it; the retry is bounded and does not claim a termination it did " //$NON-NLS-1$
+                    + "not observe.") //$NON-NLS-1$
+                .toJson();
+        }
         if (result != null && run.cleanupRequired())
+        {
+            OwnedProcessContainment released = RUNNING.get(key);
             return ToolResult.error("The client exited, but an owned resource remains unresolved.")
                 .put("runKey", key).put("cleanupRequired", true).put("retryable", false)
-                .put("heldResource", "owned infobase lease").toJson();
+                .put("heldResource", "owned infobase lease") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("containment", containmentOf(released)) //$NON-NLS-1$
+                .put("containmentProof", containmentProofOf(released)) //$NON-NLS-1$
+                .toJson();
+        }
         if (result != null && OWNED.remove(key, run)) {
             PREPARATION_EXIT.remove(key);
             return result;
         }
+        OwnedProcessContainment live = RUNNING.get(key);
         return ToolResult.success().put("operation", NAME).put("status", "Pending")
             .put("runKey", key).put("elapsedMs", System.currentTimeMillis() - run.startedAt)
             .put("phase", run.phase()).put("phaseSource", "ownedProcessLifecycle")
+            .put("containment", containmentOf(live)) //$NON-NLS-1$
+            .put("containmentProof", containmentProofOf(live)) //$NON-NLS-1$
             .put("phaseObservedAt", run.phaseObservedAt).put("progressAvailable", false)
             .put(ClientDialogReader.WINDOWS, run.windows.fields())
             .put(ClientDialogReader.ERROR, run.windows.error())
@@ -652,7 +860,7 @@ public class VanessaTool implements IMcpTool
             // Read and submit as one decision. Apart, two callers arriving together both find the
             // domain idle, and the second is queued behind a run that may take an hour instead of
             // being refused.
-            if (OWNED_MONITOR.isShutdown()) return ToolResult.error("Vanessa is shutting down; no client was started.").toJson();
+            if (SHUTDOWN.get() || OWNED_MONITOR.isShutdown()) return ToolResult.error("Vanessa is shutting down; no client was started.").toJson();
             java.util.List<String> going = new ArrayList<>(registry.unfinishedKeys());
             going.addAll(OWNED.keySet());
             if (!going.isEmpty())
@@ -874,6 +1082,14 @@ public class VanessaTool implements IMcpTool
         {
             return refused;
         }
+        // The client is only ever started under an authoritative containment. Refusing here is
+        // the honest answer on a machine that cannot offer one: the alternative is a process-tree
+        // snapshot that cannot see a child started just before its parent exits.
+        String containmentRefusal = OwnedProcessContainments.unavailableReason();
+        if (containmentRefusal != null)
+        {
+            return ToolResult.error(containmentRefusal).toJson();
+        }
         boolean mine;
         try
         {
@@ -956,26 +1172,18 @@ public class VanessaTool implements IMcpTool
             final File ownedScenario = composedFile;
             final MonopolyLock.Claim ownedClaim = claim;
             final InfobaseAddress.Hold ownedHold = hold;
-            final java.util.Map<Long, ProcessHandle> descendants = new java.util.concurrent.ConcurrentHashMap<>();
-            final java.util.concurrent.atomic.AtomicReference<Process> processRef = new java.util.concurrent.atomic.AtomicReference<>();
+            final AtomicReference<OwnedProcessContainment> processRef = new AtomicReference<>();
             final String key = jobKey;
             final AtomicBoolean holdUnresolved = new AtomicBoolean();
             final AtomicBoolean permitReleased = new AtomicBoolean();
-            OwnedVanessaRun owned = new OwnedVanessaRun(() -> {
-                Process ownedProcess = processRef.get();
-                if (ownedProcess == null) return true;
-                if (ownedProcess.isAlive()) ownedProcess.descendants().forEach(h -> descendants.put(h.pid(), h));
-                return ownedProcess.isAlive() || descendants.values().stream().anyMatch(ProcessHandle::isAlive);
-            }, () -> {
-                Process ownedProcess = cancellationTarget(key, processRef);
-                if (ownedProcess == null) return false;
-                if (ownedProcess.isAlive()) ownedProcess.descendants().forEach(h -> descendants.put(h.pid(), h));
-                descendants.values().forEach(ProcessHandle::destroyForcibly);
-                ownedProcess.destroyForcibly();
-                return !ownedProcess.isAlive() && descendants.values().stream().noneMatch(ProcessHandle::isAlive);
-            }, () -> {
+            OwnedVanessaRun owned = ownRun(key, processRef, () -> {
+                OwnedProcessContainment process = processRef.get();
+                if (process != null && !process.established())
+                {
+                    return unassignedRootAnswer(key, process);
+                }
                 ProcessResult ended = new ProcessResult();
-                ended.exitCode = processRef.get().exitValue();
+                ended.exitCode = process == null ? -1 : process.exitCode();
                 try {
                     return finishOwned(epfFile, junitFile, shotsDir, ownedScenario, key, infobaseName,
                         asTestManager, receiptFilters, receiptProject, sought, ended);
@@ -983,20 +1191,23 @@ public class VanessaTool implements IMcpTool
                     return ToolResult.error("Vanessa result could not be read.").toJson();
                 }
             }, () -> {
-                boolean cleanupFailed = false;
-                try { ownedHold.close(); } catch (RuntimeException failed) {
-                    cleanupFailed = true; holdUnresolved.set(true);
-                }
-                try { if (ownedClaim != null) ownedClaim.close(); }
-                catch (RuntimeException failed) { cleanupFailed = true; }
-                if (ownedScenario != null && removeComposed(ownedScenario) != null) cleanupFailed = true;
-                try { Files.deleteIfExists(paramsFile.toPath()); }
-                catch (java.io.IOException failed) { cleanupFailed = true; }
-                RUNNING.remove(key, processRef.get());
-                CANCELLED.remove(key);
-                if (!holdUnresolved.get() && (ownedClaim == null || !ownedClaim.held.isStillHeld())
-                    && permitReleased.compareAndSet(false, true)) THE_CLIENT.release();
-                if (cleanupFailed) throw new IllegalStateException("Owned client exited; cleanup needs operator attention.");
+                OwnedProcessContainment process = processRef.get();
+                releaseContainmentFirst(process, () -> {
+                    boolean cleanupFailed = false;
+                    try { ownedHold.close(); } catch (RuntimeException failed) {
+                        cleanupFailed = true; holdUnresolved.set(true);
+                    }
+                    try { if (ownedClaim != null) ownedClaim.close(); }
+                    catch (RuntimeException failed) { cleanupFailed = true; }
+                    if (ownedScenario != null && removeComposed(ownedScenario) != null) cleanupFailed = true;
+                    try { Files.deleteIfExists(paramsFile.toPath()); }
+                    catch (java.io.IOException failed) { cleanupFailed = true; }
+                    if (process != null) RUNNING.remove(key, process);
+                    CANCELLED.remove(key);
+                    if (!holdUnresolved.get() && (ownedClaim == null || !ownedClaim.held.isStillHeld())
+                        && permitReleased.compareAndSet(false, true)) THE_CLIENT.release();
+                    if (cleanupFailed) throw new IllegalStateException("Owned client exited; cleanup needs operator attention.");
+                });
             });
             owned.ownershipHeld = () -> {
                 boolean held = holdUnresolved.get() || (ownedClaim != null && ownedClaim.held.isStillHeld());
@@ -1006,22 +1217,56 @@ public class VanessaTool implements IMcpTool
             owned.projectName = receiptProject;
             synchronized (LAUNCHING)
             {
+                if (SHUTDOWN.get())
+                    return ToolResult.error("Vanessa is shutting down; no client was started.").toJson();
                 if (CANCELLED.containsKey(jobKey)) return refusedBeforeLaunch(jobKey);
                 OWNED.put(jobKey, owned);
                 try {
-                    ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
-                    builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
-                    builder.directory(runDir);
-                    Process process = launchOwned(jobKey, builder::start);
+                    OwnedProcessContainment process = launchOwned(jobKey,
+                        () -> OwnedProcessContainments.spawn(command, runDir));
                     if (process == null) {
                         OWNED.remove(jobKey, owned);
-                        return refusedBeforeLaunch(jobKey);
+                        String cancelled = refusedBeforeLaunch(jobKey);
+                        return cancelled != null ? cancelled
+                            : ToolResult.error("Vanessa is shutting down; no client was started.").toJson();
                     }
                     processRef.set(process);
                     RUNNING.put(jobKey, process);
                     clientLaunched.set(true);
                     handedOff = true;
+                    if (!process.established())
+                    {
+                        owned.setPhase("containmentFailed");
+                    }
+                } catch (ContainmentUnavailableException unavailable) {
+                    OWNED.remove(jobKey, owned);
+                    return ToolResult.error(unavailable.getMessage()).toJson();
                 } catch (Exception failed) {
+                    OwnedProcessContainment started = processRef.get();
+                    boolean closed = false;
+                    if (started != null)
+                    {
+                        try { closed = started.tryClose(); }
+                        catch (RuntimeException alreadyGone) { closed = false; }
+                    }
+                    if (started != null && !closed)
+                    {
+                        // The containment is retained; keep the run under its normal key so the
+                        // caller can poll or cancel it and shutdown can retry the release.
+                        RUNNING.put(jobKey, started);
+                        handedOff = true;
+                        owned.setPhase("cleanupRequired");
+                        return ToolResult.error("The client could not be released after a launch " //$NON-NLS-1$
+                            + "failure; the run is retained under its key.") //$NON-NLS-1$
+                            .put("runKey", jobKey) //$NON-NLS-1$
+                            .put("pid", started.pid()) //$NON-NLS-1$
+                            .put("cleanupRequired", true) //$NON-NLS-1$
+                            .put("retryable", true) //$NON-NLS-1$
+                            .put("phase", "cleanupRequired") //$NON-NLS-1$ //$NON-NLS-2$
+                            .put("containment", containmentOf(started)) //$NON-NLS-1$
+                            .put("containmentProof", containmentProofOf(started)) //$NON-NLS-1$
+                            .toJson();
+                    }
                     OWNED.remove(jobKey, owned);
                     throw failed;
                 }
@@ -3107,13 +3352,13 @@ public class VanessaTool implements IMcpTool
     }
 
     /**
-     * The client of each running scenario run, by the key its caller polls with.
+     * The containment of each running scenario run, by the key its caller polls with.
      * <p>
-     * Held only while the process lives. Cancelling a run means stopping the client, and nothing
-     * else in this plugin can reach it once the call that started it has returned.
+     * Held only while the tree is owned. Cancelling a run means terminating the job, and nothing
+     * else in this plugin can reach the client once the call that started it has returned.
      * </p>
      */
-    private static final java.util.Map<String, Process> RUNNING =
+    private static final java.util.Map<String, OwnedProcessContainment> RUNNING =
         new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -3211,7 +3456,7 @@ public class VanessaTool implements IMcpTool
      * Guards spawning the client and registering it, against a cancel looking for it.
      * <p>
      * Without it a cancel can write its mark, find nothing registered, and report that no client
-     * was running while {@code ProcessBuilder.start} is in the middle of spawning one.
+     * was running while the owned client is in the middle of being spawned.
      * </p>
      */
     private static final Object LAUNCHING = new Object();
@@ -3310,9 +3555,10 @@ public class VanessaTool implements IMcpTool
     /**
      * Stops one run's client and waits to see whether it went.
      * <p>
-     * {@code destroyForcibly} asks; it does not wait, and a worker may refuse. Reporting the ask
-     * as the outcome told a caller this run was done with the infobase while a client of it was
-     * still writing there.
+     * Terminating the job asks the whole tree to stop; the operating system completes that
+     * asynchronously. Reporting the request as the outcome told a caller this run was done with
+     * the infobase while a client of it was still writing there. The job reports no associated
+     * process before {@link PendingWorkRegistry.StopOutcome#STOPPED} is returned.
      * </p>
      *
      * @param runKey the run's key.
@@ -3328,7 +3574,7 @@ public class VanessaTool implements IMcpTool
         if (ownedRun != null)
             return ownedRun.cancel() ? PendingWorkRegistry.StopOutcome.STOPPED
                 : PendingWorkRegistry.StopOutcome.STILL_RUNNING;
-        Process running;
+        OwnedProcessContainment running;
         synchronized (LAUNCHING)
         {
             // The mark and the lookup happen where a launch cannot fall between them: either the
@@ -3343,27 +3589,24 @@ public class VanessaTool implements IMcpTool
         {
             return PendingWorkRegistry.StopOutcome.NOTHING_TO_STOP;
         }
-        // Taken before anything is destroyed: afterwards the parent lists no children.
-        java.util.List<ProcessHandle> workers =
-            running.descendants().collect(java.util.stream.Collectors.toList());
-        workers.forEach(ProcessHandle::destroyForcibly);
-        running.destroyForcibly();
-        boolean gone;
-        try
+        // Terminating the job is the whole tree, including a worker started after its parent had
+        // exited; it waits for the job to report no associated process rather than trusting the
+        // termination request alone.
+        boolean gone = running.terminateAndAwait(STOP_WAIT_SEC * 1000L);
+        boolean closed = false;
+        if (gone)
         {
-            gone = running.waitFor(STOP_WAIT_SEC, TimeUnit.SECONDS);
+            try { closed = running.tryClose(); }
+            catch (RuntimeException alreadyGone) { closed = false; }
         }
-        catch (InterruptedException interrupted)
+        if (!closed)
         {
-            Thread.currentThread().interrupt();
-            gone = !running.isAlive();
+            // The handle stays tracked so the plugin stop can close it and a later cancel can
+            // retry; a stop that could not confirm the release does not publish a stop.
+            RUNNING.put(runKey, running);
+            return PendingWorkRegistry.StopOutcome.STILL_RUNNING;
         }
-        for (ProcessHandle worker : workers)
-        {
-            gone = gone && !worker.isAlive();
-        }
-        return gone ? PendingWorkRegistry.StopOutcome.STOPPED
-            : PendingWorkRegistry.StopOutcome.STILL_RUNNING;
+        return PendingWorkRegistry.StopOutcome.STOPPED;
     }
 
     /**
@@ -3526,37 +3769,6 @@ public class VanessaTool implements IMcpTool
             }
         }
         return newest;
-    }
-
-    /** Seconds to wait for a stopped client to actually be gone. */
-    private static final int PROCESS_DEATH_WAIT_SEC = 20;
-
-    /**
-     * Stops the client and waits for it to be gone.
-     * <p>
-     * {@code destroyForcibly} only asks. The process is still there until the operating system
-     * says otherwise, and a caller that takes the infobase back on the strength of the ask alone
-     * hands EDT a file another process still has open.
-     * </p>
-     *
-     * @param proc the client.
-     */
-    private static void stopAndAwait(Process proc)
-    {
-        if (!proc.isAlive())
-        {
-            return;
-        }
-        proc.descendants().forEach(ProcessHandle::destroyForcibly);
-        proc.destroyForcibly();
-        try
-        {
-            proc.waitFor(PROCESS_DEATH_WAIT_SEC, TimeUnit.SECONDS);
-        }
-        catch (InterruptedException interrupted)
-        {
-            Thread.currentThread().interrupt();
-        }
     }
 
     /**

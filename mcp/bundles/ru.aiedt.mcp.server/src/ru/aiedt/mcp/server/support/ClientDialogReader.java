@@ -370,6 +370,49 @@ public final class ClientDialogReader
     }
 
     /**
+     * Reads the holding windows of one live process id and of the processes it has started.
+     * <p>
+     * The owned run keeps a native handle rather than a {@link Process}, so it names its root by
+     * pid. The descendant walk is the same one {@link #ofProcess(Process, Path)} does; it is used
+     * only for a diagnostic read and never as a liveness witness.
+     * </p>
+     *
+     * @param pid the client's root process id
+     * @param imageDirectory where the PNGs are written; created when it is missing
+     * @return the holding windows, or an empty list and a reason
+     */
+    public static Outcome ofPid(long pid, Path imageDirectory)
+    {
+        return capture(pidsOf(pid), imageDirectory);
+    }
+
+    /**
+     * The root pid followed by the pids of the processes it has started.
+     *
+     * @param pid the root pid
+     * @return the pids, never {@code null}
+     */
+    static List<Long> pidsOf(long pid)
+    {
+        List<Long> ids = new ArrayList<>();
+        if (pid <= 0)
+        {
+            return ids;
+        }
+        ids.add(Long.valueOf(pid));
+        try
+        {
+            ProcessHandle.of(pid).ifPresent(handle -> handle.descendants()
+                .forEach(descendant -> ids.add(Long.valueOf(descendant.pid()))));
+        }
+        catch (RuntimeException unavailable)
+        {
+            // The root is still named. A descendant query that fails must not skip the read.
+        }
+        return ids;
+    }
+
+    /**
      * Reads the holding windows of the named processes.
      *
      * @param processIds the client and the processes it started
