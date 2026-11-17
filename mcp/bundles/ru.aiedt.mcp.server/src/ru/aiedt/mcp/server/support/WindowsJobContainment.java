@@ -201,7 +201,14 @@ public final class WindowsJobContainment implements OwnedProcessContainment
             startup.write();
             PROCESS_INFORMATION created = new PROCESS_INFORMATION();
             Memory commandLine = new Memory((line.length() + 1L) * 2L);
-            commandLine.setWideString(0, line);
+            // CreateProcessW takes UTF-16LE, regardless of the host's wchar_t size.
+            for (int i = 0; i < line.length(); i++)
+            {
+                char unit = line.charAt(i);
+                commandLine.setByte(i * 2L, (byte) unit);
+                commandLine.setByte(i * 2L + 1L, (byte) (unit >>> 8));
+            }
+            commandLine.setShort(line.length() * 2L, (short) 0);
             WString currentDirectory = workingDirectory == null
                 ? null : new WString(workingDirectory.getAbsolutePath());
             // The module name is the first token of the command line, as ProcessBuilder's was.

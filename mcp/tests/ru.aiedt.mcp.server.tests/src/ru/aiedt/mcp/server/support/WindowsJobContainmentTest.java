@@ -48,6 +48,20 @@ public class WindowsJobContainmentTest
     }
 
     @Test
+    public void commandLineUsesWindowsUtf16EvenOnOtherHosts() throws Exception
+    {
+        FakeJobApi api = new FakeJobApi();
+        api.terminateProcessResult = true;
+        api.processSignaled = true;
+        try (OwnedProcessContainment containment = WindowsJobContainment.spawn(
+            List.of("client.exe", "\u0416\uD83D\uDE00"), null, api))
+        {
+            org.junit.Assert.assertArrayEquals("client.exe \u0416\uD83D\uDE00\0"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_16LE), api.commandBytes);
+        }
+    }
+
+    @Test
     public void anAssignFailureThatWasTerminatedThrows() throws Exception
     {
         FakeJobApi api = new FakeJobApi();
@@ -365,6 +379,7 @@ public class WindowsJobContainmentTest
         boolean processClosed;
 
         private final Pointer process = new Memory(8);
+        private byte[] commandBytes;
 
         @Override
         public Pointer CreateJobObjectW(Pointer lpJobAttributes, WString lpName)
@@ -409,6 +424,7 @@ public class WindowsJobContainmentTest
             int dwCreationFlags, Pointer lpEnvironment, WString lpCurrentDirectory,
             Structure lpStartupInfo, Structure lpProcessInformation)
         {
+            commandBytes = lpCommandLine.getByteArray(0, (int) ((Memory) lpCommandLine).size());
             WindowsJobContainment.PROCESS_INFORMATION created =
                 (WindowsJobContainment.PROCESS_INFORMATION) lpProcessInformation;
             created.hProcess = process;
