@@ -2,10 +2,27 @@ package ru.aiedt.mcp.server.toolkit.ops;
 
 import static org.junit.Assert.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
+import ru.aiedt.mcp.server.support.FakeOwnedProcessContainment;
+import ru.aiedt.mcp.server.support.OwnedProcessContainment;
 
 public class OwnedVanessaRunTest
 {
+    @Test public void anUnconfirmedCleanupKeepsTheResultHiddenAndRetries()
+    {
+        java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+        OwnedVanessaRun run = new OwnedVanessaRun(() -> false, () -> false, () -> "done",
+            () -> attempts.incrementAndGet() >= 2);
+        run.observe();
+        assertNull("a release that is not confirmed must not publish", run.result()); //$NON-NLS-1$
+        assertTrue(run.cleanupPending());
+        assertEquals("cleanupRequired", run.phase()); //$NON-NLS-1$ //$NON-NLS-2$
+        assertEquals(1, attempts.get());
+        assertEquals("done", run.await(3000)); //$NON-NLS-1$
+        assertFalse(run.cleanupPending());
+        assertEquals(2, attempts.get());
+    }
     @Test public void liveClientKeepsResourcesUntilExitAndFinalizesOnce()
     {
         boolean[] alive = {true};
@@ -96,39 +113,25 @@ public class OwnedVanessaRunTest
         exit.start(); assertEquals("done", run.await(1000)); exit.join(1000);
         assertTrue(run.phaseObservedAt >= run.startedAt);
     }
-    @Test public void cancelInsideLaunchStopsOnlyFreshFakeProcess() throws Exception
+    @Test public void cancelInsideLaunchStopsOnlyFreshFakeContainment() throws Exception
     {
-        AtomicInteger stops = new AtomicInteger();
-        Process fake = new Process() {
-            public java.io.OutputStream getOutputStream() { return java.io.OutputStream.nullOutputStream(); }
-            public java.io.InputStream getInputStream() { return java.io.InputStream.nullInputStream(); }
-            public java.io.InputStream getErrorStream() { return java.io.InputStream.nullInputStream(); }
-            public int waitFor() { return 0; } public int exitValue() { return 0; }
-            public void destroy() { stops.incrementAndGet(); }
-            public Process destroyForcibly() { stops.incrementAndGet(); return this; }
-            public java.util.stream.Stream<ProcessHandle> descendants() { return java.util.stream.Stream.empty(); }
-        };
+        FakeOwnedProcessContainment fake = new FakeOwnedProcessContainment();
         try {
             assertSame(fake, VanessaTool.launchOwned("synthetic-midspawn", () -> {
                 VanessaTool.stopTheClient("synthetic-midspawn"); return fake;
             }));
-            assertEquals(1, stops.get());
+            assertEquals(1, fake.terminates.get());
+            assertEquals(1, fake.closes.get());
         } finally { VanessaTool.refusedBeforeLaunch("synthetic-midspawn"); }
     }
     @Test public void cancelWaitsForAtomicPublicationAfterLaunchReturns() throws Exception
     {
         java.lang.reflect.Field lockField = VanessaTool.class.getDeclaredField("LAUNCHING");
         lockField.setAccessible(true); Object lock = lockField.get(null);
-        java.util.concurrent.atomic.AtomicReference<Process> published = new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.atomic.AtomicReference<Process> canceledTarget = new java.util.concurrent.atomic.AtomicReference<>();
+        AtomicReference<OwnedProcessContainment> published = new AtomicReference<>();
+        AtomicReference<OwnedProcessContainment> canceledTarget = new AtomicReference<>();
         java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);
-        Process fake = new Process() {
-            public java.io.OutputStream getOutputStream() { return java.io.OutputStream.nullOutputStream(); }
-            public java.io.InputStream getInputStream() { return java.io.InputStream.nullInputStream(); }
-            public java.io.InputStream getErrorStream() { return java.io.InputStream.nullInputStream(); }
-            public int waitFor() { return 0; } public int exitValue() { return 0; }
-            public void destroy() {}
-        };
+        FakeOwnedProcessContainment fake = new FakeOwnedProcessContainment();
         Thread cancel = new Thread(() -> { entered.countDown(); canceledTarget.set(VanessaTool.cancellationTarget("synthetic-publication", published)); });
         synchronized (lock) {
             cancel.start(); assertTrue(entered.await(1, java.util.concurrent.TimeUnit.SECONDS));

@@ -677,4 +677,16 @@ public class ClientDialogReaderTest
         }
         Files.deleteIfExists(path);
     }
+
+    /**
+     * The pid-based entry point names the root it was given and refuses a pid that cannot exist.
+     */
+    @Test
+    public void pidsOfNamesTheRootAndRejectsAnInvalidPid()
+    {
+        long current = ProcessHandle.current().pid();
+        List<Long> ids = ClientDialogReader.pidsOf(current);
+        assertTrue(ids.contains(Long.valueOf(current)));
+        assertTrue(ClientDialogReader.pidsOf(-1).isEmpty());
+    }
 }

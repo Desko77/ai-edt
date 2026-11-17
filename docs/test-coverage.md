@@ -6,13 +6,13 @@ other than the server are named with the bundle in front (`oform:ops`).
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 163 | a test class named after it |
-| exercised | 330 | reached by some other test |
+| direct | 165 | a test class named after it |
+| exercised | 333 | reached by some other test |
 | tool-sweep | 26 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 37 | needs a display or an extension point |
 | workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **575** | across 967 test classes |
+| **total** | **580** | across 972 test classes |
 
 ## untested (0)
 
@@ -144,7 +144,7 @@ _none_
 - SelfStatusTool
 - UninstallExtensionTool
 
-## exercised (330)
+## exercised (333)
 
 **(root)**
 - Activator
@@ -311,6 +311,7 @@ _none_
 - ClientLaunchMode
 - ConfigurationListProperties
 - ContainerScope
+- ContainmentUnavailableException
 - DataLossPlan
 - DatabaseChangesResolver
 - DcsExtensionExportHelper
@@ -344,6 +345,8 @@ _none_
 - MetadataGuards
 - OffScreenTextViewer
 - OneAlphabetPerWord
+- OwnedProcessContainment
+- OwnedProcessContainments
 - ParameterHelp
 - PendingEnvelope
 - PendingWorkRegistry
@@ -524,7 +527,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (163)
+## direct (165)
 
 **(root)**
 - BrowserOrigin
@@ -655,6 +658,8 @@ _none_
 - UiSync
 - UpdateReport
 - WalkNarrowing
+- WindowsCommandLine
+- WindowsJobContainment
 - WorkspacePhase
 - YamlFrontMatter
 - YaxunitHelp
@@ -737,11 +742,11 @@ closes.
 | 3-4 | 18 |
 | 5-8 | 47 |
 | 9-16 | 64 |
-| 17+ | 32 |
+| 17+ | 34 |
 
-6972 test methods across 967 test classes; 163 classes have a test of their own, median 10 methods each.
+7017 test methods across 972 test classes; 165 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 163 of 575 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 165 of 580 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

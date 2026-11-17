@@ -631,6 +631,8 @@ The client follows the configuration's run mode. A configuration whose default r
 | **1C debug server** | Debug server-side BSL through Attach. | Start `ragent` with `-debug -http` and create an EDT Attach configuration. |
 | **BSL Language Server** | Additional source review through `code_review`. | Configure the external JAR in AI-EDT preferences. |
 
+A Vanessa client launched by the tool belongs to a Windows Job Object: it is created suspended, assigned to the job before resume, and a stop or EDT exit terminates it (KILL_ON_JOB_CLOSE). Pending and unresolved-cleanup replies carry `containment` and the recorded `containmentProof`; ordinary terminal results do not necessarily include these fields: `notYetProven` until proof is observed; `jobObjectActiveProcessesZero` only after the root exit and a zero job count; `unassignedSuspended`/`rootHandleExit` for a retained unassigned root. `cleanupRequired=true` with `retryable=true` is retried by the same key; `retryable=false` is the legacy global hold/claim failure and needs investigation. On the Windows acceptance stand, the Vanessa manager and its TestClient were observed in the same job. Explicit cancellation brought its active process count to zero. A separately launched TestClient survived both normal completion and cancellation. This verifies the tested setup, not every possible 1C launcher configuration.
+
 ## ⚠️ Limitations
 
 - AI-EDT depends on internal and public EDT services; a major EDT update may require a plugin update.
