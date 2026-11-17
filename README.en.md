@@ -35,7 +35,7 @@ This is not a promise of full autonomy: agents still need result verification an
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
 >
-> To install: in EDT open **Help → Install New Software** with the address `https://desko77.github.io/ai-edt/`, or press **Archive** and pick `AI-EDT-update-site.zip` from the [release page](https://github.com/Desko77/ai-edt/releases/latest). Step by step: [3. Install into EDT](#-3-install-into-edt).
+> To install: in EDT open **Install New Software** from the **Help** menu with the address `https://desko77.github.io/ai-edt/`, or press **Archive** and pick `AI-EDT-update-site.zip` from the [release page](https://github.com/Desko77/ai-edt/releases/latest). Step by step: [3. Install into EDT](#-3-install-into-edt).
 
 ## 🎯 Why AI-EDT
 
@@ -250,7 +250,7 @@ https://desko77.github.io/ai-edt/
 
 EDT takes that address the same way it takes a local archive.
 
-**Step 1.** Start EDT and open **Help → Install New Software**.
+**Step 1.** Start EDT and open **Install New Software** from the **Help** menu.
 
 ![Installation starts from the Help menu.](docs/assets/screenshots/install-menu.png)
 
@@ -354,7 +354,7 @@ files EDT owns edited by hand, a call retried that had already handed back a res
 
 ### ▶️ 4. Start and verify
 
-Open **Window → Preferences → AI-EDT** and check:
+Open **AI-EDT** in **Window - Preferences** and check:
 
 1. the server port, normally `12250`, and **how many consecutive ports it may take**. Ten by
    default: the server takes the first free one, so a second EDT on the same machine starts without
@@ -381,7 +381,7 @@ A ready instance returns a response with `status: ok` and `phase: ready`. If the
 ### 🔗 5. Connect an AI client
 
 The server listens on `127.0.0.1` only and answers requests without a token. **Require bearer
-token** on **Window → Preferences → AI-EDT** turns the check on: every request then carries
+token** on **AI-EDT** in **Window - Preferences** turns the check on: every request then carries
 `Authorization: Bearer <token>` with the token from the **Bearer token** field of the same page (it
 is created at the first start of the server), and a client without it gets `401`. The examples below
 carry the header; with the check off the server does not read it, and the line can be left out.
@@ -551,7 +551,7 @@ Each tool can be **listed**, **callable-hidden** or **disabled**. Hidden tools s
 The server listens on `127.0.0.1` only; the bearer token check is turned on from the preference page.
 
 - **The bearer token.** It is created at the first start of the server when the field on
-  **Preferences → AI-EDT** is empty, and shown only there. The client sends it as
+  **AI-EDT** in **Preferences** is empty, and shown only there. The client sends it as
   `Authorization: Bearer <token>`; the comparison runs in constant time. A request without the
   right token gets `401`; the refusal names the preference page and never carries the token. The
   token is not written to the workspace log. **Generate** puts a new token into the field and
@@ -596,7 +596,7 @@ Every tool call is recorded: what ran, with which arguments, what came back, how
 
 The header says how many calls are kept and at how many characters of request and response, and the label above the response pane says how much of it survived: `Response (303 of 1957 characters)`. A cut record therefore cannot be mistaken for a short answer.
 
-Settings live in **Window -> Preferences -> AI-EDT**, section **Call history**: whether to record at all, how many calls to keep, how many characters of the request and of the response to keep. The shipped values answer "which tools ran" rather than "what exactly did they answer" - raise the character counts if you need the full response, since they are what decides what you get to see.
+Settings live in **AI-EDT** in **Window - Preferences**, section **Call history**: whether to record at all, how many calls to keep, how many characters of the request and of the response to keep. The shipped values answer "which tools ran" rather than "what exactly did they answer" - raise the character counts if you need the full response, since they are what decides what you get to see.
 
 Depth and extent are bounded together: the buffer as a whole stays inside a memory budget, and character counts that do not fit alongside the chosen depth are scaled down proportionally. The counts actually in force are shown in the history window header, so a reduction is visible rather than silent. The shipped values come nowhere near the budget.
 
