@@ -268,7 +268,7 @@ EDT takes that address the same way it takes a local archive.
   ```
 
   This one always resolves to the newest release and does not depend on the site being published, so it cannot fall behind. Mind the `jar:` prefix and the trailing `!/` - the address does not work without them.
-- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip` from a local build;
+- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip` from a local build.
 - **Local** and the folder `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 
 The repository name is arbitrary, for example `AI-EDT`.
@@ -359,9 +359,9 @@ Open **AI-EDT** in **Window - Preferences** and check:
 1. the server port, normally `12250`, and **how many consecutive ports it may take**. Ten by
    default: the server takes the first free one, so a second EDT on the same machine starts without
    anybody editing settings. Set it to 1 when the port is written into a client config and has to
-   stay exactly that;
-2. click **Start** to run the server now, or enable **Auto-start** and restart EDT;
-3. **Plain text mode** for clients that do not support MCP resources;
+   stay exactly that.
+2. click **Start** to run the server now, or enable **Auto-start** and restart EDT.
+3. **Plain text mode** for clients that do not support MCP resources.
 4. the active tool preset.
 
 ![The General page controls transport, external tools, network security, call history, updates and the server lifecycle.](docs/assets/screenshots/preferences-general.png)
@@ -647,9 +647,9 @@ Contributions are welcome in the form of reproducible bug reports, focused featu
 
 Start with:
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) - build process, code style and contribution rules (currently in Russian);
-- [SECURITY.md](SECURITY.md) - private vulnerability reporting and the threat model (currently in Russian);
-- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history;
+- [CONTRIBUTING.md](CONTRIBUTING.md) - build process, code style and contribution rules (currently in Russian).
+- [SECURITY.md](SECURITY.md) - private vulnerability reporting and the threat model (currently in Russian).
+- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history.
 - [CHANGELOG.md](CHANGELOG.md) - one line per release with a link to its details (in Russian, as the
   release notes are).
 
