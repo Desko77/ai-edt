@@ -107,7 +107,7 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **Existing object presentations are updated per language.** `edit_metadata operation=set_object_property` writes object, list and register-record presentations: plain text in `propertyValue` updates the configuration's default language, while a JSON language map replaces all translations. `dryRun=true` returns the resulting map without writing it.
 
-**View ordinary forms in EDT.** `Form.oform` opens as a schematic with an element tree, root and nested page selection, zoom and a read-only property table. Selecting an element shows its properties and reveals its containing pages. This is a schematic using the system font, not a 1C client screenshot; use `ordinary_forms` to change the form. [Details](docs/ordinary-forms.md#read-only-viewer-in-edt).
+**Edit ordinary forms in EDT.** Open `Form.oform` to move or resize elements on their current page, edit captions or tooltips, and undo or redo changes. If an external change conflicts with your edits, the editor keeps the draft without overwriting the file. The schematic uses the system font and is not a 1C client screenshot. [Details](docs/ordinary-forms.md#editor-in-edt).
 
 **Read a large module by line ranges.** `read_module_source` takes `projectName`, `modulePath`, `startLine` and `endLine` (inclusive, 1-based), returning at most 5000 lines per call. `read_method_source` takes `projectName`, `modulePath`, `methodName` and optional `includeDoc`. For exploration, obtain `get_module_structure` first, then read the method you need.
 
