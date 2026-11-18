@@ -48,8 +48,8 @@ public class TheSearchAndExtensionCatalogCutKeepsBaselineFactsTest
     private static final String EXTENSION_BASELINE =
         "catalog-runtime-baseline-extension-workshop.json"; //$NON-NLS-1$
 
-    /** Combined compact-Gson ceiling for the two published entries. */
-    private static final int COMBINED_CEILING = 8500;
+    /** Combined compact-Gson ceiling measured after exposing the borrow preview operation. */
+    private static final int COMBINED_CEILING = 8512;
 
     private static final String[] CODE_SCHEMA = {
         "text_search / object_references / method_references / resolve_symbol / " //$NON-NLS-1$
@@ -94,7 +94,8 @@ public class TheSearchAndExtensionCatalogCutKeepsBaselineFactsTest
     };
 
     private static final String[] EXTENSION_SCHEMA = {
-        "create_extension_project / borrow_object / borrow_objects / borrow_child / " //$NON-NLS-1$
+        "create_extension_project / borrow_object", //$NON-NLS-1$
+        "borrow_objects / borrow_child / " //$NON-NLS-1$
             + "borrow_form_item / borrow_module / list_borrowed / update_borrowed / " //$NON-NLS-1$
             + "install_extension / uninstall_extension / list_extension / " //$NON-NLS-1$
             + "export_extension / extension_lifecycle / extension_diff / " //$NON-NLS-1$

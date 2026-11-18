@@ -6,13 +6,13 @@ other than the server are named with the bundle in front (`oform:ops`).
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 165 | a test class named after it |
+| direct | 166 | a test class named after it |
 | exercised | 333 | reached by some other test |
 | tool-sweep | 26 | declaration checked by the registry-wide contract sweep |
 | ui-bound | 37 | needs a display or an extension point |
 | workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **580** | across 972 test classes |
+| **total** | **581** | across 975 test classes |
 
 ## untested (0)
 
@@ -527,7 +527,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (165)
+## direct (166)
 
 **(root)**
 - BrowserOrigin
@@ -572,6 +572,7 @@ _none_
 - BmInfobaseCredentialsHelper
 - BmInfobaseRegistrationHelper
 - BooleanLiteral
+- BorrowPreview
 - BorrowedSyncClassification
 - BranchInfobaseBook
 - BslCommentParseHelper
@@ -740,13 +741,13 @@ closes.
 | 1 | 0 |
 | 2 | 2 |
 | 3-4 | 18 |
-| 5-8 | 47 |
+| 5-8 | 48 |
 | 9-16 | 64 |
 | 17+ | 34 |
 
-7017 test methods across 972 test classes; 165 classes have a test of their own, median 10 methods each.
+7032 test methods across 975 test classes; 166 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 165 of 580 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 166 of 581 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

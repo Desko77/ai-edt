@@ -18,12 +18,17 @@ import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
 
+import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
+
+import ru.aiedt.mcp.server.Activator;
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
 import ru.aiedt.mcp.server.wire.ToolResult;
+import ru.aiedt.mcp.server.support.BorrowPreview;
 import ru.aiedt.mcp.server.support.BorrowedSyncClassification;
 import ru.aiedt.mcp.server.support.BorrowedSyncReader;
 import ru.aiedt.mcp.server.support.BorrowedSyncWriter;
+import ru.aiedt.mcp.server.support.BmCommonModuleGuards;
 import ru.aiedt.mcp.server.support.ExtensionFitness;
 import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.support.BmBinaryImportHelper;
@@ -116,7 +121,7 @@ public class ExtensionWorkshopTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "create_extension_project / borrow_object / borrow_objects / borrow_child / " //$NON-NLS-1$
+                "create_extension_project / borrow_object / preview_borrow / borrow_objects / borrow_child / " //$NON-NLS-1$
                     + "borrow_form_item / borrow_module / list_borrowed / update_borrowed / " //$NON-NLS-1$
                     + "install_extension / uninstall_extension / list_extension / " //$NON-NLS-1$
                     + "export_extension / extension_lifecycle / extension_diff / " //$NON-NLS-1$
@@ -274,6 +279,13 @@ public class ExtensionWorkshopTool implements IMcpTool
                     return refused;
                 }
                 return doBorrow(params, op, null, includeChildrenRequested(params));
+            case "preview_borrow": //$NON-NLS-1$
+                String previewRefused = refuseBadIncludeChildren(params);
+                if (previewRefused != null)
+                {
+                    return previewRefused;
+                }
+                return doPreviewBorrow(params, includeChildrenRequested(params));
             case "borrow_child": //$NON-NLS-1$
                 return doBorrow(params, op,
                     JsonUtils.extractStringArgument(params, "childKind")); //$NON-NLS-1$
@@ -540,6 +552,102 @@ public class ExtensionWorkshopTool implements IMcpTool
     private String doBorrow(Map<String, String> params, String op, String childKind)
     {
         return doBorrow(params, op, childKind, false);
+    }
+
+    /**
+     * The read-only half of {@code borrow_object}: what the model holds now, and what a fresh
+     * borrow would ask for.
+     * <p>
+     * Both the extension and the base configuration must be loaded before the walk means anything.
+     * When either is not, the answer refuses as {@code cannotTell} rather than reporting an empty
+     * plan - an unread model is not an object with no children. The plan itself is built by
+     * {@link BorrowPreview} through a source with no writing method; this method never calls
+     * {@link BmExtensionHelper#attemptBorrow} or {@link BmExtensionHelper#settleAlreadyBorrowed}.
+     * </p>
+     *
+     * @param params the call
+     * @param includeChildren whether the caller asked for the object's own children
+     * @return the preview as JSON
+     */
+    private String doPreviewBorrow(Map<String, String> params, boolean includeChildren)
+    {
+        String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
+        String objectFqn = JsonUtils.extractStringArgument(params, "objectFqn"); //$NON-NLS-1$
+        String baseProjectName = JsonUtils.extractStringArgument(params, "baseProjectName"); //$NON-NLS-1$
+        if (projectName == null || objectFqn == null)
+        {
+            return ToolResult.error("projectName and objectFqn are required").toJson(); //$NON-NLS-1$
+        }
+        IProject extension = ProjectResolver.resolve(projectName);
+        if (extension == null)
+        {
+            return ProjectResolver.notFound(projectName).toJson();
+        }
+        IProject base;
+        if (baseProjectName == null || baseProjectName.isBlank())
+        {
+            base = BmCommonModuleGuards.parentProjectOf(extension);
+            if (base == null)
+            {
+                return ToolResult.error("the extension's parent configuration could not be " //$NON-NLS-1$
+                    + "resolved; pass baseProjectName. Nothing was previewed.").toJson(); //$NON-NLS-1$
+            }
+        }
+        else
+        {
+            base = ProjectResolver.resolve(baseProjectName);
+            if (base == null)
+            {
+                return ProjectResolver.notFound(baseProjectName).toJson();
+            }
+        }
+        IConfigurationProvider provider = Activator.getDefault() == null ? null
+            : Activator.getDefault().getConfigurationProvider();
+        if (provider == null || provider.getConfiguration(extension) == null
+            || provider.getConfiguration(base) == null)
+        {
+            return ToolResult.error("cannot tell what would be borrowed: the extension and the " //$NON-NLS-1$
+                + "base configuration must both be loaded. Nothing was previewed.").toJson(); //$NON-NLS-1$
+        }
+        BorrowPreview.Source source = new BorrowPreview.Source()
+        {
+            @Override
+            public BorrowPreview.Lookup objectAt(String fqn)
+            {
+                BmExtensionHelper.SourceLookup found =
+                    BmExtensionHelper.sourceLookup(extension, base.getName(), fqn);
+                if (found.state == BmExtensionHelper.SourceState.PRESENT)
+                {
+                    return BorrowPreview.Lookup.present(found.object);
+                }
+                if (found.state == BmExtensionHelper.SourceState.ABSENT)
+                {
+                    return BorrowPreview.Lookup.absent();
+                }
+                return BorrowPreview.Lookup.unknown();
+            }
+
+            @Override
+            public BmExtensionHelper.Attachment attachmentOf(String fqn)
+            {
+                return BmExtensionHelper.attachmentState(extension, base, fqn);
+            }
+
+            @Override
+            public boolean adoptServiceAvailable()
+            {
+                return BmExtensionHelper.isAvailable();
+            }
+
+            @Override
+            public ChildBorrow.ChildCollections collections()
+            {
+                return ChildBorrow.fromTheModel();
+            }
+        };
+        BorrowPreview.Plan plan = BorrowPreview.plan(objectFqn, includeChildren, source);
+        return BorrowPreview.answer(objectFqn, includeChildren, plan, source,
+            BmExtensionHelper.resolvedAdoptServiceClass());
     }
 
     /**
@@ -1370,6 +1478,10 @@ public class ExtensionWorkshopTool implements IMcpTool
                 + "base configuration (projectName=new name, baseProjectName=base config)\n"); //$NON-NLS-1$
             sb.append("- borrow_object - borrow a single FQN (Catalog/Document/etc.); " //$NON-NLS-1$
                 + "includeChildren also borrows its own children\n"); //$NON-NLS-1$
+            sb.append("- preview_borrow - read-only plan for a fresh borrow_object: the root's " //$NON-NLS-1$
+                + "attachment state, the children a walk would ask for, the ones already there and " //$NON-NLS-1$
+                + "the ones whose state is unknown. Writes nothing; includeChildren reads the same " //$NON-NLS-1$
+                + "way as borrow_object\n"); //$NON-NLS-1$
             sb.append("- borrow_objects - batch borrow with per-FQN results\n"); //$NON-NLS-1$
             sb.append("- borrow_child - borrow a single attribute/tabular section/form/template\n"); //$NON-NLS-1$
             sb.append("- borrow_form_item - borrow a single form item by name\n"); //$NON-NLS-1$
@@ -1477,10 +1589,10 @@ public class ExtensionWorkshopTool implements IMcpTool
                     {
                         text = text + "\nFor example 8.3.27.1234.\n"; //$NON-NLS-1$
                     }
-                    if (!"borrow_object".equals(operation)) //$NON-NLS-1$
+                    if (!"borrow_object".equals(operation) && !"preview_borrow".equals(operation)) //$NON-NLS-1$ //$NON-NLS-2$
                     {
-                        text = text + "\nincludeChildren applies only to borrow_object; this " //$NON-NLS-1$
-                            + "operation does not read it.\n"; //$NON-NLS-1$
+                        text = text + "\nincludeChildren applies only to borrow_object and " //$NON-NLS-1$
+                            + "preview_borrow; this operation does not read it.\n"; //$NON-NLS-1$
                     }
                     return ToolResult.success().put("topic", topic).put("text", text).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
                 }
@@ -1521,7 +1633,7 @@ public class ExtensionWorkshopTool implements IMcpTool
         Map<String, String> m = new LinkedHashMap<>();
         for (String op : Arrays.asList(
             "create_extension_project", //$NON-NLS-1$
-            "borrow_object", "borrow_objects", "borrow_child", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "borrow_object", "preview_borrow", "borrow_objects", "borrow_child", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             "borrow_form_item", "borrow_module", "list_borrowed", "update_borrowed", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
             "install_extension", "uninstall_extension", "list_extension", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "export_extension", "extension_lifecycle", "extension_diff", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
