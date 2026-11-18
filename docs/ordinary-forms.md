@@ -3,13 +3,15 @@
 `ordinary_forms` reads and edits ordinary forms in an open EDT project. The form layout and its
 BSL module are stored in `Form.oform`. The tool is included in the main AI-EDT feature.
 
-## Read-only viewer in EDT
+## Editor in EDT
 
-Opening `Form.oform` in EDT displays an element tree, a scrollable schematic with zoom, and a read-only property table. Root and nested page selection belongs to the viewer; selecting an element in the tree reveals its ancestor pages. Resource changes reconcile the view, and moved files retarget the editor input.
+Opening `Form.oform` in EDT displays an element tree, a scrollable schematic with zoom, and a property table over one editing session shared by every editor of the file; any edit, undo, redo, save or discard in one editor refreshes the snapshot and dirty state of the others. Root and nested page selection belongs to the editor; selecting an element in the tree reveals its ancestor pages. Resource changes reconcile the view, moved files retarget the editor input, and a removed container with shared unsaved changes stays as a read-only terminal view.
 
-The schematic uses the system font. Styles, fonts and the layout's tab-visibility setting are not exposed by the snapshot; page strips serve navigation. Elements without a rectangle remain in the tree and property table. Unread records and unsupported versions are identified in the view. Coordinates and DPI are not measured against the 1C client.
+Drag a selected element to move it inside its current parent and page; drag its lower-right corner to resize it the same way. Double-click `caption`, `tooltip` or the form `Title` to edit it. Undo and Redo are on the toolbar and on Ctrl+Z/Ctrl+Y; Save writes the container. The editor uses the session's own undo history and dirty state, keeps no text of its own, and never reparents a page or an element. The palette, parent changes, anchors and the font editor are not part of this editor; use `ordinary_forms` for those and for the module.
 
-The viewer does not edit properties, drag or resize elements, save containers, or offer undo/redo UI. Use `ordinary_forms` for layout writes and `write_module_source` for the module; opening and navigating the viewer leave the container unchanged.
+A file changed outside the editor is never written over. When the outside layout, or a module the draft itself changed, conflicts with unsaved changes, the editor keeps the draft, refuses Save, and blocks closing until the user presses "Discard my changes"; after that the outside file is taken over. Save returns only after it has finished: on the UI thread it runs through the Eclipse progress service, which forks it and keeps dispatching UI events, so the UI thread never waits for a workspace rule an MCP call holds; a caller that is not the UI thread saves on its own thread without touching SWT. Cancellation stops a save before its commit point, the container write; a write already started completes. Closing uses the same contract, and no save outlives the call that made it. The module and every opaque entry are carried through a save byte for byte.
+
+The schematic uses the system font. Styles, fonts and the layout's tab-visibility setting are not exposed by the snapshot; page strips serve navigation. Elements without a rectangle remain in the tree and property table. Unread records and unsupported versions are identified in the view. Coordinates and DPI are not measured against the 1C client, and the headless suite does not prove SWT pointer or dialog behaviour.
 
 ## Address a form
 

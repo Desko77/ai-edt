@@ -6,13 +6,13 @@ other than the server are named with the bundle in front (`oform:ops`).
 
 | Bucket | Classes | Meaning |
 |---|---:|---|
-| direct | 166 | a test class named after it |
+| direct | 167 | a test class named after it |
 | exercised | 333 | reached by some other test |
 | tool-sweep | 26 | declaration checked by the registry-wide contract sweep |
-| ui-bound | 37 | needs a display or an extension point |
+| ui-bound | 39 | needs a display or an extension point |
 | workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **581** | across 975 test classes |
+| **total** | **584** | across 978 test classes |
 
 ## untested (0)
 
@@ -53,7 +53,7 @@ _none_
 - FormEventOps
 - ModuleTextSelection
 
-## ui-bound (37)
+## ui-bound (39)
 
 **(root)**
 - McpAutoStart
@@ -61,6 +61,8 @@ _none_
 **editor:(root)**
 - FormFigures
 - FormResourceWatcher
+- FormSaveOperation
+- FormSessionListener
 - OrdinaryFormEditor
 - OrdinaryFormEditorAssociation
 - OrdinaryFormEditorPage
@@ -527,7 +529,7 @@ _none_
 **workbench**
 - McpStatusBarItem
 
-## direct (166)
+## direct (167)
 
 **(root)**
 - BrowserOrigin
@@ -547,6 +549,7 @@ _none_
 - Messages
 
 **oform:session**
+- FormGeometry
 - FormSummary
 - FormViewState
 - LayoutChangeOperation
@@ -742,12 +745,12 @@ closes.
 | 2 | 2 |
 | 3-4 | 18 |
 | 5-8 | 48 |
-| 9-16 | 64 |
+| 9-16 | 65 |
 | 17+ | 34 |
 
-7032 test methods across 975 test classes; 166 classes have a test of their own, median 10 methods each.
+7071 test methods across 978 test classes; 167 classes have a test of their own, median 10 methods each.
 
-Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 166 of 581 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
+Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 167 of 584 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
 ### Resting on 2 test method(s) or fewer (2)
 

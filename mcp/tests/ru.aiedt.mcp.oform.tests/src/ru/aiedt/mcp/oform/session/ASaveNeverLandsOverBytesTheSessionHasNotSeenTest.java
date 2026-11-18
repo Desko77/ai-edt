@@ -31,8 +31,9 @@ import ru.aiedt.mcp.oform.layout.LayoutReader;
  * A save writes the session's texts, and what it wrote becomes the baseline inside the save: the
  * next save of a clean session writes nothing, and the next edit runs against the written bytes
  * without a reconciliation. A file that changed outside the editor is never written over - the
- * save is refused and the session reconciles itself first - also when the session holds edits of
- * both texts and the outside change touched only the module.
+ * save is refused and the session keeps the draft it holds; the reconciliation that drops the
+ * draft is a separate, explicit call - also when the session holds edits of both texts and the
+ * outside change touched only the module.
  */
 public class ASaveNeverLandsOverBytesTheSessionHasNotSeenTest
 {
@@ -134,9 +135,9 @@ public class ASaveNeverLandsOverBytesTheSessionHasNotSeenTest
         }
     }
 
-    /** A file the outside rewrote is not written over: the save refuses and the session reconciles. */
+    /** A file the outside rewrote is not written over, and the draft it met is kept. */
     @Test
-    public void aSaveAtForeignBytesWritesNothingAndReconciles() throws Exception
+    public void aSaveAtForeignBytesWritesNothingAndKeepsTheDraft() throws Exception
     {
         try
         {
@@ -151,9 +152,21 @@ public class ASaveNeverLandsOverBytesTheSessionHasNotSeenTest
 
                 FormEditingSession.Save save = session.save();
                 assertFalse("nothing was written over the foreign bytes", save.written); //$NON-NLS-1$
-                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, save.reconciliation); //$NON-NLS-1$
+                assertEquals("the refusal names the conflict", //$NON-NLS-1$
+                    FormEditingSession.Reconciliation.CONFLICT, save.reconciliation);
                 assertArrayEquals("the file keeps the foreign bytes", foreign, probe.bytes()); //$NON-NLS-1$
-                assertFalse("the discarded edit left the session clean", session.isDirty()); //$NON-NLS-1$
+                assertTrue("the draft stays unsaved", session.isDirty()); //$NON-NLS-1$
+                assertEquals("and it is still what the editor shows", "Проба", session.snapshot().title); //$NON-NLS-1$ //$NON-NLS-2$
+
+                FormEditingSession.Save again = session.save();
+                assertFalse("a repeated save still writes nothing", again.written); //$NON-NLS-1$
+                assertTrue("and still keeps the draft", session.isDirty()); //$NON-NLS-1$
+
+                FormEditingSession.Reconciliation discarded = session.reconcile();
+                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, discarded.outcome);
+                assertFalse("the explicit reconciliation dropped the draft", session.isDirty()); //$NON-NLS-1$
+                assertEquals("Чужой заголовок", session.snapshot().title); //$NON-NLS-1$
+                assertArrayEquals(foreign, probe.bytes());
             }
             finally
             {
@@ -168,10 +181,11 @@ public class ASaveNeverLandsOverBytesTheSessionHasNotSeenTest
 
     /**
      * A session that changed the layout and the module does not write over an outside change of
-     * the module alone: the save refuses, the outside module is taken over and the edits go.
+     * the module alone: the save refuses, the outside module stands, and both drafts stay until
+     * an explicit reconciliation drops them.
      */
     @Test
-    public void aModuleOnlyForeignChangeDiscardsAFormAndModuleSession() throws Exception
+    public void aModuleOnlyForeignChangeKeepsAFormAndModuleDraft() throws Exception
     {
         try
         {
@@ -194,10 +208,17 @@ public class ASaveNeverLandsOverBytesTheSessionHasNotSeenTest
                 probe.anotherWriterWrites(foreign);
                 FormEditingSession.Save save = session.save();
                 assertFalse("nothing was written over the foreign module", save.written); //$NON-NLS-1$
-                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, save.reconciliation); //$NON-NLS-1$
-                assertArrayEquals(foreign, probe.bytes());
-                assertFalse(session.isDirty());
-                assertTrue("the outside module was taken over", moduleOf().contains("Чужая")); //$NON-NLS-1$
+                assertEquals("the refusal names the conflict", //$NON-NLS-1$
+                    FormEditingSession.Reconciliation.CONFLICT, save.reconciliation);
+                assertArrayEquals("the file keeps the foreign module", foreign, probe.bytes()); //$NON-NLS-1$
+                assertTrue("the drafts stay unsaved", session.isDirty()); //$NON-NLS-1$
+                assertTrue("both of them", session.formChanged() && session.moduleChanged()); //$NON-NLS-1$
+                assertTrue("the file still holds the outside module", moduleOf().contains("Чужая")); //$NON-NLS-1$ //$NON-NLS-2$
+
+                FormEditingSession.Reconciliation discarded = session.reconcile();
+                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, discarded.outcome);
+                assertFalse("the explicit reconciliation dropped both drafts", session.isDirty()); //$NON-NLS-1$
+                assertTrue("the outside module was taken over", moduleOf().contains("Чужая")); //$NON-NLS-1$ //$NON-NLS-2$
             }
             finally
             {

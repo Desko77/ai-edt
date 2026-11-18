@@ -32,8 +32,10 @@ import ru.aiedt.mcp.oform.layout.LayoutReader;
  * bytes that differ with the same texts, the module that changed outside while the session holds
  * no module edit, the layout that changed outside over a clean session and over one that holds
  * edits, and the file that holds nothing editable, which puts the session into read-only until a
- * readable container is back. An edit that meets a file the session has not seen does not edit
- * over it: the session reconciles itself and answers with what that found.
+ * readable container is back. The reconciliation is the explicit discard: calling it over a
+ * session that holds edits drops them and takes the external form. A clean session that meets a
+ * file it has not seen reconciles itself before the edit runs; a session that holds edits keeps
+ * them and its edit is refused (see {@link AConflictKeepsTheDraftUntilExplicitDiscardTest}).
  */
 public class AReconciliationFollowsItsTableTest
 {
