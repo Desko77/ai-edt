@@ -53,7 +53,7 @@ import ru.aiedt.mcp.server.toolkit.ops.ModuleSourceWriter;
  * session opened with and then the texts they left; a later edit drops the redo; the history
  * keeps {@link FormEditingSession#HISTORY_LIMIT} records; a form record undoes and redoes while
  * an agent's module stays; a history that touched the module is cleared when the agent writes
- * the module; an undo over a foreign write reconciles instead of editing a stale baseline; a
+ * the module; an undo over a foreign write keeps the draft instead of editing a stale baseline; a
  * clean session and the agent's write lose nothing in either order; a gesture is one record;
  * two handler bindings in one gesture both keep their stubs; an undo stops when that
  * reconciliation has already cleared the history; the undo of a stub that created the module
@@ -74,9 +74,6 @@ public class LayoutChangeOperationTest
 
     /** The line a foreign module write shows when it drops a history that touched the module. */
     private static final String HISTORY_CLEARED = "история отмены очищена: модуль изменен вне редактора"; //$NON-NLS-1$
-
-    /** The line a foreign layout shows when it discards the session's edits. */
-    private static final String DISCARD = "Форма изменена вне редактора; несохраненные правки отброшены."; //$NON-NLS-1$
 
     private static SessionProbe probe;
 
@@ -163,9 +160,9 @@ public class LayoutChangeOperationTest
         return texts;
     }
 
-    /** The command handlers' direct history route reconciles before replaying touched entries. */
+    /** The command handlers' direct history route keeps the draft before replaying touched entries. */
     @Test
-    public void theOperationHistoryReconcilesWithoutTheSessionUndoWrapper() throws Exception
+    public void theOperationHistoryKeepsTheDraftWithoutTheSessionUndoWrapper() throws Exception
     {
         try
         {
@@ -195,6 +192,13 @@ public class LayoutChangeOperationTest
                 probe.anotherWriterWrites(foreignLayout);
                 IStatus refused = history.undo(session.undoContext(), new NullProgressMonitor(), null);
                 assertFalse(refused.toString(), refused.isOK());
+                assertEquals("History route", session.snapshot().title); //$NON-NLS-1$
+                assertTrue("the draft stays", session.isDirty()); //$NON-NLS-1$
+                assertTrue("and its history stays", session.canUndo()); //$NON-NLS-1$
+                assertArrayEquals("the foreign layout stands", foreignLayout, probe.bytes()); //$NON-NLS-1$
+
+                FormEditingSession.Reconciliation discarded = session.reconcile();
+                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, discarded.outcome);
                 assertEquals("Foreign layout", session.snapshot().title); //$NON-NLS-1$
                 assertFalse(session.isDirty());
                 assertFalse(session.canUndo());
@@ -435,9 +439,13 @@ public class LayoutChangeOperationTest
         }
     }
 
-    /** Undo over a foreign layout, with no observer event yet, reconciles and does not write the old text. */
+    /**
+     * Undo over a foreign layout, with no observer event yet, is refused: it does not reconcile
+     * the draft away and does not write the old text. The explicit reconciliation is what drops
+     * the draft and its history.
+     */
     @Test
-    public void anUndoAfterAForeignWriteReconciles() throws Exception
+    public void anUndoAfterAForeignWriteKeepsTheDraft() throws Exception
     {
         try
         {
@@ -450,13 +458,19 @@ public class LayoutChangeOperationTest
                 probe.anotherWriterWrites(foreign);
                 FormEditingSession.Reversal reversal = session.undo();
                 assertFalse(reversal.done);
-                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, reversal.reconciliation);
-                assertEquals(DISCARD, reversal.message);
-                assertEquals(0, session.undoRecords().length);
-                assertEquals(0, session.redoRecords().length);
-                assertEquals("Чужой заголовок", session.snapshot().title); //$NON-NLS-1$
-                assertArrayEquals(foreign, probe.bytes());
+                assertNotNull(reversal.message);
+                assertEquals(FormEditingSession.Reconciliation.CONFLICT, reversal.reconciliation);
+                assertArrayEquals("the foreign layout stands", foreign, probe.bytes()); //$NON-NLS-1$
+                assertTrue("the draft stays", session.isDirty()); //$NON-NLS-1$
+                assertEquals("and it is still what the editor shows", "Проба", session.snapshot().title); //$NON-NLS-1$ //$NON-NLS-2$
+                assertTrue("and its history stays", session.canUndo()); //$NON-NLS-1$
+                assertEquals(1, session.undoRecords().length);
+
+                FormEditingSession.Reconciliation discarded = session.reconcile();
+                assertEquals(FormEditingSession.Reconciliation.CHANGES_DISCARDED, discarded.outcome);
                 assertFalse(session.isDirty());
+                assertFalse(session.canUndo());
+                assertEquals("Чужой заголовок", session.snapshot().title); //$NON-NLS-1$
             }
             finally
             {

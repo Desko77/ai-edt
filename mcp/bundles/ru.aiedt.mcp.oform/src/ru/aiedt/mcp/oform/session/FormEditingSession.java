@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Supplier;
 
 import org.eclipse.core.commands.ExecutionException;
@@ -36,6 +37,7 @@ import org.eclipse.core.resources.IWorkspaceRunnable;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.IStatus;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.core.runtime.Status;
@@ -83,6 +85,12 @@ import ru.aiedt.mcp.oform.ops.OperationsCatalog;
  * set, or a container that will not read, puts the session into read-only: edits and saves are
  * refused until a reconciliation finds a readable container again.</p>
  *
+ * <p>A file whose layout text, or whose module text the session itself holds changed, changed
+ * outside does not drop the draft: an edit, a gesture, a save and an undo refuse with
+ * {@link Reconciliation#CONFLICT} and keep the texts and the history. Only {@link #reconcile()},
+ * the explicit discard, drops them and takes the external form. {@link #hasConflict()} answers
+ * whether a refresh would meet such a conflict, and changes nothing.</p>
+ *
  * <p>Each edit that changes a text is one record of the workspace operation history, on this
  * session's own undo context. Undo and redo run under the same lock and put back only the
  * entries that record touched, including restoring the absence of a module. The history is
@@ -103,11 +111,17 @@ public final class FormEditingSession
     /** The line shown when a foreign module write drops a history that touched the module. */
     static final String HISTORY_CLEARED = "история отмены очищена: модуль изменен вне редактора"; //$NON-NLS-1$
 
+    /** The line a conflict refusal shows: the draft is kept until the user discards it. */
+    static final String KEPT = "the unsaved changes are kept until an explicit reconciliation discards them"; //$NON-NLS-1$
+
     /**
      * The refusal when the container was removed and the session is not bound to a file.
      * Reconciliation reports the same literal as its outcome and does not mark the session read-only.
      */
     public static final String REMOVED = "the form was removed; the session is not bound to a file"; //$NON-NLS-1$
+
+    /** The save stopped before its commit point, the container write; a write already started completes. */
+    public static final String CANCELLED = "cancelled"; //$NON-NLS-1$
 
     /** The standard attribute names a data path can name under the form's main attribute. */
     private static final List<String> STANDARD_ATTRIBUTE_NAMES = List.of("Код", "Наименование", "Родитель", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
@@ -121,6 +135,9 @@ public final class FormEditingSession
 
     /** This session's undo context. The history keeps {@link #HISTORY_LIMIT} records of it. */
     private final IUndoContext undoContext;
+
+    /** Every editor of the file that must hear about a state change; copied on write. */
+    private final CopyOnWriteArrayList<ChangeListener> changeListeners = new CopyOnWriteArrayList<>();
 
     /** The reconciliation an undo or redo in progress reached; {@code null} when the baseline held. */
     private Reconciliation reconciledDuringStep;
@@ -202,6 +219,51 @@ public final class FormEditingSession
         return id;
     }
 
+    /**
+     * Subscribes one editor to this session's state changes: a successful edit, gesture, undo,
+     * redo, save or state-changing reconciliation reaches every editor of the file, so a second
+     * view is never left with the snapshot or the dirty flag it had before the first one edited.
+     * A receiver must schedule its UI work itself; this call may run on any thread.
+     *
+     * @param listener the receiver, ignored when {@code null}
+     */
+    public void addChangeListener(ChangeListener listener)
+    {
+        if (listener != null)
+        {
+            changeListeners.addIfAbsent(listener);
+        }
+    }
+
+    /**
+     * Unsubscribes a disposed editor.
+     *
+     * @param listener the receiver, ignored when {@code null}
+     */
+    public void removeChangeListener(ChangeListener listener)
+    {
+        if (listener != null)
+        {
+            changeListeners.remove(listener);
+        }
+    }
+
+    /** Tells every editor about a state change; one failing receiver does not stop the others. */
+    private void notifyChanged()
+    {
+        for (ChangeListener listener : changeListeners)
+        {
+            try
+            {
+                listener.sessionChanged(this);
+            }
+            catch (RuntimeException e)
+            {
+                ru.aiedt.mcp.server.Activator.logError("Ordinary form session notice failed", e); //$NON-NLS-1$
+            }
+        }
+    }
+
     /** @return the container the session edits */
     public IFile file()
     {
@@ -267,7 +329,12 @@ public final class FormEditingSession
         {
             return Edit.refused(operation + " is not a layout operation of ordinary_forms."); //$NON-NLS-1$
         }
-        return underBinding(() -> Edit.refused(REMOVED), () -> editLocked(spec, params));
+        Edit result = underBinding(() -> Edit.refused(REMOVED), () -> editLocked(spec, params));
+        if (result.done)
+        {
+            notifyChanged();
+        }
+        return result;
     }
 
     /** The edit, with the registry lock of the session's current file already held. */
@@ -279,6 +346,11 @@ public final class FormEditingSession
         }
         if (!baselineHolds())
         {
+            if (conflictsLocked())
+            {
+                return new Edit(false, "the form changed outside the editor: " + KEPT + ".", null, null, //$NON-NLS-1$
+                    Reconciliation.CONFLICT);
+            }
             Reconciliation reconciliation = reconcileLocked();
             String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
             return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
@@ -355,7 +427,12 @@ public final class FormEditingSession
         {
             return Edit.refused("a gesture names no operation."); //$NON-NLS-1$
         }
-        return underBinding(() -> Edit.refused(REMOVED), () -> gestureLocked(steps));
+        Edit result = underBinding(() -> Edit.refused(REMOVED), () -> gestureLocked(steps));
+        if (result.done)
+        {
+            notifyChanged();
+        }
+        return result;
     }
 
     /** The gesture, with the registry lock of the session's current file already held. */
@@ -367,6 +444,11 @@ public final class FormEditingSession
         }
         if (!baselineHolds())
         {
+            if (conflictsLocked())
+            {
+                return new Edit(false, "the form changed outside the editor: " + KEPT + ".", null, null, //$NON-NLS-1$
+                    Reconciliation.CONFLICT);
+            }
             Reconciliation reconciliation = reconcileLocked();
             String what = reconciliation.message != null ? reconciliation.message : reconciliation.outcome;
             return new Edit(false, "the form changed outside the editor: " + what, null, null, //$NON-NLS-1$
@@ -480,7 +562,12 @@ public final class FormEditingSession
      */
     private Reversal step(boolean undoing)
     {
-        return underBinding(() -> new Reversal(false, REMOVED, null), () -> stepLocked(undoing));
+        Reversal result = underBinding(() -> new Reversal(false, REMOVED, null), () -> stepLocked(undoing));
+        if (result.done)
+        {
+            notifyChanged();
+        }
+        return result;
     }
 
     /** The undo or redo, with the registry lock of the session's current file already held. */
@@ -638,7 +725,10 @@ public final class FormEditingSession
      * Saves the session's texts into the container. The file is compared with the baseline in
      * full first - a save never lands over bytes the session has not seen - and what the write
      * left, its bytes and its modification stamp, becomes the next baseline inside the same
-     * lock, so no reader can observe the file between the write and the baseline. Nothing is
+     * lock, so no reader can observe the file between the write and the baseline. A file whose
+     * layout text, or whose module text the session holds changed, changed outside is refused
+     * with {@link Reconciliation#CONFLICT} and the draft stays; {@link #reconcile()} is the
+     * explicit discard. Nothing is
      * written and no owner is marked when the session is clean, and the write goes through
      * {@link OrdinaryFormModule#writeEntriesReturning} under the workspace's rule on the file,
      * the rule every other write path takes as well. The rule is chosen before the registry lock.
@@ -651,8 +741,39 @@ public final class FormEditingSession
      */
     public Save save()
     {
+        return save(null);
+    }
+
+    /**
+     * Saves the session's texts into the container. A canceled {@code monitor} stops the save
+     * before its commit point - the container write - and answers {@link #CANCELLED} without
+     * touching the file; a write that already started completes and is reported written. The
+     * editor runs this while the UI dispatches its events, so the save may wait for the
+     * workspace's rule without the UI thread waiting for it.
+     *
+     * @param monitor the monitor whose cancellation stops the save before its commit point, or
+     *        {@code null} to never cancel
+     * @return what the save did
+     */
+    public Save save(IProgressMonitor monitor)
+    {
+        Save done = saveThrough(monitor);
+        if (done.written)
+        {
+            notifyChanged();
+        }
+        return done;
+    }
+
+    /** The save, without the state-change notice. */
+    private Save saveThrough(IProgressMonitor monitor)
+    {
         while (true)
         {
+            if (cancelled(monitor))
+            {
+                return new Save(false, null, CANCELLED);
+            }
             if (removed)
             {
                 return new Save(false, null, REMOVED);
@@ -672,11 +793,16 @@ public final class FormEditingSession
             Save[] out = new Save[1];
             OrdinaryFormModule[] writing = new OrdinaryFormModule[1];
             boolean[] follow = new boolean[1];
-            IWorkspaceRunnable work = monitor -> {
+            IWorkspaceRunnable work = ignored -> {
                 OpenFormSessions.SessionLock lock = OpenFormSessions.lockOf(target);
                 lock.lock();
                 try
                 {
+                    if (cancelled(monitor))
+                    {
+                        out[0] = new Save(false, null, CANCELLED);
+                        return;
+                    }
                     if (removed)
                     {
                         out[0] = new Save(false, null, REMOVED);
@@ -688,7 +814,7 @@ public final class FormEditingSession
                         return;
                     }
                     writing[0] = module;
-                    out[0] = saveLocked();
+                    out[0] = saveLocked(monitor);
                 }
                 catch (IOException e)
                 {
@@ -706,10 +832,15 @@ public final class FormEditingSession
             }
             try
             {
-                workspace.run(work, rules.modifyRule(target), IResource.NONE, new NullProgressMonitor());
+                workspace.run(work, rules.modifyRule(target), IResource.NONE,
+                    monitor == null ? new NullProgressMonitor() : monitor);
             }
             catch (CoreException e)
             {
+                if (cancelled(monitor))
+                {
+                    return new Save(false, null, CANCELLED);
+                }
                 if (removed)
                 {
                     return new Save(false, null, REMOVED);
@@ -727,6 +858,10 @@ public final class FormEditingSession
             Save done = out[0];
             if (done == null)
             {
+                if (cancelled(monitor))
+                {
+                    return new Save(false, null, CANCELLED);
+                }
                 if (removed)
                 {
                     return new Save(false, null, REMOVED);
@@ -746,10 +881,18 @@ public final class FormEditingSession
         }
     }
 
-    private Save saveLocked() throws IOException
+    private Save saveLocked(IProgressMonitor monitor) throws IOException
     {
+        if (cancelled(monitor))
+        {
+            return new Save(false, null, CANCELLED);
+        }
         if (!baselineHolds())
         {
+            if (conflictsLocked())
+            {
+                return new Save(false, null, Reconciliation.CONFLICT);
+            }
             Reconciliation reconciliation = reconcileLocked();
             return new Save(false, null, reconciliation.outcome);
         }
@@ -760,6 +903,10 @@ public final class FormEditingSession
         String formOut = formChanged() ? formText : null;
         boolean moduleChanged = moduleChanged();
         String moduleOut = moduleChanged ? currentModuleText() : null;
+        if (cancelled(monitor))
+        {
+            return new Save(false, null, CANCELLED);
+        }
         OrdinaryFormModule.WriteOutcome outcome = module.writeEntriesReturning(baselineFile(), formOut, moduleOut,
             id(), true, moduleChanged && moduleOut == null);
         if (!outcome.written)
@@ -785,7 +932,64 @@ public final class FormEditingSession
     // ---- the reconciliation ----------------------------------------------------------------
 
     /**
-     * Reads the file under the lock and settles the session against what it holds now:
+     * Settles the session against the file only while that cannot drop a held edit. A file whose
+     * layout text, or whose module text the session holds changed, contradicts the draft answers
+     * {@link Reconciliation#CONFLICT} and changes nothing; every other answer is exactly what
+     * {@link #reconcile()} returns. An editor uses this on a refresh so the check and the
+     * reconciliation cannot be separated by an outside write; a user's discard still calls
+     * {@link #reconcile()} itself.
+     *
+     * @return what settling found; {@code CONFLICT} when the draft was kept
+     */
+    public Reconciliation settle()
+    {
+        boolean wasReadOnly = readOnly;
+        String previousProblem = problem;
+        Reconciliation result = underBinding(() -> new Reconciliation(REMOVED, REMOVED), this::settleLocked);
+        if (stateChanging(result.outcome) && announces(result.outcome, wasReadOnly, previousProblem))
+        {
+            notifyChanged();
+        }
+        return result;
+    }
+
+    /**
+     * Whether a settling outcome is worth a notice. A read-only answer repeats on every refresh
+     * over the same unreadable file; only the first one, or one whose reason changed, is news.
+     */
+    private boolean announces(String outcome, boolean wasReadOnly, String previousProblem)
+    {
+        return !Reconciliation.READ_ONLY.equals(outcome) || !wasReadOnly
+            || !Objects.equals(previousProblem, problem);
+    }
+
+    private Reconciliation settleLocked()
+    {
+        if (conflictsLocked())
+        {
+            return new Reconciliation(Reconciliation.CONFLICT, KEPT);
+        }
+        return reconcileLocked();
+    }
+
+    /**
+     * Whether the file now holds layout text, or module text the session itself holds changed,
+     * that contradicts the session's edits. Reads the file under the registry lock and changes
+     * nothing: an editor asks this before a refresh, so a conflict keeps the draft instead of
+     * being reconciled away. A removed container answers {@code false}.
+     *
+     * @return whether a reconciliation would have to discard the held edits
+     */
+    public boolean hasConflict()
+    {
+        return underBinding(() -> false, this::conflictsLocked);
+    }
+
+    /**
+     * Reads the file under the lock and settles the session against what it holds now. This is
+     * the explicit discard: over a session that holds edits and a file whose layout changed it
+     * drops the edits and takes the external form. Callers that must not discard ask
+     * {@link #hasConflict()} first and leave the reconciliation to the user's decision.
      *
      * <table border="1">
      * <caption>the reconciliation</caption>
@@ -806,7 +1010,64 @@ public final class FormEditingSession
      */
     public Reconciliation reconcile()
     {
-        return underBinding(() -> new Reconciliation(REMOVED, REMOVED), this::reconcileLocked);
+        Reconciliation result = underBinding(() -> new Reconciliation(REMOVED, REMOVED), this::reconcileLocked);
+        if (stateChanging(result.outcome))
+        {
+            notifyChanged();
+        }
+        return result;
+    }
+
+    /** @return whether a reconciliation outcome changed the snapshot, the draft or the read-only state */
+    private static boolean stateChanging(String outcome)
+    {
+        return Reconciliation.REREAD.equals(outcome) || Reconciliation.MODULE_ACCEPTED.equals(outcome)
+            || Reconciliation.CHANGES_DISCARDED.equals(outcome) || Reconciliation.READ_ONLY.equals(outcome);
+    }
+
+    /**
+     * The conflict test behind {@link #hasConflict()}. A layout text other than the baseline
+     * conflicts with any held edit; a module text other than the baseline conflicts only with a
+     * held module edit, because a layout-only draft is written over the new module without
+     * replacing it. A file that does not read as a measured layout is left for
+     * {@link #reconcileLocked()} to refuse, so this answers {@code false}.
+     *
+     * @return whether the file contradicts the held edits
+     */
+    private boolean conflictsLocked()
+    {
+        byte[] bytes;
+        try
+        {
+            bytes = readBytes();
+        }
+        catch (IOException e)
+        {
+            return false;
+        }
+        if (Arrays.equals(bytes, baseBytes))
+        {
+            return false;
+        }
+        OrdinaryFormFile read;
+        try
+        {
+            read = OrdinaryFormFile.of(null, V8Container.read(bytes), bytes);
+        }
+        catch (IllegalArgumentException e)
+        {
+            return false;
+        }
+        String form = read.formText();
+        if (form == null || !versionMeasured(form))
+        {
+            return false;
+        }
+        if (!Objects.equals(form, baseForm))
+        {
+            return isDirty();
+        }
+        return moduleChanged() && !Objects.equals(read.moduleText(), baseModule);
     }
 
     private Reconciliation reconcileLocked()
@@ -1217,6 +1478,11 @@ public final class FormEditingSession
         }
         if (!baselineHolds())
         {
+            if (conflictsLocked())
+            {
+                reconciledDuringStep = new Reconciliation(Reconciliation.CONFLICT, KEPT);
+                return LayoutChangeOperation.notDone(IStatus.CANCEL, KEPT);
+            }
             reconciledDuringStep = reconcileLocked();
         }
         if (readOnly)
@@ -1452,6 +1718,12 @@ public final class FormEditingSession
         return versionMeasured(baseForm);
     }
 
+    /** @return whether the save's monitor has been canceled */
+    private static boolean cancelled(IProgressMonitor monitor)
+    {
+        return monitor != null && monitor.isCanceled();
+    }
+
     /**
      * @param formText a layout text
      * @return whether it opens with a version the writers are measured on
@@ -1514,6 +1786,22 @@ public final class FormEditingSession
     }
 
     // ---- the answers -----------------------------------------------------------------------
+
+    /**
+     * One editor's receiver of this session's state changes. The session calls it after a
+     * successful edit, gesture, undo, redo, save or state-changing reconciliation, on the thread
+     * that made the change; the receiver schedules its own UI work and unsubscribes when its
+     * editor is disposed.
+     */
+    public interface ChangeListener
+    {
+        /**
+         * The session's texts, baseline, read-only state or history changed.
+         *
+         * @param session the session
+         */
+        void sessionChanged(FormEditingSession session);
+    }
 
     /** What an edit did. */
     public static final class Edit
@@ -1593,7 +1881,9 @@ public final class FormEditingSession
         /**
          * The outcome the reconciliation reached - one of {@link Reconciliation} constants - when
          * the file had changed; {@link FormEditingSession#REMOVED} when the container was removed;
-         * the refusal otherwise; {@code null} when a clean session wrote nothing.
+         * {@link FormEditingSession#CANCELLED} when the monitor stopped the save before its commit
+         * point, so nothing was written; the refusal otherwise; {@code null} when a clean session
+         * wrote nothing.
          */
         public final String reconciliation;
 
@@ -1625,6 +1915,9 @@ public final class FormEditingSession
 
         /** The file holds nothing a session can edit: no container, or a version outside the set. */
         public static final String READ_ONLY = "readOnly"; //$NON-NLS-1$
+
+        /** The file's text contradicts the held edits: they are kept, and only a reconciliation discards them. */
+        public static final String CONFLICT = "conflict"; //$NON-NLS-1$
 
         /** The outcome; one of the constants above, or {@link FormEditingSession#REMOVED}. */
         public final String outcome;
