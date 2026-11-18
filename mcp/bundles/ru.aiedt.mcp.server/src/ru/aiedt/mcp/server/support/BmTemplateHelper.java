@@ -942,7 +942,36 @@ public final class BmTemplateHelper
      *     (the caller surfaces it as {@code templateMutationPersistWarning}
      *     so the operation is not aborted).
      */
+    public static final class PersistOutcome
+    {
+        public final String error;
+        public final String refreshWarning;
+        public final boolean fileWriteAttempted;
+        PersistOutcome(String error, String warning, boolean attempted)
+        {
+            this.error = error;
+            this.refreshWarning = warning;
+            this.fileWriteAttempted = attempted;
+        }
+    }
+
+    public static PersistOutcome persistTemplateMxlxDetailed(IProject project, String ownerFqn,
+        String templateName, EObject spreadsheetDocument)
+    {
+        String result = persistTemplateMxlxInternal(project, ownerFqn, templateName, spreadsheetDocument);
+        if (result != null && result.startsWith("workspaceRefreshWarning:"))
+            return new PersistOutcome(null, result, true);
+        return new PersistOutcome(result, null,
+            result == null || result.startsWith("Template file write failed:"));
+    }
+
     public static String persistTemplateMxlx(IProject project, String ownerFqn,
+        String templateName, EObject spreadsheetDocument)
+    {
+        return persistTemplateMxlxDetailed(project, ownerFqn, templateName, spreadsheetDocument).error;
+    }
+
+    private static String persistTemplateMxlxInternal(IProject project, String ownerFqn,
         String templateName, EObject spreadsheetDocument)
     {
         if (project == null || ownerFqn == null || templateName == null
@@ -1084,7 +1113,14 @@ public final class BmTemplateHelper
             // 0-byte file that EDT then cannot import.
             java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream(8192);
             resource.save(buf, Collections.emptyMap());
-            Files.write(mxlxFile, buf.toByteArray());
+            try
+            {
+                Files.write(mxlxFile, buf.toByteArray());
+            }
+            catch (java.io.IOException writeFailure)
+            {
+                return "Template file write failed: file bytes may be partial; " + writeFailure.getMessage();
+            }
         }
         catch (Exception e)
         {
@@ -1114,6 +1150,8 @@ public final class BmTemplateHelper
         {
             Activator.logWarning("persistTemplateMxlx: workspace refresh failed: " //$NON-NLS-1$
                 + ce.getMessage());
+            return "workspaceRefreshWarning: Template.mxlx was written but workspace refresh failed: "
+                + ce.getMessage();
         }
         return null;
     }

@@ -93,18 +93,11 @@ public class YaxunitTestsTool implements IMcpTool
     public String getDescription()
     {
         return "Unified YAxUnit test runner. " //$NON-NLS-1$
-            + "Pass mode=run|debug to switch between synchronous polling and " //$NON-NLS-1$
-            + "breakpoint-aware debug. Pass help=<topic> to load built-in YAxUnit guidance " //$NON-NLS-1$
-            + "(topics/writing/assertions/setup/events/advanced). " //$NON-NLS-1$
-            + "Filters: extensions, modules, tests (CSV); the launch configuration's filter takes "
-            + "those three only, so any other filter argument is refused rather than ignored. " //$NON-NLS-1$
-            + "updateBeforeLaunch=true (default) updates the infobase before launching and refuses "
-            + "the launch when the update does not finish. " //$NON-NLS-1$
-            + "reuseRecent=true returns the report of a run finished within the last 5 minutes "
-            + "instead of running the tests again (default false). " //$NON-NLS-1$
-            + "installYaxunit=true installs the engine when needed and, by default, lowers and " //$NON-NLS-1$
-            + "confirms its safe-mode and unsafe-action-protection flags before the run; set " //$NON-NLS-1$
-            + "yaxunitUnsafeMode=false to leave both flags untouched. " //$NON-NLS-1$
+            + "help=<topic> returns built-in YAxUnit guidance. " //$NON-NLS-1$
+            + "New launches: Without launchConfigurationName, projectName and applicationId are required; " //$NON-NLS-1$
+            + "installYaxunit also requires projectName. " //$NON-NLS-1$
+            + "Filters extensions, modules, tests (CSV); the launch configuration has only those " //$NON-NLS-1$
+            + "three, so suites, tags and contexts are refused, not ignored. " //$NON-NLS-1$
             + "run_yaxunit_tests (mode=run) and debug_yaxunit_tests (mode=debug) are back-compat " //$NON-NLS-1$
             + "aliases of this facade; prefer it for new prompts."; //$NON-NLS-1$
     }
@@ -113,10 +106,12 @@ public class YaxunitTestsTool implements IMcpTool
     public String getInputSchema()
     {
         return SchemaComposer.object()
-            .stringProperty("mode", "Mode: run (default) or debug.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("mode", //$NON-NLS-1$
+                "run (default) polls the launch synchronously; debug starts breakpoint-aware " //$NON-NLS-1$
+                + "debugging.") //$NON-NLS-1$
             .stringProperty("help", //$NON-NLS-1$
-                "Help topic: topics, writing, assertions, setup, events, advanced. " //$NON-NLS-1$
-                + "When set, other parameters are ignored.")
+                "Help topic: topics, writing, assertions, setup, events, advanced; other " //$NON-NLS-1$
+                + "parameters are ignored.") //$NON-NLS-1$
             .stringProperty("launchConfigurationName", "EDT Run Configuration name (preferred).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("projectName", "Project name (alternative to launchConfigurationName).") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("applicationId", "Application ID for the project.") //$NON-NLS-1$ //$NON-NLS-2$
@@ -129,30 +124,28 @@ public class YaxunitTestsTool implements IMcpTool
                 "Whole-call deadline, seconds (default 60). With the client running, Pending " //$NON-NLS-1$
                     + "with runKey; an earlier expiry, an error naming the step. " //$NON-NLS-1$
                     + "Aliases: timeout, timeoutMs.") //$NON-NLS-1$
-            .stringProperty("runKey", "Collect a Pending run.") //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("runKey", "Collect a Pending run (mode=run only).") //$NON-NLS-1$ //$NON-NLS-2$
             .booleanProperty("updateBeforeLaunch", //$NON-NLS-1$
-                "Default true. Set false to skip pre-launch infobase sync. A preset that " //$NON-NLS-1$
-                    + "disabled update_database launches an omitted argument without updating " //$NON-NLS-1$
-                    + "(answers carry databaseUpdate=SKIPPED_BY_PRESET); an " //$NON-NLS-1$
-                    + "explicit true is refused.") //$NON-NLS-1$
+                "Default true. An update that does not finish refuses the launch; false skips " //$NON-NLS-1$
+                + "the pre-launch infobase sync. If the preset disables update_database, an " //$NON-NLS-1$
+                + "omitted argument launches without updating (answers carry " //$NON-NLS-1$
+                + "databaseUpdate=SKIPPED_BY_PRESET); explicit true is refused.") //$NON-NLS-1$
             .booleanProperty("reuseRecent", //$NON-NLS-1$
-                "Default false. Set true to take the report of a run finished in the " //$NON-NLS-1$
-                    + "last 5 minutes instead of running again.") //$NON-NLS-1$
+                "Default false. Set true to take the report of a run finished in the last 5 " //$NON-NLS-1$
+                + "minutes instead of running again.") //$NON-NLS-1$
             .booleanProperty("installYaxunit", //$NON-NLS-1$
-                "Default false. When true, if the YAxUnit engine is not yet " //$NON-NLS-1$
-                    + "installed in the infobase, its latest release is fetched from " //$NON-NLS-1$
-                    + "GitHub (bia-technologies/yaxunit) and installed as 'YAxUnit' before " //$NON-NLS-1$
-                    + "running; when already installed nothing is downloaded. The response " //$NON-NLS-1$
-                    + "names the outcome 'installYaxunit'. Needs GitHub access and a " //$NON-NLS-1$
-                    + "resolvable thick-client runtime + stored IB credentials.") //$NON-NLS-1$
+                "Default false. When true, installs the latest YAxUnit release from GitHub " //$NON-NLS-1$
+                + "(yaxunitRepo) as 'YAxUnit' when absent; an installed engine is not downloaded. " //$NON-NLS-1$
+                + "Needs GitHub access, a resolvable thick-client runtime and stored IB " //$NON-NLS-1$
+                + "credentials. The response names the outcome 'installYaxunit'.") //$NON-NLS-1$
             .booleanProperty("yaxunitUnsafeMode", //$NON-NLS-1$
-                "Default true; read only with installYaxunit=true. On new and already-installed " //$NON-NLS-1$
-                    + "paths, reads both safety flags, lowers both in one write when " //$NON-NLS-1$
-                    + "either is on, and confirms them before launch. A mismatch aborts with " //$NON-NLS-1$
-                    + "both actual values. False leaves the flags unread and unchanged.") //$NON-NLS-1$
+                "Default true; only with installYaxunit=true. On new and already-installed engines, " //$NON-NLS-1$
+                + "reads both safety flags, lowers both in one write when either is on, and confirms " //$NON-NLS-1$
+                + "them before launch; a mismatch aborts with both actual values. False leaves the " //$NON-NLS-1$
+                + "flags unread and unchanged.") //$NON-NLS-1$
             .stringProperty("yaxunitRepo", //$NON-NLS-1$
-                "GitHub repo to pull YAxUnit from for installYaxunit, as 'owner/repo'. " //$NON-NLS-1$
-                    + "Default 'bia-technologies/yaxunit'.") //$NON-NLS-1$
+                "GitHub repo for installYaxunit as 'owner/repo'. Default " //$NON-NLS-1$
+                + "'bia-technologies/yaxunit'.") //$NON-NLS-1$
             .build();
     }
 

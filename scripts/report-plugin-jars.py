@@ -35,10 +35,14 @@ the JSON carries every bundle's payload under ``bundles`` beside the shared-deli
 The JSON also carries ``p2Profiles``: for every configuration area it names, the installed state
 of the p2 profile that area provisions from - the profile the area's config.ini selects (or the
 one profile of the registry when it selects none), latest numeric snapshot, gzip or plain XML,
-bound to the area by its configurationFolder property. That state is what p2 itself resolved as
-installed, which no directory of cached jars proves either way, so it is what answers whether the
-closed ordinary-forms delivery's feature is still installed in an area. A registry, snapshot or
-binding the format cannot say answers ``unknown`` with the reason rather than an empty reading.
+bound to the area by its configurationFolder property. A configuration area in the user's home
+provisions an installation that sits elsewhere: its profile is a surrogate, so the installation
+the report attributed the area to is passed down and the profile's installFolder - and, for a
+surrogate, its cache.shared - is checked against that identity. That state is what p2 itself
+resolved as installed, which no directory of cached jars proves either way, so it is what answers
+whether the closed ordinary-forms delivery's feature is still installed in an area. A registry,
+snapshot or binding the format cannot say answers ``unknown`` with the reason rather than an
+empty reading.
 """
 import argparse
 import gzip
@@ -87,6 +91,11 @@ LEGACY_OFORM_IUS = ("ru.aiedt.mcp.oform.feature.feature.group",
 CONFIGURATION_FOLDER_PROPERTY = "org.eclipse.equinox.p2.configurationFolder"
 INSTALL_FOLDER_PROPERTY = "org.eclipse.equinox.p2.installFolder"
 CACHE_PROPERTY = "org.eclipse.equinox.p2.cache"
+# A user configuration area provisions an installation that sits elsewhere: p2 marks that
+# profile as a surrogate of the installation and proves the shared installation again in
+# cache.shared. Neither property alone says which installation the area belongs to.
+SURROGATE_PROPERTY = "org.eclipse.equinox.p2.surrogate"
+CACHE_SHARED_PROPERTY = "org.eclipse.equinox.p2.cache.shared"
 
 
 def version_key(version):
@@ -461,6 +470,74 @@ def normalised(path):
     return os.path.normcase(os.path.normpath(str(path)))
 
 
+def config_properties(config_area):
+    """Read Java properties strictly; ambiguous declarations cannot select an agent."""
+    ini = Path(config_area) / "config.ini"
+    if not ini.exists():
+        return {}
+    text = ini.read_text(encoding="utf-8", errors="strict")
+
+    def decode(value):
+        def escape(match):
+            token = match.group(1)
+            if token.startswith("u"):
+                if not re.fullmatch(r"u[0-9a-fA-F]{4}", token):
+                    raise ValueError("malformed Unicode property escape")
+                return chr(int(token[1:], 16))
+            return {"t": "\t", "n": "\n", "r": "\r", "f": "\f"}.get(token, token)
+        if len(value) - len(value.rstrip("\\")) & 1:
+            raise ValueError("unfinished property escape")
+        return re.sub(r"\\(u.{0,4}|.)", escape, value)
+
+    properties = {}
+    pending = ""
+    for raw in text.splitlines():
+        line = pending + raw.lstrip(" \t\f")
+        if (len(line) - len(line.rstrip("\\"))) % 2:
+            pending = line[:-1]
+            continue
+        pending = ""
+        if not line or line.startswith(("#", "!")):
+            continue
+        match = re.match(r"((?:\\.|[^\s=:])+)(?:\s*[=:]\s*|\s+)?(.*)$", line)
+        if not match:
+            raise ValueError("malformed config.ini property")
+        key, value = decode(match[1]), decode(match[2])
+        if key in properties:
+            raise ValueError("duplicate config.ini property: " + key)
+        properties[key] = value
+    if pending:
+        raise ValueError("unfinished property continuation")
+    return properties
+
+
+def declared_agent(config_area, value):
+    """Resolve only the declared local agent, never search for another one."""
+    if not value or "\x00" in value or re.search(r"%(?![0-9a-fA-F]{2})", value):
+        raise ValueError("malformed p2 data area")
+    if value.startswith("@config.dir/"):
+        value = value[len("@config.dir/"):]
+    elif value == "@config.dir":
+        return Path(config_area)
+    elif value.startswith("@"):
+        raise ValueError("unsupported p2 data area variable")
+    parsed = urlparse(value)
+    if parsed.scheme:
+        if (parsed.scheme != "file" or parsed.netloc or parsed.query or parsed.fragment
+                or not parsed.path.startswith("/")):
+            raise ValueError("unsupported p2 data area URL")
+        path = Path(url2pathname(parsed.path))
+        if not path.is_absolute():
+            raise ValueError("p2 file URL is not absolute")
+    else:
+        if parsed.query or parsed.fragment:
+            raise ValueError("unsupported p2 data area location")
+        path = Path(value)
+        if not path.is_absolute():
+            path = Path(config_area) / path
+    return Path(os.path.abspath(path))
+
+
 def read_config_ini_profile_id(config_area):
     """The profile id the area's config.ini names with eclipse.p2.profile, or None.
 
@@ -504,7 +581,7 @@ def read_snapshot_bytes(path, cap):
 
 
 def parse_profile_snapshot(data):
-    """(root attributes, root properties, legacy units) of one snapshot's XML.
+    """(root attributes, root properties, targeted units) of one snapshot's XML.
 
     Streamed and cleared element by element: a profile of a real EDT installation carries a
     few thousand unit elements with nested provision data, and holding the whole tree is
@@ -533,7 +610,7 @@ def parse_profile_snapshot(data):
                 properties[element.get("name")] = element.get("value")
             elif element.tag == "unit":
                 unit_id = element.get("id")
-                if unit_id in LEGACY_OFORM_IUS:
+                if unit_id in LEGACY_OFORM_IUS + (DEFAULT_BUNDLE, OFORM_BUNDLE, "ru.aiedt.mcp.editor"):
                     units.append({"id": unit_id, "version": element.get("version")})
         element.clear()
     if not root_attributes:
@@ -564,8 +641,17 @@ def latest_snapshot(profile_dir):
     return best[2], best[1], None
 
 
-def p2_profile_status(config_area):
+def p2_profile_status(config_area, install=None):
     """The installed legacy state of one configuration area's p2 profile, as data.
+
+    ``install`` is the installation folder a caller knows the area belongs to. A
+    configuration area in the user's home provisions an installation that sits elsewhere:
+    p2 marks that profile as a surrogate, names the installation in installFolder and proves
+    it again in cache.shared, so the area's parent cannot answer which installation it is.
+    The caller that found the launcher knows it, and passing that identity here is what lets
+    a real user layout answer. Without one the profile is read against its parent - the local
+    layout where the area sits inside the installation it belongs to - and a surrogate
+    profile, one claiming another installation, stays unknown rather than guessed.
 
     ``{"status": "known", ...}`` answers from the latest snapshot of the selected profile:
     the id the area's config.ini names, or the one profile the registry holds when the ini
@@ -573,7 +659,14 @@ def p2_profile_status(config_area):
     say, and the known payload carries the unit ids of the closed delivery's feature with
     their versions, the snapshot's timestamp and the folders the profile names.
     """
-    registry = Path(config_area).parent.joinpath(*P2_REGISTRY_PARTS)
+    try:
+        ini = config_properties(config_area)
+        explicit_agent = "eclipse.p2.data.area" in ini
+        agent = (declared_agent(config_area, ini["eclipse.p2.data.area"])
+                 if explicit_agent else Path(config_area).parent / "p2")
+    except (OSError, UnicodeError, ValueError) as error:
+        return {"status": "unknown", "reason": "config.ini cannot select a p2 agent: %s" % error}
+    registry = agent.joinpath(*P2_REGISTRY_PARTS[1:])
     if not registry.is_dir():
         return {"status": "unknown", "reason": "the area holds no p2 profile registry"}
     try:
@@ -581,7 +674,9 @@ def p2_profile_status(config_area):
                         if entry.is_dir() and entry.name.endswith(".profile")]
     except OSError as error:
         return {"status": "unknown", "reason": "the p2 registry cannot be listed (%s)" % error}
-    named = read_config_ini_profile_id(config_area)
+    named = ini.get("eclipse.p2.profile")
+    if named is not None and (not named or named in (".", "..") or "/" in named or "\\" in named):
+        return {"status": "unknown", "reason": "config.ini names an invalid profile id"}
     if named:
         if not any(entry.name == named + ".profile" for entry in profile_dirs):
             return {"status": "unknown",
@@ -613,32 +708,92 @@ def p2_profile_status(config_area):
                 "reason": "the latest snapshot is of the %s profile, not the selected %s"
                           % (root_attributes.get("id"), selected)}
     bound = properties.get(CONFIGURATION_FOLDER_PROPERTY)
-    if not bound:
+    if CONFIGURATION_FOLDER_PROPERTY in properties and not bound:
+        return {"status": "unknown", "reason": "the profile has an empty configurationFolder binding"}
+    surrogate = (properties.get(SURROGATE_PROPERTY) or "").strip().lower() == "true"
+    shared_binding = (CONFIGURATION_FOLDER_PROPERTY not in properties and explicit_agent
+                      and bool(named) and not surrogate)
+    if not bound and not shared_binding:
         return {"status": "unknown",
                 "reason": "the profile does not name the configuration area it belongs to"}
-    if normalised(bound) != normalised(config_area):
+    if bound and normalised(bound) != normalised(config_area):
         return {"status": "unknown",
                 "reason": "the profile is bound to %s, not this configuration area" % bound}
+    known_install = Path(install) if install is not None else Path(config_area).parent
+    if surrogate and install is None:
+        return {"status": "unknown",
+                "reason": "the report knows no installation for this surrogate profile"}
+    install_folder = properties.get(INSTALL_FOLDER_PROPERTY)
+    if (explicit_agent or surrogate) and (
+            not install_folder or normalised(install_folder) != normalised(known_install)):
+        return {"status": "unknown",
+                "reason": "the profile installFolder does not match this installation"}
+    if surrogate:
+        shared_cache = properties.get(CACHE_SHARED_PROPERTY)
+        if not shared_cache or normalised(shared_cache) != normalised(known_install):
+            return {"status": "unknown",
+                    "reason": "the surrogate profile cache.shared does not match this installation"}
+    info = Path(config_area) / "org.eclipse.equinox.simpleconfigurator" / "bundles.info"
+    if info.exists() or shared_binding:
+        try:
+            text = info.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeError) as error:
+            return {"status": "unknown", "reason": "bundles.info cannot prove profile membership: %s" % error}
+        if shared_binding and not parse_bundles_info(text, DEFAULT_BUNDLE):
+            return {"status": "unknown", "reason": "bundles.info holds no server membership to prove the shared binding"}
+        for bundle in (DEFAULT_BUNDLE, OFORM_BUNDLE, "ru.aiedt.mcp.editor"):
+            recorded = {version for version, _ in parse_bundles_info(text, bundle)}
+            installed = {unit["version"] for unit in units if unit["id"] == bundle}
+            if recorded != installed:
+                return {"status": "unknown", "reason": "p2 profile membership differs from bundles.info for " + bundle}
     return {
         "status": "known",
         "profileId": selected,
         "snapshot": stamp,
         "installFolder": properties.get(INSTALL_FOLDER_PROPERTY),
         "cache": properties.get(CACHE_PROPERTY),
-        "legacyUnits": units,
+        "legacyUnits": [unit for unit in units if unit["id"] in LEGACY_OFORM_IUS],
     }
 
 
-def p2_profile_statuses(config_areas):
+def area_installations(found, consumer_list):
+    """The one installation each configuration area belongs to, where the report knows one.
+
+    A record belongs to an installation and a consumer names the area its launcher loads,
+    so both paths tie an area to an installation. Two installations loading one area leave
+    no single identity to verify a surrogate profile against, so that area is left out
+    rather than one of them picked: the reading then falls back to the old local assumption,
+    under which a profile claiming another installation stays unknown.
+    """
+    owners = {}
+
+    def note(area, install):
+        owners.setdefault(normalised(Path(area)), set()).add(normalised(Path(install)))
+
+    for entry in found:
+        for record in entry["records"]:
+            note(config_area_of(record["bundlesInfo"]), entry["install"])
+    for consumer in consumer_list:
+        note(consumer["loads"], consumer["install"])
+    return {area: next(iter(found_installs)) for area, found_installs in owners.items()
+            if len(found_installs) == 1}
+
+
+def p2_profile_statuses(config_areas, area_installations=None):
     """The p2 status of every configuration area, keyed by its area root as normalised.
 
     The key is the root the registry sits in - the parent of the configuration directory -
     spelled the way a caller normalises the area it loads, so both sides meet without one
-    re-deriving the other's paths.
+    re-deriving the other's paths. ``area_installations`` maps a normalised configuration
+    area to the installation the report attributed it to; an area missing from it is read
+    without a known installation, which is right for the local layout and leaves a surrogate
+    profile unknown.
     """
     statuses = {}
+    known = area_installations or {}
     for area in {normalised(area) for area in config_areas}:
-        statuses[normalised(Path(area).parent)] = p2_profile_status(area)
+        statuses[normalised(Path(area).parent)] = p2_profile_status(
+            area, known.get(normalised(area)))
     return statuses
 
 
@@ -649,7 +804,9 @@ def installation_report(roots, bundle):
     record nothing: two installations loading one area hold one profile, and a caller installing
     into it has to know about the other one. ``p2Profiles`` reads the installed state of the p2
     profile of every area those two name, so the caller that must not install beside the closed
-    delivery's feature asks the same report for it.
+    delivery's feature asks the same report for it. The installation each area was attributed to
+    is passed down with the area, because a user configuration area provisions an installation
+    that sits elsewhere and the profile can only be verified against that known identity.
     """
     found, unclaimed, unreadable = installations(roots, bundle)
     consumer_list = consumers(roots)
@@ -666,7 +823,7 @@ def installation_report(roots, bundle):
         "unclaimed": unclaimed,
         "unreadable": unreadable,
         "consumers": consumer_list,
-        "p2Profiles": p2_profile_statuses(areas),
+        "p2Profiles": p2_profile_statuses(areas, area_installations(found, consumer_list)),
     }
 
 

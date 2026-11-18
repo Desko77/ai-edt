@@ -232,6 +232,22 @@ public final class ToolRoad
     {
         PendingWorkRegistry domain = PendingWorkRegistry.domainOf(polled);
         PendingWorkRegistry.PendingEntry entry = domain == null ? null : domain.get(polled);
+        if (named != null)
+        {
+            String operation = arguments == null ? null : arguments.get("operation"); //$NON-NLS-1$
+            if (operation == null && arguments != null)
+            {
+                operation = arguments.get("action"); //$NON-NLS-1$
+            }
+            for (PendingWorkRegistry ownedDomain : PendingWorkRegistry.domains())
+            {
+                String starter = named.resumes(ownedDomain.domain(), operation);
+                if (starter != null && ownedDomain.isOwnedLivePoll(polled, starter, arguments))
+                {
+                    return true;
+                }
+            }
+        }
         if (entry == null || entry.completedAt > 0 || entry.isDone())
         {
             return false;

@@ -20,16 +20,18 @@ import ru.aiedt.mcp.server.toolkit.IMcpTool;
 import ru.aiedt.mcp.server.toolkit.ops.BslModuleAccess.ModulePathResolution;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.modules.IModuleSource;
-import ru.aiedt.mcp.server.support.modules.ModuleSources;
 
 /**
  * Serves a BSL module's text back to the agent, either whole or a chosen line span, with each line
  * carried behind its own number.
  * <p>
- * There is no model here and no editor: the file is read straight off disk, so the tool answers even
- * for a module whose Xtext model is not built. The line-number prefix on every fenced line is what
- * sets this reader apart from the method readers, which fence the raw source untouched; keep it, an
- * agent that asked for a range reads the numbers back to orient itself.
+ * There is no model here: the text comes from the one line sequence {@link ModuleTextSelection}
+ * selects - a registered module provider first, then an open editor's unsaved buffer, then the file
+ * on disk. A provider or editor answer names its origin in a note; a disk answer carries none, as
+ * before. The tool answers even for a module whose Xtext model is not built. The
+ * line-number prefix on every fenced line is what sets this reader apart from the method readers,
+ * which fence the raw source untouched; keep it, an agent that asked for a range reads the numbers
+ * back to orient itself.
  * </p>
  */
 public class ModuleSourceReader
@@ -109,8 +111,8 @@ public class ModuleSourceReader
         modulePath = resolution.getPath();
 
         IFile file = project.getFile(new Path("src").append(modulePath)); //$NON-NLS-1$
-        IModuleSource provided = file.exists() ? null : ModuleSources.locate(project, modulePath);
-        if (!file.exists() && provided == null)
+        ModuleTextSelection selection = ModuleTextSelection.select(project, modulePath, file);
+        if (selection.isAbsent())
         {
             // A path that spells the kind rather than its folder is the common near-miss, and the
             // miss is told where the kind's module actually lives.
@@ -122,34 +124,53 @@ public class ModuleSourceReader
                     ? "." : ". The canonical path of this kind is 'src/" + canonical + "'."); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         }
 
-        // What an open editor holds, when it holds something the file does not. A read that
-        // answered from the file would describe a state the user is no longer looking at, and the
-        // next write would be made against it.
-        List<String> lines = provided != null ? null : ru.aiedt.mcp.server.support.EditorBuffer.unsavedLines(file);
-        boolean fromEditor = lines != null;
-        if (!fromEditor)
+        List<String> lines;
+        try
         {
-            try
-            {
-                lines = provided != null ? provided.lines() : BslModuleAccess.readFileLines(file);
-            }
-            catch (Exception e)
-            {
-                return "Error: could not read file: " + e.getMessage(); //$NON-NLS-1$
-            }
+            lines = selection.lines();
+        }
+        catch (Exception e)
+        {
+            return "Error: could not read file: " + e.getMessage(); //$NON-NLS-1$
         }
 
-        String unsavedNote = fromEditor
-            ? "\n\n**Unsaved:** this is what the open editor holds; the file on disk still has the "
-                + "previous text." //$NON-NLS-1$
-            : ""; //$NON-NLS-1$
-        if (provided != null)
+        String unsavedNote;
+        if (selection.isProvider())
         {
-            // The address is a file that does not exist; what was read is said, so a caller
-            // that goes on to write knows where the write lands.
-            unsavedNote = "\n\n**Source:** " + provided.source() //$NON-NLS-1$
-                + (provided.containerPath() == null ? "" : " - held in src/" + provided.containerPath()) //$NON-NLS-1$ //$NON-NLS-2$
-                + "; EDT builds no model of it. write_module_source by this address writes to the same place."; //$NON-NLS-1$
+            // The text is held by a provider, whether or not a file also exists at the address.
+            // What was read is said, so a caller that goes on to write knows where the write
+            // lands. The provider's own fields ride along - a form editor holding unsaved changes
+            // of the container says so here.
+            IModuleSource provided = selection.provider();
+            StringBuilder source = new StringBuilder("\n\n**Source:** ").append(provided.source()) //$NON-NLS-1$
+                .append(provided.containerPath() == null ? "" : " - held in src/" + provided.containerPath()); //$NON-NLS-1$ //$NON-NLS-2$
+            for (Map.Entry<String, String> field : provided.answerFields().entrySet())
+            {
+                source.append("; ").append(field.getKey()).append(": ").append(field.getValue()); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            source.append("; EDT builds no model of it."); //$NON-NLS-1$
+            if (file.exists())
+            {
+                source.append(" write_module_source and diff_module use the physical file at this address, " //$NON-NLS-1$
+                    + "not the provided source."); //$NON-NLS-1$
+            }
+            else
+            {
+                source.append(" write_module_source by this address writes to the same place."); //$NON-NLS-1$
+            }
+            unsavedNote = source.toString();
+        }
+        else if (selection.isEditor())
+        {
+            // What an open editor holds, when it holds something the file does not. A read that
+            // answered from the file would describe a state the user is no longer looking at, and
+            // the next write would be made against it.
+            unsavedNote = "\n\n**Unsaved:** this is what the open editor holds; the file on disk still has the " //$NON-NLS-1$
+                + "previous text."; //$NON-NLS-1$
+        }
+        else
+        {
+            unsavedNote = ""; //$NON-NLS-1$
         }
         int total = lines.size();
         if (total == 0)

@@ -25,6 +25,7 @@ import org.eclipse.core.resources.IResource;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
 
+import ru.aiedt.mcp.oform.session.OpenFormSessions;
 import ru.aiedt.mcp.server.support.EditorBuffer;
 import ru.aiedt.mcp.server.support.LineDelimiters;
 import ru.aiedt.mcp.server.support.modules.IModuleSource;
@@ -421,14 +422,21 @@ public final class OrdinaryFormModule
     @Override
     public Map<String, String> answerFields()
     {
-        return new LinkedHashMap<>();
+        Map<String, String> fields = new LinkedHashMap<>();
+        if (OpenFormSessions.holdsChanges(container))
+        {
+            fields.put("unsavedInEditor", "true"); //$NON-NLS-1$ //$NON-NLS-2$
+        }
+        return fields;
     }
 
     /**
      * Writes the two entries of the container: the layout, the module, or both. An entry that
      * changed in the container since {@code observed} was read is refused rather than replaced,
      * and an entry the caller does not name keeps whatever the container holds at the write - an
-     * entry of a kind this server does not know included.
+     * entry of a kind this server does not know included. The write goes through
+     * {@link ContainerWriteGuard}, which holds the workspace's rule on the container and the
+     * registry lock of its editing session over the whole read, comparison and write.
      *
      * @param observed the container as the caller read it, or {@code null} when the caller read
      *        none and there is nothing to compare the file with
@@ -439,6 +447,78 @@ public final class OrdinaryFormModule
      *         entry this write would replace, or is held by an editor with unsaved changes
      */
     public boolean writeEntries(OrdinaryFormFile observed, String formText, String moduleText) throws IOException
+    {
+        return writeEntriesReturning(observed, formText, moduleText, null, false).written;
+    }
+
+    /**
+     * Writes the two entries of the container and answers what the write left: whether it wrote,
+     * the bytes it wrote, and the file's modification stamp read right after the write. A caller
+     * that keeps its own baseline of the file - an editing session - makes those its next
+     * baseline inside the lock it holds over the write, so no reader can observe the file between
+     * the write and the baseline.
+     *
+     * @param observed the container as the caller read it, or {@code null} when the caller read
+     *        none and there is nothing to compare the file with
+     * @param formText the layout text as {@link BraceTree#serialize} writes it, or {@code null} to keep
+     * @param moduleText the module text, or {@code null} to keep
+     * @param initiator the session id of the writer - the editing session this write is the save
+     *        of, or {@code null} when the agent writes
+     * @param ruleHeld whether the caller already holds the workspace's rule on the container, as
+     *        a save does over its whole comparison, write and new baseline
+     * @return what the write did; a write that changed nothing carries the file's bytes as they
+     *         are and its current stamp
+     * @throws IOException when the container cannot be read or written, no longer holds an
+     *         entry this write would replace, or is held by an editor with unsaved changes
+     */
+    public WriteOutcome writeEntriesReturning(OrdinaryFormFile observed, String formText, String moduleText,
+        String initiator, boolean ruleHeld) throws IOException
+    {
+        return writeEntriesReturning(observed, formText, moduleText, initiator, ruleHeld, false);
+    }
+
+    /**
+     * Writes the requested container entries, optionally removing the module. The guard
+     * serializes the comparison and write and refuses a replacement held dirty by another
+     * session. This method does not mark the owner for delivery; the caller must call
+     * {@link #afterWrite(boolean)} separately with the outcome's written flag.
+     *
+     * @param observed the snapshot against which replaced entries are compared, or {@code null}
+     *        to omit that comparison
+     * @param formText the layout text, or {@code null} to keep the layout
+     * @param moduleText the module text, or {@code null} to keep it unless removal is requested
+     * @param initiator the writing session's id, or {@code null} for an agent write
+     * @param ruleHeld whether the caller already holds the workspace rule on the container
+     * @param removeModule whether to remove the module entry; requires {@code moduleText} to be
+     *        {@code null}; removing an absent entry leaves it unchanged
+     * @return the write outcome, including current bytes and modification stamp even if unchanged
+     * @throws IllegalArgumentException if removal and a non-null module text are both requested
+     * @throws IOException if reading or writing fails, a replaced entry changed since observation,
+     *         or the guard refuses the write because an editor holds unsaved changes
+     */
+    public WriteOutcome writeEntriesReturning(OrdinaryFormFile observed, String formText, String moduleText,
+        String initiator, boolean ruleHeld, boolean removeModule) throws IOException
+    {
+        if (removeModule && moduleText != null)
+        {
+            throw new IllegalArgumentException("Cannot write and remove the module together"); //$NON-NLS-1$
+        }
+        try
+        {
+            ContainerWriteGuard.GuardedWrite<WriteOutcome> work = () -> writeEntriesGuarded(observed, formText,
+                moduleText, initiator, removeModule);
+            return ruleHeld ? ContainerWriteGuard.writeUnderHeldRule(container, work)
+                : ContainerWriteGuard.write(container, work);
+        }
+        catch (CoreException e)
+        {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    /** The read, the comparison and the write of the two entries, under the guard's locks. */
+    private WriteOutcome writeEntriesGuarded(OrdinaryFormFile observed, String formText, String moduleText,
+        String initiator, boolean removeModule) throws IOException, CoreException
     {
         OrdinaryFormFile file = read();
         boolean changed = false;
@@ -452,46 +532,69 @@ public final class OrdinaryFormModule
             file.setFormText(formText);
             changed = true;
         }
-        if (moduleText != null && !moduleText.equals(file.moduleText()))
+        if ((moduleText != null || removeModule) && !Objects.equals(moduleText, file.moduleText()))
         {
             if (observed != null && !Objects.equals(observed.observedModuleText(), file.moduleText()))
             {
                 throw new IOException("the container changed after it was read: the module entry is not " //$NON-NLS-1$
                     + "the one this write was computed from. Read the module again and repeat the write."); //$NON-NLS-1$
             }
-            file.setModuleText(moduleText);
+            if (removeModule)
+            {
+                file.removeModule();
+            }
+            else
+            {
+                file.setModuleText(moduleText);
+            }
             changed = true;
         }
         if (!changed)
         {
-            return false;
+            return new WriteOutcome(false, file.toBytes(), container.getModificationStamp());
         }
-        refuseWhileAnEditorHoldsUnsavedChanges(container);
+        ContainerWriteGuard.refuseUnlessAllowed(container, initiator, formText != null, moduleText != null || removeModule);
         byte[] bytes = file.toBytes();
-        try
+        if (!container.exists())
         {
-            if (!container.exists())
-            {
-                container.refreshLocal(IResource.DEPTH_ZERO, null);
-            }
-            try (InputStream stream = new ByteArrayInputStream(bytes))
-            {
-                container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
-            }
+            container.refreshLocal(IResource.DEPTH_ZERO, null);
         }
-        catch (CoreException e)
+        Pacing.pauseAt(Pacing.BEFORE_CONTAINER_WRITE);
+        try (InputStream stream = new ByteArrayInputStream(bytes))
         {
-            throw new IOException(e.getMessage(), e);
+            container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
         }
         remembered(file.moduleText());
-        return true;
+        return new WriteOutcome(true, bytes, container.getModificationStamp());
+    }
+
+    /** What a {@link #writeEntriesReturning} did: whether it wrote, and what the file holds now. */
+    public static final class WriteOutcome
+    {
+        /** Whether the container was written. */
+        public final boolean written;
+
+        /** The bytes the write put into the file, or the file's bytes when nothing was written. */
+        public final byte[] bytes;
+
+        /** The file's modification stamp read right after the write. */
+        public final long modificationStamp;
+
+        WriteOutcome(boolean written, byte[] bytes, long modificationStamp)
+        {
+            this.written = written;
+            this.bytes = bytes;
+            this.modificationStamp = modificationStamp;
+        }
     }
 
     /**
      * The body of {@link #write(List)}: the module entry is rewritten from the lines and the
      * container is written when the rewrite differs from what it holds. An empty module over an
      * empty one - no module entry or an empty entry - is not written, so no line break is
-     * invented for a module that has nothing to end.
+     * invented for a module that has nothing to end. The write goes through
+     * {@link ContainerWriteGuard} and replaces the module entry only, so it passes while a
+     * session of the form editor holds nothing but layout changes.
      *
      * @param lines the new module, line separators dropped
      * @return whether the container was written
@@ -501,41 +604,44 @@ public final class OrdinaryFormModule
      */
     private boolean writeContainer(List<String> lines) throws IOException, CoreException
     {
-        OrdinaryFormFile file = read();
-        String current = file.moduleText();
-        String delimiter = delimiterOf(current);
-        String content = String.join(LineDelimiters.LF, lines);
-        if (content.isEmpty() && (current == null || current.isEmpty()))
-        {
-            return false;
-        }
-        if (!content.isEmpty() && !content.endsWith(LineDelimiters.LF))
-        {
-            content = content + LineDelimiters.LF;
-        }
-        String rewritten = LineDelimiters.rewrite(content, delimiter);
-        if (rewritten.equals(current))
-        {
-            return false;
-        }
-        if (hasBaseline && !Objects.equals(baseline, current))
-        {
-            throw new IOException("the container changed after it was read: the module entry is not " //$NON-NLS-1$
-                + "the one this write was computed from. Read the module again and repeat the write."); //$NON-NLS-1$
-        }
-        refuseWhileAnEditorHoldsUnsavedChanges(container);
-        file.setModuleText(rewritten);
-        byte[] bytes = file.toBytes();
-        if (!container.exists())
-        {
-            container.refreshLocal(IResource.DEPTH_ZERO, null);
-        }
-        try (InputStream stream = new ByteArrayInputStream(bytes))
-        {
-            container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
-        }
-        remembered(rewritten);
-        return true;
+        return ContainerWriteGuard.write(container, () -> {
+            OrdinaryFormFile file = read();
+            String current = file.moduleText();
+            String delimiter = delimiterOf(current);
+            String content = String.join(LineDelimiters.LF, lines);
+            if (content.isEmpty() && (current == null || current.isEmpty()))
+            {
+                return Boolean.FALSE;
+            }
+            if (!content.isEmpty() && !content.endsWith(LineDelimiters.LF))
+            {
+                content = content + LineDelimiters.LF;
+            }
+            String rewritten = LineDelimiters.rewrite(content, delimiter);
+            if (rewritten.equals(current))
+            {
+                return Boolean.FALSE;
+            }
+            if (hasBaseline && !Objects.equals(baseline, current))
+            {
+                throw new IOException("the container changed after it was read: the module entry is not " //$NON-NLS-1$
+                    + "the one this write was computed from. Read the module again and repeat the write."); //$NON-NLS-1$
+            }
+            ContainerWriteGuard.refuseUnlessAllowed(container, null, false, true);
+            file.setModuleText(rewritten);
+            byte[] bytes = file.toBytes();
+            if (!container.exists())
+            {
+                container.refreshLocal(IResource.DEPTH_ZERO, null);
+            }
+            Pacing.pauseAt(Pacing.BEFORE_CONTAINER_WRITE);
+            try (InputStream stream = new ByteArrayInputStream(bytes))
+            {
+                container.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
+            }
+            remembered(rewritten);
+            return Boolean.TRUE;
+        }).booleanValue();
     }
 
     /**

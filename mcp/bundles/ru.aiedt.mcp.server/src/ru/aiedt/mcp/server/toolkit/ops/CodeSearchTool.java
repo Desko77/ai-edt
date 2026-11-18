@@ -67,18 +67,7 @@ public class CodeSearchTool implements IMcpTool
     @Override
     public String getDescription()
     {
-        return "Unified code search across nine operations - " //$NON-NLS-1$
-            + "text_search (full-text), object_references (metadata FQN refs), " //$NON-NLS-1$
-            + "method_references (refs to a specific method), resolve_symbol " //$NON-NLS-1$
-            + "(go-to-definition), call_hierarchy (incoming / outgoing call tree), " //$NON-NLS-1$
-            + "symbol_info (type / hover at a code position), content_assist " //$NON-NLS-1$
-            + "(completion proposals at a position), outgoing_structures (a metadata " //$NON-NLS-1$
-            + "object's outbound references), help (topic-driven). Pass " //$NON-NLS-1$
-            + "operation=<name> (snake_case canonical; camelCase like textSearch is " //$NON-NLS-1$
-            + "also accepted); remaining parameters follow the per-operation contracts. " //$NON-NLS-1$
-            + "The standalone tools (search_in_code, find_references, go_to_definition, " //$NON-NLS-1$
-            + "get_method_call_hierarchy, get_symbol_info, get_content_assist, " //$NON-NLS-1$
-            + "get_outgoing_structures) remain available for backward compat."; //$NON-NLS-1$
+        return "Searches BSL modules and metadata."; //$NON-NLS-1$
     }
 
     /**
@@ -138,56 +127,47 @@ public class CodeSearchTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "Operation: text_search / object_references / method_references / " //$NON-NLS-1$
-                    + "resolve_symbol / call_hierarchy / symbol_info / content_assist / " //$NON-NLS-1$
-                    + "outgoing_structures / help (snake_case canonical; camelCase like " //$NON-NLS-1$
-                    + "textSearch is also accepted). operation=help topic=<operation> " //$NON-NLS-1$
-                    + "answers what that one takes.", true) //$NON-NLS-1$
+                "text_search / object_references / method_references / resolve_symbol / " //$NON-NLS-1$
+                    + "call_hierarchy / symbol_info / content_assist / outgoing_structures / " //$NON-NLS-1$
+                    + "help. snake_case canonical; camelCase textSearch accepted.", true) //$NON-NLS-1$
             .stringProperty("topic", //$NON-NLS-1$
-                "Help topic when operation=help: workflow or the name of an operation. " //$NON-NLS-1$
-                    + "Without it, every operation with a one-line summary.") //$NON-NLS-1$
+                "operation help: workflow, or an operation name for its parameters. " //$NON-NLS-1$
+                    + "No topic: one line each.") //$NON-NLS-1$
             .stringProperty("find", FacadeHelpSearch.FIND_DESCRIPTION)
             .stringProperty("projectName", //$NON-NLS-1$
                 "EDT project name.") //$NON-NLS-1$
             .stringProperty("query", //$NON-NLS-1$
                 "Search string for text_search / method_references.") //$NON-NLS-1$
             .stringProperty("objectName", //$NON-NLS-1$
-                "FQN of the metadata object for object_references and outgoing_structures.") //$NON-NLS-1$
+                "Metadata FQN for object_references and outgoing_structures.") //$NON-NLS-1$
             .stringProperty("filePath", //$NON-NLS-1$
-                "BSL file (src/-relative path) for symbol_info / content_assist - the " //$NON-NLS-1$
-                + "position whose type / completions you want.") //$NON-NLS-1$
+                "src-relative BSL path for symbol_info / content_assist.") //$NON-NLS-1$
             .integerProperty("line", //$NON-NLS-1$
                 "1-based line for symbol_info / content_assist.") //$NON-NLS-1$
             .integerProperty("column", //$NON-NLS-1$
                 "1-based column for symbol_info / content_assist.") //$NON-NLS-1$
             .arrayProperty("positions", //$NON-NLS-1$
-                "symbol_info: several positions in the same module, answered in one call " //$NON-NLS-1$
-                    + "and reported in the order given. Each is \"line:column\" or " //$NON-NLS-1$
+                "symbol_info positions, answered in order. Each is \"line:column\" or " //$NON-NLS-1$
                     + "{\"line\":N,\"column\":M}.") //$NON-NLS-1$
             .stringProperty("contains", //$NON-NLS-1$
-                "content_assist: keep only proposals whose name contains this substring.") //$NON-NLS-1$
+                "content_assist: name substring filter.") //$NON-NLS-1$
             .integerProperty("offset", //$NON-NLS-1$
-                "content_assist: skip this many proposals (paging, with limit).") //$NON-NLS-1$
+                "content_assist: proposals to skip; pages with limit.") //$NON-NLS-1$
             .booleanProperty("computeTypes", //$NON-NLS-1$
-                "symbol_info: resolve the module's cross-references first so the answer " //$NON-NLS-1$
-                    + "names the type of the symbol (default true).") //$NON-NLS-1$
+                "symbol_info: name the symbol type (default true).") //$NON-NLS-1$
             .booleanProperty("extendedDocumentation", //$NON-NLS-1$
-                "content_assist: include the full doc string for each proposal. Default: false.") //$NON-NLS-1$
+                "content_assist: full documentation per proposal. Default: false.") //$NON-NLS-1$
             .stringProperty("symbol", //$NON-NLS-1$
-                "Method symbol for resolve_symbol (e.g. ОбщегоНазначения.СообщитьПользователю).") //$NON-NLS-1$
+                "resolve_symbol method symbol. Russian and English identifiers accepted.") //$NON-NLS-1$
             .stringProperty("methodName", //$NON-NLS-1$
-                "Method name for call_hierarchy (case-insensitive).") //$NON-NLS-1$
+                "call_hierarchy method name, case-insensitive.") //$NON-NLS-1$
             .stringProperty("modulePath", //$NON-NLS-1$
-                "call_hierarchy: the module the method lives in - a path from src/ " //$NON-NLS-1$
-                    + "(CommonModules/MyModule/Module.bsl) or a module FQN " //$NON-NLS-1$
-                    + "(CommonModule.MyModule / Catalog.Products.ManagerModule).") //$NON-NLS-1$
+                "call_hierarchy: path from src or a module FQN.") //$NON-NLS-1$
             .stringProperty("direction", //$NON-NLS-1$
-                "call_hierarchy direction: incoming / callers (default - who calls this " //$NON-NLS-1$
-                    + "method) or outgoing / callees (what this method calls).") //$NON-NLS-1$
+                "call_hierarchy: incoming / callers (default) or outgoing / callees.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
-                "Maximum results. text_search: default 100 / max 500. " //$NON-NLS-1$
-                + "object_references: default 100 / max 500. content_assist: caps the " //$NON-NLS-1$
-                + "proposal list.") //$NON-NLS-1$
+                "text_search default 100, max 500. object_references default 100, max 500. " //$NON-NLS-1$
+                    + "content_assist caps the list.") //$NON-NLS-1$
             .booleanProperty("caseSensitive", //$NON-NLS-1$
                 "text_search / method_references case sensitivity. Default: false.") //$NON-NLS-1$
             .booleanProperty("isRegex", //$NON-NLS-1$
@@ -195,44 +175,34 @@ public class CodeSearchTool implements IMcpTool
             .booleanProperty("wholeWord", //$NON-NLS-1$
                 "Whole-word match for text_search / method_references.") //$NON-NLS-1$
             .booleanProperty("compact", //$NON-NLS-1$
-                "Trim large text_search responses to first N matches plus stats " //$NON-NLS-1$
-                + "and top-5 files by match count.") //$NON-NLS-1$
+                "text_search: first N matches, stats, top-5 files.") //$NON-NLS-1$
             .integerProperty("timeoutSeconds", //$NON-NLS-1$
-                "Soft scan budget for text_search / method_references (default 25, range " //$NON-NLS-1$
-                    + "5-120).") //$NON-NLS-1$
+                "text_search / method_references soft scan budget (default 25, range 5-120).") //$NON-NLS-1$
             .stringProperty("fileMask", //$NON-NLS-1$
-                "text_search / method_references: filter by module path substring (e.g. " //$NON-NLS-1$
-                    + "'CommonModules' or 'Documents/SalesOrder').") //$NON-NLS-1$
+                "text_search / method_references: module path substring.") //$NON-NLS-1$
             .stringProperty("metadataType", //$NON-NLS-1$
-                "text_search: filter by metadata type (commonModules, documents, catalogs, " //$NON-NLS-1$
-                    + "informationRegisters, ...).") //$NON-NLS-1$
+                "text_search: commonModules, documents, catalogs, informationRegisters, ...") //$NON-NLS-1$
             .stringProperty("outputMode", //$NON-NLS-1$
-                "text_search: full (matches with context, default) / count (only the " //$NON-NLS-1$
-                    + "total) / files (file list with match counts, no context).") //$NON-NLS-1$
+                "text_search: full (default) / count / files.") //$NON-NLS-1$
             .integerProperty("contextLines", //$NON-NLS-1$
-                "text_search: lines of context shown around each match (default 2, max 5).") //$NON-NLS-1$
+                "text_search context lines around a match (default 2, max 5).") //$NON-NLS-1$
             .integerProperty("linesBefore", //$NON-NLS-1$
-                "text_search: context lines before each match (overrides contextLines).") //$NON-NLS-1$
+                "text_search lines before a match (overrides contextLines).") //$NON-NLS-1$
             .integerProperty("linesAfter", //$NON-NLS-1$
-                "text_search: context lines after each match (overrides contextLines).") //$NON-NLS-1$
+                "text_search lines after a match (overrides contextLines).") //$NON-NLS-1$
             .booleanProperty("skipBsl", //$NON-NLS-1$
-                "object_references: skip the BSL code search phase (metadata-only refs).") //$NON-NLS-1$
+                "object_references: skip the BSL phase; metadata-only refs.") //$NON-NLS-1$
             .booleanProperty("bslOnly", //$NON-NLS-1$
-                "object_references: search BSL code only, skip metadata back-references. " //$NON-NLS-1$
-                    + "Inverse of skipBsl.") //$NON-NLS-1$
+                "object_references: BSL only, skip metadata back-references. Inverse of skipBsl.") //$NON-NLS-1$
             .stringProperty("categories", //$NON-NLS-1$
-                "object_references: comma-separated whitelist - back (direct back refs) / " //$NON-NLS-1$
-                    + "produced (produced types) / predefined / fields (attribute/dimension " //$NON-NLS-1$
-                    + "refs) / bsl (BSL code).") //$NON-NLS-1$
+                "object_references: back / produced / predefined / fields / bsl.") //$NON-NLS-1$
             .booleanProperty("deep", //$NON-NLS-1$
-                "object_references: expand produced types, labelling each by kind " //$NON-NLS-1$
-                    + "(Object / Reference / Selection / Manager / Cache / List).") //$NON-NLS-1$
+                "object_references: label produced types Object / Reference / Selection / " //$NON-NLS-1$
+                    + "Manager / Cache / List.") //$NON-NLS-1$
             .stringProperty("runKey", //$NON-NLS-1$
-                "object_references: resume a Pending search issued earlier. find_references on " //$NON-NLS-1$
-                    + "a large object can exceed the soft timeout and return a runKey - re-call " //$NON-NLS-1$
-                    + "with it to fetch the final result.") //$NON-NLS-1$
+                "object_references: re-call with this key after Pending from a soft timeout.") //$NON-NLS-1$
             .booleanProperty("includeSource", //$NON-NLS-1$
-                "resolve_symbol: include the resolved method's source code (default true).") //$NON-NLS-1$
+                "resolve_symbol: include the method source (default true).") //$NON-NLS-1$
             .build();
     }
 
@@ -619,6 +589,10 @@ public class CodeSearchTool implements IMcpTool
                 sb.append("| Type / hover at a position | symbol_info |\n"); //$NON-NLS-1$
                 sb.append("| Completions at a position | content_assist |\n"); //$NON-NLS-1$
                 sb.append("| What metadata does object X point at | outgoing_structures |\n"); //$NON-NLS-1$
+                sb.append("Standalone tools search_in_code, find_references, go_to_definition, " //$NON-NLS-1$
+                    + "get_method_call_hierarchy, get_symbol_info, get_content_assist and " //$NON-NLS-1$
+                    + "get_outgoing_structures remain available.\n"); //$NON-NLS-1$
+                sb.append("operation=help topic=<operation> answers what that one takes.\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             case "text_search": //$NON-NLS-1$
                 sb.append("# code_search operation=text_search\n\nDelegates to search_in_code. " //$NON-NLS-1$
@@ -626,6 +600,9 @@ public class CodeSearchTool implements IMcpTool
                     + "project with sources), query, caseSensitive, isRegex, wholeWord, " //$NON-NLS-1$
                     + "compact, maxResults, contextLines, fileMask, metadataType, " //$NON-NLS-1$
                     + "outputMode (full/count/files).\n"); //$NON-NLS-1$
+                sb.append("fileMask examples: CommonModules, Documents/SalesOrder. " //$NON-NLS-1$
+                    + "outputMode full returns matches with context, count returns only the " //$NON-NLS-1$
+                    + "total, files returns the file list with match counts and no context.\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             case "object_references": //$NON-NLS-1$
                 sb.append("# code_search operation=object_references\n\nDelegates to find_references. " //$NON-NLS-1$
@@ -635,6 +612,8 @@ public class CodeSearchTool implements IMcpTool
                     + "configuration's siblings when the owner is itself an extension), " //$NON-NLS-1$
                     + "objectName / objectFqn, limit, deep, skipBsl, bslOnly, categories, " //$NON-NLS-1$
                     + "timeoutSeconds, runKey.\n"); //$NON-NLS-1$
+                sb.append("categories: back (direct back refs) / produced (produced types) / " //$NON-NLS-1$
+                    + "predefined / fields (attribute/dimension refs) / bsl (BSL code).\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             case "method_references": //$NON-NLS-1$
                 sb.append("# code_search operation=method_references\n\nDelegates to search_in_code " //$NON-NLS-1$
@@ -652,6 +631,8 @@ public class CodeSearchTool implements IMcpTool
                     + "the method lives in - src/ path or module FQN), methodName, and " //$NON-NLS-1$
                     + "direction=incoming|callers (default) or outgoing|callees. Returns the " //$NON-NLS-1$
                     + "direct callers or callees; depth walks callers of callers, 1 to 5.\n"); //$NON-NLS-1$
+                sb.append("Examples: CommonModules/MyModule/Module.bsl, CommonModule.MyModule, " //$NON-NLS-1$
+                    + "Catalog.Products.ManagerModule.\n"); //$NON-NLS-1$
                 return sb.toString() + parametersOf(topic);
             case "symbol_info": //$NON-NLS-1$
                 sb.append("# code_search operation=symbol_info\n\nDelegates to get_symbol_info. " //$NON-NLS-1$

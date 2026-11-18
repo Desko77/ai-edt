@@ -1,0 +1,1365 @@
+{
+  "before": {
+    "schema": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "description": "audit | layout | diff_form | inspect_layout | describe_owner | create_form | import_from_infobase | set_property | bind_handler | unbind_handler | add_element | add_page | remove_page | remove_element | add_column | remove_column | add_command_panel | add_button | add_submenu | add_separator | remove_button | set_action_source | move_element | help (required)"
+        },
+        "projectName": {
+          "type": "string",
+          "description": "Name of the EDT project whose ordinary forms to read or write."
+        },
+        "formFqn": {
+          "type": "string",
+          "description": "The form, Type.Object.Form.Name or CommonForm.Name (Catalog.Products.Form.ItemForm). Alternatively modulePath."
+        },
+        "modulePath": {
+          "type": "string",
+          "description": "The form by the address of its module, <dir>/<object>/Forms/<form>/Module.bsl."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "Writing operations: report what the write would do and write nothing (default false)."
+        },
+        "language": {
+          "type": "string",
+          "description": "Writing operations: the language code of new texts (default ru)."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "audit: how many mismatching or unreadable forms to name (default 20)."
+        },
+        "details": {
+          "type": "boolean",
+          "description": "audit: list every form with its version and sizes, capped by limit (default false)."
+        },
+        "ownerFqn": {
+          "type": "string",
+          "description": "describe_owner: the owner, Type.Object (Catalog.Products, InformationRegister.Prices). create_form: the owner of the new form, Type.Object (Catalog.Products, DataProcessor.Report1)."
+        },
+        "name": {
+          "type": "string",
+          "description": "create_form: the name of the new form. add_element: the name of the new element. add_page: the name of the new page. remove_page: the name of the page to remove. add_column: the name of the new column. remove_column: the name of the column to remove. add_command_panel: the name of the new panel. add_button: the button's name. add_submenu: the submenu's name. add_separator: the separator's name. remove_button: the button to remove."
+        },
+        "purpose": {
+          "type": "string",
+          "description": "create_form: ItemForm (default for an object) | ListForm (default for a register) | ChoiceForm | FolderForm | RecordForm | RecordSetForm | None (no main attribute)."
+        },
+        "synonym": {
+          "type": "string",
+          "description": "create_form: the form's synonym (default: derived from the name)."
+        },
+        "title": {
+          "type": "string",
+          "description": "create_form: the form's title (default: the synonym). add_page: the page's title."
+        },
+        "width": {
+          "type": "integer",
+          "description": "create_form: the form's width, from 500 to 1000 (default 500, or 820 with two columns). set_property: box: the width, instead of right; size: the form's width. add_element, add_command_panel: the width, instead of right. add_column: the column's width."
+        },
+        "height": {
+          "type": "integer",
+          "description": "create_form: the form's height, from 350 to 700 (default: the content, at least 350). set_property: box: the height, instead of bottom; size: the form's height. add_element, add_command_panel: the height, instead of bottom."
+        },
+        "setAsDefault": {
+          "type": "boolean",
+          "description": "create_form: make it the owner's default form of that purpose (default false)."
+        },
+        "withFields": {
+          "type": "boolean",
+          "description": "create_form: lay the header out as labels and fields (default true on an object form)."
+        },
+        "withTables": {
+          "type": "boolean",
+          "description": "create_form: lay a table out for each tabular section (default true only for ItemForm with tabular sections)."
+        },
+        "withCommands": {
+          "type": "boolean",
+          "description": "create_form: put the form's command panel and a panel on each table (default true except for purpose=None)."
+        },
+        "columns": {
+          "type": "string",
+          "description": "create_form: 1, 2 or auto (default auto: 1 when the header has 12 attributes or fewer, else 2)."
+        },
+        "tabularSections": {
+          "type": "string",
+          "description": "create_form: pages or below (default pages when there are two or more, else below)."
+        },
+        "module": {
+          "type": "string",
+          "description": "import_from_infobase: where the module entry comes from - project (default: the module of the project's current container; refused when the project holds no container, with module=infobase named as the source that has one) or infobase (the exported container's own module)."
+        },
+        "applicationId": {
+          "type": "string",
+          "description": "import_from_infobase: the infobase to export the form from, when the project has more than one; the default infobase when omitted."
+        },
+        "elementName": {
+          "type": "string",
+          "description": "set_property: the element; absent for the form itself. bind_handler: the element whose event to bind; absent for the form. unbind_handler: the element whose event to unbind; absent for the form. remove_element: the element to remove. add_column, remove_column: the Table. move_element: the element to move."
+        },
+        "property": {
+          "type": "string",
+          "description": "set_property: one of title (the form's title, or an element's caption with elementName) | caption (an element's caption (value)) | tooltip (an element's tooltip (value; empty clears)) | size (the form's width and/or height) | box (an element's left, top, right, bottom, or width and height) | visible (an element's visibility (value=true|false)) | enabled (an element's enablement (value=true|false)) | readOnly (a field's read-only flag (value=true|false); measured on a Field alone) | tabs (a panel's tab strip (value=true|false): true draws a tab per page, false leaves the pages to be turned over from code. A panel draws tabs from its second page on) | font (an element's font: value=auto resets it to the form's font, or fontFamily with fontSize (and bold, italic, underline)) | textColor (an element's text colour (value=auto | #RRGGBB | a style element index)) | backColor (an element's background colour (value=auto | #RRGGBB | a style element index)) | borderColor (an element's border colour (value=auto | #RRGGBB | a style element index)) | alignment (the horizontal alignment (value=left|center|right|auto) of a Label, a Button or a Field; a Field has no center) | format (a field's format string (value; empty clears it)) | editFormat (a field's edit format - not measured: the platform reads no ФорматРедактирования and the corpus carries none; refused) | anchor (an element's edge (edge=left|top|right|bottom) bound to the form (value=form), to none (value=none), or to a neighbour (value=<element>.<edge> with offset))."
+        },
+        "value": {
+          "type": "string",
+          "description": "set_property: the text for title, caption or tooltip; true|false for visible, enabled, readOnly; auto, #RRGGBB or a style element index for the colours; left|center|right|auto for alignment; auto for the font; form, none or <element>.<edge> for anchor."
+        },
+        "left": {
+          "type": "integer",
+          "description": "set_property: box: the left edge. add_element, add_command_panel: the left edge."
+        },
+        "top": {
+          "type": "integer",
+          "description": "set_property: box: the top edge. add_element, add_command_panel: the top edge."
+        },
+        "right": {
+          "type": "integer",
+          "description": "set_property: box: the right edge. add_element, add_command_panel: the right edge."
+        },
+        "bottom": {
+          "type": "integer",
+          "description": "set_property: box: the bottom edge. add_element, add_command_panel: the bottom edge."
+        },
+        "fontFamily": {
+          "type": "string",
+          "description": "set_property: font: the family, with fontSize."
+        },
+        "fontSize": {
+          "type": "integer",
+          "description": "set_property: font: the size, with fontFamily."
+        },
+        "bold": {
+          "type": "boolean",
+          "description": "set_property: font: bold (with fontFamily and fontSize)."
+        },
+        "italic": {
+          "type": "boolean",
+          "description": "set_property: font: italic (with fontFamily and fontSize)."
+        },
+        "underline": {
+          "type": "boolean",
+          "description": "set_property: font: underline (with fontFamily and fontSize)."
+        },
+        "edge": {
+          "type": "string",
+          "description": "set_property: anchor: the element's own edge - left, top, right or bottom."
+        },
+        "offset": {
+          "type": "integer",
+          "description": "set_property: anchor: the offset from the target's edge (default 0)."
+        },
+        "event": {
+          "type": "string",
+          "description": "bind_handler: the event (ПриИзменении, Нажатие, ПриОткрытии, ...; help lists them). unbind_handler: the event to unbind."
+        },
+        "procedure": {
+          "type": "string",
+          "description": "bind_handler: the procedure to bind (default <element><event>, or the event for the form). add_button: the procedure the button runs (the parameters: Кнопка)."
+        },
+        "stub": {
+          "type": "boolean",
+          "description": "bind_handler: add an empty procedure with the measured parameters to the module when it declares none (default true). add_button: add an empty procedure with the parameter Кнопка to the module when it declares none (default false)."
+        },
+        "type": {
+          "type": "string",
+          "description": "add_element: Button | Chart | CheckBox | CommandPanel | Field | FieldHtml | Group | Image | Label | ListField | Panel | RadioBtn | SelectField | Separator | Table | TableField | TextDocumentField; a Table shows the rows data names, and so does a ListField; a TableField, a FieldHtml, a TextDocumentField and a Chart take no data. add_column: String | Number | Date | Boolean, the values' type when data names none."
+        },
+        "parent": {
+          "type": "string",
+          "description": "add_element: the Panel to put the element in; absent for the form. add_page, remove_page: the Panel; absent for the form. add_command_panel: the Panel to put the panel in; absent for the form. add_button: the submenu to put the button in; absent for the panel itself. add_submenu, add_separator: the submenu to put it in; absent for the panel itself. move_element: the Panel to move the element into, or form for the root."
+        },
+        "page": {
+          "type": "string",
+          "description": "add_element, add_command_panel: the page of the panel or form; absent for the first. move_element: the page of that parent."
+        },
+        "caption": {
+          "type": "string",
+          "description": "add_element: the caption of a Label, Button, CheckBox, RadioBtn or Group. add_column: the column's caption. add_button: the caption of a procedure button (default the name); a button of a standard action keeps the text the platform gives that action and takes the caption as its tooltip. add_submenu: the caption (default the name)."
+        },
+        "tooltip": {
+          "type": "string",
+          "description": "add_element: the tooltip."
+        },
+        "data": {
+          "type": "string",
+          "description": "add_element: the data path in words, <form attribute>[.<member>...] (СправочникОбъект.Артикул). A TableField, a FieldHtml, a TextDocumentField and a Chart show what their own record or the code sets, so this argument is refused for them; a ListField names the value-list attribute it shows. add_column: the member or standard attribute of the row (Код, Наименование, Номенклатура, НомерСтроки), or the column of the value table."
+        },
+        "cascade": {
+          "type": "boolean",
+          "description": "remove_element: remove an element command panels take their actions from, clearing the source and the auto-fill of those panels (default false)."
+        },
+        "editable": {
+          "type": "boolean",
+          "description": "add_column: the cell gets an editor (default true); given together with control, the two must agree."
+        },
+        "control": {
+          "type": "string",
+          "description": "add_column: the cell's control: field, checkBox, selectField, none (default field when editable, none otherwise); a pair of control and value type outside the measured ones is refused"
+        },
+        "actionSource": {
+          "type": "string",
+          "description": "add_command_panel: the Table the panel takes its actions from; absent or none for no source."
+        },
+        "autoFill": {
+          "type": "boolean",
+          "description": "add_command_panel: whether the platform fills the panel's buttons itself (default true with an actionSource, false without one). set_action_source: whether the platform fills the panel's buttons itself (default true with a table, false with none)."
+        },
+        "panel": {
+          "type": "string",
+          "description": "add_button: the command panel that takes the button. add_submenu: the command panel that takes the submenu. add_separator: the command panel that takes the separator. remove_button: the command panel that holds the button. set_action_source: the command panel."
+        },
+        "action": {
+          "type": "string",
+          "description": "add_button: a standard action: one of close, write, writeAndClose, help, add, change, delete, copy, moveUp, moveDown, sortAscending, sortDescending, finishEditing, filterByValue, disableFilter, saveValues, restoreValues, copyObject, reread, findInList, refresh, listSettings, outputList, select, enableAll, disableAll, back, forward, newGroup, findInTree, moveToGroup, hierarchy, viewByOwner, searchByNumber, setFilterAndSort, post, unpost, editInDialog, markDeletion, setFilter, enterOnBasis."
+        },
+        "picture": {
+          "type": "integer",
+          "description": "add_button: the index of the picture dictionary of a standard action (0 to 3; default the picture the corpus most often writes for the action)."
+        },
+        "before": {
+          "type": "string",
+          "description": "add_button: a button of the same block to put the button in front of. add_submenu: a button of the same block to put the submenu in front of. add_separator: a button of the same block to put the separator in front of."
+        },
+        "table": {
+          "type": "string",
+          "description": "set_action_source: the Table the panel takes its actions from; none clears the source."
+        },
+        "topic": {
+          "type": "string",
+          "description": "help: Operation name for its full contract; omit or leave blank for the general catalogue."
+        }
+      },
+      "required": []
+    },
+    "generalHelp": {
+      "success": true,
+      "tool": "ordinary_forms",
+      "operations": [
+        "audit - every ordinary form of the project: layout version, container entries, module size, byte-for-byte round trip of the layout text; details=true lists forms, limit caps the lists",
+        "layout - one form (formFqn or modulePath): title, attributes with types, pages, form handlers with events and the element tree - type, name, caption, tooltip, box, page, data path, handlers, buttons of a command panel",
+        "diff_form - one form (formFqn or modulePath) against HEAD: whether the layout entry and the module entry changed, and the names of the other entries added, removed or changed; a changed module is left to diff_module at the module's address; when there is nothing to compare with, revision names the outcome",
+        "inspect_layout - one form (formFqn or modulePath), read-only: findings over the layout the reader yields - duplicate ids and names in their namespaces, references to pages, elements, attributes, action sources and anchor targets the layout does not hold, handlers the module does not declare, invalid boxes, anchor cycles - and warnings for siblings of one page that overlap (a Group or Panel frame never a party) and a child past its parent's box; the coverage names what was and was not checked, and nothing is corrected",
+        "describe_owner - ownerFqn (Type.Object): the owner's attributes, tabular sections, standard attributes and list columns, in words, with no uuid",
+        "create_form - ownerFqn, name, purpose (ItemForm | ListForm | ChoiceForm | FolderForm | RecordForm | RecordSetForm | None), synonym, title, width, height, setAsDefault, withFields, withTables, withCommands, columns (1 | 2 | auto), tabularSections (pages | below): the form's entry on its owner and the container Forms/<name>/Form.oform. The layout is the owner's header, its tabular sections and its command panels; the file, the model entry and the baseline mark are three steps, and a failure of the file or the model removes the file",
+        "import_from_infobase - formFqn (or modulePath), module (project | infobase, default project), applicationId: the form's container pulled out of the project's infobase into the project. The layout and every other entry of the container come from the infobase, the module entry from the chosen source; a handler the infobase layout binds that the chosen module does not declare stops the write and is named in the answer",
+        "set_property - property=title (of the form, or of an element with elementName) | caption | tooltip (value) | box (left, top, right, bottom or width, height) of elementName | size (width, height) of the form | visible, enabled, readOnly, tabs (value=true|false) | font (value=auto, or fontFamily with fontSize, bold, italic, underline) | textColor, backColor, borderColor (value=auto | #RRGGBB | a style element index) | alignment (value=left|center|right|auto) | format (value, empty clears) | editFormat (refused) | anchor (edge=left|top|right|bottom, value=form|none|<element>.<edge>, offset) of elementName",
+        "bind_handler - event + procedure (default <element><event>) of elementName, or of the form without elementName; stub=true adds an empty procedure with the measured parameters to the module",
+        "unbind_handler - event of elementName or of the form",
+        "add_element - type, name, parent (a Panel) and page, left/top/right/bottom or width/height, caption, tooltip, data (a path in words: <form attribute>.<member>); the record is the measured template of the type with the element's own values put in",
+        "add_page - name and title of a page of the form or of parent (a Panel)",
+        "remove_page - name of a page of the form or of parent (a Panel); a page with elements on it or the last page is refused",
+        "remove_element - elementName, with its children, data bindings and the anchors that named it; an element a command panel takes its actions from is refused unless cascade=true, which clears the source and the auto-fill of those panels",
+        "add_column - elementName (a Table), name, caption, data (a member or standard attribute of the row, or the value table's column), type (String | Number | Date | Boolean when data names none), width, editable, control (the cell's control); the kind of column follows what the rows are: a list of an object, a tabular section, a value table or tree",
+        "remove_column - elementName (a Table) and name",
+        "add_command_panel - name, the box (left/top/right/bottom or width/height), parent and page, actionSource (a Table of the form) and autoFill (true with a source, false without one); add_element type=CommandPanel writes the same panel without a source",
+        "add_button - panel + name + caption (a standard action keeps its own text and takes the caption as its tooltip), and exactly one of procedure (a procedure of the form module, stub=true adds an empty one) and action (a registered standard action); picture is the index of the measured dictionary; parent puts the button in a submenu, before in front of a named button of the same block",
+        "add_submenu - panel + name + caption of a submenu, with parent and before as of a button; the submenu gets an empty buttons block of its own - add_button parent=<submenu> fills it",
+        "add_separator - panel + name of a separator, with parent and before as of a button",
+        "remove_button - panel + name: a button, a separator or a submenu with every button under it; the action records nothing references any more go with it",
+        "set_action_source - panel + table (a Table of the form, or none): sets the source and autoFill=true, or clears both; autoFill=false keeps the source without the platform filling the buttons",
+        "move_element - elementName to parent (a Panel, or form) and page; the box stays; anchors between the element and the neighbours the move separates are released both ways and listed",
+        "help - this catalogue"
+      ],
+      "properties": {
+        "title": "the form's title, or an element's caption with elementName",
+        "caption": "an element's caption (value)",
+        "tooltip": "an element's tooltip (value; empty clears)",
+        "size": "the form's width and/or height",
+        "box": "an element's left, top, right, bottom, or width and height",
+        "visible": "an element's visibility (value=true|false)",
+        "enabled": "an element's enablement (value=true|false)",
+        "readOnly": "a field's read-only flag (value=true|false); measured on a Field alone",
+        "tabs": "a panel's tab strip (value=true|false): true draws a tab per page, false leaves the pages to be turned over from code. A panel draws tabs from its second page on",
+        "font": "an element's font: value=auto resets it to the form's font, or fontFamily with fontSize (and bold, italic, underline)",
+        "textColor": "an element's text colour (value=auto | #RRGGBB | a style element index)",
+        "backColor": "an element's background colour (value=auto | #RRGGBB | a style element index)",
+        "borderColor": "an element's border colour (value=auto | #RRGGBB | a style element index)",
+        "alignment": "the horizontal alignment (value=left|center|right|auto) of a Label, a Button or a Field; a Field has no center",
+        "format": "a field's format string (value; empty clears it)",
+        "editFormat": "a field's edit format - not measured: the platform reads no ФорматРедактирования and the corpus carries none; refused",
+        "anchor": "an element's edge (edge=left|top|right|bottom) bound to the form (value=form), to none (value=none), or to a neighbour (value=<element>.<edge> with offset)"
+      },
+      "events": {
+        "form": [
+          "ПередОткрытием",
+          "ПриОткрытии",
+          "ПередЗакрытием",
+          "ПриЗакрытии",
+          "ОбработкаВыбора",
+          "ОбработкаАктивизацииОбъекта",
+          "ОбработкаЗаписиНовогоОбъекта",
+          "ОбработкаОповещения",
+          "ПриПовторномОткрытии",
+          "ОбновлениеОтображения",
+          "ВнешнееСобытие",
+          "ОбработкаПроверкиЗаполнения"
+        ],
+        "mainAttributeOfAnObject": [
+          "ПередЗаписью",
+          "ПриЗаписи",
+          "ПослеЗаписи",
+          "ПриИзмененииДанных"
+        ],
+        "mainAttributeOfSettings": [
+          "ПередСохранениемЗначений",
+          "ПослеВосстановленияЗначений"
+        ],
+        "Field": [
+          "ПриИзменении",
+          "НачалоВыбораИзСписка",
+          "НачалоВыбора",
+          "Очистка",
+          "РегулированиеЗначения",
+          "Открытие",
+          "ОбработкаВыбора",
+          "ОкончаниеВводаТекста",
+          "АвтоПодборТекста"
+        ],
+        "SelectField": [
+          "ПриИзменении",
+          "НачалоВыбораИзСписка",
+          "НачалоВыбора",
+          "Очистка",
+          "РегулированиеЗначения",
+          "Открытие",
+          "ОбработкаВыбора",
+          "ОкончаниеВводаТекста",
+          "АвтоПодборТекста"
+        ],
+        "CheckBox": [
+          "ПриИзменении"
+        ],
+        "RadioBtn": [
+          "ПриИзменении"
+        ],
+        "Button": [
+          "Нажатие"
+        ],
+        "Label": [
+          "Нажатие"
+        ],
+        "Image": [
+          "Нажатие"
+        ],
+        "Panel": [
+          "ПриСменеСтраницы"
+        ],
+        "Table": [
+          "Выбор",
+          "ПриАктивизацииСтроки",
+          "ПриАктивизацииКолонки",
+          "ПриАктивизацииЯчейки",
+          "ПередНачаломДобавления",
+          "ПередНачаломИзменения",
+          "ПередУдалением",
+          "ПриНачалеРедактирования",
+          "ПередОкончаниемРедактирования",
+          "ПриИзмененииФлажка",
+          "ПриВыводеСтроки",
+          "ВыборЗначения",
+          "ПриОкончанииРедактирования",
+          "ОбработкаЗаписиНовогоОбъекта",
+          "ПослеУдаления",
+          "ОбработкаВыбора",
+          "ПриПолученииДанных",
+          "НачалоПеретаскивания",
+          "ПроверкаПеретаскивания",
+          "ОкончаниеПеретаскивания",
+          "Перетаскивание",
+          "ПередРазворачиванием",
+          "ПередУстановкойПометкиУдаления"
+        ],
+        "TableField": [
+          "Выбор",
+          "ОбработкаРасшифровки",
+          "ПриАктивизацииОбласти",
+          "НачалоПеретаскивания",
+          "ПроверкаПеретаскивания",
+          "ОкончаниеПеретаскивания",
+          "Перетаскивание"
+        ],
+        "ListField": [
+          "ПриАктивизацииСтроки"
+        ],
+        "CalendarBox": [
+          "ПриИзменении",
+          "Выбор",
+          "ПриВыводеПериода",
+          "ПроверкаПеретаскивания",
+          "Перетаскивание"
+        ],
+        "FieldHtml": [
+          "ДокументСформирован",
+          "onclick",
+          "ondragstart"
+        ],
+        "Chart": [
+          "ОбработкаРасшифровки"
+        ]
+      },
+      "writes": "Every writing operation takes dryRun; a write rewrites only the records the operation names, and marks the form's owner in the sync baselines so update_database carries the form.",
+      "whatAnOrdinaryFormIs": "A form of the thick client's ordinary application mode. EDT keeps it as Form.oform - a platform container with two text entries, 'form' (the layout in the platform's brace format) and 'module' (BSL) - and does not open it in any editor."
+    },
+    "operations": {
+      "audit": {
+        "operation": "audit",
+        "kind": "QUERY",
+        "writes": false,
+        "needsProject": true,
+        "summary": "every ordinary form of the project: layout version, container entries, module size, byte-for-byte round trip of the layout text; details=true lists forms, limit caps the lists",
+        "arguments": {
+          "limit": {
+            "type": "integer",
+            "description": "how many mismatching or unreadable forms to name (default 20)."
+          },
+          "details": {
+            "type": "boolean",
+            "description": "list every form with its version and sizes, capped by limit (default false)."
+          }
+        }
+      },
+      "layout": {
+        "operation": "layout",
+        "kind": "QUERY",
+        "writes": false,
+        "needsProject": true,
+        "summary": "one form (formFqn or modulePath): title, attributes with types, pages, form handlers with events and the element tree - type, name, caption, tooltip, box, page, data path, handlers, buttons of a command panel",
+        "arguments": {}
+      },
+      "diff_form": {
+        "operation": "diff_form",
+        "kind": "QUERY",
+        "writes": false,
+        "needsProject": true,
+        "summary": "one form (formFqn or modulePath) against HEAD: whether the layout entry and the module entry changed, and the names of the other entries added, removed or changed; a changed module is left to diff_module at the module's address; when there is nothing to compare with, revision names the outcome",
+        "arguments": {}
+      },
+      "inspect_layout": {
+        "operation": "inspect_layout",
+        "kind": "QUERY",
+        "writes": false,
+        "needsProject": true,
+        "summary": "one form (formFqn or modulePath), read-only: findings over the layout the reader yields - duplicate ids and names in their namespaces, references to pages, elements, attributes, action sources and anchor targets the layout does not hold, handlers the module does not declare, invalid boxes, anchor cycles - and warnings for siblings of one page that overlap (a Group or Panel frame never a party) and a child past its parent's box; the coverage names what was and was not checked, and nothing is corrected",
+        "arguments": {}
+      },
+      "describe_owner": {
+        "operation": "describe_owner",
+        "kind": "QUERY",
+        "writes": false,
+        "needsProject": true,
+        "summary": "ownerFqn (Type.Object): the owner's attributes, tabular sections, standard attributes and list columns, in words, with no uuid",
+        "arguments": {
+          "ownerFqn": {
+            "type": "string",
+            "description": "the owner, Type.Object (Catalog.Products, InformationRegister.Prices)."
+          }
+        }
+      },
+      "create_form": {
+        "operation": "create_form",
+        "kind": "CREATION",
+        "writes": true,
+        "needsProject": true,
+        "summary": "ownerFqn, name, purpose (ItemForm | ListForm | ChoiceForm | FolderForm | RecordForm | RecordSetForm | None), synonym, title, width, height, setAsDefault, withFields, withTables, withCommands, columns (1 | 2 | auto), tabularSections (pages | below): the form's entry on its owner and the container Forms/<name>/Form.oform. The layout is the owner's header, its tabular sections and its command panels; the file, the model entry and the baseline mark are three steps, and a failure of the file or the model removes the file",
+        "arguments": {
+          "ownerFqn": {
+            "type": "string",
+            "description": "the owner of the new form, Type.Object (Catalog.Products, DataProcessor.Report1)."
+          },
+          "name": {
+            "type": "string",
+            "description": "the name of the new form."
+          },
+          "purpose": {
+            "type": "string",
+            "description": "ItemForm (default for an object) | ListForm (default for a register) | ChoiceForm | FolderForm | RecordForm | RecordSetForm | None (no main attribute)."
+          },
+          "synonym": {
+            "type": "string",
+            "description": "the form's synonym (default: derived from the name)."
+          },
+          "title": {
+            "type": "string",
+            "description": "the form's title (default: the synonym)."
+          },
+          "width": {
+            "type": "integer",
+            "description": "the form's width, from 500 to 1000 (default 500, or 820 with two columns)."
+          },
+          "height": {
+            "type": "integer",
+            "description": "the form's height, from 350 to 700 (default: the content, at least 350)."
+          },
+          "setAsDefault": {
+            "type": "boolean",
+            "description": "make it the owner's default form of that purpose (default false)."
+          },
+          "withFields": {
+            "type": "boolean",
+            "description": "lay the header out as labels and fields (default true on an object form)."
+          },
+          "withTables": {
+            "type": "boolean",
+            "description": "lay a table out for each tabular section (default true only for ItemForm with tabular sections)."
+          },
+          "withCommands": {
+            "type": "boolean",
+            "description": "put the form's command panel and a panel on each table (default true except for purpose=None)."
+          },
+          "columns": {
+            "type": "string",
+            "description": "1, 2 or auto (default auto: 1 when the header has 12 attributes or fewer, else 2)."
+          },
+          "tabularSections": {
+            "type": "string",
+            "description": "pages or below (default pages when there are two or more, else below)."
+          }
+        }
+      },
+      "import_from_infobase": {
+        "operation": "import_from_infobase",
+        "kind": "CREATION",
+        "writes": true,
+        "needsProject": true,
+        "summary": "formFqn (or modulePath), module (project | infobase, default project), applicationId: the form's container pulled out of the project's infobase into the project. The layout and every other entry of the container come from the infobase, the module entry from the chosen source; a handler the infobase layout binds that the chosen module does not declare stops the write and is named in the answer",
+        "arguments": {
+          "module": {
+            "type": "string",
+            "description": "where the module entry comes from - project (default: the module of the project's current container; refused when the project holds no container, with module=infobase named as the source that has one) or infobase (the exported container's own module)."
+          },
+          "applicationId": {
+            "type": "string",
+            "description": "the infobase to export the form from, when the project has more than one; the default infobase when omitted."
+          }
+        }
+      },
+      "set_property": {
+        "operation": "set_property",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "property=title (of the form, or of an element with elementName) | caption | tooltip (value) | box (left, top, right, bottom or width, height) of elementName | size (width, height) of the form | visible, enabled, readOnly, tabs (value=true|false) | font (value=auto, or fontFamily with fontSize, bold, italic, underline) | textColor, backColor, borderColor (value=auto | #RRGGBB | a style element index) | alignment (value=left|center|right|auto) | format (value, empty clears) | editFormat (refused) | anchor (edge=left|top|right|bottom, value=form|none|<element>.<edge>, offset) of elementName",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the element; absent for the form itself."
+          },
+          "property": {
+            "type": "string",
+            "description": "one of title (the form's title, or an element's caption with elementName) | caption (an element's caption (value)) | tooltip (an element's tooltip (value; empty clears)) | size (the form's width and/or height) | box (an element's left, top, right, bottom, or width and height) | visible (an element's visibility (value=true|false)) | enabled (an element's enablement (value=true|false)) | readOnly (a field's read-only flag (value=true|false); measured on a Field alone) | tabs (a panel's tab strip (value=true|false): true draws a tab per page, false leaves the pages to be turned over from code. A panel draws tabs from its second page on) | font (an element's font: value=auto resets it to the form's font, or fontFamily with fontSize (and bold, italic, underline)) | textColor (an element's text colour (value=auto | #RRGGBB | a style element index)) | backColor (an element's background colour (value=auto | #RRGGBB | a style element index)) | borderColor (an element's border colour (value=auto | #RRGGBB | a style element index)) | alignment (the horizontal alignment (value=left|center|right|auto) of a Label, a Button or a Field; a Field has no center) | format (a field's format string (value; empty clears it)) | editFormat (a field's edit format - not measured: the platform reads no ФорматРедактирования and the corpus carries none; refused) | anchor (an element's edge (edge=left|top|right|bottom) bound to the form (value=form), to none (value=none), or to a neighbour (value=<element>.<edge> with offset))."
+          },
+          "value": {
+            "type": "string",
+            "description": "the text for title, caption or tooltip; true|false for visible, enabled, readOnly; auto, #RRGGBB or a style element index for the colours; left|center|right|auto for alignment; auto for the font; form, none or <element>.<edge> for anchor."
+          },
+          "left": {
+            "type": "integer",
+            "description": "box: the left edge."
+          },
+          "top": {
+            "type": "integer",
+            "description": "box: the top edge."
+          },
+          "right": {
+            "type": "integer",
+            "description": "box: the right edge."
+          },
+          "bottom": {
+            "type": "integer",
+            "description": "box: the bottom edge."
+          },
+          "width": {
+            "type": "integer",
+            "description": "box: the width, instead of right; size: the form's width."
+          },
+          "height": {
+            "type": "integer",
+            "description": "box: the height, instead of bottom; size: the form's height."
+          },
+          "fontFamily": {
+            "type": "string",
+            "description": "font: the family, with fontSize."
+          },
+          "fontSize": {
+            "type": "integer",
+            "description": "font: the size, with fontFamily."
+          },
+          "bold": {
+            "type": "boolean",
+            "description": "font: bold (with fontFamily and fontSize)."
+          },
+          "italic": {
+            "type": "boolean",
+            "description": "font: italic (with fontFamily and fontSize)."
+          },
+          "underline": {
+            "type": "boolean",
+            "description": "font: underline (with fontFamily and fontSize)."
+          },
+          "edge": {
+            "type": "string",
+            "description": "anchor: the element's own edge - left, top, right or bottom."
+          },
+          "offset": {
+            "type": "integer",
+            "description": "anchor: the offset from the target's edge (default 0)."
+          }
+        }
+      },
+      "bind_handler": {
+        "operation": "bind_handler",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "event + procedure (default <element><event>) of elementName, or of the form without elementName; stub=true adds an empty procedure with the measured parameters to the module",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the element whose event to bind; absent for the form."
+          },
+          "event": {
+            "type": "string",
+            "description": "the event (ПриИзменении, Нажатие, ПриОткрытии, ...; help lists them)."
+          },
+          "procedure": {
+            "type": "string",
+            "description": "the procedure to bind (default <element><event>, or the event for the form)."
+          },
+          "stub": {
+            "type": "boolean",
+            "description": "add an empty procedure with the measured parameters to the module when it declares none (default true)."
+          }
+        }
+      },
+      "unbind_handler": {
+        "operation": "unbind_handler",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "event of elementName or of the form",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the element whose event to unbind; absent for the form."
+          },
+          "event": {
+            "type": "string",
+            "description": "the event to unbind."
+          }
+        }
+      },
+      "add_element": {
+        "operation": "add_element",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "type, name, parent (a Panel) and page, left/top/right/bottom or width/height, caption, tooltip, data (a path in words: <form attribute>.<member>); the record is the measured template of the type with the element's own values put in",
+        "arguments": {
+          "type": {
+            "type": "string",
+            "description": "Button | Chart | CheckBox | CommandPanel | Field | FieldHtml | Group | Image | Label | ListField | Panel | RadioBtn | SelectField | Separator | Table | TableField | TextDocumentField; a Table shows the rows data names, and so does a ListField; a TableField, a FieldHtml, a TextDocumentField and a Chart take no data."
+          },
+          "name": {
+            "type": "string",
+            "description": "the name of the new element."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the Panel to put the element in; absent for the form."
+          },
+          "page": {
+            "type": "string",
+            "description": "the page of the panel or form; absent for the first."
+          },
+          "left": {
+            "type": "integer",
+            "description": "the left edge."
+          },
+          "top": {
+            "type": "integer",
+            "description": "the top edge."
+          },
+          "right": {
+            "type": "integer",
+            "description": "the right edge."
+          },
+          "bottom": {
+            "type": "integer",
+            "description": "the bottom edge."
+          },
+          "width": {
+            "type": "integer",
+            "description": "the width, instead of right."
+          },
+          "height": {
+            "type": "integer",
+            "description": "the height, instead of bottom."
+          },
+          "caption": {
+            "type": "string",
+            "description": "the caption of a Label, Button, CheckBox, RadioBtn or Group."
+          },
+          "tooltip": {
+            "type": "string",
+            "description": "the tooltip."
+          },
+          "data": {
+            "type": "string",
+            "description": "the data path in words, <form attribute>[.<member>...] (СправочникОбъект.Артикул). A TableField, a FieldHtml, a TextDocumentField and a Chart show what their own record or the code sets, so this argument is refused for them; a ListField names the value-list attribute it shows."
+          }
+        }
+      },
+      "add_page": {
+        "operation": "add_page",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "name and title of a page of the form or of parent (a Panel)",
+        "arguments": {
+          "name": {
+            "type": "string",
+            "description": "the name of the new page."
+          },
+          "title": {
+            "type": "string",
+            "description": "the page's title."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the Panel; absent for the form."
+          }
+        }
+      },
+      "remove_page": {
+        "operation": "remove_page",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "name of a page of the form or of parent (a Panel); a page with elements on it or the last page is refused",
+        "arguments": {
+          "name": {
+            "type": "string",
+            "description": "the name of the page to remove."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the Panel; absent for the form."
+          }
+        }
+      },
+      "remove_element": {
+        "operation": "remove_element",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "elementName, with its children, data bindings and the anchors that named it; an element a command panel takes its actions from is refused unless cascade=true, which clears the source and the auto-fill of those panels",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the element to remove."
+          },
+          "cascade": {
+            "type": "boolean",
+            "description": "remove an element command panels take their actions from, clearing the source and the auto-fill of those panels (default false)."
+          }
+        }
+      },
+      "add_column": {
+        "operation": "add_column",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "elementName (a Table), name, caption, data (a member or standard attribute of the row, or the value table's column), type (String | Number | Date | Boolean when data names none), width, editable, control (the cell's control); the kind of column follows what the rows are: a list of an object, a tabular section, a value table or tree",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the Table."
+          },
+          "name": {
+            "type": "string",
+            "description": "the name of the new column."
+          },
+          "caption": {
+            "type": "string",
+            "description": "the column's caption."
+          },
+          "data": {
+            "type": "string",
+            "description": "the member or standard attribute of the row (Код, Наименование, Номенклатура, НомерСтроки), or the column of the value table."
+          },
+          "type": {
+            "type": "string",
+            "description": "String | Number | Date | Boolean, the values' type when data names none."
+          },
+          "width": {
+            "type": "integer",
+            "description": "the column's width."
+          },
+          "editable": {
+            "type": "boolean",
+            "description": "the cell gets an editor (default true); given together with control, the two must agree."
+          },
+          "control": {
+            "type": "string",
+            "description": "the cell's control: field, checkBox, selectField, none (default field when editable, none otherwise); a pair of control and value type outside the measured ones is refused"
+          }
+        }
+      },
+      "remove_column": {
+        "operation": "remove_column",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "elementName (a Table) and name",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the Table."
+          },
+          "name": {
+            "type": "string",
+            "description": "the name of the column to remove."
+          }
+        }
+      },
+      "add_command_panel": {
+        "operation": "add_command_panel",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "name, the box (left/top/right/bottom or width/height), parent and page, actionSource (a Table of the form) and autoFill (true with a source, false without one); add_element type=CommandPanel writes the same panel without a source",
+        "arguments": {
+          "name": {
+            "type": "string",
+            "description": "the name of the new panel."
+          },
+          "left": {
+            "type": "integer",
+            "description": "the left edge."
+          },
+          "top": {
+            "type": "integer",
+            "description": "the top edge."
+          },
+          "right": {
+            "type": "integer",
+            "description": "the right edge."
+          },
+          "bottom": {
+            "type": "integer",
+            "description": "the bottom edge."
+          },
+          "width": {
+            "type": "integer",
+            "description": "the width, instead of right."
+          },
+          "height": {
+            "type": "integer",
+            "description": "the height, instead of bottom."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the Panel to put the panel in; absent for the form."
+          },
+          "page": {
+            "type": "string",
+            "description": "the page of the panel or form; absent for the first."
+          },
+          "actionSource": {
+            "type": "string",
+            "description": "the Table the panel takes its actions from; absent or none for no source."
+          },
+          "autoFill": {
+            "type": "boolean",
+            "description": "whether the platform fills the panel's buttons itself (default true with an actionSource, false without one)."
+          }
+        }
+      },
+      "add_button": {
+        "operation": "add_button",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "panel + name + caption (a standard action keeps its own text and takes the caption as its tooltip), and exactly one of procedure (a procedure of the form module, stub=true adds an empty one) and action (a registered standard action); picture is the index of the measured dictionary; parent puts the button in a submenu, before in front of a named button of the same block",
+        "arguments": {
+          "panel": {
+            "type": "string",
+            "description": "the command panel that takes the button."
+          },
+          "name": {
+            "type": "string",
+            "description": "the button's name."
+          },
+          "caption": {
+            "type": "string",
+            "description": "the caption of a procedure button (default the name); a button of a standard action keeps the text the platform gives that action and takes the caption as its tooltip."
+          },
+          "procedure": {
+            "type": "string",
+            "description": "the procedure the button runs (the parameters: Кнопка)."
+          },
+          "action": {
+            "type": "string",
+            "description": "a standard action: one of close, write, writeAndClose, help, add, change, delete, copy, moveUp, moveDown, sortAscending, sortDescending, finishEditing, filterByValue, disableFilter, saveValues, restoreValues, copyObject, reread, findInList, refresh, listSettings, outputList, select, enableAll, disableAll, back, forward, newGroup, findInTree, moveToGroup, hierarchy, viewByOwner, searchByNumber, setFilterAndSort, post, unpost, editInDialog, markDeletion, setFilter, enterOnBasis."
+          },
+          "picture": {
+            "type": "integer",
+            "description": "the index of the picture dictionary of a standard action (0 to 3; default the picture the corpus most often writes for the action)."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the submenu to put the button in; absent for the panel itself."
+          },
+          "before": {
+            "type": "string",
+            "description": "a button of the same block to put the button in front of."
+          },
+          "stub": {
+            "type": "boolean",
+            "description": "add an empty procedure with the parameter Кнопка to the module when it declares none (default false)."
+          }
+        }
+      },
+      "add_submenu": {
+        "operation": "add_submenu",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "panel + name + caption of a submenu, with parent and before as of a button; the submenu gets an empty buttons block of its own - add_button parent=<submenu> fills it",
+        "arguments": {
+          "panel": {
+            "type": "string",
+            "description": "the command panel that takes the submenu."
+          },
+          "name": {
+            "type": "string",
+            "description": "the submenu's name."
+          },
+          "caption": {
+            "type": "string",
+            "description": "the caption (default the name)."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the submenu to put it in; absent for the panel itself."
+          },
+          "before": {
+            "type": "string",
+            "description": "a button of the same block to put the submenu in front of."
+          }
+        }
+      },
+      "add_separator": {
+        "operation": "add_separator",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "panel + name of a separator, with parent and before as of a button",
+        "arguments": {
+          "panel": {
+            "type": "string",
+            "description": "the command panel that takes the separator."
+          },
+          "name": {
+            "type": "string",
+            "description": "the separator's name."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the submenu to put it in; absent for the panel itself."
+          },
+          "before": {
+            "type": "string",
+            "description": "a button of the same block to put the separator in front of."
+          }
+        }
+      },
+      "remove_button": {
+        "operation": "remove_button",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "panel + name: a button, a separator or a submenu with every button under it; the action records nothing references any more go with it",
+        "arguments": {
+          "panel": {
+            "type": "string",
+            "description": "the command panel that holds the button."
+          },
+          "name": {
+            "type": "string",
+            "description": "the button to remove."
+          }
+        }
+      },
+      "set_action_source": {
+        "operation": "set_action_source",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "panel + table (a Table of the form, or none): sets the source and autoFill=true, or clears both; autoFill=false keeps the source without the platform filling the buttons",
+        "arguments": {
+          "panel": {
+            "type": "string",
+            "description": "the command panel."
+          },
+          "table": {
+            "type": "string",
+            "description": "the Table the panel takes its actions from; none clears the source."
+          },
+          "autoFill": {
+            "type": "boolean",
+            "description": "whether the platform fills the panel's buttons itself (default true with a table, false with none)."
+          }
+        }
+      },
+      "move_element": {
+        "operation": "move_element",
+        "kind": "LAYOUT",
+        "writes": true,
+        "needsProject": true,
+        "summary": "elementName to parent (a Panel, or form) and page; the box stays; anchors between the element and the neighbours the move separates are released both ways and listed",
+        "arguments": {
+          "elementName": {
+            "type": "string",
+            "description": "the element to move."
+          },
+          "parent": {
+            "type": "string",
+            "description": "the Panel to move the element into, or form for the root."
+          },
+          "page": {
+            "type": "string",
+            "description": "the page of that parent."
+          }
+        }
+      },
+      "help": {
+        "operation": "help",
+        "kind": "QUERY",
+        "writes": false,
+        "needsProject": false,
+        "summary": "this catalogue",
+        "arguments": {
+          "topic": {
+            "type": "string",
+            "description": "Operation name for its full contract; omit or leave blank for the general catalogue."
+          }
+        }
+      }
+    }
+  },
+  "expectedSchema": {
+    "type": "object",
+    "properties": {
+      "operation": {
+        "type": "string",
+        "description": "audit | layout | diff_form | inspect_layout | describe_owner | create_form | import_from_infobase | set_property | bind_handler | unbind_handler | add_element | add_page | remove_page | remove_element | add_column | remove_column | add_command_panel | add_button | add_submenu | add_separator | remove_button | set_action_source | move_element | help (required)"
+      },
+      "projectName": {
+        "type": "string",
+        "description": "Name of the EDT project whose ordinary forms to read or write."
+      },
+      "formFqn": {
+        "type": "string",
+        "description": "The form, Type.Object.Form.Name or CommonForm.Name (Catalog.Products.Form.ItemForm). Alternatively modulePath."
+      },
+      "modulePath": {
+        "type": "string",
+        "description": "The form by the address of its module, <dir>/<object>/Forms/<form>/Module.bsl."
+      },
+      "dryRun": {
+        "type": "boolean",
+        "description": "Writing operations: report what the write would do and write nothing (default false)."
+      },
+      "language": {
+        "type": "string",
+        "description": "Writing operations: the language code of new texts (default ru)."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "audit: how many mismatching or unreadable forms to name (default 20)."
+      },
+      "details": {
+        "type": "boolean",
+        "description": "audit: list every form with its version and sizes, capped by limit (default false)."
+      },
+      "ownerFqn": {
+        "type": "string",
+        "description": "describe_owner: the owner, Type.Object. create_form: the owner of the new form, Type.Object."
+      },
+      "name": {
+        "type": "string",
+        "description": "create_form, add_element, add_page, add_column, add_command_panel, add_button, add_submenu, add_separator: the name of the new item. remove_page, remove_column, remove_button: the name of the item to remove."
+      },
+      "purpose": {
+        "type": "string",
+        "description": "create_form: ItemForm (default for an object) | ListForm (default for a register) | ChoiceForm | FolderForm | RecordForm | RecordSetForm | None (no main attribute)."
+      },
+      "synonym": {
+        "type": "string",
+        "description": "create_form: the form's synonym (default: derived from the name)."
+      },
+      "title": {
+        "type": "string",
+        "description": "create_form: the form's title (default: the synonym). add_page: the page's title."
+      },
+      "width": {
+        "type": "integer",
+        "description": "create_form: the form's width, from 500 to 1000 (default 500, or 820 with two columns). set_property: box: the width, instead of right; size: the form's width. add_element, add_command_panel: the width, instead of right. add_column: the column's width."
+      },
+      "height": {
+        "type": "integer",
+        "description": "create_form: the form's height, from 350 to 700 (default: the content, at least 350). set_property: box: the height, instead of bottom; size: the form's height. add_element, add_command_panel: the height, instead of bottom."
+      },
+      "setAsDefault": {
+        "type": "boolean",
+        "description": "create_form: make it the owner's default form of that purpose (default false)."
+      },
+      "withFields": {
+        "type": "boolean",
+        "description": "create_form: lay the header out as labels and fields (default true on an object form)."
+      },
+      "withTables": {
+        "type": "boolean",
+        "description": "create_form: lay a table out for each tabular section (default true only for ItemForm with tabular sections)."
+      },
+      "withCommands": {
+        "type": "boolean",
+        "description": "create_form: put the form's command panel and a panel on each table (default true except for purpose=None)."
+      },
+      "columns": {
+        "type": "string",
+        "description": "create_form: 1, 2 or auto (default auto: 1 when the header has 12 attributes or fewer, else 2)."
+      },
+      "tabularSections": {
+        "type": "string",
+        "description": "create_form: pages or below (default pages when there are two or more, else below)."
+      },
+      "module": {
+        "type": "string",
+        "description": "import_from_infobase: where the module entry comes from - project (default: the module of the project's current container; refused when the project holds no container, with module=infobase named as the source that has one) or infobase (the exported container's own module)."
+      },
+      "applicationId": {
+        "type": "string",
+        "description": "import_from_infobase: the infobase to export the form from, when the project has more than one; the default infobase when omitted."
+      },
+      "elementName": {
+        "type": "string",
+        "description": "set_property: the element; absent for the form itself. bind_handler: the element whose event to bind; absent for the form. unbind_handler: the element whose event to unbind; absent for the form. remove_element: the element to remove. add_column, remove_column: the Table. move_element: the element to move."
+      },
+      "property": {
+        "type": "string",
+        "description": "set_property: one of title (the form's title, or an element's caption with elementName) | caption (an element's caption (value)) | tooltip (an element's tooltip (value; empty clears)) | size (the form's width and/or height) | box (an element's left, top, right, bottom, or width and height) | visible (an element's visibility (value=true|false)) | enabled (an element's enablement (value=true|false)) | readOnly (a field's read-only flag (value=true|false); measured on a Field alone) | tabs (a panel's tab strip (value=true|false): true draws a tab per page, false leaves the pages to be turned over from code. A panel draws tabs from its second page on) | font (an element's font: value=auto resets it to the form's font, or fontFamily with fontSize (and bold, italic, underline)) | textColor (an element's text colour (value=auto | #RRGGBB | a style element index)) | backColor (an element's background colour (value=auto | #RRGGBB | a style element index)) | borderColor (an element's border colour (value=auto | #RRGGBB | a style element index)) | alignment (the horizontal alignment (value=left|center|right|auto) of a Label, a Button or a Field; a Field has no center) | format (a field's format string (value; empty clears it)) | editFormat (a field's edit format - not measured: the platform reads no ФорматРедактирования and the corpus carries none; refused) | anchor (an element's edge (edge=left|top|right|bottom) bound to the form (value=form), to none (value=none), or to a neighbour (value=<element>.<edge> with offset))."
+      },
+      "value": {
+        "type": "string",
+        "description": "set_property: the text for title, caption or tooltip; true|false for visible, enabled, readOnly; auto, #RRGGBB or a style element index for the colours; left|center|right|auto for alignment; auto for the font; form, none or <element>.<edge> for anchor."
+      },
+      "left": {
+        "type": "integer",
+        "description": "set_property: box: the left edge. add_element, add_command_panel: the left edge."
+      },
+      "top": {
+        "type": "integer",
+        "description": "set_property: box: the top edge. add_element, add_command_panel: the top edge."
+      },
+      "right": {
+        "type": "integer",
+        "description": "set_property: box: the right edge. add_element, add_command_panel: the right edge."
+      },
+      "bottom": {
+        "type": "integer",
+        "description": "set_property: box: the bottom edge. add_element, add_command_panel: the bottom edge."
+      },
+      "fontFamily": {
+        "type": "string",
+        "description": "set_property: font: the family, with fontSize."
+      },
+      "fontSize": {
+        "type": "integer",
+        "description": "set_property: font: the size, with fontFamily."
+      },
+      "bold": {
+        "type": "boolean",
+        "description": "set_property: font: bold (with fontFamily and fontSize)."
+      },
+      "italic": {
+        "type": "boolean",
+        "description": "set_property: font: italic (with fontFamily and fontSize)."
+      },
+      "underline": {
+        "type": "boolean",
+        "description": "set_property: font: underline (with fontFamily and fontSize)."
+      },
+      "edge": {
+        "type": "string",
+        "description": "set_property: anchor: the element's own edge - left, top, right or bottom."
+      },
+      "offset": {
+        "type": "integer",
+        "description": "set_property: anchor: the offset from the target's edge (default 0)."
+      },
+      "event": {
+        "type": "string",
+        "description": "bind_handler: the event (help lists them). unbind_handler: the event to unbind."
+      },
+      "procedure": {
+        "type": "string",
+        "description": "bind_handler: the procedure to bind (default <element><event>, or the event for the form). add_button: the procedure the button runs (the parameters: Кнопка)."
+      },
+      "stub": {
+        "type": "boolean",
+        "description": "bind_handler: add an empty procedure with the measured parameters to the module when it declares none (default true). add_button: add an empty procedure with the parameter Кнопка to the module when it declares none (default false)."
+      },
+      "type": {
+        "type": "string",
+        "description": "add_element: Button | Chart | CheckBox | CommandPanel | Field | FieldHtml | Group | Image | Label | ListField | Panel | RadioBtn | SelectField | Separator | Table | TableField | TextDocumentField; a Table shows the rows data names, and so does a ListField; a TableField, a FieldHtml, a TextDocumentField and a Chart take no data. add_column: String | Number | Date | Boolean, the values' type when data names none."
+      },
+      "parent": {
+        "type": "string",
+        "description": "add_element, add_page, remove_page, add_command_panel: the Panel; absent for the form. add_button, add_submenu, add_separator: the submenu; absent for the panel itself. move_element: the Panel to move the element into, or form for the root."
+      },
+      "page": {
+        "type": "string",
+        "description": "add_element, add_command_panel: the page of the panel or form; absent for the first. move_element: the page of that parent."
+      },
+      "caption": {
+        "type": "string",
+        "description": "add_element: the caption of a Label, Button, CheckBox, RadioBtn or Group. add_column: the column's caption. add_button: the caption of a procedure button (default the name); a button of a standard action keeps the text the platform gives that action and takes the caption as its tooltip. add_submenu: the caption (default the name)."
+      },
+      "tooltip": {
+        "type": "string",
+        "description": "add_element: the tooltip."
+      },
+      "data": {
+        "type": "string",
+        "description": "add_element: the data path in words, <form attribute>[.<member>...]. A TableField, a FieldHtml, a TextDocumentField and a Chart show what their own record or the code sets, so this argument is refused for them; a ListField names the value-list attribute it shows. add_column: the member or standard attribute of the row, or the column of the value table."
+      },
+      "cascade": {
+        "type": "boolean",
+        "description": "remove_element: remove an element command panels take their actions from, clearing the source and the auto-fill of those panels (default false)."
+      },
+      "editable": {
+        "type": "boolean",
+        "description": "add_column: the cell gets an editor (default true); given together with control, the two must agree."
+      },
+      "control": {
+        "type": "string",
+        "description": "add_column: the cell's control: field, checkBox, selectField, none (default field when editable, none otherwise); a pair of control and value type outside the measured ones is refused"
+      },
+      "actionSource": {
+        "type": "string",
+        "description": "add_command_panel: the Table the panel takes its actions from; absent or none for no source."
+      },
+      "autoFill": {
+        "type": "boolean",
+        "description": "add_command_panel: whether the platform fills the panel's buttons itself (default true with an actionSource, false without one). set_action_source: whether the platform fills the panel's buttons itself (default true with a table, false with none)."
+      },
+      "panel": {
+        "type": "string",
+        "description": "add_button, add_submenu, add_separator: the command panel that takes the button, submenu or separator. remove_button: the command panel that holds the button. set_action_source: the command panel."
+      },
+      "action": {
+        "type": "string",
+        "description": "add_button: a standard action: one of close, write, writeAndClose, help, add, change, delete, copy, moveUp, moveDown, sortAscending, sortDescending, finishEditing, filterByValue, disableFilter, saveValues, restoreValues, copyObject, reread, findInList, refresh, listSettings, outputList, select, enableAll, disableAll, back, forward, newGroup, findInTree, moveToGroup, hierarchy, viewByOwner, searchByNumber, setFilterAndSort, post, unpost, editInDialog, markDeletion, setFilter, enterOnBasis."
+      },
+      "picture": {
+        "type": "integer",
+        "description": "add_button: the index of the picture dictionary of a standard action (0 to 3; default the picture the corpus most often writes for the action)."
+      },
+      "before": {
+        "type": "string",
+        "description": "add_button, add_submenu, add_separator: a button of the same block to put the new button, submenu or separator in front of."
+      },
+      "table": {
+        "type": "string",
+        "description": "set_action_source: the Table the panel takes its actions from; none clears the source."
+      },
+      "topic": {
+        "type": "string",
+        "description": "help: Operation name for its full contract; omit or leave blank for the general catalogue."
+      }
+    },
+    "required": []
+  },
+  "schemaMeanings": {
+    "describe_owner": {
+      "ownerFqn": "the owner, Type.Object."
+    },
+    "create_form": {
+      "ownerFqn": "the owner of the new form, Type.Object.",
+      "name": "the name of the new item."
+    },
+    "add_element": {
+      "name": "the name of the new item.",
+      "parent": "the Panel; absent for the form.",
+      "data": "the data path in words, <form attribute>[.<member>...]. A TableField, a FieldHtml, a TextDocumentField and a Chart show what their own record or the code sets, so this argument is refused for them; a ListField names the value-list attribute it shows."
+    },
+    "add_page": {
+      "name": "the name of the new item.",
+      "parent": "the Panel; absent for the form."
+    },
+    "remove_page": {
+      "name": "the name of the item to remove.",
+      "parent": "the Panel; absent for the form."
+    },
+    "add_column": {
+      "name": "the name of the new item.",
+      "data": "the member or standard attribute of the row, or the column of the value table."
+    },
+    "remove_column": {
+      "name": "the name of the item to remove."
+    },
+    "add_command_panel": {
+      "name": "the name of the new item.",
+      "parent": "the Panel; absent for the form."
+    },
+    "add_button": {
+      "name": "the name of the new item.",
+      "parent": "the submenu; absent for the panel itself.",
+      "panel": "the command panel that takes the button, submenu or separator.",
+      "before": "a button of the same block to put the new button, submenu or separator in front of."
+    },
+    "add_submenu": {
+      "name": "the name of the new item.",
+      "parent": "the submenu; absent for the panel itself.",
+      "panel": "the command panel that takes the button, submenu or separator.",
+      "before": "a button of the same block to put the new button, submenu or separator in front of."
+    },
+    "add_separator": {
+      "name": "the name of the new item.",
+      "parent": "the submenu; absent for the panel itself.",
+      "panel": "the command panel that takes the button, submenu or separator.",
+      "before": "a button of the same block to put the new button, submenu or separator in front of."
+    },
+    "remove_button": {
+      "name": "the name of the item to remove.",
+      "panel": "the command panel that holds the button."
+    },
+    "bind_handler": {
+      "event": "the event (help lists them)."
+    },
+    "unbind_handler": {
+      "event": "the event to unbind."
+    },
+    "move_element": {
+      "parent": "the Panel to move the element into, or form for the root."
+    },
+    "set_action_source": {
+      "panel": "the command panel."
+    }
+  },
+  "changedParameters": [
+    "ownerFqn",
+    "name",
+    "event",
+    "parent",
+    "data",
+    "panel",
+    "before"
+  ],
+  "frozenBeforeProduction": true
+}

@@ -18,7 +18,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.junit.After;
 import org.junit.Test;
 
 /**
@@ -32,12 +31,6 @@ import org.junit.Test;
  */
 public class ACancelBeforeTheBodyClaimsItsStartTest
 {
-    @After
-    public void theGateGoes()
-    {
-        PendingWorkRegistry.beforeWorkClaim = null;
-    }
-
     @Test
     public void aCancelBeforeTheSupplierClaimsDoesNotRunTheBody() throws Exception
     {
@@ -48,22 +41,35 @@ public class ACancelBeforeTheBodyClaimsItsStartTest
         assertTrue(permits.tryAcquire());
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
-        CountDownLatch pastTheGate = new CountDownLatch(1);
+        // One private worker lets a queued marker prove the supplier has passed its claim,
+        // including the path where cancellation prevents the body (and its finally) entirely.
+        var constructor = PendingWorkRegistry.class.getDeclaredConstructor(String.class, String.class, int.class);
+        constructor.setAccessible(true);
+        PendingWorkRegistry registry = constructor.newInstance("claim-test", "claim-test", 1);
+        var executorField = PendingWorkRegistry.class.getDeclaredField("executor");
+        executorField.setAccessible(true);
+        java.util.concurrent.ExecutorService executor =
+            (java.util.concurrent.ExecutorService)executorField.get(registry);
+        String key = "poll-claim-" + System.nanoTime(); //$NON-NLS-1$
+        java.util.function.Consumer<PendingWorkRegistry.PendingEntry> previous = PendingWorkRegistry.beforeWorkClaim;
         PendingWorkRegistry.beforeWorkClaim = job -> {
+            if (!key.equals(job.runKey))
+            {
+                if (previous != null) { previous.accept(job); }
+                return;
+            }
             seen.set(job);
             entered.countDown();
             try
             {
-                release.await(20, TimeUnit.SECONDS);
+                assertTrue("the claim gate was not released", release.await(20, TimeUnit.SECONDS));
             }
             catch (InterruptedException interrupted)
             {
                 Thread.currentThread().interrupt();
             }
-            pastTheGate.countDown();
         };
-        String key = "poll-claim-" + System.nanoTime(); //$NON-NLS-1$
-        Thread starter = new Thread(() -> PendingWorkRegistry.REFERENCES.getOrStart(key, job -> {
+        Thread starter = new Thread(() -> registry.getOrStart(key, job -> {
             permitsWhenTheBodyStarted.set(permits.availablePermits());
             bodyRan.set(true);
             return "ran"; //$NON-NLS-1$
@@ -73,15 +79,19 @@ public class ACancelBeforeTheBodyClaimsItsStartTest
         {
             starter.start();
             assertTrue("the supplier never entered", entered.await(15, TimeUnit.SECONDS)); //$NON-NLS-1$
+            // Entering the hook publishes the entry before supplyAsync's return is assigned to
+            // entry.future. Wait for getOrStart to finish publishing, without opening the gate.
+            starter.join(15_000L);
+            assertFalse("the starter did not publish the future", starter.isAlive());
             PendingWorkRegistry.PendingEntry entry = seen.get();
             assertNotNull("the supplier entered without an entry", entry); //$NON-NLS-1$
+            assertNotNull("the future was not published", entry.future);
             ToolRoad.Ticket ticket = new ToolRoad.Ticket(permits::release);
             assertTrue("the ticket was not the one handed to the entry", ticket.transferTo(entry)); //$NON-NLS-1$
             assertEquals(0, permits.availablePermits());
             assertTrue(entry.future.cancel(false));
             release.countDown();
-            assertTrue(pastTheGate.await(10, TimeUnit.SECONDS));
-            Thread.sleep(200L);
+            executor.submit(() -> { }).get(10, TimeUnit.SECONDS);
             if (bodyRan.get())
             {
                 assertEquals("the permit came back while the body was still to run", //$NON-NLS-1$
@@ -95,9 +105,19 @@ public class ACancelBeforeTheBodyClaimsItsStartTest
         finally
         {
             release.countDown();
-            PendingWorkRegistry.beforeWorkClaim = null;
-            PendingWorkRegistry.REFERENCES.remove(key);
-            starter.join(15_000L);
+            try
+            {
+                starter.join(15_000L);
+                executor.shutdown();
+                assertTrue("the private worker did not leave", executor.awaitTermination(15, TimeUnit.SECONDS));
+                assertFalse("the starter did not leave", starter.isAlive());
+            }
+            finally
+            {
+                executor.shutdownNow();
+                PendingWorkRegistry.beforeWorkClaim = previous;
+                registry.remove(key);
+            }
         }
     }
 }

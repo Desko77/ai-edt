@@ -72,12 +72,15 @@ public class TheSmallTextsNameWhatTheCodeDoesTest
             "infobase_admin operation=sync_control syncOperation=rebuild_dump_info.")); //$NON-NLS-1$
     }
 
-    /** config_io lists unpack_external_binary in its description and in its refusal. */
+    /** config_io lists unpack_external_binary in its operation argument and in its refusal. */
     @Test
     public void configIoListsEveryOperation()
     {
         ConfigIoFacadeTool tool = new ConfigIoFacadeTool();
-        assertTrue(tool.getDescription().contains("unpack_external_binary")); //$NON-NLS-1$
+        String operation = JsonParser.parseString(tool.getInputSchema())
+            .getAsJsonObject().getAsJsonObject("properties").getAsJsonObject("operation") //$NON-NLS-1$ //$NON-NLS-2$
+            .get("description").getAsString(); //$NON-NLS-1$
+        assertTrue(operation, operation.contains("unpack_external_binary")); //$NON-NLS-1$
         String refusal = tool.execute(Collections.emptyMap());
         assertTrue(refusal, refusal.contains("unpack_external_binary")); //$NON-NLS-1$
     }

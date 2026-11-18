@@ -57,7 +57,8 @@ public class FoldPresetHazardTest
         Map.entry("launch_debugger", //$NON-NLS-1$
             List.of("debug_launch", "set_breakpoint", "remove_breakpoint", "list_breakpoints", "wait_for_break", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
                 "resume", "step", "evaluate_expression", "get_variables", "debug_status", "set_variable", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$ //$NON-NLS-6$
-                "terminate_launch", "run_to_line", "set_exception_breakpoint", "start_profiling", "get_profiling_results")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                "terminate_launch", "run_to_line", "set_exception_breakpoint", "start_profiling", "get_profiling_results", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                "launch_debugger_writes")), //$NON-NLS-1$
         Map.entry("cluster_admin", //$NON-NLS-1$
             List.of("create_cluster", "update_cluster", "delete_cluster", "add_to_cluster", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                 "remove_from_cluster")), //$NON-NLS-1$
@@ -129,7 +130,9 @@ public class FoldPresetHazardTest
         "dcs_workshop/dcs_workshop_writes", "mxl_workshop/mxl_workshop_writes", //$NON-NLS-1$ //$NON-NLS-2$
         "xdto_workshop/xdto_workshop_writes", //$NON-NLS-1$
         "external_object_workshop/external_object_workshop_writes", //$NON-NLS-1$
-        "external_data_source_workshop/external_data_source_workshop_writes"); //$NON-NLS-1$
+        "external_data_source_workshop/external_data_source_workshop_writes", //$NON-NLS-1$
+        // enableExternalObjectDump=true asks this door before it writes the dump setting.
+        "launch_debugger/launch_debugger_writes"); //$NON-NLS-1$
 
     @Test
     public void everyCrossPresetFoldHazardIsGateChecked()

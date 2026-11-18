@@ -34,11 +34,11 @@ public final class CommandPanelOperations
             "name, the box (left/top/right/bottom or width/height), parent and page, actionSource " //$NON-NLS-1$
                 + "(a Table of the form) and autoFill (true with a source, false without one); " //$NON-NLS-1$
                 + "add_element type=CommandPanel writes the same panel without a source", //$NON-NLS-1$
-            List.of(ParamSpec.string("name", "the name of the new panel."), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("name", "the name of the new panel.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.integer("left", "the left edge."), ParamSpec.integer("top", "the top edge."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                 ParamSpec.integer("right", "the right edge."), ParamSpec.integer("bottom", "the bottom edge."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
                 ParamSpec.integer("width", "the width, instead of right."), ParamSpec.integer("height", "the height, instead of bottom."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
-                ParamSpec.string("parent", "the Panel to put the panel in; absent for the form."), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("parent", "the Panel to put the panel in; absent for the form.").withSchemaDescription("the Panel; absent for the form."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("page", "the page of the panel or form; absent for the first."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.string("actionSource", "the Table the panel takes its actions from; absent or none for no source."), //$NON-NLS-1$ //$NON-NLS-2$
                 ParamSpec.bool("autoFill", "whether the platform fills the panel's buttons itself " //$NON-NLS-1$
@@ -50,8 +50,8 @@ public final class CommandPanelOperations
                 + "stub=true adds an empty one) and action (a registered standard action); picture is " //$NON-NLS-1$
                 + "the index of the measured dictionary; parent puts the button in a submenu, before " //$NON-NLS-1$
                 + "in front of a named button of the same block", //$NON-NLS-1$
-            List.of(ParamSpec.string("panel", "the command panel that takes the button."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the button's name."), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("panel", "the command panel that takes the button.").withSchemaDescription("the command panel that takes the button, submenu or separator."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("name", "the button's name.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("caption", "the caption of a procedure button (default the name); a button of a " //$NON-NLS-1$
                     + "standard action keeps the text the platform gives that action and takes the caption as its " //$NON-NLS-1$
                     + "tooltip."), //$NON-NLS-1$
@@ -59,35 +59,35 @@ public final class CommandPanelOperations
                 ParamSpec.string("action", () -> "a standard action: one of " + String.join(", ", StandardActions.names()) + "."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.integer("picture", "the index of the picture dictionary of a standard action (0 to " //$NON-NLS-1$
                     + (CommandPanels.pictureCount() - 1) + "; default the picture the corpus most often writes for the action)."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("parent", "the submenu to put the button in; absent for the panel itself."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("before", "a button of the same block to put the button in front of."), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("parent", "the submenu to put the button in; absent for the panel itself.").withSchemaDescription("the submenu; absent for the panel itself."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("before", "a button of the same block to put the button in front of.").withSchemaDescription("a button of the same block to put the new button, submenu or separator in front of."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.bool("stub", "add an empty procedure with the parameter Кнопка to the module " //$NON-NLS-1$
                     + "when it declares none (default false).")), //$NON-NLS-1$
             CommandPanelOperations::addButton));
         out.add(OperationSpec.layout("add_submenu", //$NON-NLS-1$
             "panel + name + caption of a submenu, with parent and before as of a button; the submenu " //$NON-NLS-1$
                 + "gets an empty buttons block of its own - add_button parent=<submenu> fills it", //$NON-NLS-1$
-            List.of(ParamSpec.string("panel", "the command panel that takes the submenu."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the submenu's name."), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("panel", "the command panel that takes the submenu.").withSchemaDescription("the command panel that takes the button, submenu or separator."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("name", "the submenu's name.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 ParamSpec.string("caption", "the caption (default the name)."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("parent", "the submenu to put it in; absent for the panel itself."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("before", "a button of the same block to put the submenu in front of.")), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("parent", "the submenu to put it in; absent for the panel itself.").withSchemaDescription("the submenu; absent for the panel itself."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("before", "a button of the same block to put the submenu in front of.").withSchemaDescription("a button of the same block to put the new button, submenu or separator in front of.")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             (context) -> OperationResult.of(CommandPanels.addSubmenu(context.tree, language(context), //$NON-NLS-1$
                 context.string("panel"), context.string("name"), context.string("caption"), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
                 context.string("parent"), context.string("before"))))); //$NON-NLS-1$ //$NON-NLS-2$
         out.add(OperationSpec.layout("add_separator", //$NON-NLS-1$
             "panel + name of a separator, with parent and before as of a button", //$NON-NLS-1$
-            List.of(ParamSpec.string("panel", "the command panel that takes the separator."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the separator's name."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("parent", "the submenu to put it in; absent for the panel itself."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("before", "a button of the same block to put the separator in front of.")), //$NON-NLS-1$ //$NON-NLS-2$
+            List.of(ParamSpec.string("panel", "the command panel that takes the separator.").withSchemaDescription("the command panel that takes the button, submenu or separator."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("name", "the separator's name.").withSchemaDescription("the name of the new item."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("parent", "the submenu to put it in; absent for the panel itself.").withSchemaDescription("the submenu; absent for the panel itself."), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+                ParamSpec.string("before", "a button of the same block to put the separator in front of.").withSchemaDescription("a button of the same block to put the new button, submenu or separator in front of.")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             (context) -> OperationResult.of(CommandPanels.addSeparator(context.tree, context.string("panel"), //$NON-NLS-1$ //$NON-NLS-2$
                 context.string("name"), context.string("parent"), context.string("before"))))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         out.add(OperationSpec.layout("remove_button", //$NON-NLS-1$
             "panel + name: a button, a separator or a submenu with every button under it; the action " //$NON-NLS-1$
                 + "records nothing references any more go with it", //$NON-NLS-1$
             List.of(ParamSpec.string("panel", "the command panel that holds the button."), //$NON-NLS-1$ //$NON-NLS-2$
-                ParamSpec.string("name", "the button to remove.")), //$NON-NLS-1$ //$NON-NLS-2$
+                ParamSpec.string("name", "the button to remove.").withSchemaDescription("the name of the item to remove.")), //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             (context) -> OperationResult.of(CommandPanels.removeButton(context.tree, context.string("panel"), //$NON-NLS-1$ //$NON-NLS-2$
                 context.string("name"))))); //$NON-NLS-1$
         out.add(OperationSpec.layout("set_action_source", //$NON-NLS-1$

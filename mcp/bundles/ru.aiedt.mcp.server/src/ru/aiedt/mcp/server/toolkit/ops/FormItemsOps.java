@@ -1484,6 +1484,11 @@ final class FormItemsOps
             {
                 error.put("tag", tag); //$NON-NLS-1$
             }
+            String errorCode = formRefusalCode(message);
+            if (errorCode != null)
+            {
+                error.put("errorCode", errorCode); //$NON-NLS-1$
+            }
             return error.toJson();
         }
         ToolResult ok = ToolResult.success()
@@ -1506,6 +1511,37 @@ final class FormItemsOps
             ok.put("warning", warning); //$NON-NLS-1$
         }
         return ok.toJson();
+    }
+
+    /** Classifies only the bounded canonical form refusal prefixes, not embedded user text. */
+    static String formRefusalCode(String message)
+    {
+        String remaining = message;
+        for (String wrapper : new String[] { "Error: dry run - action would FAIL: ",
+            "Error: BM API error: ", "Error: " })
+        {
+            if (remaining.startsWith(wrapper))
+            {
+                remaining = remaining.substring(wrapper.length());
+                break;
+            }
+        }
+        // A preview may carry the write formatter's original Error wrapper.
+        if (remaining.startsWith("Error: BM API error: "))
+        {
+            remaining = remaining.substring("Error: BM API error: ".length());
+        }
+        else if (remaining.startsWith("Error: "))
+        {
+            remaining = remaining.substring("Error: ".length());
+        }
+        for (String code : new String[] { "FORM_PLACEMENT_INVALID_SIBLING",
+            "FORM_PLACEMENT_AMBIGUOUS_SIBLING", "EXTENSION_BINDING_UNSUPPORTED",
+            "EXTENSION_BINDING_UNVERIFIED", "EXTENSION_BINDING_UNRESOLVED" })
+        {
+            if (remaining.startsWith(code + ": ")) { return code; }
+        }
+        return null;
     }
 
     /**

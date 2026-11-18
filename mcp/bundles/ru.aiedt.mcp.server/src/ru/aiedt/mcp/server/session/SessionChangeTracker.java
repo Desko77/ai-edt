@@ -21,6 +21,7 @@ import org.eclipse.core.resources.IResourceDelta;
 import org.eclipse.core.resources.ResourcesPlugin;
 
 import ru.aiedt.mcp.server.Activator;
+import ru.aiedt.mcp.server.support.PinnedResultCache;
 
 /**
  * Tracks file changes in the workspace for scoped validation.
@@ -192,6 +193,8 @@ public final class SessionChangeTracker
             {
                 String projectPrefix = "/" + resource.getName() + "/"; //$NON-NLS-1$ //$NON-NLS-2$
                 modifiedPaths.removeIf(path -> path.startsWith(projectPrefix));
+                // A pinned result page can no longer be served from a project that is closing.
+                PinnedResultCache.shared().clearProject(resource.getName());
             }
             return;
         }

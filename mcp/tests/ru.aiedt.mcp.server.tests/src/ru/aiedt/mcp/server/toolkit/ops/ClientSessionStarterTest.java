@@ -51,6 +51,38 @@ public class ClientSessionStarterTest
                 || out.contains("launch manager is not published")); //$NON-NLS-1$
     }
 
+    /** These invalid requests return before obtaining a launch manager or touching a project. */
+    @Test
+    public void invalidEndpointBudgetReportsThatNothingStarted()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("endpointTimeoutSeconds", "0");
+        assertNotStarted(new ClientSessionStarter().execute(params));
+    }
+
+    @Test
+    public void endpointBudgetWithoutEndpointReportsThatNothingStarted()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("endpointTimeoutSeconds", "20");
+        assertNotStarted(new ClientSessionStarter().execute(params));
+    }
+
+    @Test
+    public void excessiveEndpointBudgetReportsThatNothingStarted()
+    {
+        Map<String, String> params = new HashMap<>();
+        params.put("endpointTimeoutSeconds", "51");
+        assertNotStarted(new ClientSessionStarter().execute(params));
+    }
+
+    private static void assertNotStarted(String answer)
+    {
+        String compact = answer.replaceAll("\\s+", "");
+        assertTrue(answer, compact.contains("\"started\":false"));
+        assertTrue(answer, compact.contains("\"mutationStarted\":false"));
+    }
+
     @Test
     public void theToolDescribesItselfWellEnoughToBeChosen()
     {

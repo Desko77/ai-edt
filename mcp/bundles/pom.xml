@@ -19,6 +19,7 @@
   <modules>
     <module>ru.aiedt.mcp.server</module>
     <module>ru.aiedt.mcp.oform</module>
+    <module>ru.aiedt.mcp.oform.editor</module>
   </modules>
 
 </project>

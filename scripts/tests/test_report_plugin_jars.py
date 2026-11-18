@@ -18,7 +18,10 @@ The installed state of an area - what p2 itself resolved, as unit ids - is read 
 registry beside the configuration area, and is checked on made-up registries: gzip and plain
 snapshots, numeric timestamp order, a corrupt latest snapshot an older clean one must not answer
 for, the profile an area's config.ini names against several, a profile bound to another area, and
-the exact legacy unit ids of the closed ordinary-forms delivery.
+the exact legacy unit ids of the closed ordinary-forms delivery. A configuration area in the user's
+home is checked on the layout p2 writes for a shared installation: the profile is a surrogate, names
+the installation that sits elsewhere, and is verified against the installation the report attributed
+the area to, never against the area's parent.
 
 Run: python3 scripts/tests/test_report_plugin_jars.py
 """
@@ -591,29 +594,35 @@ LEGACY_JAR_IU = "ru.aiedt.mcp.oform.feature.feature.jar"
 
 
 def write_p2_profile(area_root, units=(), profile_id="DefaultProfile", timestamp="1791574315314",
-                     plain=False, config_folder=None, config_ini=None, root_id=None):
+                     plain=False, config_folder=None, config_ini=None, root_id=None,
+                     install_folder="C:/edt-install", extra_properties=()):
     """A p2 profile snapshot in the registry a configuration area's root carries.
 
     The snapshot is the XML p2 writes - root profile element, root properties binding it to
     the area, units as id and version - gzipped the way p2 stores it, or plain for the
     unzipped spelling. ``root_id`` writes a root profile id other than the directory's
     (a snapshot of another profile); ``config_ini`` writes an eclipse.p2.profile line into
-    the area's configuration when given.
+    the area's configuration when given. ``install_folder`` and ``extra_properties`` write
+    the properties a shared installation's surrogate profile carries.
     """
     profile_dir = (pathlib.Path(area_root) / "p2" / "org.eclipse.equinox.p2.engine" /
                    "profileRegistry" / (profile_id + ".profile"))
     profile_dir.mkdir(parents=True, exist_ok=True)
     folder = config_folder if config_folder is not None else pathlib.Path(area_root) / "configuration"
     unit_lines = "".join("<unit id='%s' version='%s'/>" % (uid, version) for uid, version in units)
+    property_lines = [
+        "<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>" % folder,
+        "<property name='org.eclipse.equinox.p2.installFolder' value='%s'/>" % install_folder,
+    ]
+    property_lines += ["<property name='%s' value='%s'/>" % (name, value)
+                       for name, value in extra_properties]
     xml = ("<?xml version='1.0' encoding='UTF-8'?>"
            "<?profile version='1.0.0'?>"
            "<profile id='%s' timestamp='%s'>"
-           "<properties size='2'>"
-           "<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>"
-           "<property name='org.eclipse.equinox.p2.installFolder' value='C:/edt-install'/>"
-           "</properties>"
+           "<properties size='%d'>%s</properties>"
            "<units size='%d'>%s</units>"
-           "</profile>") % (root_id or profile_id, timestamp, folder, len(units), unit_lines)
+           "</profile>") % (root_id or profile_id, timestamp, len(property_lines),
+                            "".join(property_lines), len(units), unit_lines)
     name = "%s.profile%s" % (timestamp, "" if plain else ".gz")
     target = profile_dir / name
     if plain:
@@ -626,6 +635,298 @@ def write_p2_profile(area_root, units=(), profile_id="DefaultProfile", timestamp
         configuration.mkdir(parents=True, exist_ok=True)
         (configuration / "config.ini").write_text(config_ini, encoding="utf-8")
     return target
+
+
+def write_user_configuration(root, *, units=None, recorded=None, **overrides):
+    """A current official EDT layout: the installation elsewhere, the area in the user's home.
+
+    The launcher marks the installation folder, the configuration area sits under
+    ``<home>/org.eclipse.platform_<version>_<path hash>_<ws>_<os>_<arch>/configuration``,
+    the p2 agent is the sibling the area's config.ini names (``@config.dir/../p2``), and the
+    profile is the surrogate p2 writes for a shared installation: it names the installation
+    in installFolder, binds the area by configurationFolder, and proves the shared
+    installation again in cache.shared. ``overrides`` change the values those proofs carry,
+    so a test can show which contradiction the report refuses.
+    """
+    install = make_installation(root / "Program Files" / "edt-2026.2.2")
+    profile_root = root / "home" / (
+        "org.eclipse.platform_4.38.0_%s_win32_win32_x86_64" % REPORT.install_path_hash(install))
+    area = profile_root / "configuration"
+    area.mkdir(parents=True)
+    if units is None:
+        units = [(BUNDLE, "1.0.0"), ("ru.aiedt.mcp.oform", "1.0.0")]
+    values = {"install_folder": str(install), "shared_cache": str(install),
+              "surrogate": "true", "cache": str(profile_root), "config_folder": area,
+              "root_id": None}
+    values.update(overrides)
+    snapshot = write_p2_profile(
+        profile_root, units=units, plain=True,
+        install_folder=values["install_folder"],
+        config_folder=values["config_folder"],
+        root_id=values["root_id"],
+        extra_properties=[
+            ("org.eclipse.equinox.p2.surrogate", values["surrogate"]),
+            ("org.eclipse.equinox.p2.cache", values["cache"]),
+            ("org.eclipse.equinox.p2.cache.shared", values["shared_cache"]),
+        ])
+    (area / "config.ini").write_text(
+        "eclipse.p2.data.area=@config.dir/../p2\n"
+        "eclipse.p2.profile=DefaultProfile\n"
+        "osgi.sharedConfiguration.area=file:configuration/\n", encoding="utf-8")
+    if recorded is None:
+        recorded = [(uid, version) for uid, version in units
+                    if uid not in (LEGACY_GROUP_IU, LEGACY_JAR_IU)]
+    write_bundles_info(area, [uid + "," + version + ",plugins/x.jar,4,false"
+                              for uid, version in recorded])
+    return install, profile_root, area, snapshot
+
+
+class AUserConfigurationIsASurrogateOfItsInstallation(unittest.TestCase):
+    """A current official layout keeps the configuration area outside the installation.
+
+    The report knows the installation from its launcher and from the path hash in the
+    configuration area's name. The profile names that installation in installFolder and
+    proves it again in cache.shared, so it can be verified only against the identity the
+    caller knows: the area's parent is the user's profile folder, not the installation, and
+    assuming the parent answers unknown for a layout that is real.
+    """
+
+    def test_the_matching_surrogate_is_known_with_no_legacy_units(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install, _, area, _ = write_user_configuration(pathlib.Path(directory))
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("known", status["status"], status)
+        self.assertEqual([], status["legacyUnits"])
+        self.assertEqual(str(install), status["installFolder"])
+
+    def test_the_config_ini_of_the_real_layout_selects_the_only_profile(self):
+        """The real area's config.ini names the sibling agent and the shared configuration only."""
+        with tempfile.TemporaryDirectory() as directory:
+            install, _, area, _ = write_user_configuration(pathlib.Path(directory))
+            (area / "config.ini").write_text(
+                "eclipse.p2.data.area=@config.dir/../p2\n"
+                "osgi.sharedConfiguration.area=file:configuration/\n", encoding="utf-8")
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("known", status["status"], status)
+        self.assertEqual("DefaultProfile", status["profileId"])
+
+    def test_the_legacy_units_of_a_surrogate_are_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install, _, area, _ = write_user_configuration(
+                pathlib.Path(directory),
+                units=[(BUNDLE, "1.0.0"), ("ru.aiedt.mcp.oform", "1.0.0"),
+                       (LEGACY_GROUP_IU, "0.1.0")])
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("known", status["status"], status)
+        self.assertEqual([LEGACY_GROUP_IU], [unit["id"] for unit in status["legacyUnits"]])
+
+    def test_a_surrogate_without_a_known_installation_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, _, area, _ = write_user_configuration(pathlib.Path(directory))
+            status = REPORT.p2_profile_status(area)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("installation", status["reason"])
+
+    def test_an_install_folder_of_another_installation_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install, _, area, _ = write_user_configuration(
+                root, install_folder=str(root / "Program Files" / "other-edt"))
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("installFolder", status["reason"])
+
+    def test_a_surrogate_install_folder_contradicts_even_without_a_data_area(self):
+        """A surrogate profile is verified by its own claim, not only by the explicit agent."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install, _, area, _ = write_user_configuration(
+                root, install_folder=str(root / "Program Files" / "other-edt"))
+            (area / "config.ini").write_text(
+                "eclipse.p2.profile=DefaultProfile\n"
+                "osgi.sharedConfiguration.area=file:configuration/\n", encoding="utf-8")
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("installFolder", status["reason"])
+
+    def test_a_shared_cache_of_another_installation_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install, _, area, _ = write_user_configuration(
+                root, shared_cache=str(root / "other-cache"))
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("cache.shared", status["reason"])
+
+    def test_a_configuration_binding_of_another_area_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install, _, area, _ = write_user_configuration(
+                root, config_folder=root / "other" / "configuration")
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("bound", status["reason"])
+
+    def test_a_surrogate_without_a_configuration_binding_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install, _, area, snapshot = write_user_configuration(pathlib.Path(directory))
+            text = snapshot.read_text(encoding="utf-8")
+            text = text.replace(
+                "<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>" % area, "")
+            snapshot.write_text(text, encoding="utf-8")
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("does not name", status["reason"])
+
+    def test_a_snapshot_of_another_profile_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install, _, area, _ = write_user_configuration(
+                pathlib.Path(directory), root_id="NotThisOne")
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("NotThisOne", status["reason"])
+
+    def test_membership_drift_is_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            install, _, area, _ = write_user_configuration(
+                pathlib.Path(directory),
+                recorded=[(BUNDLE, "0.2.60"), ("ru.aiedt.mcp.oform", "1.0.0")])
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("unknown", status["status"])
+        self.assertIn("membership", status["reason"])
+
+    def test_the_old_local_layout_is_still_known(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install = make_installation(root / "installs" / "edt")
+            area = install / "configuration"
+            area.mkdir()
+            write_p2_profile(install, units=[(BUNDLE, "1.0.0"),
+                                             ("ru.aiedt.mcp.oform", "1.0.0")],
+                             plain=True, install_folder=str(install))
+            (area / "config.ini").write_text(
+                "eclipse.p2.data.area=@config.dir/../p2\n"
+                "eclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+            write_bundles_info(area, [BUNDLE + ",1.0.0,plugins/x.jar,4,false",
+                                      "ru.aiedt.mcp.oform,1.0.0,plugins/x.jar,4,false"])
+            status = REPORT.p2_profile_status(area, install)
+        self.assertEqual("known", status["status"], status)
+
+
+class ExplicitSharedAgentProfiles(unittest.TestCase):
+    def fixture(self, root, legacy=False, bound=False):
+        area = root / "edt" / "configuration"
+        agent = root / "shared agent"
+        area.mkdir(parents=True)
+        units = [(BUNDLE, "1.0.0"), ("ru.aiedt.mcp.oform", "1.0.0")]
+        if legacy:
+            units.append((LEGACY_GROUP_IU, "0.1.0"))
+        snapshot = write_p2_profile(agent, units=units, plain=True,
+                                    config_folder=area)
+        text = snapshot.read_text(encoding="utf-8")
+        if not bound:
+            text = text.replace("<property name='org.eclipse.equinox.p2.configurationFolder' value='%s'/>" % area, "")
+        text = text.replace("C:/edt-install", str(area.parent))
+        snapshot.write_text(text, encoding="utf-8")
+        uri = (agent / "p2").as_uri().replace(":", "\\:")
+        (area / "config.ini").write_text(
+            "eclipse.p2.data.area=" + uri + "\neclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+        write_bundles_info(area, [uid + "," + version + ",plugins/x.jar,4,false"
+                                  for uid, version in units if uid != LEGACY_GROUP_IU])
+        return area, snapshot
+
+    def test_explicit_shared_agent_without_configuration_binding(self):
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy), tempfile.TemporaryDirectory() as directory:
+                area, _ = self.fixture(pathlib.Path(directory), legacy=legacy)
+                status = REPORT.p2_profile_status(area)
+                self.assertEqual("known", status["status"], status)
+                self.assertEqual(bool(status["legacyUnits"]), legacy)
+
+    def test_explicit_agent_with_configuration_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, _ = self.fixture(pathlib.Path(directory), bound=True)
+            self.assertEqual("known", REPORT.p2_profile_status(area)["status"])
+
+    def test_relative_and_config_dir_agent_locations(self):
+        for location in ("../../shared agent/p2", "@config.dir/../../shared agent/p2"):
+            with self.subTest(location=location), tempfile.TemporaryDirectory() as directory:
+                area, _ = self.fixture(pathlib.Path(directory))
+                (area / "config.ini").write_text("eclipse.p2.data.area=" + location +
+                    "\neclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+                self.assertEqual("known", REPORT.p2_profile_status(area)["status"])
+
+    def test_binding_install_and_membership_contradictions_remain_unknown(self):
+        for change in ("configuration", "empty-configuration", "install", "old", "missing", "editor"):
+            with self.subTest(change=change), tempfile.TemporaryDirectory() as directory:
+                area, snapshot = self.fixture(pathlib.Path(directory), bound=True)
+                text = snapshot.read_text(encoding="utf-8")
+                if change == "configuration":
+                    text = text.replace("value='%s'" % area, "value='wrong'")
+                elif change == "empty-configuration":
+                    text = text.replace("value='%s'" % area, "value=''")
+                elif change == "install":
+                    text = text.replace("value='%s'" % area.parent, "value='wrong'")
+                elif change == "old":
+                    text = text.replace("version='1.0.0'", "version='0.2.60'")
+                elif change == "missing":
+                    text = text.replace("<unit id='%s' version='1.0.0'/>" % BUNDLE, "")
+                else:
+                    write_bundles_info(area, ["ru.aiedt.mcp.editor,1.0.0,plugins/x.jar,4,false"])
+                snapshot.write_text(text, encoding="utf-8")
+                self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_shared_binding_requires_readable_membership_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, _ = self.fixture(pathlib.Path(directory))
+            info = area / "org.eclipse.equinox.simpleconfigurator" / "bundles.info"
+            with unittest.mock.patch.object(pathlib.Path, "read_text", side_effect=OSError("unreadable")):
+                self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+            info.rename(info.with_suffix(".saved"))
+            self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_each_targeted_bundle_requires_exact_version_sets_even_without_legacy(self):
+        for bundle in (BUNDLE, "ru.aiedt.mcp.oform", "ru.aiedt.mcp.editor"):
+            for versions in (("0.2.60",), (), ("1.0.0", "0.2.60")):
+                with self.subTest(bundle=bundle, versions=versions), tempfile.TemporaryDirectory() as directory:
+                    area, snapshot = self.fixture(pathlib.Path(directory))
+                    text = snapshot.read_text(encoding="utf-8")
+                    text = text.replace("<unit id='%s' version='1.0.0'/>" % bundle, "")
+                    text = text.replace("</units>", "".join(
+                        "<unit id='%s' version='%s'/>" % (bundle, version) for version in versions) + "</units>")
+                    snapshot.write_text(text, encoding="utf-8")
+                    lines = [uid + ",1.0.0,plugins/x.jar,4,false"
+                             for uid in (BUNDLE, "ru.aiedt.mcp.oform", "ru.aiedt.mcp.editor")]
+                    write_bundles_info(area, lines)
+                    self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_empty_targeted_membership_does_not_prove_shared_binding(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, snapshot = self.fixture(pathlib.Path(directory))
+            text = snapshot.read_text(encoding="utf-8")
+            text = text.replace("<unit id='%s' version='1.0.0'/>" % BUNDLE, "")
+            text = text.replace("<unit id='ru.aiedt.mcp.oform' version='1.0.0'/>", "")
+            snapshot.write_text(text, encoding="utf-8")
+            write_bundles_info(area, [])
+            self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
+
+    def test_java_property_unicode_and_continuation_select_the_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            area, _ = self.fixture(pathlib.Path(directory))
+            text = (area / "config.ini").read_text(encoding="utf-8")
+            text = text.replace("DefaultProfile", "Default\\u0050ro\\\n  file")
+            (area / "config.ini").write_text(text, encoding="utf-8")
+            self.assertEqual("known", REPORT.p2_profile_status(area)["status"])
+
+    def test_invalid_explicit_locations_and_properties_never_fall_back(self):
+        for value in ("https://example.invalid/p2", "file://remote/share/p2", "file:/bad%ZZ",
+                      "\\uZZZZ", "@unknown/p2", "file:/tmp/p2?query"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as directory:
+                area, _ = self.fixture(pathlib.Path(directory))
+                write_p2_profile(area.parent)
+                (area / "config.ini").write_text("eclipse.p2.data.area=" + value +
+                    "\neclipse.p2.profile=DefaultProfile\n", encoding="utf-8")
+                self.assertEqual("unknown", REPORT.p2_profile_status(area)["status"])
 
 
 class TheInstalledStateIsReadFromTheP2Profile(unittest.TestCase):
@@ -886,7 +1187,8 @@ class TheJsonReportCarriesTheProfileStates(unittest.TestCase):
             install = make_installation(root / "installs" / "edt")
             write_bundles_info(install / "configuration",
                                [BUNDLE + ",0.2.60,plugins/" + BUNDLE + "_0.2.60.jar,4,false"])
-            write_p2_profile(install, units=[(LEGACY_GROUP_IU, "0.1.0.202609212242")])
+            write_p2_profile(install, units=[(LEGACY_GROUP_IU, "0.1.0.202609212242"),
+                                             (BUNDLE, "0.2.60")])
             payload = self.payload_for(root)
         self.assertEqual({"bundle", "roots", "installations", "unclaimed", "unreadable",
                           "consumers", "p2Profiles"}, set(payload))
@@ -905,6 +1207,40 @@ class TheJsonReportCarriesTheProfileStates(unittest.TestCase):
             payload = self.payload_for(root)
         self.assertIn(REPORT.normalised(elsewhere), payload["p2Profiles"])
         self.assertEqual("known", payload["p2Profiles"][REPORT.normalised(elsewhere)]["status"])
+
+    def test_a_user_configuration_area_is_known_through_the_json_report(self):
+        """The report passes the installation it attributed the area to, not the area's parent."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            install, profile_root, area, _ = write_user_configuration(root)
+            payload = self.payload_for(root)
+        key = REPORT.normalised(profile_root)
+        self.assertIn(key, payload["p2Profiles"])
+        status = payload["p2Profiles"][key]
+        self.assertEqual("known", status["status"], status)
+        self.assertEqual([], status["legacyUnits"])
+        self.assertEqual(str(install), status["installFolder"])
+
+    def test_the_json_report_reads_the_legacy_units_of_a_surrogate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            _, profile_root, _, _ = write_user_configuration(
+                root, units=[(BUNDLE, "1.0.0"), ("ru.aiedt.mcp.oform", "1.0.0"),
+                             (LEGACY_GROUP_IU, "0.1.0")])
+            payload = self.payload_for(root)
+        status = payload["p2Profiles"][REPORT.normalised(profile_root)]
+        self.assertEqual("known", status["status"], status)
+        self.assertEqual([LEGACY_GROUP_IU], [unit["id"] for unit in status["legacyUnits"]])
+
+    def test_the_json_report_refuses_a_surrogate_of_another_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            other = str(root / "Program Files" / "other-edt")
+            _, profile_root, _, _ = write_user_configuration(
+                root, install_folder=other, shared_cache=other)
+            payload = self.payload_for(root)
+        status = payload["p2Profiles"][REPORT.normalised(profile_root)]
+        self.assertEqual("unknown", status["status"], status)
 
     def test_the_full_shape_carries_it_per_bundle(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -151,6 +151,16 @@ class ProseIsNotCoverage(FakeTree):
                       buckets["exercised"])
 
 
+class DrawingIsUiBound(unittest.TestCase):
+    def test_draw2d_figures_are_ui_bound_but_pure_navigation_is_not(self):
+        figure = "import org.eclipse.draw2d.Figure;\nclass Drawing extends Figure {}"
+        self.assertEqual(("ui-bound", "Drawing"),
+                         MODULE.classify("Drawing.java", figure, set(), "", set(), set()))
+        pure = "import java.util.Map;\nclass Navigation {}"
+        self.assertEqual(("untested", "Navigation"),
+                         MODULE.classify("Navigation.java", pure, set(), "", set(), set()))
+
+
 class VersionFloor(unittest.TestCase):
     def test_qualifiers_do_not_move_a_version_past_its_release(self):
         self.assertTrue(BUNDLES.at_least("0.2.60.v20261017", "0.2.60"))

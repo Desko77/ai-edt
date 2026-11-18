@@ -453,7 +453,7 @@ public enum ToolProfile
      * the facade, its reads included, is off.
      * </p>
      * <p>
-     * The eight {@code *_writes} names are capability names, not tools: nothing registers them and
+     * The nine {@code *_writes} names are capability names, not tools: nothing registers them and
      * no group lists them, so they have no checkbox and no wire name. Seven are the write half of a
      * constructor facade - the reads of that facade and its {@code dryRun} previews stay on under
      * every preset, and the facade asks {@code ToolGate.gateIfPresetDisabled} about the name before
@@ -462,9 +462,11 @@ public enum ToolProfile
      * write door of the ordinary-forms tool another bundle publishes: the catalogue keeps that tool
      * callable as a mixed one while this name is disabled, and the tool itself refuses its writing
      * operations on it, so a preset that leaves the name out would leave those writes reachable
-     * through a tool the catalogue no longer blocks as a whole. They are deliberately not separate
-     * door tools: a door tool is a callable name a client can be told about, and these carry no
-     * operation of their own.
+     * through a tool the catalogue no longer blocks as a whole. The ninth,
+     * {@code launch_debugger_writes}, is the dump setting a launch turns on with
+     * {@code enableExternalObjectDump=true}, which Debug &amp; Test refuses while it keeps launching
+     * on. They are deliberately not separate door tools: a door tool is a callable name a client can
+     * be told about, and these carry no operation of their own.
      * </p>
      *
      * @return the names no write-blocking preset may leave enabled
@@ -494,6 +496,10 @@ public enum ToolProfile
         // tool refuses its writes on this name; with it left out, the whole-tool refusal would be
         // the only barrier and a mixed declaration would have bought nothing.
         names.add("ordinary_forms_writes"); //$NON-NLS-1$
+        // Debug & Test keeps launch_debugger on, and enableExternalObjectDump=true switches dump
+        // generation on in the external-object project's settings: the launch asks this door
+        // before that write.
+        names.add("launch_debugger_writes"); //$NON-NLS-1$
         names.add("git_commit"); //$NON-NLS-1$
         names.add("git_checkout"); //$NON-NLS-1$
         names.add("git_revert_file"); //$NON-NLS-1$

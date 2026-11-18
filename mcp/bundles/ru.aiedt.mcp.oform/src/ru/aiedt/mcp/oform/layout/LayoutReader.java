@@ -135,6 +135,11 @@ public final class LayoutReader
             {
                 layout.title = localized(head.get(0));
             }
+            if (body.size() >= 5 && intOf(body.get(3)) != null && intOf(body.get(4)) != null)
+            {
+                layout.width = intOf(body.get(3));
+                layout.height = intOf(body.get(4));
+            }
             ListNode rootPanel = body.size() > 2 ? asList(body.get(2)) : null;
             if (rootPanel != null && rootPanel.size() >= 2 && PANEL_TYPE.equalsIgnoreCase(tokenText(rootPanel.get(0))))
             {
@@ -507,21 +512,9 @@ public final class LayoutReader
         {
             return null;
         }
-        int[] path;
-        switch (type)
+        int[] path = PropertyApplicability.captionPath(type);
+        if (path == null)
         {
-        case "Label": //$NON-NLS-1$
-        case "Button": //$NON-NLS-1$
-        case "Group": //$NON-NLS-1$
-            path = new int[] { 1, 2 };
-            break;
-        case "CheckBox": //$NON-NLS-1$
-            path = new int[] { 1, 0, 2 };
-            break;
-        case "RadioBtn": //$NON-NLS-1$
-            path = new int[] { 2, 0, 2 };
-            break;
-        default:
             return null;
         }
         Node node = own;

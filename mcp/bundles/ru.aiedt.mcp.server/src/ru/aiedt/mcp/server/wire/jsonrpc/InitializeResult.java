@@ -18,6 +18,8 @@ public class InitializeResult
 
     private final ServerInfo serverInfo;
 
+    private final String instructions;
+
     /**
      * Builds the handshake result.
      *
@@ -30,9 +32,36 @@ public class InitializeResult
     public InitializeResult(String protocolVersion, String serverName, String serverVersion,
         String author, String title)
     {
+        this(protocolVersion, serverName, serverVersion, author, title, null);
+    }
+
+    /**
+     * Builds the handshake result with optional guidance.
+     *
+     * @param protocolVersion the agreed MCP revision
+     * @param serverName the server name
+     * @param serverVersion the plugin version
+     * @param author the attribution string
+     * @param title the display title
+     * @param instructions guidance for the client, or null
+     */
+    public InitializeResult(String protocolVersion, String serverName, String serverVersion,
+        String author, String title, String instructions)
+    {
         this.protocolVersion = protocolVersion;
         this.capabilities = new Capabilities();
         this.serverInfo = new ServerInfo(serverName, serverVersion, author, title);
+        this.instructions = instructions;
+    }
+
+    /**
+     * Returns the optional guidance.
+     *
+     * @return the instructions, or null
+     */
+    public String getInstructions()
+    {
+        return instructions;
     }
 
     /**

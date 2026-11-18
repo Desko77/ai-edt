@@ -1,0 +1,150 @@
+{
+  "name": "config_io",
+  "beforeUtf8Bytes": 6510,
+  "shape": {
+    "name": "config_io",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "find": {
+          "type": "string"
+        },
+        "binaryPath": {
+          "type": "string"
+        },
+        "platform": {
+          "type": "string"
+        },
+        "extensionName": {
+          "type": "string"
+        },
+        "baseConfigurationPath": {
+          "type": "string"
+        },
+        "keepXmlPath": {
+          "type": "string"
+        },
+        "projectName": {
+          "type": "string"
+        },
+        "outputPath": {
+          "type": "string"
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "importPath": {
+          "type": "string"
+        },
+        "sourcePath": {
+          "type": "string"
+        },
+        "targetPath": {
+          "type": "string"
+        },
+        "applicationId": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "allowOutOfSync": {
+          "type": "boolean"
+        },
+        "skipValidation": {
+          "type": "string"
+        },
+        "baseProjectName": {
+          "type": "string"
+        },
+        "xmlVersion": {
+          "type": "string"
+        },
+        "objectName": {
+          "type": "string"
+        },
+        "timeoutSeconds": {
+          "type": "string"
+        },
+        "runKey": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "variant": {
+          "type": "string"
+        },
+        "allVariants": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operation"
+      ]
+    },
+    "annotations": {
+      "openWorldHint": false
+    }
+  },
+  "root": "Configuration import / export: round-trip the configuration to XML. import_configuration_from_xml and import_configuration_from_binary mutate the workspace (each creates a project) and export_object, import_configuration_from_binary and export_infobase_objects may reply Pending with a runKey to resume - the facade only routes, it adds no dryRun. export_configuration_to_cf dumps the infobase's current configuration (run update_database first to capture project changes); export_infobase_objects reads the infobase's own configuration and writes the Designer-XML files to a destination directory; export_database_configuration and export_database_extension are the guarded .cf/.cfe dumps - they refuse an occupied outputPath (overwrite=true overrides) and an infobase that does not hold the project's current configuration (allowOutOfSync=true overrides), so an old file can never pass as the result.",
+  "descriptions": {
+    "operation": "export_configuration_to_xml / import_configuration_from_xml / import_configuration_from_binary / export_object / export_common_picture / export_configuration_to_cf / export_infobase_objects / unpack_external_binary / export_database_configuration / export_database_extension / help (snake_case canonical; camelCase like exportObject accepted). topic=<operation>: what that one takes.",
+    "topic": "Help topic when operation=help; without it - all operations with one-line summaries.",
+    "find": "With help: search this help for a case-insensitive substring - all the words must appear inside one chunk, and with topic only that topic is searched.",
+    "binaryPath": "import_configuration_from_binary: absolute .cf/.cfe path to import (required).",
+    "platform": "import_configuration_from_binary: staging infobase platform version (e.g. 8.3.24).",
+    "extensionName": "import_configuration_from_binary, .cfe only: name to load the extension under; if omitted, taken from the file name. export_database_extension: exact extension name to export (required; list_extension shows installed names).",
+    "baseConfigurationPath": "import_configuration_from_binary, .cfe only: .cf loaded into the staging infobase first, providing the configuration the extension borrows from.",
+    "keepXmlPath": "import_configuration_from_binary: keep the intermediate Designer-XML here instead of a temporary directory that is deleted.",
+    "projectName": "EDT project name; for import operations, the NEW project to create - must not exist.",
+    "outputPath": "Absolute output path, required by every export. export_configuration_to_xml: Designer-XML dump directory (created if missing; existing contents overwritten). export_object: .epf/.erf file path (extension picks the kind, else auto-detected). export_common_picture: FILE path, or DIRECTORY when allVariants=true. export_configuration_to_cf: .cf file path. export_infobase_objects: DIRECTORY path (must be absent or empty). export_database_configuration / export_database_extension: .cf / .cfe file path - existing file refused unless overwrite=true.",
+    "objects": "export_infobase_objects: required object addresses from the INFOBASE's configuration - a whole top object (Catalog.Банки / Справочник.Банки), a form (Catalog.Банки.Form.ФормаЭлемента) or a common form (CommonForm.Имя).",
+    "importPath": "import_configuration_from_xml: absolute path to the directory of Designer-XML files (required).",
+    "sourcePath": "unpack_external_binary: absolute path to the .epf or .erf file to convert (required).",
+    "targetPath": "unpack_external_binary: directory the XML is written into (required).",
+    "applicationId": "export_configuration_to_cf / export_database_configuration / export_database_extension: infobase application id (from get_applications).",
+    "overwrite": "export_database_configuration / export_database_extension: replace an existing file at outputPath (default false - occupied path refused).",
+    "allowOutOfSync": "export_database_configuration / export_database_extension: dump while the infobase lacks the project's current configuration (default false - the dump is refused instead of silently missing changes; run update_database first).",
+    "skipValidation": "export_configuration_to_cf: pass 'true' to skip the built-in validate_for_export guard.",
+    "baseProjectName": "Both imports, for an extension: the project of the configuration it extends.",
+    "xmlVersion": "import_configuration_from_xml: platform XML format version (e.g. 8.3.20); omit to auto-detect.",
+    "objectName": "export_object: object name within the project.",
+    "timeoutSeconds": "export_object: soft timeout in seconds before returning Pending JSON with runKey (default 30, range 5-120, clamped); same for import_configuration_from_binary (staging run) and export_infobase_objects (Designer run).",
+    "runKey": "export_object, import_configuration_from_binary, export_infobase_objects: resume a Pending run; other params ignored once runKey is supplied.",
+    "name": "export_common_picture: required CommonPicture name - 'CommonPicture.<Name>' or bare '<Name>'.",
+    "variant": "export_common_picture, multi-variant only: one DPI tier by manifest entry name (e.g. '200.png'), bare scale ('200') or screenDensity token ('hdpi').",
+    "allVariants": "export_common_picture, multi-variant only: extract every zip entry into outputPath as a directory (default false)."
+  },
+  "changedKeys": [
+    "outputPath",
+    "operation",
+    "objects",
+    "allowOutOfSync",
+    "extensionName",
+    "timeoutSeconds",
+    "variant",
+    "runKey",
+    "overwrite",
+    "baseConfigurationPath",
+    "applicationId",
+    "keepXmlPath",
+    "allVariants",
+    "importPath",
+    "name",
+    "xmlVersion",
+    "projectName",
+    "topic",
+    "platform",
+    "binaryPath"
+  ]
+}

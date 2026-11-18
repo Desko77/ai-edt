@@ -126,6 +126,44 @@ public final class OperationsCatalog
     }
 
     /**
+     * Describe one registered operation without executing its handler or resolving its project.
+     *
+     * @param spec the registered operation to describe
+     * @return the operation flags, summary and complete common and operation-specific parameters
+     */
+    public static Map<String, Object> describe(OperationSpec spec)
+    {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("operation", spec.name); //$NON-NLS-1$
+        out.put("kind", spec.kind.name()); //$NON-NLS-1$
+        out.put("writes", spec.writes); //$NON-NLS-1$
+        out.put("needsProject", spec.needsProject); //$NON-NLS-1$
+        out.put("summary", spec.help); //$NON-NLS-1$
+        out.put("commonArguments", parameterDetails(COMMON)); //$NON-NLS-1$
+        out.put("arguments", parameterDetails(spec.params)); //$NON-NLS-1$
+        return out;
+    }
+
+    /**
+     * Encode parameter types and complete current descriptions without inferring defaults or required flags.
+     *
+     * @param params the parameters in declaration order
+     * @return an ordered map of parameter names to types and descriptions
+     */
+    private static Map<String, Object> parameterDetails(List<ParamSpec> params)
+    {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (ParamSpec param : params)
+        {
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("type", param.type.name().toLowerCase(Locale.ROOT)); //$NON-NLS-1$
+            detail.put("description", param.description()); //$NON-NLS-1$
+            out.put(param.name, detail);
+        }
+        return out;
+    }
+
+    /**
      * The tool's input schema: {@code operation}, the common arguments, then every argument any
      * operation declares, merged by name.
      *
@@ -136,11 +174,12 @@ public final class OperationsCatalog
         SchemaComposer composer = SchemaComposer.object()
             .stringProperty("operation", String.join(" | ", knownNames()) + " (required)"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
         Map<String, ParamSpec.Type> types = new LinkedHashMap<>();
-        Map<String, List<String>> descriptions = new LinkedHashMap<>();
+        Map<String, String> commonDescriptions = new LinkedHashMap<>();
+        Map<String, Map<String, List<String>>> descriptions = new LinkedHashMap<>();
         for (ParamSpec common : COMMON)
         {
             types.put(common.name, common.type);
-            descriptions.computeIfAbsent(common.name, k -> new ArrayList<>()).add(common.description());
+            commonDescriptions.put(common.name, common.schemaDescription());
         }
         for (OperationSpec spec : BY_NAME.values())
         {
@@ -153,12 +192,27 @@ public final class OperationsCatalog
                         + param.type + " for " + spec.name); //$NON-NLS-1$
                 }
                 types.put(param.name, param.type);
-                descriptions.computeIfAbsent(param.name, k -> new ArrayList<>()).add(spec.name + ": " + param.description()); //$NON-NLS-1$
+                descriptions.computeIfAbsent(param.name, k -> new LinkedHashMap<>())
+                    .computeIfAbsent(param.schemaDescription(), k -> new ArrayList<>()).add(spec.name);
             }
         }
         for (Map.Entry<String, ParamSpec.Type> entry : types.entrySet())
         {
-            String description = String.join(" ", descriptions.get(entry.getKey())); //$NON-NLS-1$
+            List<String> parts = new ArrayList<>();
+            String common = commonDescriptions.get(entry.getKey());
+            if (common != null)
+            {
+                parts.add(common);
+            }
+            Map<String, List<String>> meanings = descriptions.get(entry.getKey());
+            if (meanings != null)
+            {
+                for (Map.Entry<String, List<String>> meaning : meanings.entrySet())
+                {
+                    parts.add(String.join(", ", meaning.getValue()) + ": " + meaning.getKey()); //$NON-NLS-1$ //$NON-NLS-2$
+                }
+            }
+            String description = String.join(" ", parts); //$NON-NLS-1$
             switch (entry.getValue())
             {
             case INTEGER:

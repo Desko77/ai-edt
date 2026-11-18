@@ -62,26 +62,23 @@ public class GitTool
     @Override
     public String getDescription()
     {
-        return "Git for the project inside EDT: status, branches, log, commit, checkout, " //$NON-NLS-1$
-            + "show_file_changes and revert_file. " //$NON-NLS-1$
+        return "Git for the project inside EDT. status: work tree and index vs HEAD, " //$NON-NLS-1$
+            + "ahead/behind the tracking branch. branches: local branches, current first. " //$NON-NLS-1$
+            + "log: recent commits. commit: named paths only, no add-all. " //$NON-NLS-1$
+            + "checkout: switch branch, or create it. " //$NON-NLS-1$
             + "show_file_changes reads a line diff, or (granularity=method, one .bsl file) the " //$NON-NLS-1$
             + "changed procedures and functions by name; edits outside any method count in the file " //$NON-NLS-1$
             + "totals and are not a method hunk. " //$NON-NLS-1$
             + "revert_file writes one file's bytes back from a commit, with the line endings a " //$NON-NLS-1$
-            + "checkout would give it; dryRun previews and writes nothing. The index is not touched: " //$NON-NLS-1$
-            + "afterwards the file matches HEAD, or it is listed as modified. An external edit of " //$NON-NLS-1$
-            + ".form, .mdo or .dcs needs revalidate_objects. " //$NON-NLS-1$
-            + "create_merge_restore_point records the project files before a merge and does not move " //$NON-NLS-1$
-            + "HEAD: a commit and its hash when the project is in git, otherwise a copy of the project " //$NON-NLS-1$
-            + "directory. restore_merge_point puts those files back - a file whose bytes already " //$NON-NLS-1$
-            + "match the point is not rewritten - and does not roll back the infobase. " //$NON-NLS-1$
-            + "delete_merge_restore_point drops a recorded point: the ref or the copy, and the " //$NON-NLS-1$
-            + "index entry; no project file is touched. " //$NON-NLS-1$
-            + "Operations: status (work tree and index vs HEAD, ahead/behind the tracking branch), " //$NON-NLS-1$
-            + "branches (local branches, current first), log (recent commits), " //$NON-NLS-1$
-            + "commit (stage named paths and commit them - paths by name only, there is no add-all), " //$NON-NLS-1$
-            + "checkout (switch branch, or create it), show_file_changes, revert_file, " //$NON-NLS-1$
-            + "create_merge_restore_point, delete_merge_restore_point, restore_merge_point."; //$NON-NLS-1$
+            + "checkout would give it; the index is not touched: afterwards the file matches HEAD, " //$NON-NLS-1$
+            + "or it is listed as modified. An external edit of .form, .mdo or .dcs needs " //$NON-NLS-1$
+            + "revalidate_objects. " //$NON-NLS-1$
+            + "create_merge_restore_point records the project files and does not move HEAD: a commit " //$NON-NLS-1$
+            + "and its hash when the project is in git, otherwise a copy of the project directory. " //$NON-NLS-1$
+            + "restore_merge_point puts those files back; a file whose bytes already match the point " //$NON-NLS-1$
+            + "is not rewritten; does not roll back the infobase. " //$NON-NLS-1$
+            + "delete_merge_restore_point drops the ref or the copy, and the index entry; " //$NON-NLS-1$
+            + "no project file is touched."; //$NON-NLS-1$
     }
 
     @Override
@@ -104,49 +101,46 @@ public class GitTool
             .stringProperty("operation", //$NON-NLS-1$
                 KNOWN + " (required)") //$NON-NLS-1$
             .stringProperty("projectName", //$NON-NLS-1$
-                "Name of the EDT project; its repository is the one the operation reads.") //$NON-NLS-1$
+                "EDT project name; its repository is used.") //$NON-NLS-1$
             .integerProperty("limit", //$NON-NLS-1$
-                "log: how many commits to list (default 10, at most 100). " //$NON-NLS-1$
-                    + "show_file_changes: how many changed files the answer carries (default 50, at " //$NON-NLS-1$
-                    + "most 200); the answer gives the total in totalFileCount either way.") //$NON-NLS-1$
+                "log: commits to list (default 10, at most 100). " //$NON-NLS-1$
+                    + "show_file_changes: changed files the answer carries (default 50, at most 200); " //$NON-NLS-1$
+                    + "totalFileCount either way.") //$NON-NLS-1$
             .stringProperty("paths", //$NON-NLS-1$
                 "commit: comma-separated paths to stage and commit, relative to the repository's " //$NON-NLS-1$
-                    + "work tree (e.g. 'src/CommonModules/MyModule/Module.bsl,CHANGELOG.md'). " //$NON-NLS-1$
-                    + "Required and by name only - a blanket add-all is refused, because a review " //$NON-NLS-1$
-                    + "cannot be told apart from one.") //$NON-NLS-1$
+                    + "work tree. Required and by name only; a blanket add-all is refused.") //$NON-NLS-1$
             .stringProperty("message", //$NON-NLS-1$
-                "commit: the commit message (required).") //$NON-NLS-1$
+                "commit: commit message (required).") //$NON-NLS-1$
             .stringProperty("authorName", //$NON-NLS-1$
-                "commit: author name when the repository's own configuration names none. " //$NON-NLS-1$
+                "commit: author name when configuration names none. " //$NON-NLS-1$
                     + "The configured author is used first.") //$NON-NLS-1$
             .stringProperty("authorEmail", //$NON-NLS-1$
                 "commit: author email, paired with authorName.") //$NON-NLS-1$
             .stringProperty("branch", //$NON-NLS-1$
-                "checkout: the branch to switch to, or (with createBranch) to create and switch " //$NON-NLS-1$
-                    + "to. A switch refused on conflicting files names them and changes nothing.") //$NON-NLS-1$
+                "checkout: branch to switch to, or (with createBranch) to create and switch to. " //$NON-NLS-1$
+                    + "A switch refused on conflicting files names them and changes nothing.") //$NON-NLS-1$
             .booleanProperty("createBranch", //$NON-NLS-1$
-                "checkout: create the branch from the current HEAD instead of switching to an " //$NON-NLS-1$
+                "checkout: create the branch from HEAD instead of switching to an " //$NON-NLS-1$
                     + "existing one (default false).") //$NON-NLS-1$
             .stringProperty("filePath", //$NON-NLS-1$
                 "show_file_changes: one file, relative to the work tree (a project-relative path " //$NON-NLS-1$
-                    + "is accepted). Omit it to list the changed files with line counts and no hunks, " //$NON-NLS-1$
-                    + "at most limit of them. " //$NON-NLS-1$
-                    + "revert_file: the one file to put back (required).") //$NON-NLS-1$
+                    + "is accepted). Omit it to list changed files with line counts and no hunks, " //$NON-NLS-1$
+                    + "at most limit. revert_file: the one file to put back (required).") //$NON-NLS-1$
             .stringProperty("fromRef", //$NON-NLS-1$
-                "show_file_changes and revert_file: the commit to read (SHA, branch or HEAD). " //$NON-NLS-1$
+                "show_file_changes and revert_file: commit to read (SHA, branch or HEAD). " //$NON-NLS-1$
                     + "Default HEAD.") //$NON-NLS-1$
             .stringProperty("toRef", //$NON-NLS-1$
-                "show_file_changes: the commit to compare against. Omit it to compare with the " //$NON-NLS-1$
+                "show_file_changes: commit to compare against. Omit it to compare with the " //$NON-NLS-1$
                     + "work tree.") //$NON-NLS-1$
             .stringProperty("granularity", //$NON-NLS-1$
-                "show_file_changes: line (default) or method. method names each changed procedure " //$NON-NLS-1$
+                "show_file_changes: line (default) or method. method names changed procedure " //$NON-NLS-1$
                     + "and function and applies only to one .bsl filePath; any other file is refused.") //$NON-NLS-1$
             .booleanProperty("dryRun", //$NON-NLS-1$
                 "revert_file: true previews the diff against fromRef and writes nothing " //$NON-NLS-1$
-                    + "(default false). A preview matches the file on disk and is answered even " //$NON-NLS-1$
-                    + "while an editor holds unsaved changes for it; only the write is refused then.") //$NON-NLS-1$
+                    + "(default false). A preview uses the file on disk while an editor holds unsaved changes " //$NON-NLS-1$
+                    + "for it; only the write is refused then.") //$NON-NLS-1$
             .stringProperty("pointId", //$NON-NLS-1$
-                "restore_merge_point: the point to put back. Omit it to use the latest point for " //$NON-NLS-1$
+                "restore_merge_point: point to put back. Omit it to use the latest point for " //$NON-NLS-1$
                     + "the project. delete_merge_restore_point: the point to delete, required.") //$NON-NLS-1$
             .build();
     }

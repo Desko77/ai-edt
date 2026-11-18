@@ -93,6 +93,21 @@ public class HandshakeDtoTest
         assertNull(document.get("error"));
     }
 
+    @Test
+    public void instructionsAreSerializedOnlyWhenPresent()
+    {
+        InitializeResult present = new InitializeResult("v", "s", "1", "a", "t", "guidance");
+        JsonObject withInstructions = JsonParser.parseString(GsonHolder.toJson(present)).getAsJsonObject();
+        assertEquals("guidance", present.getInstructions());
+        assertEquals("guidance", withInstructions.get("instructions").getAsString());
+
+        InitializeResult absent = new InitializeResult("v", "s", "1", "a", "t");
+        assertNull(absent.getInstructions());
+        assertFalse(JsonParser.parseString(GsonHolder.toJson(absent)).getAsJsonObject().has("instructions"));
+        InitializeResult explicitNull = new InitializeResult("v", "s", "1", "a", "t", null);
+        assertFalse(JsonParser.parseString(GsonHolder.toJson(explicitNull)).getAsJsonObject().has("instructions"));
+    }
+
     // ---- JsonRpcError ----
 
     @Test

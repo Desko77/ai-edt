@@ -262,8 +262,15 @@ public final class McpServerMeta
      */
     public static final String RESOURCE_SCHEME = "aiedt://"; //$NON-NLS-1$
 
-    /** The one family of resources served today: the write-ups for EDT validation checks. */
+    /** The family of resources holding the write-ups for EDT validation checks. */
     public static final String RESOURCE_CHECKS = RESOURCE_SCHEME + "checks/"; //$NON-NLS-1$
+
+    /**
+     * The single document describing the routes of this build. It is built from the registry and
+     * the active preset at the moment it is read, so it is a route table rather than a static help
+     * page: what it says about availability is true when the read happens.
+     */
+    public static final String RESOURCE_GUIDANCE = RESOURCE_SCHEME + "guidance"; //$NON-NLS-1$
 
     private static final String UNKNOWN_VERSION = "unknown"; //$NON-NLS-1$
 

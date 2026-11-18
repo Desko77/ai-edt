@@ -3,6 +3,14 @@
 `ordinary_forms` reads and edits ordinary forms in an open EDT project. The form layout and its
 BSL module are stored in `Form.oform`. The tool is included in the main AI-EDT feature.
 
+## Read-only viewer in EDT
+
+Opening `Form.oform` in EDT displays an element tree, a scrollable schematic with zoom, and a read-only property table. Root and nested page selection belongs to the viewer; selecting an element in the tree reveals its ancestor pages. Resource changes reconcile the view, and moved files retarget the editor input.
+
+The schematic uses the system font. Styles, fonts and the layout's tab-visibility setting are not exposed by the snapshot; page strips serve navigation. Elements without a rectangle remain in the tree and property table. Unread records and unsupported versions are identified in the view. Coordinates and DPI are not measured against the 1C client.
+
+The viewer does not edit properties, drag or resize elements, save containers, or offer undo/redo UI. Use `ordinary_forms` for layout writes and `write_module_source` for the module; opening and navigating the viewer leave the container unchanged.
+
 ## Address a form
 
 Pass `projectName` and either `formFqn` or `modulePath`:
@@ -15,8 +23,17 @@ The module address is also accepted by `read_module_source`, `read_method_source
 `code_search operation=text_search`. A module change updates the module entry alone: the layout
 entry and every other entry of the container are carried through untouched.
 
-Read the operation catalog with `operation=help`. The input schema and help use the same operation
-and property registries.
+`operation=help` returns the general operation catalogue, properties, events and write conditions.
+`operation=help topic=<operation>` returns `operationHelp`: the canonical operation name, `kind`,
+`writes`, `needsProject`, `summary`, `commonArguments` and `arguments` with types and full descriptions.
+`needsProject` describes the selected operation; the help request itself needs no project and does
+not execute that operation. Writing topics also return the write conditions in the root `writes`
+field; the nested `operationHelp.writes` is a boolean. An omitted or blank `topic` returns the general
+catalogue. Topic names ignore case and surrounding spaces; an unknown topic returns an error.
+
+```json
+{"operation": "help", "topic": "add_button"}
+```
 
 ```json
 {

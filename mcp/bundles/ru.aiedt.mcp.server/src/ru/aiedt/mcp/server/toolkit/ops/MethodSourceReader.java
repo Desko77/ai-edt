@@ -29,7 +29,6 @@ import ru.aiedt.mcp.server.support.YamlFrontMatter;
 import ru.aiedt.mcp.server.support.MarkdownTableHelper;
 import ru.aiedt.mcp.server.support.ProjectResolver;
 import ru.aiedt.mcp.server.support.modules.IModuleSource;
-import ru.aiedt.mcp.server.support.modules.ModuleSources;
 import ru.aiedt.mcp.server.support.TextSuggest;
 import ru.aiedt.mcp.server.support.UiSync;
 
@@ -37,11 +36,15 @@ import ru.aiedt.mcp.server.support.UiSync;
  * Reads one procedure or function by name and hands it back with a front-matter header the agent can
  * read the outcome off without parsing the code.
  * <p>
- * The model is asked first, because it names the method canonically and knows its export flag for
- * certain; when the model is not built the same answer is reconstructed by scanning the text with the
- * shared keyword patterns. Either way the returned span reaches back over the leading doc-comment, and
- * {@code includeDoc} turns that comment into a structured section. When the name is unknown the
- * available methods are listed, so a near miss corrects itself.
+ * The text comes from the one line sequence {@link ModuleTextSelection} selects - a registered
+ * module provider first, then an open editor's unsaved buffer, then the file on disk. Provider and
+ * editor text is scanned directly so the method and its inclusive bounds always describe the text
+ * the caller is shown. For disk text the built model is asked first, because it names the method
+ * canonically and knows its export flag for certain; when the model is not built the same answer is
+ * reconstructed by scanning the text with the shared keyword patterns. Either way the returned span
+ * reaches back over the leading doc-comment, and {@code includeDoc} turns that comment into a
+ * structured section. When the name is unknown the available methods are listed, so a near miss
+ * corrects itself.
  * </p>
  */
 public class MethodSourceReader
@@ -123,39 +126,135 @@ public class MethodSourceReader
         }
         String resolvedPath = resolution.getPath();
 
-        IModuleSource provided = ModuleSources.locate(project, resolvedPath);
-        if (provided != null)
+        IFile file = project.getFile(new Path("src").append(resolvedPath));
+        ModuleTextSelection selection = ModuleTextSelection.select(project, resolvedPath, file);
+
+        if (selection.isProvider())
         {
             // EDT builds no model of a provided module: straight to the text reader.
             List<String> lines;
             try
             {
-                lines = provided.lines();
+                lines = selection.lines();
             }
             catch (Exception e)
             {
-                return "Error: could not read the module from " + provided.source() + ": " + e.getMessage(); //$NON-NLS-1$ //$NON-NLS-2$
+                return "Error: could not read the module from " + selection.provider().source() + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                    + e.getMessage();
             }
-            return readMethodFromLines(lines, resolvedPath, methodName, includeDoc, projectName, provided);
+            return readMethodFromLines(lines, resolvedPath, methodName, includeDoc, projectName,
+                selection.provider());
+        }
+        if (selection.isEditor())
+        {
+            // The model may still hold the saved revision; the open editor's text is what the
+            // user is looking at, so the method and its bounds are read from that text.
+            try
+            {
+                return withUnsavedNote(readMethodFromLines(selection.lines(), resolvedPath, methodName,
+                    includeDoc, projectName, null));
+            }
+            catch (Exception e)
+            {
+                return "Error: could not read the editor text: " + e.getMessage(); //$NON-NLS-1$
+            }
+        }
+        if (selection.isDisk())
+        {
+            List<String> lines;
+            try
+            {
+                lines = selection.lines();
+            }
+            catch (Exception e)
+            {
+                // The model may still answer though the file cannot be read, as it did before.
+                String fromModel = readMethodViaModelOrNull(project, resolvedPath, methodName, includeDoc,
+                    projectName);
+                return fromModel != null ? fromModel
+                    : readMethodViaText(project, resolvedPath, methodName, includeDoc, projectName);
+            }
+            // The disk text is the model's text: keep the model's canonical name and export flag
+            // and its inclusive bounds, applied to the lines selected once for this call.
+            String diskAnswer = readMethodViaModelOrNull(project, resolvedPath, methodName, includeDoc,
+                projectName, lines);
+            if (diskAnswer != null)
+            {
+                return diskAnswer;
+            }
+            return readMethodFromLines(lines, resolvedPath, methodName, includeDoc, projectName, null);
         }
 
-        String result;
+        // No provider owns the address and no file exists there: the model may still have the
+        // module, and the text reader keeps its own refusal when it does not.
+        String modelAnswer = readMethodViaModelOrNull(project, resolvedPath, methodName, includeDoc, projectName);
+        if (modelAnswer != null)
+        {
+            return modelAnswer;
+        }
+        return readMethodViaText(project, resolvedPath, methodName, includeDoc, projectName);
+    }
+
+    /**
+     * Reads the method off the built model, for when the file could not be read or does not exist.
+     *
+     * @param project the project
+     * @param modulePath the resolved module path
+     * @param methodName the method name
+     * @param includeDoc whether to append the parsed doc-comment
+     * @param projectName the project name for the header
+     * @return the answer, or <code>null</code> when the model does not answer (send to the text path)
+     */
+    private String readMethodViaModelOrNull(IProject project, String modulePath, String methodName,
+        boolean includeDoc, String projectName)
+    {
         try
         {
-            result = UiSync.call(() ->
-                readMethodViaEmf(project, resolvedPath, methodName, includeDoc, projectName));
+            return UiSync.call(() ->
+                readMethodViaEmf(project, modulePath, methodName, includeDoc, projectName));
         }
         catch (RuntimeException e)
         {
-            // The model path failed or the UI thread was unavailable; fall through to the text reader.
-            result = null;
+            return null;
         }
+    }
 
-        if (result != null)
+    /**
+     * Reads the method off the built model against lines already selected for this call.
+     *
+     * @param project the project
+     * @param modulePath the resolved module path
+     * @param methodName the method name
+     * @param includeDoc whether to append the parsed doc-comment
+     * @param projectName the project name for the header
+     * @param lines the selected disk lines
+     * @return the answer, or <code>null</code> when the model is not built (send to the text path)
+     */
+    private String readMethodViaModelOrNull(IProject project, String modulePath, String methodName,
+        boolean includeDoc, String projectName, List<String> lines)
+    {
+        try
         {
-            return result;
+            return UiSync.call(() ->
+                readMethodViaEmf(project, modulePath, methodName, includeDoc, projectName, lines));
         }
-        return readMethodViaText(project, resolvedPath, methodName, includeDoc, projectName);
+        catch (RuntimeException e)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * Names the origin of a method answer read from an open editor's unsaved text.
+     *
+     * @param answer the method answer
+     * @return the answer with the unsaved note
+     */
+    private static String withUnsavedNote(String answer)
+    {
+        return answer + (answer.endsWith("\n") ? "\n" : "\n\n") //$NON-NLS-1$ //$NON-NLS-2$
+            + "**Unsaved:** this is what the open editor holds; the file on disk still has the " //$NON-NLS-1$
+            + "previous text.\n"; //$NON-NLS-1$
     }
 
     /**
@@ -182,9 +281,6 @@ public class MethodSourceReader
             return BslModuleAccess.buildMethodNotFoundResponse(module, modulePath, methodName);
         }
 
-        int startLine = BslModuleAccess.getStartLine(method);
-        int endLine = BslModuleAccess.getEndLine(method);
-
         List<String> lines;
         try
         {
@@ -195,6 +291,53 @@ public class MethodSourceReader
         {
             return readMethodFromEmfText(method, modulePath, projectName, includeDoc);
         }
+
+        return renderMethodViaEmf(method, modulePath, projectName, includeDoc, lines);
+    }
+
+    /**
+     * Reads the method off the built model against the text already selected for this call.
+     *
+     * @param project the project
+     * @param modulePath the resolved module path
+     * @param methodName the method name
+     * @param includeDoc whether to append the parsed doc-comment
+     * @param projectName the project name for the header
+     * @param lines the disk text, read once by the caller
+     * @return the answer, or <code>null</code> when the model is not built (send to the text path)
+     */
+    private String readMethodViaEmf(IProject project, String modulePath, String methodName,
+        boolean includeDoc, String projectName, List<String> lines)
+    {
+        Module module = BslModuleAccess.loadModule(project, modulePath);
+        if (module == null)
+        {
+            return null;
+        }
+        Method method = BslModuleAccess.findMethod(module, methodName);
+        if (method == null)
+        {
+            return BslModuleAccess.buildMethodNotFoundResponse(module, modulePath, methodName);
+        }
+        return renderMethodViaEmf(method, modulePath, projectName, includeDoc, lines);
+    }
+
+    /**
+     * Renders a method found by the model, slicing the selected lines with the model's inclusive
+     * bounds and reaching back over the leading doc-comment.
+     *
+     * @param method the model method
+     * @param modulePath the resolved module path
+     * @param projectName the project name for the header
+     * @param includeDoc whether to append the parsed doc-comment
+     * @param lines the text the bounds refer to
+     * @return the answer
+     */
+    private String renderMethodViaEmf(Method method, String modulePath, String projectName,
+        boolean includeDoc, List<String> lines)
+    {
+        int startLine = BslModuleAccess.getStartLine(method);
+        int endLine = BslModuleAccess.getEndLine(method);
 
         int from = Math.max(1, findDocCommentStart(lines, startLine));
         int to = Math.min(lines.size(), endLine);

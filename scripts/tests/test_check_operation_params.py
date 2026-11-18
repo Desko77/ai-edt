@@ -468,5 +468,53 @@ class TheCatalogHasToIntegrityCheckItself(FakeCatalogTree):
                         % problems)
 
 
+class ForwardedArgumentMapsAreFollowed(unittest.TestCase):
+    def test_a_call_before_a_declaration_is_not_the_method_body(self):
+        source = '''class Workshop {
+            void execute(Map<String, String> params) {
+                if (ready) { String invalid = format(params, true); if (invalid != null) return; }
+            }
+            String format(Map<String, String> params) { return format(params, false); }
+            String format(Map<String, String> params, boolean validateOnly) {
+                return extractStringArgument(params, "fontName");
+            }
+        }'''
+        names, _ = MODULE.parameters_of('return format(params);', source)
+        names |= MODULE.branch_deep_reads('return format(params);', source, '')
+        self.assertIn('fontName', names)
+
+    def test_the_real_creation_lifecycle_keeps_its_exact_request_scope(self):
+        source = (MODULE.OPS / 'ExtensionWorkshopTool.java').read_text(encoding='utf-8')
+        branch = MODULE.branches(MODULE.dispatch_body(source))['create_extension_project']
+        names, _ = MODULE.parameters_of(branch, source)
+        names |= MODULE.branch_deep_reads(branch, source, '')
+        self.assertEqual({'projectName', 'baseProjectName', 'namePrefix', 'runKey', 'cancel'}, names)
+
+    def test_real_format_validation_does_not_replace_the_final_writer(self):
+        source = (MODULE.OPS / 'MxlWorkshopTool.java').read_text(encoding='utf-8')
+        branch = MODULE.branches(MODULE.dispatch_body(source))['format_cells']
+        names, _ = MODULE.parameters_of(branch, source)
+        names |= MODULE.branch_deep_reads(branch, source, '')
+        import re
+        expected = set()
+        for constant, values in MODULE.CONST_ARRAY.findall(source):
+            if constant.startswith('FORMAT_'):
+                expected.update(re.findall(r'"([A-Za-z0-9_]+)"', values))
+        self.assertGreaterEqual(len(expected), 25)
+        self.assertLessEqual(expected, names)
+
+    def test_unrelated_map_and_scalar_arguments_are_not_forwarding(self):
+        source = '''class Workshop {
+            String run(Map<String, String> params) {
+                other(new HashMap<>()); scalar(params.get("projectName"));
+                return extractStringArgument(params, "own");
+            }
+            String other(Map<String, String> args) { return args.get("foreign"); }
+            String scalar(String name) { return extractStringArgument(params, "unrelated"); }
+        }'''
+        self.assertEqual({'own', 'projectName'},
+                         MODULE.branch_deep_reads('return run(params);', source, ''))
+
+
 if __name__ == "__main__":
     unittest.main()

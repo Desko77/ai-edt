@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import pathlib
 import re
 import sys
@@ -260,6 +261,7 @@ def names_read_through_a_loop(body: str, source: str) -> set[str]:
     return names
 
 
+@functools.lru_cache(maxsize=2048)
 def method_body(source: str, name: str) -> str:
     """The body of a method by name, braces matched. Empty when it is not in this file.
 
@@ -274,13 +276,28 @@ def method_body(source: str, name: str) -> str:
     seven operations of that facade were in the map knowing one parameter each, and the derivation
     had fallen through to the facade-wide set instead of what each operation reads.
     """
-    signature = re.search(
-        r"\b" + re.escape(name) + r"\s*\([^;{]*\)\s*(?:throws [\w.,\s]+)?\s*\{", source)
-    if not signature:
-        return ""
-    start = source.find("{", signature.end() - 1)
-    end = balanced_span(source, start, "{", "}")
-    return source[start:end - 1] if end > 0 else ""
+    bodies = []
+    # Require a return type and a declaration boundary. A call followed by an if-block
+    # is not a declaration, even when its argument text happens to match the signature.
+    declaration = re.compile(
+        r"(?:^|[;{}\n])\s*(?:(?:public|protected|private|static|final|synchronized)\s+)*"
+        r"[\w.<>?,\[\] ]+\s+" + re.escape(name)
+        + r"\s*\(([^;{}()]*)\)\s*(?:throws [\w.,\s]+)?\s*\{", re.M)
+    for signature in declaration.finditer(source):
+        start = source.find("{", signature.end() - 1)
+        end = balanced_span(source, start, "{", "}")
+        if end > 0:
+            body = source[start:end - 1]
+            # Reads may use args/p rather than params; only a declared argument map
+            # gets this normalization, never an unrelated map local.
+            maps = re.findall(r"Map\s*<\s*String\s*,\s*String\s*>\s+(\w+)",
+                              signature.group(1))
+            for argument in maps:
+                body = re.sub(r"\b" + re.escape(argument) + r"\b", "params", body)
+            bodies.append(body)
+    # Overloads can forward the same map to one another. Retain every declaration
+    # rather than mistaking the validation overload or its first call for the writer.
+    return "\n".join(bodies)
 
 
 def parameters_of(branch: str, source: str) -> tuple[set[str], str]:
@@ -341,6 +358,8 @@ def parameters_of(branch: str, source: str) -> tuple[set[str], str]:
         if body:
             names |= set(EXTRACT.findall(body))
             names |= names_read_through_a_loop(body, holder)
+    if not names:
+        names |= branch_deep_reads(branch, source, dispatch_body(source))
     if names:
         return names, "read in place"
     # A facade that reads its arguments BEFORE dispatching and hands them down as locals - which is
@@ -606,6 +625,34 @@ def facade_common_reads(source: str, handlers: set[str], depth: int = 5,
     return names
 
 
+def map_forwarding_calls(body: str) -> list[str]:
+    """Calls receiving the argument map itself, not a scalar read nested inside a call."""
+    calls = []
+    for match in re.finditer(r"\b((?:\w+\.)?\w+)\s*\(", body):
+        opened = body.index("(", match.start())
+        end = balanced_span(body, opened, "(", ")")
+        if end < 0:
+            continue
+        arguments = body[opened + 1:end - 1]
+        # A whole map argument is bounded by top-level commas. Parentheses nested
+        # inside another argument cannot turn scalar(params.get(...)) into forwarding.
+        depth = 0
+        start = 0
+        parts = []
+        for index, char in enumerate(arguments):
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth -= 1
+            elif char == "," and depth == 0:
+                parts.append(arguments[start:index].strip())
+                start = index + 1
+        parts.append(arguments[start:].strip())
+        if "params" in parts:
+            calls.append(match.group(1))
+    return calls
+
+
 def resolve_body(called: str, call_site: str, holder: str) -> tuple[str, str]:
     """The body of `called`, in `holder` or in the class the call site names.
 
@@ -615,6 +662,20 @@ def resolve_body(called: str, call_site: str, holder: str) -> tuple[str, str]:
     Looking in the facade alone left such a read out of the map, and the guard then refused a
     call that works.
     """
+    receiver, _, method = called.rpartition(".")
+    if receiver:
+        # Resolve a typed field, including a fully-qualified support helper. Its
+        # execute method is not the facade execute and must not be skipped.
+        field = re.search(r"\b([\w.]+)\s+" + re.escape(receiver) + r"\s*=", holder)
+        if field:
+            qualified = field.group(1)
+            candidates = list(SRC.rglob(qualified.rsplit(".", 1)[-1] + ".java"))
+            if len(candidates) == 1:
+                other = candidates[0].read_text(encoding="utf-8")
+                body = method_body(other, method)
+                if body:
+                    return body, other
+        called = method
     body = method_body(holder, called)
     if body:
         return body, holder
@@ -642,26 +703,26 @@ def branch_deep_reads(branch: str, source: str, dispatch: str, depth: int = 5) -
     after copying `params` into `forwarded` - reads what that tool's schema names.
     """
     names: set[str] = set()
-    seen: set[str] = {"execute"}
-    frontier = [(method, branch, source) for method in
-                re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", branch)]
+    seen: set[tuple[str, str]] = set()
+    frontier = [(method, branch, source) for method in map_forwarding_calls(branch)]
     for _ in range(depth):
         following: list[tuple[str, str, str]] = []
         for method, call_site, holder in frontier:
-            if method in seen or method in CONTROL_WORDS:
+            identity = (method, holder)
+            if identity in seen or method in CONTROL_WORDS or method == "execute":
                 continue
-            seen.add(method)
+            seen.add(identity)
             body, found_in = resolve_body(method, call_site, holder)
             if dispatch:
                 body = body.replace(dispatch, " ", 1)
             if not body:
                 continue
             names |= set(EXTRACT.findall(body))
+            names |= set(re.findall(r'\bparams\.(?:get|containsKey)\(\s*"([A-Za-z0-9_]+)"', body))
             names |= names_read_through_a_loop(body, found_in)
             for class_name in DELEGATE.findall(body):
                 names |= schema_parameters(class_name) or set()
-            following.extend((called, body, found_in) for called in
-                             re.findall(r"\b(\w+)\s*\((?=[^;{}]*\bparams\b)", body))
+            following.extend((called, body, found_in) for called in map_forwarding_calls(body))
         frontier = following
     return names
 

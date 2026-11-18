@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?eclipse version="3.4"?>
+<plugin>
+
+   <extension point="org.eclipse.ui.editors">
+      <editor
+            id="ru.aiedt.mcp.oform.editor.ordinaryForm"
+            name="%editorName"
+            extensions="oform"
+            default="false"
+            class="ru.aiedt.mcp.oform.editor.OrdinaryFormEditor">
+      </editor>
+   </extension>
+
+   <extension point="org.eclipse.ui.ide.editorAssociationOverride">
+      <editorAssociationOverride
+            id="ru.aiedt.mcp.oform.editor.association"
+            class="ru.aiedt.mcp.oform.editor.OrdinaryFormEditorAssociation">
+      </editorAssociationOverride>
+   </extension>
+
+   <extension point="org.eclipse.ui.preferencePages">
+      <page
+            id="ru.aiedt.mcp.oform.editor.settings"
+            category="ru.aiedt.mcp.server.settings"
+            name="%preferencePageName"
+            class="ru.aiedt.mcp.oform.editor.OrdinaryFormEditorPage">
+      </page>
+   </extension>
+
+</plugin>

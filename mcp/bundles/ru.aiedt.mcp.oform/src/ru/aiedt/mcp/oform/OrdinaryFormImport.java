@@ -1006,7 +1006,8 @@ public final class OrdinaryFormImport
         }
 
         /**
-         * Writes the imported container after checking its editor buffer and the observed bytes.
+         * Writes the imported container after checking its editor buffer, its session and the
+         * observed bytes, all through {@link ContainerWriteGuard}.
          *
          * @param containerPath the container path relative to src
          * @param observed the bytes read before exporting, or null when absent
@@ -1017,31 +1018,34 @@ public final class OrdinaryFormImport
         public void write(String containerPath, byte[] observed, byte[] bytes) throws IOException
         {
             IFile file = file(containerPath);
-            OrdinaryFormModule.refuseWhileAnEditorHoldsUnsavedChanges(file);
             try
             {
-                file.refreshLocal(IResource.DEPTH_ZERO, null);
-                byte[] current = null;
-                if (file.exists())
-                {
-                    try (InputStream stream = file.getContents(true))
-                    {
-                        current = stream.readAllBytes();
-                    }
-                }
-                requireUnchanged(observed, current);
-                createFolders(file.getParent());
-                try (InputStream stream = new ByteArrayInputStream(bytes))
-                {
+                ContainerWriteGuard.write(file, () -> {
+                    ContainerWriteGuard.refuseUnlessAllowed(file, null, true, true);
+                    file.refreshLocal(IResource.DEPTH_ZERO, null);
+                    byte[] current = null;
                     if (file.exists())
                     {
-                        file.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
+                        try (InputStream stream = file.getContents(true))
+                        {
+                            current = stream.readAllBytes();
+                        }
                     }
-                    else
+                    requireUnchanged(observed, current);
+                    createFolders(file.getParent());
+                    try (InputStream stream = new ByteArrayInputStream(bytes))
                     {
-                        file.create(stream, IResource.FORCE, null);
+                        if (file.exists())
+                        {
+                            file.setContents(stream, IResource.FORCE | IResource.KEEP_HISTORY, null);
+                        }
+                        else
+                        {
+                            file.create(stream, IResource.FORCE, null);
+                        }
                     }
-                }
+                    return null;
+                });
             }
             catch (CoreException e)
             {

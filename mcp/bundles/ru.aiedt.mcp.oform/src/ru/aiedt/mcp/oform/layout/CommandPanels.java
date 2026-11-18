@@ -11,7 +11,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 import ru.aiedt.mcp.oform.BraceTree;
 import ru.aiedt.mcp.oform.BraceTree.ListNode;
@@ -195,7 +194,7 @@ public final class CommandPanels
         {
             return;
         }
-        substitute(inner, "@PANELUUID", new Token(UUID.randomUUID().toString())); //$NON-NLS-1$
+        substitute(inner, "@PANELUUID", new Token(LayoutIds.next())); //$NON-NLS-1$
         substitute(inner, "@AUTOFILL", new Token("0")); //$NON-NLS-1$ //$NON-NLS-2$
         substitute(inner, "@ALLOC", new Token("0")); //$NON-NLS-1$ //$NON-NLS-2$
         substitute(record, "@SOURCE", new Token("0")); //$NON-NLS-1$ //$NON-NLS-2$
@@ -384,7 +383,7 @@ public final class CommandPanels
         else
         {
             actionRecord = resource("PanelProcedureAction"); //$NON-NLS-1$
-            substitute(actionRecord, "@U", new Token(UUID.randomUUID().toString())); //$NON-NLS-1$
+            substitute(actionRecord, "@U", new Token(LayoutIds.next())); //$NON-NLS-1$
             String title = caption == null || caption.isEmpty() ? LayoutEditor.presentation(procedure) : caption;
             substitute(actionRecord, "@PROC", Token.string(procedure)); //$NON-NLS-1$
             substitute(actionRecord, "@TITLE", LayoutReader.localizedNode(language, title)); //$NON-NLS-1$
@@ -454,10 +453,10 @@ public final class CommandPanels
         }
         // the submenu's own block: a fresh uuid and a number of the button id space, as every
         // measured block of a form's own carries
-        String blockUuid = UUID.randomUUID().toString();
+        String blockUuid = LayoutIds.next();
         int blockNum = allocateId(panel);
         ListNode action = resource("PanelSubmenuAction"); //$NON-NLS-1$
-        substitute(action, "@U", new Token(UUID.randomUUID().toString())); //$NON-NLS-1$
+        substitute(action, "@U", new Token(LayoutIds.next())); //$NON-NLS-1$
         substitute(action, "@BLOCKUUID", new Token(blockUuid)); //$NON-NLS-1$
         substitute(action, "@BLOCKNUM", new Token(Integer.toString(blockNum))); //$NON-NLS-1$
         appendAction(panel, action);
@@ -524,7 +523,7 @@ public final class CommandPanels
             return taken;
         }
         ListNode action = resource("PanelSeparatorAction"); //$NON-NLS-1$
-        substitute(action, "@U", new Token(UUID.randomUUID().toString())); //$NON-NLS-1$
+        substitute(action, "@U", new Token(LayoutIds.next())); //$NON-NLS-1$
         int buttonId = appendAction(panel, action);
         ListNode button = buttonRecord(root, false);
         substitute(button, "@NAME", Token.string(name)); //$NON-NLS-1$

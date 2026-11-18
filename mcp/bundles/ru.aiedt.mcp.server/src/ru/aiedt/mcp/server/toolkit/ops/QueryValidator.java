@@ -66,15 +66,12 @@ public class QueryValidator
     @Override
     public String getDescription()
     {
-        return "Validate 1C:Enterprise query language (QL) text in the context of a project, returning " //$NON-NLS-1$
-            + "syntax and semantic errors with line numbers. Use after writing or editing any 1C query " //$NON-NLS-1$
-            + "to catch mistakes early. Supports regular queries and DCS (Data Composition System) " //$NON-NLS-1$
-            + "queries; also returns a 'hints' array flagging common mistakes (SQL keywords like " //$NON-NLS-1$
-            + "SELECT/FROM/WHERE/JOIN/LIMIT/ORDER BY used instead of 1C QL, and wrong keywords like " //$NON-NLS-1$
-            + "УБЫВАНИЕ instead of УБЫВ). The hints array is empty when the query is correct. " //$NON-NLS-1$
-            + "Pass describeResult=true to also get what the query returns - the columns of each " //$NON-NLS-1$
-            + "result table and their types - instead of reading them off the query text; an " //$NON-NLS-1$
-            + "asterisk is expanded into the fields it stands for."; //$NON-NLS-1$
+        return "Validate 1C query text in a project, returning syntax and semantic errors with " //$NON-NLS-1$
+            + "line numbers. Run it before the query is executed against an infobase and before " //$NON-NLS-1$
+            + "that query is written into code that executes it. dcsMode accepts data composition " //$NON-NLS-1$
+            + "(DCS) query syntax. hints flags SQL keywords and УБЫВАНИЕ used instead of 1C QL, " //$NON-NLS-1$
+            + "and is empty for a correct query. describeResult=true names each result table's " //$NON-NLS-1$
+            + "columns and types; an asterisk expands to its fields."; //$NON-NLS-1$
     }
 
     @Override

@@ -26,10 +26,16 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
+### Preparing 1.0
+
+AI-EDT supports an agent-assisted development cycle: inspect the model, make a bounded change, verify the result and receive an actionable refusal when the operation cannot be established as safe. The 1.0 preparation addresses reports from real runs: extension-field placement, template persistence, infobase selection and UI-test launch options. Capabilities and contract changes are described in the [changelog](CHANGELOG.md#100---unreleased).
+
+This is not a promise of full autonomy: agents still need result verification and explicit authorization for data operations. The ordinary-form viewer remains read-only in this release.
+
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
 >
-> To install: in EDT open **Help → Install New Software** with the address `https://desko77.github.io/ai-edt/`, or press **Archive** and pick `AI-EDT-update-site.zip` from the [release page](https://github.com/Desko77/ai-edt/releases/latest). Step by step: [3. Install into EDT](#-3-install-into-edt).
+> To install: in EDT open **Install New Software** from the **Help** menu with the address `https://desko77.github.io/ai-edt/`, or press **Archive** and pick `AI-EDT-update-site.zip` from the [release page](https://github.com/Desko77/ai-edt/releases/latest). Step by step: [3. Install into EDT](#-3-install-into-edt).
 
 ## 🎯 Why AI-EDT
 
@@ -101,7 +107,11 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **Existing object presentations are updated per language.** `edit_metadata operation=set_object_property` writes object, list and register-record presentations: plain text in `propertyValue` updates the configuration's default language, while a JSON language map replaces all translations. `dryRun=true` returns the resulting map without writing it.
 
-**An open editor outranks the file.** `read_module_source` returns what the editor holds when it holds unsaved changes, and says so in the answer - otherwise the assistant reasons about a version the developer has moved past. `write_module_source` refuses in that case and names the file: writing over an open editor destroys either your unsaved work or its own, depending on who saves last, and does it silently. The text is read through the platform's file buffer manager, so neither a window nor the display thread is needed.
+**View ordinary forms in EDT.** `Form.oform` opens as a schematic with an element tree, root and nested page selection, zoom and a read-only property table. Selecting an element shows its properties and reveals its containing pages. This is a schematic using the system font, not a 1C client screenshot; use `ordinary_forms` to change the form. [Details](docs/ordinary-forms.md#read-only-viewer-in-edt).
+
+**Read a large module by line ranges.** `read_module_source` takes `projectName`, `modulePath`, `startLine` and `endLine` (inclusive, 1-based), returning at most 5000 lines per call. `read_method_source` takes `projectName`, `modulePath`, `methodName` and optional `includeDoc`. For exploration, obtain `get_module_structure` first, then read the method you need.
+
+**Module text source priority.** `read_module_source` and `read_method_source` select a matching `IModuleSourceProvider`, then an editor buffer with unsaved changes, then the physical file. A provider has priority even when the file exists and its editor has unsaved changes. An answer from an editor buffer carries an `Unsaved` note. `write_module_source` and `diff_module` use the physical file when it exists, otherwise the provider; the reader note for an address with both a provider and a file names the physical write and comparison target. Writing a file with unsaved editor changes is refused: save or revert them first. The physical editor buffer is read through the platform's file buffer manager without accessing a window or the display thread.
 
 **A query is checked before anyone runs it.** `validate_query` parses the text in the context of the project and returns syntax and semantic errors with line numbers, with a separate mode for DCS queries. Alongside them comes a list of hints for the usual slips: SQL keywords instead of the 1C query language, `УБЫВАНИЕ` where `УБЫВ` belongs. The assistant does not have to start the configuration to find out that a query will not compile.
 
@@ -240,7 +250,7 @@ https://desko77.github.io/ai-edt/
 
 EDT takes that address the same way it takes a local archive.
 
-**Step 1.** Start EDT and open **Help → Install New Software**.
+**Step 1.** Start EDT and open **Install New Software** from the **Help** menu.
 
 ![Installation starts from the Help menu.](docs/assets/screenshots/install-menu.png)
 
@@ -258,7 +268,7 @@ EDT takes that address the same way it takes a local archive.
   ```
 
   This one always resolves to the newest release and does not depend on the site being published, so it cannot fall behind. Mind the `jar:` prefix and the trailing `!/` - the address does not work without them.
-- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip` from a local build;
+- **Archive** and the file `mcp/repositories/ru.aiedt.mcp.server.repository/target/AI-EDT-<version>.zip` from a local build.
 - **Local** and the folder `mcp/repositories/ru.aiedt.mcp.server.repository/target/repository`.
 
 The repository name is arbitrary, for example `AI-EDT`.
@@ -344,14 +354,14 @@ files EDT owns edited by hand, a call retried that had already handed back a res
 
 ### ▶️ 4. Start and verify
 
-Open **Window → Preferences → AI-EDT** and check:
+Open **AI-EDT** in **Window - Preferences** and check:
 
 1. the server port, normally `12250`, and **how many consecutive ports it may take**. Ten by
    default: the server takes the first free one, so a second EDT on the same machine starts without
    anybody editing settings. Set it to 1 when the port is written into a client config and has to
-   stay exactly that;
-2. click **Start** to run the server now, or enable **Auto-start** and restart EDT;
-3. **Plain text mode** for clients that do not support MCP resources;
+   stay exactly that.
+2. click **Start** to run the server now, or enable **Auto-start** and restart EDT.
+3. **Plain text mode** for clients that do not support MCP resources.
 4. the active tool preset.
 
 ![The General page controls transport, external tools, network security, call history, updates and the server lifecycle.](docs/assets/screenshots/preferences-general.png)
@@ -371,7 +381,7 @@ A ready instance returns a response with `status: ok` and `phase: ready`. If the
 ### 🔗 5. Connect an AI client
 
 The server listens on `127.0.0.1` only and answers requests without a token. **Require bearer
-token** on **Window → Preferences → AI-EDT** turns the check on: every request then carries
+token** on **AI-EDT** in **Window - Preferences** turns the check on: every request then carries
 `Authorization: Bearer <token>` with the token from the **Bearer token** field of the same page (it
 is created at the first start of the server), and a client without it gets `401`. The examples below
 carry the header; with the check off the server does not read it, and the line can be left out.
@@ -486,7 +496,9 @@ AI-EDT uses a facade-first API. A facade accepts an operation discriminator and 
 
 Legacy standalone tool names remain callable as compatibility aliases. The **Canonical** preset hides those aliases from `tools/list`, reducing context use without removing capabilities.
 
-A facade's help is `operation=help`, one operation or argument with `topic`; `find=<words>` searches the help and names the topic to open for the whole section.
+A facade's help is `operation=help`, one operation or argument with `topic`; `find=<words>` searches the help and names the topic to open for the whole section. The catalogue carries short descriptions; operation help expands the full conditions and arguments, with a `parameters` topic also available on constructors. For `launch_debugger`, use `action=help`.
+
+`initialize` and `server/discover` return `instructions` pointing to the MCP resource `aiedt://guidance`. Reading it through `resources/read` with `uri=aiedt://guidance` returns routes for client launch, external-object debugging, import, query validation, export and ordinary forms. Availability is computed from the current registry and preset at read time: `hidden, callable` means a hidden but callable name, while `off` means a disabled route. The call itself makes the final decision.
 
 ![One facade covers many operations: here code_search reports the outgoing calls of a method.](docs/assets/screenshots/call-hierarchy.png)
 
@@ -539,7 +551,7 @@ Each tool can be **listed**, **callable-hidden** or **disabled**. Hidden tools s
 The server listens on `127.0.0.1` only; the bearer token check is turned on from the preference page.
 
 - **The bearer token.** It is created at the first start of the server when the field on
-  **Preferences → AI-EDT** is empty, and shown only there. The client sends it as
+  **AI-EDT** in **Preferences** is empty, and shown only there. The client sends it as
   `Authorization: Bearer <token>`; the comparison runs in constant time. A request without the
   right token gets `401`; the refusal names the preference page and never carries the token. The
   token is not written to the workspace log. **Generate** puts a new token into the field and
@@ -584,7 +596,7 @@ Every tool call is recorded: what ran, with which arguments, what came back, how
 
 The header says how many calls are kept and at how many characters of request and response, and the label above the response pane says how much of it survived: `Response (303 of 1957 characters)`. A cut record therefore cannot be mistaken for a short answer.
 
-Settings live in **Window -> Preferences -> AI-EDT**, section **Call history**: whether to record at all, how many calls to keep, how many characters of the request and of the response to keep. The shipped values answer "which tools ran" rather than "what exactly did they answer" - raise the character counts if you need the full response, since they are what decides what you get to see.
+Settings live in **AI-EDT** in **Window - Preferences**, section **Call history**: whether to record at all, how many calls to keep, how many characters of the request and of the response to keep. The shipped values answer "which tools ran" rather than "what exactly did they answer" - raise the character counts if you need the full response, since they are what decides what you get to see.
 
 Depth and extent are bounded together: the buffer as a whole stays inside a memory budget, and character counts that do not fit alongside the chosen depth are scaled down proportionally. The counts actually in force are shown in the history window header, so a reduction is visible rather than silent. The shipped values come nowhere near the budget.
 
@@ -606,7 +618,7 @@ The debugger facade supports ordinary client launches and **Attach to 1C:Enterpr
 
 The agent discovers an EDT launch configuration, attaches to the 1C debug server, sets a breakpoint and waits for a suspend event. AI-EDT then returns stable references to the thread, stack and frame so the agent can inspect variables, evaluate expressions, step through the code and resume execution.
 
-A launch counts as running only once a live debug target is seen; otherwise the answer says what happened instead and lists the modal dialogs that opened during the launch. The `debugServerPort` argument gives a launch its own debug server port when the default one is already taken by another environment on the machine. The client that starts can open an external data processor or report right away: the environment builds an external object dump for that, so the launch checks whether dump generation is on for the external-object project and turns it on when `enableExternalObjectDump` says so. The object receives its parameters through the `/C` startup string named by `startupOption` - written to the launch's own configuration copy, the saved one untouched; an Attach configuration and a session already running refuse it.
+A launch counts as running only once a live debug target is seen; otherwise the answer says what happened instead and lists the modal dialogs that opened during the launch. The `debugServerPort` argument gives a launch its own debug server port when the default one is already taken by another environment on the machine. The client that starts can open an external data processor or report right away: the environment builds an external object dump for that, so the launch checks whether dump generation is on for the external-object project and turns it on when `enableExternalObjectDump` says so. Under a preset that blocks writing (the `launch_debugger_writes` door) `enableExternalObjectDump=true` is refused before anything starts; without the argument or with `false` the launch goes ahead as before. An Attach configuration starts no client and refuses `externalObjectName` and `externalObjectProject`. Both refusals carry `nothingWasLaunchedOrUpdated`. The object receives its parameters through the `/C` startup string named by `startupOption` - written to the launch's own configuration copy, the saved one untouched; an Attach configuration and a session already running refuse it.
 
 The client follows the configuration's run mode. A configuration whose default run mode is the ordinary application starts in the thick client: a launch configuration the launch creates is saved with the thick client, an existing one starts this launch with it, and `/RunModeOrdinaryApplication` is put among the infobase's additional launch parameters on the reference EDT holds for the session - the infobase list on disk is not written. The arguments `clientType` (`thin`, `thick`, `web`) and `runMode` (`ordinary`, `managed`) of `launch_debugger action=launch` and `infobase_admin operation=start_client` name the choice outright; `clientType=thin` on an ordinary-application configuration is refused unless `runMode=managed` comes with it. The answer says what was decided (`clientType`, `clientTypeSource`, `runMode`, `runModeSource`) and what was changed (`runModeFlagState`, `runModeFlagScope`, `infobaseAdditionalParameters`).
 
@@ -618,6 +630,8 @@ The client follows the configuration's run mode. A configuration whose default r
 | **Vanessa Automation** | Execute scenario-based UI tests, waiting for the run or coming back for it by key, with cancellation and screenshots grouped by the step that failed. | Configure Vanessa separately and create the required launch setup. |
 | **1C debug server** | Debug server-side BSL through Attach. | Start `ragent` with `-debug -http` and create an EDT Attach configuration. |
 | **BSL Language Server** | Additional source review through `code_review`. | Configure the external JAR in AI-EDT preferences. |
+
+The tool creates the Vanessa process suspended, assigns it to a Windows Job Object, and then resumes it. On explicit cancellation, the tool terminates the processes in that job. On EDT exit, Windows terminates them (`KILL_ON_JOB_CLOSE`). Pending and unresolved-cleanup replies carry `containment` and the recorded `containmentProof`; ordinary terminal results do not necessarily include these fields: `notYetProven` until proof is observed; `jobObjectActiveProcessesZero` only after the root exit and a zero job count; `unassignedSuspended`/`rootHandleExit` for a retained unassigned root. `cleanupRequired=true` with `retryable=true` is retried by the same key; `retryable=false` is the legacy global hold/claim failure and needs investigation. On the Windows acceptance stand, the Vanessa manager and its TestClient were observed in the same job. Explicit cancellation brought its active process count to zero. A separately launched TestClient survived both normal completion and cancellation. This verifies the tested setup, not every possible 1C launcher configuration.
 
 ## ⚠️ Limitations
 
@@ -633,9 +647,9 @@ Contributions are welcome in the form of reproducible bug reports, focused featu
 
 Start with:
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) - build process, code style and contribution rules (currently in Russian);
-- [SECURITY.md](SECURITY.md) - private vulnerability reporting and the threat model (currently in Russian);
-- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history;
+- [CONTRIBUTING.md](CONTRIBUTING.md) - build process, code style and contribution rules (currently in Russian).
+- [SECURITY.md](SECURITY.md) - private vulnerability reporting and the threat model (currently in Russian).
+- [docs/PROVENANCE.md](docs/PROVENANCE.md) - source provenance and reimplementation history.
 - [CHANGELOG.md](CHANGELOG.md) - one line per release with a link to its details (in Russian, as the
   release notes are).
 

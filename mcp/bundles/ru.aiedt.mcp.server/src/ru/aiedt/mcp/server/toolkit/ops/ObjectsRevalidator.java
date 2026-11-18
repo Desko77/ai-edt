@@ -104,15 +104,41 @@ public class ObjectsRevalidator
 
         if (projectName != null && !projectName.isEmpty())
         {
-            String notReadyError = ProjectStateGuard.checkReadyOrError(projectName);
-            if (notReadyError != null)
+            ProjectStateGuard.ProjectStateResult state = readinessState(projectName);
+            if (!state.isReady())
             {
-                return ToolResult.error(notReadyError).toJson();
+                boolean building = state.getState() == ProjectStateGuard.ProjectState.BUILDING;
+                ToolResult refusal = ToolResult.error(state.getMessage())
+                    .put("operation", NAME)
+                    .put("code", building ? "projectBuilding" : "projectNotReady")
+                    .put("status", "not_started")
+                    .put("mutationStarted", false)
+                    .put("retryable", building);
+                if (building) refusal.put("retryAfterMs", 500);
+                return refusal.toJson();
             }
         }
 
         List<String> objects = parseObjectsList(objectsJson);
         return revalidateObjects(projectName, objects);
+    }
+
+    /** Reads typed readiness while retaining the existing detailed refusal wording. */
+    protected ProjectStateGuard.ProjectStateResult readinessState(String projectName)
+    {
+        IProject project = org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot()
+            .getProject(projectName);
+        ProjectStateGuard.ProjectStateResult state = ProjectStateGuard.checkProjectState(project);
+        if (state.isReady()) return state;
+        if (state.getState() == ProjectStateGuard.ProjectState.NOT_AVAILABLE
+            && (!project.exists() || !project.isOpen()))
+        {
+            return new ProjectStateGuard.ProjectStateResult(state.getState(),
+                ProjectResolver.describeNotFound(projectName));
+        }
+        // Preserve BUILDING/UNKNOWN with their original diagnostic even if project flags change
+        // after the observation; detailed missing/closed help only decorates NOT_AVAILABLE.
+        return state;
     }
 
     private List<String> parseObjectsList(String objectsJson)
