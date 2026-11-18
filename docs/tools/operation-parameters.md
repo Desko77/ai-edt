@@ -310,6 +310,7 @@
 | `ExtensionWorkshopTool` | `list_borrowed` | `projectName:string` | read in place |
 | `ExtensionWorkshopTool` | `list_extension` | `applicationId:string`, `projectName:string` | delegate ListExtensionsTool |
 | `ExtensionWorkshopTool` | `list_interceptors` | `baseProjectName:string`, `kind:string`, `limit:integer`, `projectName:string` | delegate ListInterceptorsTool |
+| `ExtensionWorkshopTool` | `preview_borrow` | `baseProjectName:string`, `includeChildren:boolean`, `objectFqn:string`, `projectName:string` | read in place |
 | `ExtensionWorkshopTool` | `uninstall_extension` | `applicationId:string`, `extensionName:string`, `projectName:string` | delegate UninstallExtensionTool |
 | `ExtensionWorkshopTool` | `update_borrowed` | `apply:boolean`, `baseProjectName:string`, `limit:integer`, `objectFqn:string`, `projectName:string` | read in place |
 | `ExternalDataSourceWorkshopTool` | `add_field` | `allowedLength:string`, `dataSourceName:string`, `dateFractions:string`, `dryRun:boolean`, `fractionDigits:integer`, `length:integer`, `name:string`, `nameInDataSource:string`, `nonNegative:boolean`, `ownerFqn:string`, `precision:integer`, `projectName:string`, `synonym:string`, `tableName:string`, `type:string` | read in place |
