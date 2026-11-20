@@ -4,17 +4,11 @@
 the BSL module are stored in a `Form.oform` container inside the project. EDT builds neither a
 layout model nor a BSL model for these entries. The tool is part of the main AI-EDT feature and answers JSON.
 
-## Read-only viewer
+## Editor in EDT
 
-`Form.oform` opens in EDT as an element tree, a scrollable and zoomable schematic, and a read-only
-property table. Selecting an element reveals its containing pages. Page navigation is local to
-each viewer, and resource changes reconcile the displayed snapshot. This is a schematic using the
-system font, not a 1C client screenshot: snapshot styles, fonts and tab visibility are not exposed,
-and coordinates and DPI are not measured against 1C. Elements without a box remain in the tree.
+`Form.oform` opens as an element tree, a zoomable schematic, and a property table. Selecting an element reveals its containing pages. The schematic is not a 1C client screenshot.
 
-The viewer offers no property editing, drag/resize, save or undo/redo UI. Perform layout changes
-through `ordinary_forms` and module changes through `write_module_source`, then read them back.
-Opening and navigation do not modify the container.
+In AI-EDT 1.1, drag an element to move it or drag its lower-right corner to resize it within the current parent and page. Edit caption, tooltip or form title in the property table. Save, undo and redo use the shared editing session. When an external change conflicts with the draft, Save refuses without overwriting the file. Use `ordinary_forms` for structural changes and `write_module_source` for module edits.
 
 ## Address a form
 

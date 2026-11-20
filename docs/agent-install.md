@@ -107,7 +107,11 @@ director request is an atomic update: the old version is removed and the highest
 the repository is added.
 
 On a very first installation there is nothing to remove, and `-uninstallIU` makes the director
-fail instead. Drop that line the first time.
+fail instead. Drop that line only after confirming that the target profile has no prior AI-EDT
+installation. For an update, if p2 and `bundles.info` disagree about installed AI-EDT versions,
+stop before writing. A newer snapshot or `-SkipUninstall` does not reconcile that disagreement.
+Use a supported profile recovery procedure or a separate, verified installation. Do not edit
+shared profile membership by hand or remove JARs while an EDT instance may still use them.
 
 When the installation has no `-vm` in its `1cedt.ini`, pass the JVM to the director yourself,
 straight after the executable: `-vm "<JDK>\bin\javaw.exe"`. Without it the launcher does not

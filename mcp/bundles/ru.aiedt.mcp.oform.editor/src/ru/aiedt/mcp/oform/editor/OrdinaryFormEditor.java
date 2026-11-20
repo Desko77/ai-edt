@@ -302,7 +302,9 @@ public final class OrdinaryFormEditor extends EditorPart implements ISaveablePar
         form.setOpaque(true); form.setBackgroundColor(ColorConstants.white); form.setBorder(new LineBorder());
         int width = snapshot.width == null ? 800 : Math.max(1, snapshot.width);
         int height = snapshot.height == null ? 600 : Math.max(1, snapshot.height);
-        drawing.add(form, new Rectangle(0, 0, width, height));
+        drawing.add(form);
+        // LayeredPane treats the add argument as a layer key, not a layout constraint.
+        drawing.setConstraint(form, new Rectangle(0, 0, width, height));
         addFigures(snapshot.elements, "root", snapshot.pages, form); //$NON-NLS-1$
         drawing.revalidate(); drawing.repaint();
     }
