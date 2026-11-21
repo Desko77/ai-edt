@@ -7,8 +7,12 @@
 package ru.aiedt.mcp.server.toolkit.ops;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 
 import org.eclipse.core.resources.IFile;
@@ -19,6 +23,9 @@ import org.eclipse.core.runtime.Path;
 import com._1c.g5.v8.dt.bsl.model.Function;
 import com._1c.g5.v8.dt.bsl.model.Method;
 import com._1c.g5.v8.dt.bsl.model.Module;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonParser;
 
 import ru.aiedt.mcp.server.wire.SchemaComposer;
 import ru.aiedt.mcp.server.wire.JsonUtils;
@@ -46,10 +53,23 @@ import ru.aiedt.mcp.server.support.UiSync;
  * structured section. When the name is unknown the available methods are listed, so a near miss
  * corrects itself.
  * </p>
+ * <p>
+ * The batch route added beside that one answers only from the single line sequence
+ * {@link ModuleTextSelection} selects at the start of the call, and never consults the built model.
+ * That is deliberate: the model and the text can describe different revisions, and consulting the
+ * model per requested name would mix two sources into one answer. One captured snapshot and one
+ * scan serve every name, so a batch is internally consistent even when it is partial.
+ * </p>
  */
 public class MethodSourceReader
     implements IMcpTool
 {
+    /** The largest batch the wire contract promises. */
+    private static final int MAX_BATCH_NAMES = 25;
+
+    /** A generous ceiling for the batch text: 25 BSL names and their escapes fit far below it. */
+    private static final int MAX_BATCH_CHARS = 64 * 1024;
+
     @Override
     public String getName()
     {
@@ -73,7 +93,11 @@ public class MethodSourceReader
             .stringProperty("modulePath", //$NON-NLS-1$
                 "Path under src/, e.g. 'CommonModules/MyModule/Module.bsl', or a module FQN such as " //$NON-NLS-1$
                     + "'CommonModule.MyModule' / 'Catalog.Products.ManagerModule'", true) //$NON-NLS-1$
-            .stringProperty("methodName", "Procedure/function name (matching ignores case)", true) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringProperty("methodName", "Procedure/function name (matching ignores case)", false) //$NON-NLS-1$ //$NON-NLS-2$
+            .stringArrayProperty("methodBatch", //$NON-NLS-1$
+                "Batch alternative to methodName: a strict JSON array of 1 to 25 names. Names " //$NON-NLS-1$
+                    + "match ignoring case; duplicates, empty names and unquoted or single-quoted " //$NON-NLS-1$
+                    + "elements are refused. Use either methodName or methodBatch, not both.", false) //$NON-NLS-1$
             .booleanProperty("includeDoc", //$NON-NLS-1$
                 "Also parses the method's doc-comment into a structured Documentation section " //$NON-NLS-1$
                     + "(description / typed parameters / return / deprecated). Default: false.") //$NON-NLS-1$
@@ -97,6 +121,7 @@ public class MethodSourceReader
         String projectName = JsonUtils.extractStringArgument(params, "projectName"); //$NON-NLS-1$
         String modulePath = JsonUtils.extractStringArgument(params, "modulePath"); //$NON-NLS-1$
         String methodName = JsonUtils.extractStringArgument(params, "methodName"); //$NON-NLS-1$
+        String methodBatchRaw = JsonUtils.extractStringArgument(params, "methodBatch"); //$NON-NLS-1$
         boolean includeDoc = JsonUtils.extractBooleanArgument(params, "includeDoc", false); //$NON-NLS-1$
 
         if (projectName == null || projectName.isEmpty())
@@ -108,9 +133,27 @@ public class MethodSourceReader
             return "Error: " + TextSuggest.missingParam("modulePath", //$NON-NLS-1$ //$NON-NLS-2$
                 "CommonModules/MyModule/Module.bsl"); //$NON-NLS-1$
         }
-        if (methodName == null || methodName.isEmpty())
+
+        boolean singleRequested = methodName != null && !methodName.isEmpty();
+        boolean batchRequested = methodBatchRaw != null && !methodBatchRaw.trim().isEmpty();
+        if (singleRequested && batchRequested)
         {
-            return "Error: " + TextSuggest.missingParam("methodName", "MyProcedure"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            return "Error: provide exactly one of 'methodName' or 'methodBatch', not both"; //$NON-NLS-1$
+        }
+        if (!singleRequested && !batchRequested)
+        {
+            return "Error: provide exactly one of 'methodName' (one method) or 'methodBatch' " //$NON-NLS-1$
+                + "(a strict JSON array of 1 to 25 names)"; //$NON-NLS-1$
+        }
+        if (batchRequested)
+        {
+            List<String> requestedNames = new ArrayList<>();
+            String problem = readBatchNames(methodBatchRaw, requestedNames);
+            if (problem != null)
+            {
+                return problem;
+            }
+            return readBatch(projectName, modulePath, requestedNames, includeDoc);
         }
 
         IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
@@ -193,6 +236,435 @@ public class MethodSourceReader
             return modelAnswer;
         }
         return readMethodViaText(project, resolvedPath, methodName, includeDoc, projectName);
+    }
+
+    /**
+     * Reads the requested batch names from their strict JSON array.
+     * <p>
+     * The wire argument is validated lexically before Gson sees it. The shipped Gson (2.10.1) has no
+     * strictness setting on {@code JsonParser}, and its parser is lenient: it would accept unquoted
+     * and single-quoted arrays. Its non-lenient streaming reader lives in a package this bundle does
+     * not import, so the bundle cannot ask Gson for strict reading. Instead
+     * {@link #isStrictJsonStringArray(String)} walks the text once - linear in the bounded argument -
+     * and accepts only one array whose elements are JSON strings with valid escapes; a number, an
+     * object, an unquoted name, a single-quoted one, a trailing comma or trailing text is refused.
+     * The exported {@code JsonParser} then reads the same validated text into a tree, and the names
+     * are taken from it. A comma-separated string is not a batch spelling either and is refused, so
+     * a caller that sends one learns the wire shape instead of getting two methods it did not name.
+     * Names are checked before the module is resolved, so a malformed batch touches no provider,
+     * buffer or file.
+     * </p>
+     *
+     * @param raw the argument as the caller sent it
+     * @param names receives the names in request order
+     * @return the refusal, or <code>null</code> when the batch is valid
+     */
+    private static String readBatchNames(String raw, List<String> names)
+    {
+        String text = raw.trim();
+        if (text.length() > MAX_BATCH_CHARS || !isStrictJsonStringArray(text))
+        {
+            return batchArrayProblem();
+        }
+        JsonElement parsed;
+        try
+        {
+            parsed = JsonParser.parseString(text);
+        }
+        catch (RuntimeException notJson)
+        {
+            return batchArrayProblem();
+        }
+        if (!parsed.isJsonArray())
+        {
+            return batchArrayProblem();
+        }
+        JsonArray array = parsed.getAsJsonArray();
+        if (array.size() < 1 || array.size() > MAX_BATCH_NAMES)
+        {
+            return "Error: methodBatch must hold between 1 and 25 names"; //$NON-NLS-1$
+        }
+        Set<String> seen = new HashSet<>();
+        for (JsonElement element : array)
+        {
+            if (!element.isJsonPrimitive() || !element.getAsJsonPrimitive().isString())
+            {
+                return "Error: methodBatch must hold every name as a JSON string"; //$NON-NLS-1$
+            }
+            String name = element.getAsString();
+            if (name.trim().isEmpty())
+            {
+                return "Error: methodBatch holds an empty name"; //$NON-NLS-1$
+            }
+            if (!seen.add(name.toLowerCase(Locale.ROOT)))
+            {
+                return "Error: methodBatch names '" + name + "' twice (names match ignoring case)"; //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            names.add(name);
+        }
+        return null;
+    }
+
+    /**
+     * Walks the bounded text once and tells whether it is exactly one JSON array whose elements are
+     * JSON strings. Only RFC 8259 whitespace, double-quoted strings and the standard escapes are
+     * accepted; the walk is linear in the text and never recurses.
+     *
+     * @param text the trimmed argument
+     * @return <code>true</code> when the text is a strict JSON string array
+     */
+    private static boolean isStrictJsonStringArray(String text)
+    {
+        int length = text.length();
+        int index = skipJsonWhitespace(text, 0);
+        if (index >= length || text.charAt(index) != '[')
+        {
+            return false;
+        }
+        index = skipJsonWhitespace(text, index + 1);
+        if (index < length && text.charAt(index) == ']')
+        {
+            return skipJsonWhitespace(text, index + 1) == length;
+        }
+        while (true)
+        {
+            index = skipJsonWhitespace(text, index);
+            if (index >= length || text.charAt(index) != '"')
+            {
+                return false;
+            }
+            index = skipJsonString(text, index);
+            if (index < 0)
+            {
+                return false;
+            }
+            index = skipJsonWhitespace(text, index);
+            if (index >= length)
+            {
+                return false;
+            }
+            char next = text.charAt(index);
+            if (next == ',')
+            {
+                index = skipJsonWhitespace(text, index + 1);
+                if (index >= length || text.charAt(index) != '"')
+                {
+                    return false;
+                }
+                continue;
+            }
+            if (next == ']')
+            {
+                return skipJsonWhitespace(text, index + 1) == length;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Walks one JSON string from its opening quote and returns the index after its closing quote.
+     *
+     * @param text the text
+     * @param openingQuote the index of the opening double quote
+     * @return the index after the closing quote, or -1 when the string is malformed
+     */
+    private static int skipJsonString(String text, int openingQuote)
+    {
+        int index = openingQuote + 1;
+        while (index < text.length())
+        {
+            char ch = text.charAt(index++);
+            if (ch == '"')
+            {
+                return index;
+            }
+            if (ch == '\\')
+            {
+                if (index >= text.length())
+                {
+                    return -1;
+                }
+                char escape = text.charAt(index++);
+                switch (escape)
+                {
+                    case '"':
+                    case '\\':
+                    case '/':
+                    case 'b':
+                    case 'f':
+                    case 'n':
+                    case 'r':
+                    case 't':
+                        break;
+                    case 'u':
+                        if (index + 4 > text.length())
+                        {
+                            return -1;
+                        }
+                        for (int i = 0; i < 4; i++)
+                        {
+                            char hex = text.charAt(index + i);
+                            if (!((hex >= '0' && hex <= '9') || (hex >= 'a' && hex <= 'f')
+                                || (hex >= 'A' && hex <= 'F')))
+                            {
+                                return -1;
+                            }
+                        }
+                        index += 4;
+                        break;
+                    default:
+                        return -1;
+                }
+            }
+            else if (ch < 0x20)
+            {
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Skips the four whitespace characters JSON allows between tokens.
+     *
+     * @param text the text
+     * @param index the index to start from
+     * @return the first index that is not JSON whitespace
+     */
+    private static int skipJsonWhitespace(String text, int index)
+    {
+        while (index < text.length())
+        {
+            char ch = text.charAt(index);
+            if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r')
+            {
+                index++;
+            }
+            else
+            {
+                break;
+            }
+        }
+        return index;
+    }
+
+    /**
+     * The refusal for a batch argument that is not one strict JSON array of strings.
+     *
+     * @return the refusal line
+     */
+    private static String batchArrayProblem()
+    {
+        return "Error: methodBatch must be a strict JSON array of strings, e.g. [\"MyProcedure\"]"; //$NON-NLS-1$
+    }
+
+    /**
+     * Answers a batch from one module selection and one scan of its lines.
+     * <p>
+     * The built model is deliberately not consulted here, unlike the single-name disk route: the
+     * model and the selected text can describe different revisions, and asking it per name would
+     * mix two sources into one answer. The one captured line sequence is the whole input, so every
+     * requested name is decided against the same snapshot.
+     * </p>
+     *
+     * @param projectName the project name for the header
+     * @param modulePath the module address the caller gave
+     * @param requestedNames the requested names, already validated
+     * @param includeDoc whether to append each found method's parsed doc-comment
+     * @return one markdown document, or an {@code Error:} line
+     */
+    private String readBatch(String projectName, String modulePath, List<String> requestedNames,
+        boolean includeDoc)
+    {
+        IProject project = ResourcesPlugin.getWorkspace().getRoot().getProject(projectName);
+        if (project == null || !project.exists())
+        {
+            return "Error: " + ProjectResolver.describeNotFound(projectName); //$NON-NLS-1$
+        }
+
+        ModulePathResolution resolution = BslModuleAccess.resolveModulePath(project, modulePath);
+        if (!resolution.isResolved())
+        {
+            return resolution.getHint();
+        }
+        String resolvedPath = resolution.getPath();
+        IFile file = project.getFile(new Path("src").append(resolvedPath)); //$NON-NLS-1$
+        ModuleTextSelection selection = ModuleTextSelection.select(project, resolvedPath, file);
+
+        List<String> lines;
+        try
+        {
+            lines = selection.lines();
+        }
+        catch (Exception e)
+        {
+            if (selection.isProvider())
+            {
+                return "Error: could not read the module from " + selection.provider().source() + ": " //$NON-NLS-1$ //$NON-NLS-2$
+                    + e.getMessage();
+            }
+            if (selection.isEditor())
+            {
+                return "Error: could not read the editor text: " + e.getMessage(); //$NON-NLS-1$
+            }
+            return "Error: could not read the file: " + e.getMessage(); //$NON-NLS-1$
+        }
+        return renderBatch(lines, resolvedPath, projectName, requestedNames, includeDoc, selection);
+    }
+
+    /**
+     * Renders every found method of a batch and the names that were not found, from one scan of one
+     * line sequence. The document carries one front-matter block, one section per found method and
+     * one missing list, never a repeated front matter.
+     *
+     * @param lines the selected module text
+     * @param modulePath the resolved module path
+     * @param projectName the project name for the header
+     * @param requestedNames the requested names in request order
+     * @param includeDoc whether to append each found method's parsed doc-comment
+     * @param selection where the lines came from, for the origin fields and note
+     * @return the markdown document
+     */
+    private String renderBatch(List<String> lines, String modulePath, String projectName,
+        List<String> requestedNames, boolean includeDoc, ModuleTextSelection selection)
+    {
+        List<String> available = new ArrayList<>();
+        Map<String, MethodSpan> spans = new LinkedHashMap<>();
+        scanMethods(lines, available, spans);
+
+        List<MethodSpan> found = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        for (String name : requestedNames)
+        {
+            MethodSpan span = spans.get(name.toLowerCase(Locale.ROOT));
+            if (span == null)
+            {
+                missing.add(name);
+            }
+            else
+            {
+                found.add(span);
+            }
+        }
+
+        YamlFrontMatter frontMatter = YamlFrontMatter.create()
+            .put("projectName", projectName) //$NON-NLS-1$
+            .put("module", modulePath) //$NON-NLS-1$
+            .put("requested", requestedNames.size()) //$NON-NLS-1$
+            .put("found", found.size()) //$NON-NLS-1$
+            .put("missing", missing.size()); //$NON-NLS-1$
+        IModuleSource provided = selection.provider();
+        if (provided != null)
+        {
+            frontMatter.put("source", provided.source()); //$NON-NLS-1$
+            if (provided.containerPath() != null)
+            {
+                frontMatter.put("container", provided.containerPath()); //$NON-NLS-1$
+            }
+        }
+
+        StringBuilder body = new StringBuilder();
+        for (MethodSpan span : found)
+        {
+            body.append("## ").append(span.name).append("\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            int from = Math.max(1, findDocCommentStart(lines, span.startLine));
+            int to = Math.min(lines.size(), span.endLine);
+            body.append("```bsl\n"); //$NON-NLS-1$
+            for (int i = from - 1; i < to; i++)
+            {
+                body.append(lines.get(i)).append("\n"); //$NON-NLS-1$
+            }
+            body.append("```\n\n"); //$NON-NLS-1$
+            if (includeDoc)
+            {
+                appendParsedDoc(body, lines, span.startLine);
+            }
+        }
+        if (!missing.isEmpty())
+        {
+            body.append("## Methods not found (").append(missing.size()).append(")\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            for (String name : missing)
+            {
+                body.append("- ").append(name).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+            body.append("\n**Methods available** (").append(available.size()).append("):\n\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            for (String name : available)
+            {
+                body.append("- ").append(name).append("\n"); //$NON-NLS-1$ //$NON-NLS-2$
+            }
+        }
+        if (selection.isEditor())
+        {
+            body.append("\n**Unsaved:** this is what the open editor holds; the file on disk still has the " //$NON-NLS-1$
+                + "previous text.\n"); //$NON-NLS-1$
+        }
+        return frontMatter.wrapContent(body.toString());
+    }
+
+    /**
+     * One scan of the selected lines: the available names in source order and the first declaration
+     * of each name ignoring case. A batch looks every requested name up here, so the text and its
+     * parse are shared by the whole call.
+     *
+     * @param lines the selected module text
+     * @param available receives every declared name in source order
+     * @param spans receives the first span of each name, keyed by its lower-cased form
+     */
+    private static void scanMethods(List<String> lines, List<String> available,
+        Map<String, MethodSpan> spans)
+    {
+        for (int i = 0; i < lines.size(); i++)
+        {
+            Matcher matcher = BslModuleAccess.METHOD_START_PATTERN.matcher(lines.get(i));
+            if (!matcher.find())
+            {
+                continue;
+            }
+            String name = matcher.group(1);
+            available.add(name);
+            String key = name.toLowerCase(Locale.ROOT);
+            if (spans.containsKey(key))
+            {
+                continue;
+            }
+            spans.put(key, new MethodSpan(name, i + 1, findMethodEnd(lines, i)));
+        }
+    }
+
+    /**
+     * Finds the inclusive 1-based line a declaration ends on, scanning from the line after it.
+     *
+     * @param lines the module lines
+     * @param declarationIndex the 0-based index of the declaration line
+     * @return the 1-based end line, or the last line when no terminator follows
+     */
+    private static int findMethodEnd(List<String> lines, int declarationIndex)
+    {
+        for (int i = declarationIndex + 1; i < lines.size(); i++)
+        {
+            if (BslModuleAccess.METHOD_END_PATTERN.matcher(lines.get(i)).find())
+            {
+                return i + 1;
+            }
+        }
+        return lines.size();
+    }
+
+    /** One declaration found by the batch scan: its canonical name and inclusive text bounds. */
+    private static final class MethodSpan
+    {
+        final String name;
+
+        final int startLine;
+
+        final int endLine;
+
+        MethodSpan(String name, int startLine, int endLine)
+        {
+            this.name = name;
+            this.startLine = startLine;
+            this.endLine = endLine;
+        }
     }
 
     /**

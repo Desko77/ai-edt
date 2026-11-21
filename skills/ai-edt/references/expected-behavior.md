@@ -47,7 +47,7 @@ is left.
 `read_module_source` accepts `projectName`, `modulePath`, `startLine` and `endLine`.
 The bounds are inclusive and 1-based; one answer carries at most 5000 lines. Each range call selects
 and reads the source again, so do not assume ranges taken across edits describe one revision.
-`read_method_source` accepts `projectName`, `modulePath`, `methodName` and `includeDoc` (default false).
+`read_method_source` accepts `projectName`, `modulePath`, exactly one of `methodName` or `methodBatch`, and optional `includeDoc` (default false). `methodBatch` is a JSON array of 1 to 25 nonblank method names without case-insensitive duplicates. It reads one text snapshot and lists names not found separately; it does not fall back to the EDT model when the text is unavailable.
 These readers do not declare `resultId`, `offset`, `pageSize` or a pinned-result continuation.
 Do not invent those arguments or confuse line-range reading with a `Pending` / `runKey` operation.
 

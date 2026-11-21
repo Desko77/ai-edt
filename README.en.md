@@ -26,11 +26,9 @@ AI-EDT is an MCP server implemented as a plugin running **inside a live 1C:EDT i
 
 Instead of treating an EDT workspace as a directory of XML and BSL files, an assistant can use EDT's own semantic model, indexes, validators and debug services.
 
-### Preparing 1.0
+### New in 1.1.0
 
-AI-EDT supports an agent-assisted development cycle: inspect the model, make a bounded change, verify the result and receive an actionable refusal when the operation cannot be established as safe. The 1.0 preparation addresses reports from real runs: extension-field placement, template persistence, infobase selection and UI-test launch options. Capabilities and contract changes are described in the [changelog](CHANGELOG.md#100---unreleased).
-
-This is not a promise of full autonomy: agents still need result verification and explicit authorization for data operations. The ordinary-form viewer remains read-only in this release.
+Edit ordinary-form layouts in EDT. Use `extension_workshop` with `operation=preview_borrow` to see the borrowing plan without changing the extension. Pass `methodBatch` to `read_method_source` to read up to 25 BSL methods from a single module snapshot. See the [changelog](CHANGELOG.md).
 
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
@@ -107,7 +105,7 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **Existing object presentations are updated per language.** `edit_metadata operation=set_object_property` writes object, list and register-record presentations: plain text in `propertyValue` updates the configuration's default language, while a JSON language map replaces all translations. `dryRun=true` returns the resulting map without writing it.
 
-**View ordinary forms in EDT.** `Form.oform` opens as a schematic with an element tree, root and nested page selection, zoom and a read-only property table. Selecting an element shows its properties and reveals its containing pages. This is a schematic using the system font, not a 1C client screenshot; use `ordinary_forms` to change the form. [Details](docs/ordinary-forms.md#read-only-viewer-in-edt).
+**Edit ordinary forms in EDT.** Open `Form.oform`. On the current page, you can move and resize elements, edit captions and tooltips, and undo or redo edits. If an external change conflicts with your edits, the editor keeps the draft and leaves the file unchanged. The editor draws the form using the system font without starting the 1C client. [Details](docs/ordinary-forms.md#editor-in-edt).
 
 **Read a large module by line ranges.** `read_module_source` takes `projectName`, `modulePath`, `startLine` and `endLine` (inclusive, 1-based), returning at most 5000 lines per call. `read_method_source` takes `projectName`, `modulePath`, `methodName` and optional `includeDoc`. For exploration, obtain `get_module_structure` first, then read the method you need.
 

@@ -24,6 +24,7 @@ import com._1c.g5.v8.bm.core.IBmTransaction;
 import com._1c.g5.v8.bm.integration.AbstractBmTask;
 import com._1c.g5.v8.bm.integration.IBmModel;
 import com._1c.g5.v8.dt.core.platform.IBmModelManager;
+import com._1c.g5.v8.dt.core.platform.IConfigurationProvider;
 import com._1c.g5.v8.dt.core.platform.IDtProject;
 import com._1c.g5.v8.dt.core.platform.IDtProjectManager;
 import com._1c.g5.v8.dt.core.platform.IV8Project;
@@ -46,6 +47,77 @@ import ru.aiedt.mcp.server.Activator;
  */
 public final class BmExtensionHelper
 {
+    /**
+     * How an address stands in an extension: present, known to be absent, or not established.
+     * <p>
+     * A read-only caller has to tell the last two apart. {@code false} from a probe that could not
+     * run is not the same fact as {@code false} from a model that was read and did not hold the
+     * address, and a preview that reports the first as the second calls an object fresh when it
+     * may already be adopted.
+     * </p>
+     */
+    public enum Attachment
+    {
+        /** The address resolves in the extension model. */
+        ATTACHED,
+        /** The extension model was read and the address is not in it. */
+        ABSENT,
+        /** The model could not be read, or the probe failed, so neither answer is established. */
+        UNKNOWN
+    }
+
+    /** What reading one address out of the base configuration established. */
+    public enum SourceState
+    {
+        /** The base holds the object. */
+        PRESENT,
+        /** The base was read and does not hold the object. */
+        ABSENT,
+        /** The base could not be read, so neither answer is established. */
+        UNKNOWN
+    }
+
+    /** One base lookup, with the failure told apart from the address being absent. */
+    public static final class SourceLookup
+    {
+        /** What the read established. */
+        public final SourceState state;
+
+        /** The object when the state is {@link SourceState#PRESENT}; otherwise <code>null</code>. */
+        public final Object object;
+
+        private SourceLookup(SourceState state, Object object)
+        {
+            this.state = state;
+            this.object = object;
+        }
+
+        /**
+         * @param object the object the base holds
+         * @return a present lookup
+         */
+        public static SourceLookup present(Object object)
+        {
+            return new SourceLookup(SourceState.PRESENT, object);
+        }
+
+        /**
+         * @return a lookup for an address the base was read for and does not hold
+         */
+        public static SourceLookup absent()
+        {
+            return new SourceLookup(SourceState.ABSENT, null);
+        }
+
+        /**
+         * @return a lookup for a base that could not be read
+         */
+        public static SourceLookup unknown()
+        {
+            return new SourceLookup(SourceState.UNKNOWN, null);
+        }
+    }
+
     private static final String[] CANDIDATE_PACKAGES = {
         "com._1c.g5.v8.dt.md.extension.adopt.IMdAdoptObjectsService", //$NON-NLS-1$
         "com._1c.g5.v8.dt.metadata.extension.IMdAdoptObjectsService", //$NON-NLS-1$
@@ -1072,6 +1144,59 @@ public final class BmExtensionHelper
     }
 
     /**
+     * The three-state base lookup a read-only caller needs.
+     * <p>
+     * {@link #sourceObject} answers <code>null</code> for both "the base does not hold this
+     * address" and "the base could not be read", which is exactly the confusion a preview must
+     * not make. This checks that the base project and its configuration were actually readable
+     * before it calls the address absent.
+     * </p>
+     *
+     * @param extension the extension project the borrow is aimed at
+     * @param baseProjectName the base configuration, or empty to derive it
+     * @param fqn the address
+     * @return what the read established, never <code>null</code>
+     */
+    public static SourceLookup sourceLookup(IProject extension, String baseProjectName, String fqn)
+    {
+        if (extension == null || fqn == null || fqn.isEmpty())
+        {
+            return SourceLookup.unknown();
+        }
+        try
+        {
+            IProject base;
+            if (baseProjectName != null && !baseProjectName.isEmpty())
+            {
+                base = org.eclipse.core.resources.ResourcesPlugin.getWorkspace().getRoot()
+                    .getProject(baseProjectName);
+            }
+            else
+            {
+                base = deriveParentProject(resolveExtensionProject(extension));
+            }
+            if (base == null || !base.exists())
+            {
+                return SourceLookup.unknown();
+            }
+            Activator activator = Activator.getDefault();
+            IConfigurationProvider provider = activator == null ? null
+                : activator.getConfigurationProvider();
+            if (provider == null || provider.getConfiguration(base) == null)
+            {
+                return SourceLookup.unknown();
+            }
+            EObject resolved = resolveSourceEObject(base, fqn);
+            return resolved == null ? SourceLookup.absent() : SourceLookup.present(resolved);
+        }
+        catch (RuntimeException | LinkageError failed)
+        {
+            Activator.logWarning("sourceLookup(" + fqn + ") failed: " + failed.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
+            return SourceLookup.unknown();
+        }
+    }
+
+    /**
      * Resolves an EObject by FQN inside the base project's configuration.
      * <p>
      * Supported FQN forms:
@@ -1743,11 +1868,25 @@ public final class BmExtensionHelper
     }
 
     /**
-     * 1.43.x: verifies the {@code targetFqn} actually resolves inside the
-     * {@code extension} project's metadata model. Used both as a pre-check
-     * (skip the adopt call when the object is already borrowed) and as a
-     * post-check after EDT throws an "already" exception, to tell a genuine
-     * idempotent success from a stale partial-borrow on disk.
+     * Whether {@code targetFqn} resolves inside the {@code extension} project's metadata model.
+     * <p>
+     * Used both as a pre-check (skip the adopt call when the object is already borrowed) and as a
+     * post-check after EDT throws an "already" exception, to tell a genuine idempotent success from
+     * a stale partial-borrow on disk. An attachment that could not be established is not returned
+     * as attached; the caller then attempts the borrow, which is the previous behaviour.
+     * </p>
+     *
+     * @param extension the extension project
+     * @param targetFqn the address
+     * @return {@code true} only when the model was read and holds the address
+     */
+    static boolean isAttachedInExtension(IProject extension, String targetFqn)
+    {
+        return attachmentState(extension, targetFqn) == Attachment.ATTACHED;
+    }
+
+    /**
+     * The three-state attachment test a read-only caller needs.
      * <p>
      * Detection strategy:
      * <ol>
@@ -1759,69 +1898,197 @@ public final class BmExtensionHelper
      *   <li>Walk the extension's Configuration EMF tree for non-top children
      *       (attributes, tabular sections, dimensions, resources).</li>
      * </ol>
-     * Returns {@code false} when verification cannot be performed (BM not
-     * ready, lifecycle race, reflection failure). The caller treats that as
-     * "cannot confirm attached" - the safer default since blindly trusting
-     * EDT's "already" message is what caused the false-positive in the first
-     * place.
+     * {@link Attachment#UNKNOWN} is returned when the BM model or the configuration could not be
+     * read, or the probe itself failed. A false from such a probe is not the same fact as a model
+     * that was read and did not hold the address, and a preview must not present one as the other.
+     * </p>
+     *
+     * @param extension the extension project
+     * @param targetFqn the address
+     * @return the attachment state; {@link Attachment#UNKNOWN} when it could not be established
      */
-    static boolean isAttachedInExtension(IProject extension, String targetFqn)
+    public static Attachment attachmentState(IProject extension, String targetFqn)
     {
         if (extension == null || targetFqn == null || targetFqn.isEmpty())
         {
-            return false;
+            return Attachment.UNKNOWN;
         }
         String normalized = normalizeFqnSafely(targetFqn);
         try
         {
-            IBmModelManager bmModelManager = Activator.getDefault().getBmModelManager();
-            if (bmModelManager != null)
+            Activator activator = Activator.getDefault();
+            if (activator == null)
             {
-                IBmModel bmModel = bmModelManager.getModel(extension);
-                if (bmModel != null)
-                {
-                    AtomicReference<Boolean> ref = new AtomicReference<>(Boolean.FALSE);
-                    bmModel.executeReadonlyTask(
-                        new AbstractBmTask<Void>("VerifyAttachedInExtension") //$NON-NLS-1$
+                return Attachment.UNKNOWN;
+            }
+            IBmModelManager bmModelManager = activator.getBmModelManager();
+            IBmModel bmModel = bmModelManager == null ? null : bmModelManager.getModel(extension);
+            boolean bmModelReadable = bmModel != null;
+            if (bmModelReadable)
+            {
+                AtomicReference<Boolean> ref = new AtomicReference<>(Boolean.FALSE);
+                bmModel.executeReadonlyTask(
+                    new AbstractBmTask<Void>("VerifyAttachedInExtension") //$NON-NLS-1$
+                    {
+                        @Override
+                        public Void execute(IBmTransaction tx,
+                            org.eclipse.core.runtime.IProgressMonitor pm)
                         {
-                            @Override
-                            public Void execute(IBmTransaction tx,
-                                org.eclipse.core.runtime.IProgressMonitor pm)
+                            IBmObject obj = tx.getTopObjectByFqn(normalized);
+                            if (obj != null)
                             {
-                                IBmObject obj = tx.getTopObjectByFqn(normalized);
-                                if (obj != null)
-                                {
-                                    ref.set(Boolean.TRUE);
-                                    return null;
-                                }
-                                if (looksLikeFormMetadataFqn(normalized))
-                                {
-                                    IBmObject withSuffix = tx.getTopObjectByFqn(
-                                        normalized + ".Form"); //$NON-NLS-1$
-                                    if (withSuffix != null)
-                                    {
-                                        ref.set(Boolean.TRUE);
-                                    }
-                                }
+                                ref.set(Boolean.TRUE);
                                 return null;
                             }
-                        });
-                    if (Boolean.TRUE.equals(ref.get()))
-                    {
-                        return true;
-                    }
+                            if (looksLikeFormMetadataFqn(normalized))
+                            {
+                                IBmObject withSuffix = tx.getTopObjectByFqn(
+                                    normalized + ".Form"); //$NON-NLS-1$
+                                if (withSuffix != null)
+                                {
+                                    ref.set(Boolean.TRUE);
+                                }
+                            }
+                            return null;
+                        }
+                    });
+                if (Boolean.TRUE.equals(ref.get()))
+                {
+                    return Attachment.ATTACHED;
                 }
+            }
+            IConfigurationProvider provider = activator.getConfigurationProvider();
+            if (provider == null || provider.getConfiguration(extension) == null)
+            {
+                return Attachment.UNKNOWN;
             }
             // EMF fallback for children that are not registered as BM top
             // objects (attributes, tabular sections, dimensions, resources).
             EObject viaEmf = resolveViaEmfFallback(extension, normalized);
-            return viaEmf != null;
+            if (viaEmf != null)
+            {
+                return Attachment.ATTACHED;
+            }
+            // Without the BM index the top-object half of the probe did not run, so an address it
+            // would have found cannot be reported absent. The configuration alone covers children.
+            return bmModelReadable ? Attachment.ABSENT : Attachment.UNKNOWN;
         }
-        catch (Exception e)
+        catch (Exception | LinkageError e)
         {
-            Activator.logWarning("isAttachedInExtension(" + targetFqn + ") failed: " //$NON-NLS-1$ //$NON-NLS-2$
+            Activator.logWarning("attachmentState(" + targetFqn + ") failed: " //$NON-NLS-1$ //$NON-NLS-2$
                 + e.getMessage());
-            return false;
+            return Attachment.UNKNOWN;
+        }
+    }
+
+    /**
+     * Whether the extension object at an address is the borrowed identity of the base object.
+     * <p>
+     * A model can hold an object under the same address that the extension made itself. Its FQN
+     * matches, but it is not the object the base owns: it carries no link, or a link to another
+     * base object. Calling that attached would make a collision look like an idempotent borrow,
+     * and calling it absent would make it look fresh. It is neither, so it is
+     * {@link Attachment#UNKNOWN}.
+     * </p>
+     *
+     * @param extensionObject the object resolved in the extension model
+     * @param baseUuid the uuid of the base object the borrow would copy, or <code>null</code>
+     * @return {@link Attachment#ATTACHED} only for the borrowed identity
+     */
+    static Attachment attachmentIdentity(Object extensionObject, java.util.UUID baseUuid)
+    {
+        if (!(extensionObject instanceof MdObject) || baseUuid == null)
+        {
+            return Attachment.UNKNOWN;
+        }
+        MdObject object = (MdObject)extensionObject;
+        try
+        {
+            Object belonging = object.getObjectBelonging();
+            if (belonging != null && !"ADOPTED".equalsIgnoreCase(String.valueOf(belonging))) //$NON-NLS-1$
+            {
+                return Attachment.UNKNOWN;
+            }
+            java.util.UUID link = object.getExtendedConfigurationObject();
+            return link != null && link.equals(baseUuid)
+                ? Attachment.ATTACHED : Attachment.UNKNOWN;
+        }
+        catch (RuntimeException | LinkageError cannotTell)
+        {
+            return Attachment.UNKNOWN;
+        }
+    }
+
+    /**
+     * The identity-aware attachment test for a preview.
+     * <p>
+     * The address alone is not enough: the extension may hold its own object under the same FQN.
+     * The extension object is resolved, the base object is resolved, and the extension object's
+     * {@code extendedConfigurationObject} must name the base object's uuid. Anything else - an own
+     * object, a link to another base, an unreadable base - is {@link Attachment#UNKNOWN} rather
+     * than attached or fresh.
+     * </p>
+     *
+     * @param extension the extension project
+     * @param base the base configuration project
+     * @param targetFqn the address
+     * @return the state; {@link Attachment#UNKNOWN} when it could not be established
+     */
+    public static Attachment attachmentState(IProject extension, IProject base, String targetFqn)
+    {
+        if (extension == null || base == null || targetFqn == null || targetFqn.isEmpty())
+        {
+            return Attachment.UNKNOWN;
+        }
+        String normalized = normalizeFqnSafely(targetFqn);
+        try
+        {
+            Activator activator = Activator.getDefault();
+            if (activator == null)
+            {
+                return Attachment.UNKNOWN;
+            }
+            IConfigurationProvider provider = activator.getConfigurationProvider();
+            if (provider == null || provider.getConfiguration(extension) == null
+                || provider.getConfiguration(base) == null)
+            {
+                return Attachment.UNKNOWN;
+            }
+            IBmModelManager bmModelManager = activator.getBmModelManager();
+            IBmModel bmModel = bmModelManager == null ? null : bmModelManager.getModel(extension);
+            EObject extensionObject = null;
+            if (bmModel != null)
+            {
+                extensionObject = resolveViaBmTransaction(extension, normalized);
+                if (extensionObject == null && looksLikeFormMetadataFqn(normalized))
+                {
+                    extensionObject = resolveViaBmTransaction(extension, normalized + ".Form"); //$NON-NLS-1$
+                }
+                extensionObject = ensureMdObjectForForm(extensionObject);
+            }
+            if (extensionObject == null)
+            {
+                extensionObject = resolveViaEmfFallback(extension, normalized);
+            }
+            if (extensionObject == null)
+            {
+                // Without the BM index the top-object half of the probe did not run, so an address
+                // it would have found cannot be reported absent. The configuration alone covers
+                // children.
+                return bmModel != null ? Attachment.ABSENT : Attachment.UNKNOWN;
+            }
+            EObject baseObject = resolveSourceEObject(base, normalized);
+            if (!(baseObject instanceof MdObject))
+            {
+                return Attachment.UNKNOWN;
+            }
+            return attachmentIdentity(extensionObject, ((MdObject)baseObject).getUuid());
+        }
+        catch (Exception | LinkageError failed)
+        {
+            Activator.logWarning("attachmentState(" + targetFqn + ") identity failed: " //$NON-NLS-1$ //$NON-NLS-2$
+                + failed.getMessage());
+            return Attachment.UNKNOWN;
         }
     }
 

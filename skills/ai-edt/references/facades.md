@@ -898,6 +898,7 @@ Two questions, and neither answers the other.
 
 | Ask | Operation | What it reads |
 |---|---|---|
+| what new borrowing may involve | `extension_workshop operation=preview_borrow` | read-only; pass `projectName`, `objectFqn`, optionally `baseProjectName` and `includeChildren=true`. Candidates, already attached and unknown are separate. Does not predict objects EDT pulls in during adoption or bypass the facade's availability. |
 | what a new delivery breaks in an extension | `extension_workshop operation=check_release_fitness` | declarations in the model: a borrowed object gone, a borrowed field gone, a field whose type moved. Needs `baseProjectName`, the project the new delivery is loaded as |
 | what drifted in the extension and what apply would write | `extension_workshop operation=update_borrowed` | the extension's own record of what it borrowed, against the base: uuid links, controlled types with qualifiers, form items, handler signatures. `apply=true` aligns the controlled types and updates the borrowed forms; the rest it refuses to touch and says so |
 | whether the handlers still fit their targets | `extension_workshop operation=list_interceptors` with `baseProjectName` | the target's signature from the BSL model, and whether a controlled fragment's text drifted |
