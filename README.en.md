@@ -28,7 +28,7 @@ Instead of treating an EDT workspace as a directory of XML and BSL files, an ass
 
 ### New in 1.1.0
 
-Edit ordinary-form layouts in EDT. `preview_borrow` shows a borrowing plan without writing, and `read_method_source` reads up to 25 methods from one module snapshot through `methodBatch`. See the [changelog](CHANGELOG.md).
+Edit ordinary-form layouts in EDT. Use `extension_workshop` with `operation=preview_borrow` to see the borrowing plan without changing the extension. Pass `methodBatch` to `read_method_source` to read up to 25 BSL methods from a single module snapshot. See the [changelog](CHANGELOG.md).
 
 > [!IMPORTANT]
 > The current line runs on **1C:EDT 2026.2** and **2026.1**. It is built against 2026.1, so one artifact installs on both. The plugin runs wherever EDT runs; only the build and installation scripts documented below assume Windows.
@@ -105,7 +105,7 @@ The server exposes more than one hundred operations. Related actions are grouped
 
 **Existing object presentations are updated per language.** `edit_metadata operation=set_object_property` writes object, list and register-record presentations: plain text in `propertyValue` updates the configuration's default language, while a JSON language map replaces all translations. `dryRun=true` returns the resulting map without writing it.
 
-**Edit ordinary forms in EDT.** Open `Form.oform` to move or resize elements on their current page, edit captions or tooltips, and undo or redo changes. If an external change conflicts with your edits, the editor keeps the draft without overwriting the file. The schematic uses the system font and is not a 1C client screenshot. [Details](docs/ordinary-forms.md#editor-in-edt).
+**Edit ordinary forms in EDT.** Open `Form.oform`. On the current page, you can move and resize elements, edit captions and tooltips, and undo or redo edits. If an external change conflicts with your edits, the editor keeps the draft and leaves the file unchanged. The editor draws the form using the system font without starting the 1C client. [Details](docs/ordinary-forms.md#editor-in-edt).
 
 **Read a large module by line ranges.** `read_module_source` takes `projectName`, `modulePath`, `startLine` and `endLine` (inclusive, 1-based), returning at most 5000 lines per call. `read_method_source` takes `projectName`, `modulePath`, `methodName` and optional `includeDoc`. For exploration, obtain `get_module_structure` first, then read the method you need.
 
