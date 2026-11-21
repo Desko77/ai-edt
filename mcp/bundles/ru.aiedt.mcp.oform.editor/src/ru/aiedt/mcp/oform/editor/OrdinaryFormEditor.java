@@ -478,7 +478,8 @@ public final class OrdinaryFormEditor extends EditorPart implements ISaveablePar
      * it closes: the progress service forks the save and keeps dispatching UI events while this
      * caller waits, so the UI never waits on the workspace rule itself.
      */
-    @Override public int promptToSaveOnClose()
+    @Override
+    public int promptToSaveOnClose()
     {
         if (session == null || !isDirty()) { return ISaveablePart2.NO; }
         if (!conflicted && session.hasConflict()) { conflicted = true; updateActions(); }
@@ -521,7 +522,8 @@ public final class OrdinaryFormEditor extends EditorPart implements ISaveablePar
      * own thread and never touches SWT. The supplied monitor is propagated, and its cancellation
      * (like the service's own) stops the save before its commit point.
      */
-    @Override public void doSave(IProgressMonitor monitor)
+    @Override
+    public void doSave(IProgressMonitor monitor)
     {
         if (session == null || disposed || removedTerminal) { return; }
         if (Thread.currentThread() != uiThread) {
