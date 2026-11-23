@@ -49,6 +49,8 @@ stale derived state rather than real type errors. Revalidation does not clear th
 
 Create the empty template if needed, then use `mxl_workshop operation=apply_changes` to fill one existing template. Pass `projectName`, `ownerFqn`, and `templateName` once and `changes` as a JSON array of ordered `set_cell`, `merge_cells`, `format_cells`, and `add_named_area` objects. Use the same arguments as the individual operations, without a target or `dryRun` in any entry. The outer `dryRun` previews the whole set without saving.
 
+Set `columnWidth` in MXL width units, not characters. Use about 5.6 units per character as a starting estimate, then check the rendered layout with the intended font. In AI-EDT 1.2.0, `format_cells` can apply borders to parameter cells without replacing the parameter.
+
 An invalid entry reports a zero-based `changeIndex` when available. A file-save error does not imply that the model is unchanged: read the result before attempting a corrective write. Do not replay a whole batch after a timeout or an uncertain save.
 
 ## Write a query
