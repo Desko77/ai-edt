@@ -99,7 +99,7 @@ public class MxlWorkshopTool implements IMcpTool
     {
         return SchemaComposer.object()
             .stringProperty("operation", //$NON-NLS-1$
-                "create_template / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / insert_rows / delete_rows / copy_rows / insert_columns / delete_columns / copy_columns / check_print_width / help", //$NON-NLS-1$
+                "create_template / apply_changes / set_cell / format_cells / merge_cells / draw / add_drawing / remove_drawing / read_template / add_named_area / list_named_areas / remove_named_area / insert_rows / delete_rows / copy_rows / insert_columns / delete_columns / copy_columns / check_print_width / help", //$NON-NLS-1$
                 true)
             .stringProperty("projectName", "EDT project name.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("ownerFqn", "Template owner FQN (Catalog.X / Document.X) or CommonTemplate.X.") //$NON-NLS-1$
@@ -119,6 +119,7 @@ public class MxlWorkshopTool implements IMcpTool
             .integerProperty("toCol", "Merge range / copy_columns: first target column.") //$NON-NLS-1$
             .integerProperty("count", "Row/column operations: how many (default 1).") //$NON-NLS-1$
             .stringProperty("formatFrom", "insert_rows / insert_columns: take formats from above/left (default), below/right or none; text and parameters are not copied.") //$NON-NLS-1$
+            .stringProperty("changes", "apply_changes: JSON array of set_cell, merge_cells, format_cells or add_named_area operations for one existing template.") //$NON-NLS-1$ //$NON-NLS-2$
             .stringProperty("layout", "draw: JSON {cells:[{row,col,text}],merges:[{from,to}]}.") //$NON-NLS-1$
             .stringProperty("drawingType", "add_drawing: Line / Rectangle / Ellipse / Text (RU aliases accepted).") //$NON-NLS-1$
             .integerProperty("beginRow", "add_drawing: top-left anchor row (1-based).") //$NON-NLS-1$ //$NON-NLS-2$
@@ -183,6 +184,17 @@ public class MxlWorkshopTool implements IMcpTool
     public String execute(Map<String, String> params)
     {
         String operation = JsonUtils.extractStringArgument(params, "operation");
+        if (APPLY_CHANGES.equals(operation))
+        {
+            try
+            {
+                parseChanges(params.get("changes")); //$NON-NLS-1$
+            }
+            catch (InvalidChange invalid)
+            {
+                return invalid.answer();
+            }
+        }
         if (operation == null || !OPS.containsKey(operation))
         {
             return executeLocked(params);
@@ -254,6 +266,202 @@ public class MxlWorkshopTool implements IMcpTool
             return ToolResult.error(busy.getMessage()).put("code", "templateBusy")
                 .put("status", "not_started").put("mutationStarted", false)
                 .put("retryable", true).put("retryAfterMs", 500).toJson();
+        }
+    }
+
+    static final String APPLY_CHANGES = "apply_changes"; //$NON-NLS-1$
+
+    static List<JsonObject> parseChanges(String source)
+    {
+        if (source == null)
+            throw new InvalidChange(-1, "changes must be a non-empty JSON array"); //$NON-NLS-1$
+        com.google.gson.JsonElement parsed;
+        try
+        {
+            parsed = JsonParser.parseString(source);
+        }
+        catch (JsonSyntaxException invalid)
+        {
+            throw new InvalidChange(-1, "changes must be valid JSON"); //$NON-NLS-1$
+        }
+        if (!parsed.isJsonArray() || parsed.getAsJsonArray().size() == 0
+            || parsed.getAsJsonArray().size() > 1000)
+            throw new InvalidChange(-1, "changes must contain 1 to 1000 entries"); //$NON-NLS-1$
+        List<JsonObject> changes = new ArrayList<>();
+        for (var entry : parsed.getAsJsonArray())
+        {
+            int index = changes.size();
+            if (!entry.isJsonObject())
+                throw new InvalidChange(index, "Expected an operation object"); //$NON-NLS-1$
+            JsonObject change = entry.getAsJsonObject();
+            for (String key : List.of("projectName", "ownerFqn", "templateName", "dryRun"))
+            {
+                if (change.has(key))
+                    throw new InvalidChange(index, "Argument belongs to the outer call: " + key);
+            }
+            var operation = change.get("operation"); //$NON-NLS-1$
+            if (operation == null || !operation.isJsonPrimitive() || !operation.getAsJsonPrimitive().isString()
+                || !List.of("set_cell", "merge_cells", "format_cells", "add_named_area") //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ //$NON-NLS-5$
+                    .contains(operation.getAsString()))
+                throw new InvalidChange(index, "Unsupported template change operation"); //$NON-NLS-1$
+            changes.add(change);
+        }
+        return List.copyOf(changes);
+    }
+
+    private String opApplyChanges(Map<String, String> params)
+    {
+        String projectName = params.get("projectName");
+        String ownerFqn = params.get("ownerFqn");
+        String templateName = params.get("templateName");
+        if (projectName == null || ownerFqn == null || templateName == null)
+            return ToolResult.error("projectName, ownerFqn and templateName are required").toJson();
+        if (!BmTemplateHelper.cellOpsAvailable()) return mxlApiNotFound(APPLY_CHANGES);
+        List<FormatChange> prepared = new ArrayList<>();
+        try
+        {
+            for (JsonObject change : parseChanges(params.get("changes")))
+            {
+                int index = prepared.size();
+                try
+                {
+                    prepared.add(prepareChange(change, projectName, ownerFqn, templateName));
+                }
+                catch (IllegalArgumentException invalid)
+                {
+                    throw new InvalidChange(index, invalid.getMessage());
+                }
+            }
+        }
+        catch (InvalidChange invalid)
+        {
+            return invalid.answer();
+        }
+        IProject project = ProjectResolver.resolve(projectName);
+        if (project == null) return ProjectResolver.notFound(projectName).toJson();
+        boolean dryRun = JsonUtils.extractBooleanArgument(params, "dryRun", false);
+        String[] persistError = { null };
+        int[] failingIndex = { -1 };
+        BmObjectHelper.Result result = executeTemplateWrite(project, ownerFqn, dryRun, (tx, owner) -> {
+            SpreadsheetDocument doc = writableDocument(owner, templateName);
+            for (int index = 0; index < prepared.size(); index++)
+            {
+                failingIndex[0] = index;
+                String error = prepared.get(index).apply(doc);
+                if (error != null) abortOnRefusal(error);
+            }
+            failingIndex[0] = -1;
+            if (!dryRun)
+                persistError[0] = persistTemplateWithModelNames(project, ownerFqn, owner, templateName, doc);
+            return prepared.size() + " template changes";
+        });
+        if (failingIndex[0] >= 0 && result.tags != null)
+            result.tags.put("changeIndex", failingIndex[0]);
+        failOnPersist(result, persistError[0]);
+        return formatResult(result, APPLY_CHANGES);
+    }
+
+    FormatChange prepareChange(JsonObject change, String projectName, String ownerFqn, String templateName)
+    {
+        Map<String, String> values = new LinkedHashMap<>();
+        for (var field : change.entrySet())
+        {
+            if (!field.getValue().isJsonPrimitive())
+                throw new IllegalArgumentException("Expected a scalar value for " + field.getKey());
+            values.put(field.getKey(), field.getValue().getAsString());
+        }
+        return switch (values.remove("operation"))
+        {
+            case "set_cell" -> {
+                requireKeys(values, List.of("row", "col", "text", "language", "fillType", "parameter"));
+                int row = coordinate(values, "row"), col = coordinate(values, "col");
+                String text = values.get("text"), parameter = values.get("parameter");
+                String fill = values.get("fillType"), language = values.get("language");
+                boolean textPassed = values.containsKey("text");
+                String error = BmTemplateHelper.fillProblem(fill, parameter, textPassed);
+                if (error != null) throw new IllegalArgumentException(error);
+                if (!textPassed && parameter == null)
+                    throw new IllegalArgumentException("text or parameter is required");
+                yield doc -> BmTemplateHelper.setCellContent(doc, row, col, text, textPassed, language, fill, parameter);
+            }
+            case "merge_cells" -> {
+                requireKeys(values, List.of("fromRow", "fromCol", "toRow", "toCol"));
+                int r1 = coordinate(values, "fromRow"), c1 = coordinate(values, "fromCol");
+                int r2 = coordinate(values, "toRow"), c2 = coordinate(values, "toCol");
+                requireOrderedRange(r1, c1, r2, c2);
+                yield doc -> {
+                    BmTemplateHelper.mergeCells(doc, r1, c1, r2, c2);
+                    return null;
+                };
+            }
+            case "add_named_area" -> {
+                requireKeys(values, List.of("areaName", "areaKind", "fromRow", "fromCol", "toRow", "toCol"));
+                String name = values.get("areaName"), kind = values.getOrDefault("areaKind", "columns");
+                if (name == null || name.isBlank() || !List.of("rows", "columns", "rect").contains(kind))
+                    throw new IllegalArgumentException("areaName and a valid areaKind are required");
+                int r1 = "columns".equals(kind) ? -1 : coordinate(values, "fromRow");
+                int r2 = "columns".equals(kind) ? -1 : coordinate(values, "toRow");
+                int c1 = "rows".equals(kind) ? -1 : coordinate(values, "fromCol");
+                int c2 = "rows".equals(kind) ? -1 : coordinate(values, "toCol");
+                requireOrderedRange(r1, c1, r2, c2);
+                yield doc -> {
+                    BmTemplateHelper.addNamedArea(doc, name, kind, r1, c1, r2, c2);
+                    return null;
+                };
+            }
+            case "format_cells" -> {
+                List<String> allowed = new ArrayList<>(List.of("row", "col", "fromRow", "fromCol", "toRow", "toCol",
+                    "textPlacement", "textOrientation", "rowHeight", "autoColumnWidth", "columnWidth",
+                    "columnWidthWeight", "fontSize"));
+                for (String[] group : new String[][] {FORMAT_STRINGS, FORMAT_INTS, FORMAT_MARGINS, FORMAT_FLAGS})
+                    Collections.addAll(allowed, group);
+                requireKeys(values, allowed);
+                values.put("projectName", projectName);
+                values.put("ownerFqn", ownerFqn);
+                values.put("templateName", templateName);
+                FormatChange[] format = { null };
+                String error = opFormatCells(values, true, prepared -> format[0] = prepared);
+                if (error != null)
+                    throw new IllegalArgumentException(JsonParser.parseString(error).getAsJsonObject().get("error").getAsString());
+                yield format[0];
+            }
+            default -> throw new IllegalArgumentException("Unsupported template change operation");
+        };
+    }
+
+    private static void requireKeys(Map<String, String> values, List<String> allowed)
+    {
+        for (String key : values.keySet())
+            if (!allowed.contains(key)) throw new IllegalArgumentException("Unexpected argument: " + key);
+    }
+
+    private static int coordinate(Map<String, String> values, String name)
+    {
+        int value = JsonUtils.extractIntArgument(values, name, -1);
+        if (value < 1) throw new IllegalArgumentException(name + " must be a positive integer");
+        return value;
+    }
+
+    private static void requireOrderedRange(int r1, int c1, int r2, int c2)
+    {
+        if (r2 < r1 || c2 < c1) throw new IllegalArgumentException("Range end precedes its start");
+    }
+
+    static final class InvalidChange extends IllegalArgumentException
+    {
+        private static final long serialVersionUID = 1L;
+        final int index;
+
+        InvalidChange(int index, String message)
+        {
+            super(message);
+            this.index = index;
+        }
+
+        String answer()
+        {
+            return ToolResult.error(getMessage()).put("code", "invalidTemplateChange") //$NON-NLS-1$ //$NON-NLS-2$
+                .put("changeIndex", index).put("mutationStarted", false).toJson(); //$NON-NLS-1$ //$NON-NLS-2$
         }
     }
 
@@ -394,6 +602,9 @@ public class MxlWorkshopTool implements IMcpTool
                 break;
             case "merge_cells": //$NON-NLS-1$
                 answer = opMergeCells(params);
+                break;
+            case "apply_changes": //$NON-NLS-1$
+                answer = opApplyChanges(params);
                 break;
             case "draw": //$NON-NLS-1$
                 answer = opDraw(params);
@@ -1812,6 +2023,18 @@ public class MxlWorkshopTool implements IMcpTool
 
     private String opFormatCells(Map<String, String> params, boolean validateOnly)
     {
+        return opFormatCells(params, validateOnly, null);
+    }
+
+    @FunctionalInterface
+    interface FormatChange
+    {
+        String apply(SpreadsheetDocument document);
+    }
+
+    private String opFormatCells(Map<String, String> params, boolean validateOnly,
+        java.util.function.Consumer<FormatChange> prepared)
+    {
         if (!BmTemplateHelper.cellOpsAvailable())
         {
             return mxlApiNotFound("format_cells"); //$NON-NLS-1$
@@ -1946,7 +2169,24 @@ public class MxlWorkshopTool implements IMcpTool
             return ToolResult.error("a cell range is required: row/col for one cell, or " //$NON-NLS-1$
                 + "fromRow/fromCol/toRow/toCol for a rectangle").toJson(); //$NON-NLS-1$
         }
-        if (validateOnly) return null;
+        if (validateOnly && prepared == null) return null;
+        final int firstRow = fromRow;
+        final int firstCol = fromCol;
+        final Integer angle = orientation;
+        if (prepared != null)
+        {
+            prepared.accept(doc -> {
+                if (cellProperties)
+                {
+                    BmTemplateHelper.FormatOutcome outcome = BmTemplateHelper.applyCellFormat(doc,
+                        firstRow, firstCol, toRow, toCol, placement, angle, rowHeight,
+                        autoColumnWidth, columnWidth, widthWeight, look);
+                    if (outcome.error != null) return outcome.error;
+                }
+                return printProperties ? BmTemplateHelper.applyPrintSettings(doc, look) : null;
+            });
+            return null;
+        }
         IProject project = ProjectResolver.resolve(projectName);
         if (project == null)
         {
@@ -2916,6 +3156,11 @@ public class MxlWorkshopTool implements IMcpTool
                 + "Border styles: None, Solid, Dotted, Double, ThinDashed, ThickDashed, " //$NON-NLS-1$
                 + "LargeDashed; borderWidth defaults to 1.\n"); //$NON-NLS-1$
             sb.append("- merge_cells - merges a rectangle. Args: fromRow, fromCol, toRow, toCol (1-based, both inclusive)\n"); //$NON-NLS-1$
+            sb.append("- apply_changes - ordered JSON array in changes (1 to 1000 entries) for one existing template. " //$NON-NLS-1$
+                + "Each entry names set_cell, merge_cells, format_cells or add_named_area and its arguments. " //$NON-NLS-1$
+                + "The target and dryRun belong to the outer call only. Applies in one BM transaction and attempts " //$NON-NLS-1$
+                + "one file save. A save failure is not success; read the state before retrying. " //$NON-NLS-1$
+                + "changeIndex, when present for an entry, is zero-based.\n"); //$NON-NLS-1$
             sb.append("- draw - batch: layout='{\"cells\":[{row,col,text,language}],\"merges\":[{fromRow,fromCol,toRow,toCol}]}'\n"); //$NON-NLS-1$
             sb.append("- add_drawing - places a graphic. Args: drawingType (Line/Rectangle/Ellipse/Text), beginRow, beginColumn, endRow, endColumn, [*Offset], [formatIndex], [zOrder], text (for Text). Returns drawingId\n"); //$NON-NLS-1$
             sb.append("- remove_drawing - removes a graphic by drawingId (idempotent)\n"); //$NON-NLS-1$
@@ -3057,6 +3302,7 @@ public class MxlWorkshopTool implements IMcpTool
         for (String op : Arrays.asList("create_template", "set_cell", "format_cells", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "merge_cells", "draw", //$NON-NLS-1$ //$NON-NLS-2$
             "add_drawing", "remove_drawing", "read_template", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+            "apply_changes", //$NON-NLS-1$
             "add_named_area", "list_named_areas", "remove_named_area", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "insert_rows", "delete_rows", "copy_rows", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
             "insert_columns", "delete_columns", "copy_columns", //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
