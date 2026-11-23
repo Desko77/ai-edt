@@ -12,7 +12,7 @@ other than the server are named with the bundle in front (`oform:ops`).
 | ui-bound | 39 | needs a display or an extension point |
 | workspace-bound | 19 | drives a live EDT project or debug session |
 | untested | 0 | plain logic nothing touches |
-| **total** | **584** | across 979 test classes |
+| **total** | **584** | across 980 test classes |
 
 ## untested (0)
 
@@ -748,7 +748,7 @@ closes.
 | 9-16 | 65 |
 | 17+ | 34 |
 
-7085 test methods across 979 test classes; 167 classes have a test of their own, median 10 methods each.
+7089 test methods across 980 test classes; 167 classes have a test of their own, median 10 methods each.
 
 Read the total against the width table, not on its own. Where a class has a named test it is not thin, but only 167 of 584 classes have one: 26 are covered by the registry-wide contract sweep and 19 need a live EDT project, so their assurance comes from live verification rather than from this number. Comparing the total with another suite compares how much is unit-testable as much as how much is tested.
 
