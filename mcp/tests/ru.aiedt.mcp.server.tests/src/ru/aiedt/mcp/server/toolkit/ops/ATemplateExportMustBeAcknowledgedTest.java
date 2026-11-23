@@ -63,12 +63,17 @@ public class ATemplateExportMustBeAcknowledgedTest
         context.set(expected);
         try
         {
-            com.google.gson.JsonObject answer = com.google.gson.JsonParser.parseString(
-                (String) format.invoke(new MxlWorkshopTool(), failed, "set_cell")).getAsJsonObject();
-            assertEquals("outcome_unknown", answer.get("status").getAsString());
-            assertTrue(answer.get("mutationStarted").getAsBoolean());
-            assertFalse(answer.get("retryable").getAsBoolean());
-            assertTrue(answer.get("recoveryHint").getAsString().contains("do not replay"));
+            for (String operation : new String[] { "set_cell", "apply_changes" })
+            {
+                com.google.gson.JsonObject answer = com.google.gson.JsonParser.parseString(
+                    (String) format.invoke(new MxlWorkshopTool(), failed, operation)).getAsJsonObject();
+                assertFalse(answer.get("success").getAsBoolean());
+                assertEquals(operation, answer.get("operation").getAsString());
+                assertEquals("outcome_unknown", answer.get("status").getAsString());
+                assertTrue(answer.get("mutationStarted").getAsBoolean());
+                assertFalse(answer.get("retryable").getAsBoolean());
+                assertTrue(answer.get("recoveryHint").getAsString().contains("do not replay"));
+            }
         }
         finally { context.remove(); }
     }

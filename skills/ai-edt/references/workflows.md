@@ -37,13 +37,19 @@ replace the whole file.
 1. `edit_metadata operation=help` to confirm the operation exists and what it needs. This step
    prevents the most common failure: hand-rolling a `.mdo` edit for something the server already
    does.
-2. Create with `edit_metadata`, or many objects at once with `batch=true`.
-3. Read `batchResults[]`, redo failed entries one by one.
+2. Use one `edit_metadata` call with `batch=true` and `stopOnError=true` for an ordered creation sequence, including one object with its attributes and tabular sections. Each entry commits separately; the batch is not atomic.
+3. If the batch returns `Pending`, collect it using the same `runKey`; do not resubmit it. Read `batchResults[]`, keep committed entries, and verify the affected model before retrying a failed write whose outcome is uncertain. Correct and submit only the remaining work.
 4. `diagnostics operation=revalidate_objects`, then `get_project_errors` on the new objects.
 
 On a freshly created project, validation markers such as unknown `String` or `Number` types are
 stale derived state rather than real type errors. Revalidation does not clear them;
 `diagnostics operation=clean_project` does.
+
+## Fill a spreadsheet template
+
+Create the empty template if needed, then use `mxl_workshop operation=apply_changes` to fill one existing template. Pass `projectName`, `ownerFqn`, and `templateName` once and `changes` as a JSON array of ordered `set_cell`, `merge_cells`, `format_cells`, and `add_named_area` objects. Use the same arguments as the individual operations, without a target or `dryRun` in any entry. The outer `dryRun` previews the whole set without saving.
+
+An invalid entry reports a zero-based `changeIndex` when available. A file-save error does not imply that the model is unchanged: read the result before attempting a corrective write. Do not replay a whole batch after a timeout or an uncertain save.
 
 ## Write a query
 
